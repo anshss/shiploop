@@ -145,7 +145,7 @@ If `CLAUDE.md` does not exist, write a new one with this structure:
 ```markdown
 # <workspace-name>
 
-<!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command instead. -->
+<!-- meta-repo:auto-start — managed by /meta-repo:setup; regenerable. Don't edit between these markers by hand; ask Claude to refresh this section from current state and it will rewrite only what's inside. -->
 
 ## Workspace shape
 
@@ -184,7 +184,7 @@ This is a pnpm workspace wrapping <N> independent git repos as sub-folders (the 
 
 ## Refreshing this section
 
-Run `/meta-repo:refresh-claude` to regenerate everything between the meta-repo markers from current repo state. Safe to run anytime — it preserves the user-written section below.
+When the workspace structure changes (new/removed sub-repo, port change, new pnpm script), ask Claude to refresh this section from current repo state. Claude rewrites only the content between the `meta-repo:auto-start/end` markers; the user-written section below is preserved.
 
 <!-- meta-repo:auto-end -->
 
@@ -195,82 +195,25 @@ Run `/meta-repo:refresh-claude` to regenerate everything between the meta-repo m
 <!-- Add anything specific to this project here: purpose, ICP, product decisions, key facts you want every Claude session to know. The auto-refresh command never touches content below the `meta-repo:auto-end` marker. -->
 
 (empty — fill in as you go)
-```
 
-Substitute `<workspace-name>` with `basename "$(pwd)"`, `<N>` with the sub-repo count, and the table rows with actual detected sub-repo / port / remote values. For each sub-repo's remote, run `git -C <sub-repo> remote get-url origin 2>/dev/null` and use the result; if empty, write `n/a`.
+## Sub-repo notes
 
-Make the file. Confirm it exists.
+Per-sub-repo learnings — accumulated over time, never auto-overwritten. Append quirks, gotchas, and decisions as you discover them. Agents working inside a sub-repo auto-load this file via Claude Code's parent-directory walk, so anything you write here is visible from sub-repo sessions too.
 
----
+### `<name1>/` — <role1>
 
-## Phase 4.6 — Write per-sub-repo CLAUDE.md files
+(empty — fill in as you go)
 
-For each confirmed sub-repo, write a thin CLAUDE.md inside it. This gives agents invoked from inside a sub-repo (`cd app && claude`) the context that they're operating in a meta-repo workspace.
-
-**Per-sub-repo file path:** `<sub-repo>/CLAUDE.md`
-
-**Existing-file handling:** If a sub-repo already has a CLAUDE.md, do not overwrite. Check for `<!-- meta-repo:auto-start -->` marker. If absent, ask: "`<sub-repo>/CLAUDE.md` exists. Prepend the meta-repo auto section, or skip this sub-repo?" If present, treat as already wired — skip.
-
-**Role detection:** Determine each sub-repo's role from these signals (in priority order):
-1. `<sub-repo>/package.json` → `description` field if non-empty.
-2. Framework markers in `<sub-repo>/`: `next.config.*` → Next.js app, `prisma/schema.prisma` → Prisma backend, `express` in deps → Express API, `vite.config.*` → Vite app, etc.
-3. If neither, write `(role: TBD — describe this sub-repo)`.
-
-**Sibling list:** Construct a one-line role-summary per sibling sub-repo using the same detection logic.
-
-**Template to write into each `<sub-repo>/CLAUDE.md`:**
-
-```markdown
-# <sub-repo-name>
-
-<!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command from the workspace root instead. -->
-
-## Part of a meta-repo workspace
-
-This directory is a sub-repo inside the **<workspace-name>** meta-repo workspace at `../`. The parent is a pnpm workspace wrapping multiple independent git repos as sub-folders.
-
-- **This sub-repo:** `<sub-repo-name>` — <role>
-- **Dev port:** <port>
-- **Remote:** `<remote>`
-- **Workspace root:** `../` (see `../CLAUDE.md` for cross-cutting context and operating commands)
-
-## Sibling sub-repos
-
-| Sub-repo | Role |
-|----------|------|
-| `../<sibling1>/` | <role1> |
-| `../<sibling2>/` | <role2> |
-| ... |
-
-## When working here
-
-- This sub-repo is its own git repo. Commits here push to `<remote>`, not the workspace root.
-- For cross-cutting commands (status, doctor, dev, branch, push), `cd ..` and use the workspace's pnpm scripts.
-- For this sub-repo only: `cd .. && pnpm dev:<sub-repo-name>` boots this one with log tee.
-- MCP servers configured at the workspace root (`../.mcp.json`) apply to sessions here as well — do not add MCPs in this sub-repo.
-- See `../CLAUDE.md` § anti-patterns for cross-stack discipline rules.
-
-<!-- meta-repo:auto-end -->
-
----
-
-## Sub-repo-specific notes (user-written, never auto-overwritten)
-
-<!-- Add quirks, gotchas, decisions specific to this sub-repo here. The auto-refresh command never touches content below the `meta-repo:auto-end` marker. -->
+### `<name2>/` — <role2>
 
 (empty — fill in as you go)
 ```
 
-After writing all per-sub-repo CLAUDE.mds, print:
+Substitute `<workspace-name>` with `basename "$(pwd)"`, `<N>` with the sub-repo count, the table rows with actual detected sub-repo / port / remote values, and the `### <name>/ — <role>` sub-headings (one per detected sub-repo) under `## Sub-repo notes` with detected names + roles. For each sub-repo's remote, run `git -C <sub-repo> remote get-url origin 2>/dev/null` and use the result; if empty, write `n/a`. For role detection, prefer `<sub>/package.json`'s `description` field, fall back to framework markers (`next.config.*` → Next.js, `prisma/` → Prisma backend, `express` in deps → Express API, `vite.config.*` → Vite app), else `(role: TBD)`.
 
-```
-Wrote CLAUDE.md in <N> sub-repos:
-  - <name1>/CLAUDE.md (<role1>)
-  - <name2>/CLAUDE.md (<role2>)
-  - ...
-```
+Make the file. Confirm it exists.
 
-**Committing:** Do NOT commit these to each sub-repo's git automatically. Each sub-repo is its own repo with its own PR workflow — let the user decide whether to commit (typically yes, since CLAUDE.md helps any agent invoked there).
+**Why no per-sub-repo CLAUDE.md files?** Git treats sub-repos with their own `.git/` as embedded repos and refuses to track files inside them from the meta-repo root. Sub-repo learnings would either need 3 separate PRs to each sub-repo's git, or a symlink workaround, or stay untracked. The accepted trade-off is to keep all learnings in the workspace-root CLAUDE.md — agents working from inside a sub-repo still see this file via Claude Code's automatic parent-directory walk.
 
 ---
 
