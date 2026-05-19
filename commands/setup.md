@@ -136,6 +136,73 @@ Copy `~/.claude/skills/meta-repo/templates/health.sh` and update the `check` lin
 
 ---
 
+## Phase 4.5 — Write CLAUDE.md (initial)
+
+If `CLAUDE.md` already exists at the workspace root, **do not overwrite it**. Instead, check whether it contains the `<!-- meta-repo:auto-start -->` delimiter. If not, ask the user: "An existing CLAUDE.md is here. Add the meta-repo auto-managed section to the top, or skip and refresh manually later?" If they say add, prepend the auto section with delimiters above their existing content. If skip, move on.
+
+If `CLAUDE.md` does not exist, write a new one with this structure:
+
+```markdown
+# <workspace-name>
+
+<!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command instead. -->
+
+## Workspace shape
+
+This is a pnpm workspace wrapping <N> independent git repos as sub-folders (the meta-repo pattern). Each sub-repo deploys on its own cadence with its own PR queue and CI; the workspace root provides cross-cutting tooling.
+
+| Sub-repo | Port | Remote |
+|----------|------|--------|
+| `<name1>/` | <port1> | `<github-remote-1>` |
+| `<name2>/` | <port2> | `<github-remote-2>` |
+| ...        |        |                       |
+
+(If a sub-repo's remote can't be detected via `git -C <sub> remote get-url origin`, write `n/a`.)
+
+## Operating commands
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm dev` | Boot all sub-repos in parallel; tee output to `logs/<name>.log` |
+| `pnpm dev:raw` | Original `pnpm --parallel -r dev` (no log tee) |
+| `pnpm status` | One-read state table: branch / dirty / ahead / behind / PR# / CI per sub-repo |
+| `pnpm doctor` | Tooling + env + ports + workspace health audit |
+| `pnpm branch <name>` | Create branch across root + sub-repos (or `--only a,b`) |
+| `pnpm switch <name>` | Checkout branch (tracking origin if local missing) across all |
+| `pnpm pull` | `git pull --ff-only` per repo |
+| `pnpm push` | Push changed sub-repos and open PRs via `gh` |
+| `./health.sh` | Liveness check (HTTP curl each dev server) |
+
+## Anti-patterns (load-bearing rules)
+
+1. **MCP servers always at root.** Never run `claude mcp add` from a sub-repo. They must be scoped to the workspace root so they apply across all sub-repos.
+2. **Always `cd` into the sub-repo before committing.** The workspace root is its own git repo; `git add` from root will not stage sub-repo files.
+3. **Never assume sub-repos are on the same branch.** They drift constantly. Run `pnpm status` before reasoning about branch state.
+4. **Never run destructive git commands without verifying which sub-repo you're in.** Easy to wipe the wrong working tree.
+5. **PRs are not transactional across sub-repos.** A feature touching multiple sub-repos becomes multiple PRs that merge independently. Plan merge order deliberately.
+6. **Sub-repo `.env.example` is the contract.** Never commit `.env` files.
+
+## Refreshing this section
+
+Run `/meta-repo:refresh-claude` to regenerate everything between the meta-repo markers from current repo state. Safe to run anytime — it preserves the user-written section below.
+
+<!-- meta-repo:auto-end -->
+
+---
+
+## Project context (user-written, never auto-overwritten)
+
+<!-- Add anything specific to this project here: purpose, ICP, product decisions, key facts you want every Claude session to know. The auto-refresh command never touches content below the `meta-repo:auto-end` marker. -->
+
+(empty — fill in as you go)
+```
+
+Substitute `<workspace-name>` with `basename "$(pwd)"`, `<N>` with the sub-repo count, and the table rows with actual detected sub-repo / port / remote values. For each sub-repo's remote, run `git -C <sub-repo> remote get-url origin 2>/dev/null` and use the result; if empty, write `n/a`.
+
+Make the file. Confirm it exists.
+
+---
+
 ## Phase 5 — Copy + parameterize scripts
 
 ```bash
