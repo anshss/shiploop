@@ -203,6 +203,77 @@ Make the file. Confirm it exists.
 
 ---
 
+## Phase 4.6 — Write per-sub-repo CLAUDE.md files
+
+For each confirmed sub-repo, write a thin CLAUDE.md inside it. This gives agents invoked from inside a sub-repo (`cd app && claude`) the context that they're operating in a meta-repo workspace.
+
+**Per-sub-repo file path:** `<sub-repo>/CLAUDE.md`
+
+**Existing-file handling:** If a sub-repo already has a CLAUDE.md, do not overwrite. Check for `<!-- meta-repo:auto-start -->` marker. If absent, ask: "`<sub-repo>/CLAUDE.md` exists. Prepend the meta-repo auto section, or skip this sub-repo?" If present, treat as already wired — skip.
+
+**Role detection:** Determine each sub-repo's role from these signals (in priority order):
+1. `<sub-repo>/package.json` → `description` field if non-empty.
+2. Framework markers in `<sub-repo>/`: `next.config.*` → Next.js app, `prisma/schema.prisma` → Prisma backend, `express` in deps → Express API, `vite.config.*` → Vite app, etc.
+3. If neither, write `(role: TBD — describe this sub-repo)`.
+
+**Sibling list:** Construct a one-line role-summary per sibling sub-repo using the same detection logic.
+
+**Template to write into each `<sub-repo>/CLAUDE.md`:**
+
+```markdown
+# <sub-repo-name>
+
+<!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command from the workspace root instead. -->
+
+## Part of a meta-repo workspace
+
+This directory is a sub-repo inside the **<workspace-name>** meta-repo workspace at `../`. The parent is a pnpm workspace wrapping multiple independent git repos as sub-folders.
+
+- **This sub-repo:** `<sub-repo-name>` — <role>
+- **Dev port:** <port>
+- **Remote:** `<remote>`
+- **Workspace root:** `../` (see `../CLAUDE.md` for cross-cutting context and operating commands)
+
+## Sibling sub-repos
+
+| Sub-repo | Role |
+|----------|------|
+| `../<sibling1>/` | <role1> |
+| `../<sibling2>/` | <role2> |
+| ... |
+
+## When working here
+
+- This sub-repo is its own git repo. Commits here push to `<remote>`, not the workspace root.
+- For cross-cutting commands (status, doctor, dev, branch, push), `cd ..` and use the workspace's pnpm scripts.
+- For this sub-repo only: `cd .. && pnpm dev:<sub-repo-name>` boots this one with log tee.
+- MCP servers configured at the workspace root (`../.mcp.json`) apply to sessions here as well — do not add MCPs in this sub-repo.
+- See `../CLAUDE.md` § anti-patterns for cross-stack discipline rules.
+
+<!-- meta-repo:auto-end -->
+
+---
+
+## Sub-repo-specific notes (user-written, never auto-overwritten)
+
+<!-- Add quirks, gotchas, decisions specific to this sub-repo here. The auto-refresh command never touches content below the `meta-repo:auto-end` marker. -->
+
+(empty — fill in as you go)
+```
+
+After writing all per-sub-repo CLAUDE.mds, print:
+
+```
+Wrote CLAUDE.md in <N> sub-repos:
+  - <name1>/CLAUDE.md (<role1>)
+  - <name2>/CLAUDE.md (<role2>)
+  - ...
+```
+
+**Committing:** Do NOT commit these to each sub-repo's git automatically. Each sub-repo is its own repo with its own PR workflow — let the user decide whether to commit (typically yes, since CLAUDE.md helps any agent invoked there).
+
+---
+
 ## Phase 5 — Copy + parameterize scripts
 
 ```bash

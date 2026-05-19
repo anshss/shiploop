@@ -1,48 +1,54 @@
 ---
 model: sonnet
 effort: low
-description: Regenerate the auto-managed section of CLAUDE.md from current repo state. Preserves all user-written content below the `meta-repo:auto-end` marker. Run this after adding/removing sub-repos, changing ports, or updating the operating commands. Idempotent — safe to run anytime.
+description: Regenerate the auto-managed section of every meta-repo CLAUDE.md from current repo state — the workspace-root CLAUDE.md AND each sub-repo's CLAUDE.md. Preserves all user-written content below each `meta-repo:auto-end` marker. Run after adding/removing sub-repos, changing ports, updating operating commands, or editing role descriptions. Idempotent — safe to run anytime.
 ---
 
-You are the meta-repo CLAUDE.md refresher. Your job is to rewrite only the content between `<!-- meta-repo:auto-start -->` and `<!-- meta-repo:auto-end -->` in the workspace root's CLAUDE.md. Everything outside those markers — including any project-specific context the user has written — must be preserved exactly.
+You are the meta-repo CLAUDE.md refresher. Your job is to rewrite **only** the content between `<!-- meta-repo:auto-start -->` and `<!-- meta-repo:auto-end -->` in:
+
+1. The workspace-root `CLAUDE.md`
+2. Each sub-repo's `<sub-repo>/CLAUDE.md`
+
+Everything outside those markers — including any project-specific or sub-repo-specific context the user has written — must be preserved exactly.
 
 ---
 
-## Step 1 — Locate CLAUDE.md
+## Step 1 — Verify this is a meta-repo workspace
 
-Working dir = `pwd`. Check that `CLAUDE.md` exists at the workspace root.
-
-- If missing: ask the user "No CLAUDE.md found here. Create one fresh? (yes / no)" If yes, write the full template from `/meta-repo:setup` Phase 4.5 and stop. If no, exit.
-- If present: continue.
-
-## Step 2 — Verify this is a meta-repo workspace
-
-Check for the marker files:
+Working dir = `pwd`. Check the marker files:
 - `package.json` exists and contains `"status": "bash scripts/status.sh"` (the canonical meta-repo signature)
 - `pnpm-workspace.yaml` exists
 
-If either is missing, tell the user: "This folder doesn't look like a meta-repo workspace (no pnpm-workspace.yaml or no `status` script in package.json). Run `/meta-repo:setup` first, or cd into a meta-repo workspace." Exit.
+If either is missing, tell the user: "This folder doesn't look like a meta-repo workspace. Run `/meta-repo:setup` first, or cd into a meta-repo workspace." Exit.
 
-## Step 3 — Detect current state
+## Step 2 — Detect current state
 
 Collect:
 
-1. **Sub-repos** — list all top-level folders containing a `.git/` directory:
+1. **Sub-repos** — top-level folders containing a `.git/`:
    ```bash
    for d in */; do [ -d "$d/.git" ] && echo "${d%/}"; done
    ```
 
-2. **Per sub-repo: port and remote.**
-   - Port: read `<sub>/package.json` → look at the `dev` script for `-p (\d{4})` or `PORT=(\d+)`. If absent, mark `?`.
-   - Remote: `git -C <sub> remote get-url origin 2>/dev/null` → output or `n/a`.
+2. **Per sub-repo: port, remote, role.**
+   - **Port:** read `<sub>/package.json` → grep `dev` script for `-p (\d{4})` or `PORT=(\d+)`. If absent, mark `?` (and note for the report).
+   - **Remote:** `git -C <sub> remote get-url origin 2>/dev/null` → output or `n/a`.
+   - **Role:** `<sub>/package.json` `description` field if non-empty. Otherwise infer from framework markers (`next.config.*` → Next.js, `prisma/` → Prisma backend, `express` in deps → Express API, `vite.config.*` → Vite app). Otherwise `(role: TBD)`.
 
-3. **Available pnpm scripts** — read root `package.json` and list `scripts.*` keys.
+3. **Available pnpm scripts** — read root `package.json`, list `scripts.*` keys.
 
 4. **Workspace name** — `basename "$(pwd)"`.
 
-## Step 4 — Build the new auto section
+## Step 3 — Refresh the workspace-root CLAUDE.md
 
-Construct exactly this markdown block (substituting the detected values):
+Locate `./CLAUDE.md`.
+
+- If missing: ask "No CLAUDE.md at workspace root. Create one fresh? (yes / no)" → if yes, write the full root template from `/meta-repo:setup` Phase 4.5.
+- If present and contains both markers: replace the substring between (and including) `<!-- meta-repo:auto-start -->` and `<!-- meta-repo:auto-end -->` with the regenerated root auto section (template below).
+- If present but missing markers: ask "No meta-repo markers found in root CLAUDE.md. Prepend the auto section? (yes / no)" → if yes, prepend.
+- If only one marker (corrupted): warn and skip this file.
+
+**Root auto section template** (substitute detected values):
 
 ```markdown
 <!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command instead. -->
@@ -64,7 +70,7 @@ This is a pnpm workspace wrapping <N> independent git repos as sub-folders (the 
 | ... |
 | `./health.sh` | Liveness check (HTTP curl each dev server) |
 
-(Use the descriptions from the meta-repo skill SKILL.md for canonical commands; for any custom user-added scripts, write a brief inferred purpose or `(custom)`.)
+(Use descriptions from the canonical meta-repo set for known scripts; for any user-added scripts, write a brief inferred purpose or `(custom)`.)
 
 ## Anti-patterns (load-bearing rules)
 
@@ -77,33 +83,76 @@ This is a pnpm workspace wrapping <N> independent git repos as sub-folders (the 
 
 ## Refreshing this section
 
-Run `/meta-repo:refresh-claude` to regenerate everything between the meta-repo markers from current repo state. Safe to run anytime — it preserves the user-written section below.
+Run `/meta-repo:refresh-claude` to regenerate every meta-repo-managed section (root + each sub-repo) from current state. Safe to run anytime — preserves user-written content.
 
 <!-- meta-repo:auto-end -->
 ```
 
-## Step 5 — Write back
+Write the result back to `./CLAUDE.md`.
 
-Read the current `CLAUDE.md` content into memory. Find the substring between `<!-- meta-repo:auto-start -->` and `<!-- meta-repo:auto-end -->` (inclusive). Replace it with the newly constructed block from Step 4.
+## Step 4 — Refresh each sub-repo's CLAUDE.md
 
-**Edge cases:**
-- If the markers are not present in the current CLAUDE.md, ask the user: "No meta-repo markers found in CLAUDE.md. Prepend the auto section to the top of the file? (yes / no)" If yes, prepend. If no, exit without changes.
-- If only one marker is present (corrupted state), warn the user and exit without changes. Tell them to manually fix the markers, then re-run.
+For each detected sub-repo, repeat the same marker-aware update inside `<sub-repo>/CLAUDE.md`.
 
-Write the result back to `CLAUDE.md`.
+- If `<sub-repo>/CLAUDE.md` is missing: ask "Create CLAUDE.md in `<sub-repo>/`? (yes / no — skip this one)" → if yes, write the full sub-repo template.
+- If present with both markers: replace the section between markers with the regenerated sub-repo auto section (template below).
+- If present but missing markers: ask "No meta-repo markers in `<sub-repo>/CLAUDE.md`. Prepend? (yes / no)" → if yes, prepend.
+- If only one marker (corrupted): warn for this sub-repo and skip.
 
-## Step 6 — Report
+**Sub-repo auto section template** (substitute detected values for THIS sub-repo and its siblings):
 
-Print a diff-summary:
+```markdown
+<!-- meta-repo:auto-start — managed by /meta-repo:setup and /meta-repo:refresh-claude. Do not edit between these markers; rerun the refresh command from the workspace root instead. -->
+
+## Part of a meta-repo workspace
+
+This directory is a sub-repo inside the **<workspace-name>** meta-repo workspace at `../`. The parent is a pnpm workspace wrapping multiple independent git repos as sub-folders.
+
+- **This sub-repo:** `<sub-repo-name>` — <role>
+- **Dev port:** <port>
+- **Remote:** `<remote>`
+- **Workspace root:** `../` (see `../CLAUDE.md` for cross-cutting context and operating commands)
+
+## Sibling sub-repos
+
+| Sub-repo | Role |
+|----------|------|
+| `../<sibling1>/` | <role1> |
+| `../<sibling2>/` | <role2> |
+| ... |
+
+## When working here
+
+- This sub-repo is its own git repo. Commits here push to `<remote>`, not the workspace root.
+- For cross-cutting commands (status, doctor, dev, branch, push), `cd ..` and use the workspace's pnpm scripts.
+- For this sub-repo only: `cd .. && pnpm dev:<sub-repo-name>` boots this one with log tee.
+- MCP servers configured at the workspace root (`../.mcp.json`) apply to sessions here too — do not add MCPs in this sub-repo.
+- See `../CLAUDE.md` § anti-patterns for cross-stack discipline rules.
+
+<!-- meta-repo:auto-end -->
+```
+
+Substitute carefully — `<sub-repo-name>`, `<role>`, `<port>`, `<remote>` change per iteration. The sibling list excludes the current sub-repo and lists the others with their detected roles.
+
+## Step 5 — Report
+
+Print a summary of what changed:
 
 ```
-── CLAUDE.md refreshed ──
-Sub-repos:       <count> (<list>)
-Ports:           <list>
-Commands:       <count> wired in package.json
-Anti-patterns:   6 (canonical)
+── CLAUDE.md refresh complete ──
 
-User-written section preserved below the meta-repo:auto-end marker.
+Root CLAUDE.md:
+  - <action: refreshed | prepended | created | skipped>
+
+Sub-repo CLAUDE.mds:
+  - <name1>/CLAUDE.md  →  <action>  (port <p>, role: <role>)
+  - <name2>/CLAUDE.md  →  <action>  (port <p>, role: <role>)
+  - ...
+
+Warnings:
+  - <list any sub-repos where ports were missing, remotes were n/a, or markers were corrupted>
+
+User-written sections preserved below each meta-repo:auto-end marker.
 ```
 
-Do not commit or push. The user decides when.
+Do not commit or push to any repo. Each sub-repo is its own git repo with its own PR workflow — the user decides what to commit and when.
