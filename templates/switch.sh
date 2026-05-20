@@ -6,18 +6,23 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ── customize: list your sub-repo folder names here ──
+REPOS=("app" "backend" "website")
+
+DEFAULT_SCOPE="root,$(IFS=,; echo "${REPOS[*]}")"
+
 if [ $# -lt 1 ]; then
-  echo "usage: pnpm switch <name> [--only root,app,backend,website]"
+  echo "usage: pnpm switch <name> [--only $DEFAULT_SCOPE]"
   exit 2
 fi
 
 NAME="$1"; shift
-SCOPE="root,app,backend,website"
+SCOPE="$DEFAULT_SCOPE"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) SCOPE="$2"; shift 2 ;;
-    -h|--help) echo "usage: pnpm switch <name> [--only root,app,backend,website]"; exit 0 ;;
+    -h|--help) echo "usage: pnpm switch <name> [--only $DEFAULT_SCOPE]"; exit 0 ;;
     *) echo "unknown arg: $1"; exit 2 ;;
   esac
 done
@@ -39,7 +44,7 @@ switch_one() {
   cd "$ROOT"
 }
 
-switch_one "root"    "$ROOT"
-switch_one "app"     "$ROOT/app"
-switch_one "backend" "$ROOT/backend"
-switch_one "website" "$ROOT/website"
+switch_one "root" "$ROOT"
+for repo in "${REPOS[@]}"; do
+  switch_one "$repo" "$ROOT/$repo"
+done

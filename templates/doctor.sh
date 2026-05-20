@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Verify the godmode setup is healthy. Pass/warn/fail per check.
+# Verify the meta-repo workspace is healthy. Pass/warn/fail per check.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ── customize: list your sub-repo folder names and dev ports here ──
+REPOS=("app" "backend" "website")
+PORTS=(3001 4000 3000)   # one per REPO, same order
 
 PASS=0; WARN=0; FAIL=0
 
@@ -24,35 +28,35 @@ command -v curl >/dev/null && ok "curl" || fail "curl missing"
 
 # ── Sub-repos ──
 section "sub-repos"
-for sub in app backend website; do
+for sub in "${REPOS[@]}"; do
   if [ -d "$ROOT/$sub/.git" ]; then
     ok "$sub/ present (git repo)"
   elif [ -d "$ROOT/$sub" ]; then
     warn "$sub/ exists but not a git repo"
   else
-    fail "$sub/ missing — clone github.com/Splitoio/$sub"
+    fail "$sub/ missing — clone the sub-repo into this folder"
   fi
 done
 
 # ── Env files ──
 section "env files"
 check_env() {
-  local sub="$1" file="$2"
-  if [ -f "$ROOT/$sub/$file" ]; then
-    ok "$sub/$file present"
+  local sub="$1"
+  if [ -f "$ROOT/$sub/.env" ] || [ -f "$ROOT/$sub/.env.local" ]; then
+    ok "$sub/ has .env or .env.local"
   elif [ -f "$ROOT/$sub/.env.example" ]; then
-    warn "$sub/$file missing (copy $sub/.env.example)"
+    warn "$sub/.env missing (copy $sub/.env.example)"
   else
-    warn "$sub/$file missing and no .env.example"
+    warn "$sub/.env missing and no .env.example"
   fi
 }
-check_env "app"     ".env"
-check_env "backend" ".env"
-check_env "website" ".env.local"
+for sub in "${REPOS[@]}"; do
+  check_env "$sub"
+done
 
 # ── Ports ──
 section "ports (free or in-use by dev server)"
-for port in 3000 3001 4000; do
+for port in "${PORTS[@]}"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t | head -1)
     cmd=$(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || echo "?")
@@ -62,27 +66,6 @@ for port in 3000 3001 4000; do
   fi
 done
 
-# ── Port↔CLAUDE.md drift ──
-section "port mapping consistency"
-claude_md="$ROOT/CLAUDE.md"
-health="$ROOT/health.sh"
-if [ -f "$claude_md" ] && [ -f "$health" ]; then
-  drift=0
-  # Extract port mentions from CLAUDE.md table rows and from health.sh check lines.
-  grep -E '^\| `(app|backend|website)/`' "$claude_md" 2>/dev/null | while read -r line; do
-    name=$(echo "$line" | grep -oE '`(app|backend|website)/`' | tr -d '`/')
-    port=$(echo "$line" | grep -oE '[0-9]{4}' | head -1)
-    [ -z "$name" ] || [ -z "$port" ] && continue
-    health_port=$(grep -E "check[[:space:]]+\"$name\"" "$health" | grep -oE '[0-9]{4}' | head -1)
-    if [ -n "$health_port" ] && [ "$port" != "$health_port" ]; then
-      echo "  ⚠ drift: CLAUDE.md says $name=$port, health.sh says $name=$health_port"
-    fi
-  done
-  ok "checked CLAUDE.md ↔ health.sh"
-else
-  warn "could not compare CLAUDE.md and health.sh"
-fi
-
 # ── Workspace deps ──
 section "workspace"
 if [ -f "$ROOT/pnpm-workspace.yaml" ] || [ -f "$ROOT/pnpm-workspace.yml" ]; then
@@ -91,22 +74,9 @@ else
   warn "no pnpm-workspace.yaml at root"
 fi
 [ -d "$ROOT/node_modules" ] && ok "root node_modules installed" || warn "root node_modules missing — run 'pnpm install'"
-[ -d "$ROOT/app/node_modules" ]     && ok "app/node_modules installed"     || warn "app/node_modules missing"
-[ -d "$ROOT/backend/node_modules" ] && ok "backend/node_modules installed" || warn "backend/node_modules missing"
-[ -d "$ROOT/website/node_modules" ] && ok "website/node_modules installed" || warn "website/node_modules missing"
-
-# ── Prisma ──
-section "prisma"
-if [ -f "$ROOT/backend/prisma/schema.prisma" ]; then
-  ok "backend/prisma/schema.prisma present"
-  if [ -d "$ROOT/backend/node_modules/.prisma" ] || [ -d "$ROOT/backend/node_modules/@prisma/client" ]; then
-    ok "prisma client generated"
-  else
-    warn "prisma client not generated — run 'cd backend && pnpm prisma:generate'"
-  fi
-else
-  warn "no prisma schema found"
-fi
+for sub in "${REPOS[@]}"; do
+  [ -d "$ROOT/$sub/node_modules" ] && ok "$sub/node_modules installed" || warn "$sub/node_modules missing"
+done
 
 # ── Summary ──
 echo ""

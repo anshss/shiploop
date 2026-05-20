@@ -225,30 +225,16 @@ cp ~/.claude/skills/meta-repo/templates/{status,doctor,branch,switch,dev,pull-al
 chmod +x scripts/*.sh
 ```
 
-The templates hardcode `app/backend/website` and the splito-specific port mapping. **You must update each script** to use the user's actual sub-repo names. Specifically:
+Each template has a `# ── customize:` block near the top defining a `REPOS=(...)` array (and `PORTS=(...)` / `REPOS_PORTS=(...)` where ports matter). **Update those arrays in every script to match the user's actual sub-repo folder names and ports.**
 
-In `status.sh`, `branch.sh`, `switch.sh`, `pull-all.sh`:
-- Look at the bottom of each script for lines like:
-  ```
-  report "$ROOT"          "root"
-  report "$ROOT/app"      "app"
-  report "$ROOT/backend"  "backend"
-  report "$ROOT/website"  "website"
-  ```
-- Replace with the user's actual sub-repos.
+Files to edit:
+- `status.sh`, `branch.sh`, `switch.sh`, `pull-all.sh`, `dev.sh`, `push-prs.sh` — set `REPOS=(...)` to the detected sub-repo names
+- `doctor.sh` — set `REPOS=(...)` AND `PORTS=(...)` (same order, one port per repo)
+- `health.sh` — set `REPOS_PORTS=("name:port" ...)`
 
-In `dev.sh`:
-- Replace the three `run_one` lines with one per sub-repo.
+After substitution, verify each script's syntax: `bash -n scripts/<name>.sh`. The scripts loop over the arrays, so no other edits are needed.
 
-In `doctor.sh`:
-- Replace the `for sub in app backend website` loops with the user's actual sub-repos.
-- Replace the hardcoded port list (`3000 3001 4000`) with the user's actual ports.
-- Replace the `check_env` calls with one per sub-repo (using `.env` or `.env.local` as appropriate — for Next.js sub-repos use `.env.local`, otherwise `.env`).
-
-In `push-prs.sh`:
-- Replace the sub-repo list at the top.
-
-After substitution, verify each script's syntax: `bash -n scripts/<name>.sh`.
+`push-prs.sh` auto-derives each sub-repo's `<org>/<repo>` from its `git remote get-url origin` — you don't need to set a separate GitHub-org list.
 
 ---
 

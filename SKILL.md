@@ -7,9 +7,9 @@ description: Multi-subrepo workspace pattern — pnpm root + N independent git r
 
 ## What it is
 
-A workspace root that contains multiple independent git repositories as sub-folders. Each sub-repo (e.g., `app/`, `backend/`, `website/`) has its own remote, PR queue, and CI. The root is *also* its own git repo, holding workspace config, cross-cutting scripts, integrated QA/audit, and shared MCP/agent context. The result: you operate N services as one product without sacrificing their independent deploy cadences or PR isolation.
+A workspace root that contains multiple independent git repositories as sub-folders. Each sub-repo has its own remote, PR queue, and CI. The root is *also* its own git repo, holding workspace config, cross-cutting scripts, and shared MCP/agent context. The result: you operate N services as one product without sacrificing their independent deploy cadences or PR isolation.
 
-Reference implementation: `/Users/anshs/Folder/code/splito` (sub-repos: `app/`, `backend/`, `website/`).
+Example shape: `your-workspace/{app,backend,website}/` — three sub-folders, each its own git repo, pnpm workspace at root.
 
 ## When to use this pattern
 
@@ -34,7 +34,7 @@ If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opi
 | `pnpm dev:raw` | Original `pnpm --parallel -r dev` (no log tee) |
 | `pnpm dev:<name>` | Boot one sub-repo only |
 | `pnpm status` | One-read table: branch / dirty / ahead / behind / PR# / CI per sub-repo + root |
-| `pnpm doctor` | Health audit: tooling, env files, ports, sub-repo presence, Prisma, port-drift between CLAUDE.md and health.sh |
+| `pnpm doctor` | Health audit: tooling, env files, ports, sub-repo presence, workspace config |
 | `pnpm branch <name>` | Create branch across root + all sub-repos (or `--only a,b`) |
 | `pnpm switch <name>` | Checkout branch (tracking origin if local missing) across all |
 | `pnpm pull` | `git pull --ff-only` per repo |
@@ -43,7 +43,7 @@ If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opi
 
 ## Anti-patterns (load-bearing rules)
 
-1. **MCP servers always at root.** Never run `claude mcp add` from a sub-repo. They must be scoped to the workspace root so they apply across all sub-repos. (`splito/.mcp.json` is the canonical example.)
+1. **MCP servers always at root.** Never run `claude mcp add` from a sub-repo. They must be scoped to the workspace root so they apply across all sub-repos (e.g., one `.mcp.json` at the workspace root, none inside sub-repos).
 2. **Always `cd` into the sub-repo before committing.** The workspace root is its own git repo; `git add` from root will not stage sub-repo files. Each sub-repo's changes commit independently.
 3. **Never assume sub-repos are on the same branch.** They drift constantly. Run `pnpm status` before reasoning about branch state.
 4. **Never run destructive git commands (`reset --hard`, `clean -fd`, `branch -D`) without first verifying which sub-repo you're in.** Easy to wipe the wrong working tree.
@@ -79,7 +79,7 @@ If asked to set up a meta-repo workspace in a new repo:
    - `chmod +x scripts/*.sh`
    - `pnpm doctor` to verify
 
-Hand the user a list of what was created and what still needs configuring (e.g., `.env` files, MCP tokens, Prisma migration).
+Hand the user a list of what was created and what still needs configuring (e.g., `.env` files, MCP tokens, per-sub-repo bootstrap commands like DB migrations or codegen).
 
 ## Tradeoffs (state honestly when asked)
 
@@ -92,7 +92,7 @@ Hand the user a list of what was created and what still needs configuring (e.g.,
 - Independent deploy cadences without losing cross-product context
 - AI agents get bounded file trees but full product visibility
 - Parallel agent work across sub-repos doesn't merge-conflict (different git indexes)
-- Workspace root is the single home for MCP config, audit harness, and shared scripts
+- Workspace root is the single home for MCP config, shared scripts, and any cross-stack tooling you add
 
 If a user asks "should I migrate from meta-repo to Turborepo?" — the answer depends on whether their services *actually* deploy independently and whether the abstraction cost has been paid. Sunk cost is real; don't recommend migration unless they're hitting concrete pain.
 

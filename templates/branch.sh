@@ -5,18 +5,23 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ── customize: list your sub-repo folder names here ──
+REPOS=("app" "backend" "website")
+
+DEFAULT_SCOPE="root,$(IFS=,; echo "${REPOS[*]}")"
+
 if [ $# -lt 1 ]; then
-  echo "usage: pnpm branch <name> [--only root,app,backend,website]"
+  echo "usage: pnpm branch <name> [--only $DEFAULT_SCOPE]"
   exit 2
 fi
 
 NAME="$1"; shift
-SCOPE="root,app,backend,website"
+SCOPE="$DEFAULT_SCOPE"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) SCOPE="$2"; shift 2 ;;
-    -h|--help) echo "usage: pnpm branch <name> [--only root,app,backend,website]"; exit 0 ;;
+    -h|--help) echo "usage: pnpm branch <name> [--only $DEFAULT_SCOPE]"; exit 0 ;;
     *) echo "unknown arg: $1"; exit 2 ;;
   esac
 done
@@ -39,10 +44,10 @@ create_branch() {
   cd "$ROOT"
 }
 
-create_branch "root"    "$ROOT"
-create_branch "app"     "$ROOT/app"
-create_branch "backend" "$ROOT/backend"
-create_branch "website" "$ROOT/website"
+create_branch "root" "$ROOT"
+for repo in "${REPOS[@]}"; do
+  create_branch "$repo" "$ROOT/$repo"
+done
 
 echo ""
 echo "created/checked out '$NAME' in: $SCOPE"

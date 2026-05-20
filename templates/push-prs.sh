@@ -3,9 +3,24 @@
 # Auto-commits uncommitted changes (AI-generated messages), pushes branches,
 # and opens PRs with AI-generated descriptions via claude -p.
 
+# ── customize: list your sub-repo folder names here ──
 REPOS=("app" "backend" "website")
-GITHUB_REPOS=("Splitoio/app" "Splitoio/backend" "Splitoio/website")
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Auto-derive GitHub <org>/<repo> from each sub-repo's origin remote.
+# Falls back gracefully if a repo has no origin or isn't on github.com.
+gh_repo_for() {
+  local dir="$1"
+  local url
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+  [ -z "$url" ] && return 1
+  # Strip protocol/host, .git suffix
+  url="${url#https://github.com/}"
+  url="${url#git@github.com:}"
+  url="${url%.git}"
+  echo "$url"
+}
 
 # Check dependencies
 if ! command -v gh &>/dev/null; then
@@ -79,11 +94,17 @@ check_cross_repo_conflicts() {
 
 handle_repo() {
   local REPO="$1"
-  local GH_REPO="$2"
   local REPO_DIR="$ROOT_DIR/$REPO"
 
   if [ ! -d "$REPO_DIR/.git" ]; then
     echo "⚠  $REPO/ not found, skipping"
+    return
+  fi
+
+  local GH_REPO
+  GH_REPO=$(gh_repo_for "$REPO_DIR")
+  if [ -z "$GH_REPO" ]; then
+    echo "⚠  $REPO/ — could not detect github.com origin, skipping"
     return
   fi
 
@@ -176,15 +197,15 @@ handle_repo() {
 
 check_cross_repo_conflicts
 
-for i in "${!REPOS[@]}"; do
-  handle_repo "${REPOS[$i]}" "${GITHUB_REPOS[$i]}"
+for repo in "${REPOS[@]}"; do
+  handle_repo "$repo"
 done
 
-# Handle root monorepo
+# Handle root workspace repo
 echo ""
 ROOT_DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 if [ "$ROOT_DIRTY" -gt 0 ]; then
-  echo "🤖 monorepo root — generating commit message..."
+  echo "🤖 workspace root — generating commit message..."
   DIFF=$(git diff && git diff --cached)
   [ -z "$DIFF" ] && DIFF=$(git status --short)
   COMMIT_MSG=$(ai_commit_message "$DIFF")
@@ -197,30 +218,18 @@ fi
 ROOT_AHEAD=$(git rev-list --count "origin/$(git branch --show-current)..HEAD" 2>/dev/null || echo "0")
 if [ "$ROOT_AHEAD" -gt 0 ]; then
   git push origin "$(git branch --show-current)" --quiet
-  echo "↑  monorepo root — pushed"
+  echo "↑  workspace root — pushed"
 else
-  echo "✓  monorepo root — up to date"
+  echo "✓  workspace root — up to date"
 fi
 
 echo ""
 echo "Done. $PR_CREATED PR(s) created."
 
-# Post-deploy health check (advisory — never fails the push)
+# Optional post-push health check (skipped if no health.sh at root)
 HEALTH_SCRIPT="$ROOT_DIR/health.sh"
 if [ -f "$HEALTH_SCRIPT" ]; then
   echo ""
-  echo "Running post-deploy health check..."
-  HEALTH_LOG=$(bash "$HEALTH_SCRIPT" 2>&1) || true
-  FAILED_SERVICES=$(echo "$HEALTH_LOG" | grep "not responding" | sed 's/.*✗ //' | sed 's/ (.*//' || true)
-  if [ -n "$FAILED_SERVICES" ]; then
-    echo "$HEALTH_LOG"
-    LOG_FILE="$ROOT_DIR/.claude/qa/qa-runs/last.jsonl"
-    mkdir -p "$(dirname "$LOG_FILE")"
-    while IFS= read -r svc; do
-      echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phase\":\"post_deploy\",\"issue\":\"post_deploy_failure\",\"detail\":\"$svc not responding\"}" >> "$LOG_FILE"
-    done <<< "$FAILED_SERVICES"
-    echo "  Logged to $LOG_FILE — run 'pnpm qa:heal' to record."
-  else
-    echo "  All services healthy post-deploy."
-  fi
+  echo "Running post-push health check..."
+  bash "$HEALTH_SCRIPT" || true
 fi

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Check that all three dev servers are responding
+# Liveness check — HTTP curl each sub-repo's dev server (web projects only).
 set -euo pipefail
+
+# ── customize: list each sub-repo and its dev port as "name:port" ──
+REPOS_PORTS=("app:3001" "backend:4000" "website:3000")
 
 PASS=0
 FAIL=0
@@ -16,15 +19,18 @@ check() {
   fi
 }
 
-echo "Splito health check"
-echo "-------------------"
-check "app"     "http://localhost:3000"
-check "website" "http://localhost:3001"
-check "backend" "http://localhost:4000"
+echo "Workspace health check"
+echo "----------------------"
+for entry in "${REPOS_PORTS[@]}"; do
+  name="${entry%:*}"
+  port="${entry#*:}"
+  check "$name" "http://localhost:$port"
+done
 echo ""
 
+TOTAL=${#REPOS_PORTS[@]}
 if [ $FAIL -eq 0 ]; then
-  echo "All services up ($PASS/3)"
+  echo "All services up ($PASS/$TOTAL)"
   exit 0
 else
   echo "$FAIL service(s) down — run 'pnpm dev' to start"
