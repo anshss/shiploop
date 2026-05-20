@@ -268,12 +268,23 @@ Do not push. The user adds the remote and pushes themselves.
 
 ## Phase 8 — Report
 
+Reuse the role/framework detection from Phase 4.6 (now in Phase 4.5's substitution paragraph) to print a one-line stack summary per sub-repo. Detection signals, in priority order:
+1. `<sub>/package.json` → `description` field if non-empty.
+2. Framework markers: `next.config.*` → Next.js (and check `app/` vs `pages/` for App Router vs Pages Router), `prisma/schema.prisma` → Prisma backend, `express` in deps → Express API, `vite.config.*` → Vite app, `astro.config.*` → Astro, `nuxt.config.*` → Nuxt, etc.
+3. If none match, write `unknown stack`.
+
+This is a one-glance summary printed at setup-time only — do NOT write it into CLAUDE.md (where it would go stale; the auto-section refresh would have to re-detect anyway).
+
 Print a final summary:
 
 ```
 ── meta-repo workspace ready ──
 
 Sub-repos:    <name1> (port <p1>), <name2> (port <p2>), ...
+Detected stacks:
+  <name1>/  <stack — e.g. "Next.js (App Router)">
+  <name2>/  <stack — e.g. "Express + Prisma">
+  ...
 Scripts:      scripts/{status,doctor,branch,switch,dev,pull-all,push-prs}.sh
 Health:       ./health.sh
 
