@@ -1,6 +1,6 @@
 ---
 name: meta-repo
-description: Multi-subrepo workspace pattern — pnpm root + N independent git repos operated as one product. Use when (a) working inside an existing meta-repo workspace (splito, or any pnpm workspace where sub-folders each have their own .git), (b) setting up a new project with this shape, or (c) deciding whether the pattern fits. Skill includes operating commands, scaffolding workflow, and explicit anti-patterns.
+description: Multi-subrepo workspace pattern — pnpm root + N independent git repos operated as one product. Use as reference when (a) working inside an existing meta-repo workspace (splito, or any pnpm workspace where sub-folders each have their own .git) or (b) deciding whether the pattern fits a new project. For scaffolding a new workspace, invoke the dedicated /meta-repo:setup slash command instead. Skill carries operating commands, anti-patterns, and explicit tradeoffs.
 ---
 
 # Meta-repo — multi-subrepo workspace pattern
