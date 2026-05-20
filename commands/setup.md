@@ -171,7 +171,7 @@ This is a pnpm workspace wrapping <N> independent git repos as sub-folders (the 
 | `pnpm switch <name>` | Checkout branch (tracking origin if local missing) across all |
 | `pnpm pull` | `git pull --ff-only` per repo |
 | `pnpm push` | Push changed sub-repos and open PRs via `gh` |
-| `./health.sh` | Liveness check (HTTP curl each dev server) |
+| `./health.sh` | Liveness check (HTTP curl each dev server — web projects only) |
 
 ## Anti-patterns (load-bearing rules)
 

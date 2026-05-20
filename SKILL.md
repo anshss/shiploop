@@ -39,9 +39,7 @@ If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opi
 | `pnpm switch <name>` | Checkout branch (tracking origin if local missing) across all |
 | `pnpm pull` | `git pull --ff-only` per repo |
 | `pnpm push` | Push changed sub-repos and open PRs via `gh` |
-| `pnpm audit` | Playwright integration tests against the live stack |
-| `pnpm audit:report` | Open the HTML report |
-| `./health.sh` | Liveness check (HTTP curl each dev server) |
+| `./health.sh` | Liveness check (HTTP curl each dev server — web projects only) |
 
 ## Anti-patterns (load-bearing rules)
 

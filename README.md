@@ -4,7 +4,7 @@ A Claude Code skill that scaffolds and operates **multi-subrepo pnpm workspaces*
 
 ## When this pattern fits
 
-You have multiple services that ship on independent cadences (e.g., `app/`, `backend/`, `website/`), but you want to operate them as one product — share product context with AI agents, run cross-stack QA, dispatch parallel work without merge conflicts.
+You have multiple services that ship on independent cadences (e.g., `app/`, `backend/`, `website/`), but you want to operate them as one product — share product context with AI agents, dispatch parallel work without merge conflicts, run cross-stack scripts from one place.
 
 You don't have to give up sub-repo independence to get workspace-level ergonomics.
 
@@ -13,6 +13,15 @@ You don't have to give up sub-repo independence to get workspace-level ergonomic
 - All services deploy together → use Turborepo or a single repo
 - Sub-repos share a lot of code daily → three git remotes make code sharing painful
 - You're early enough that the abstraction cost outweighs deploy-independence
+
+## What the skill assumes
+
+The scaffolded scripts are designed for **web/Node projects with a `pnpm dev` per sub-repo**:
+- Port detection scans each sub-repo's `dev` script for `-p <port>` / `PORT=`
+- `health.sh` does HTTP curls against detected ports
+- `dev.sh` runs `pnpm dev` in each sub-repo with log tee
+
+Git ops (`status`, `branch`, `switch`, `pull-all`, `push-prs`) are framework-agnostic. For non-web projects (CLI tools, libraries), the git ops still help — strip or edit the web-specific scripts after scaffolding. The skill doesn't auto-detect non-web sub-repos today.
 
 ## Install
 
@@ -54,7 +63,7 @@ After setup, you get:
 | `pnpm switch <name>` | Checkout branch across all (tracks origin if local missing) |
 | `pnpm pull` | `git pull --ff-only` per repo |
 | `pnpm push` | Push changed sub-repos and auto-open PRs via `gh` |
-| `./health.sh` | HTTP liveness check on each dev server |
+| `./health.sh` | HTTP liveness check on each dev server (web projects only) |
 
 ## Repo layout
 
