@@ -108,19 +108,6 @@ else
   warn "no prisma schema found"
 fi
 
-# ── Playwright ──
-section "audit (playwright)"
-if [ -d "$ROOT/audit" ]; then
-  ok "audit/ directory present"
-  if [ -d "$ROOT/node_modules/@playwright/test" ]; then
-    ok "playwright installed"
-  else
-    warn "playwright not installed — run 'pnpm install'"
-  fi
-else
-  warn "audit/ missing"
-fi
-
 # ── Summary ──
 echo ""
 echo "── summary ──"

@@ -113,7 +113,7 @@ Agents invoked from inside a sub-repo (e.g., `cd app && claude`) automatically l
 - Independent deploy cadences without losing cross-product context
 - AI agents get bounded file trees but full product visibility
 - Parallel agent work across sub-repos doesn't merge-conflict (different git indexes)
-- Workspace root is the canonical home for MCP config, shared scripts, integrated QA harness
+- Workspace root is the canonical home for MCP config, shared scripts, and any cross-stack tooling you add
 
 ## Status
 
