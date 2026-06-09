@@ -24,9 +24,10 @@ fi
 
 ln -s "$SOURCE/commands" "$TARGET"
 
-# Make templates executable in case git lost +x on clone.
+# Make templates executable in case git lost +x on clone (recurse — templates now
+# has worktree/, govern/, hooks/, lib/ subdirs). Skip .example files.
 if [ -d "$SOURCE/templates" ]; then
-  chmod +x "$SOURCE/templates"/*.sh 2>/dev/null || true
+  find "$SOURCE/templates" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 fi
 
 echo ""

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# OPTIONAL project-specific doctor checks.
+#   Rename to scripts/lib/doctor-extra.sh (drop the .example) to enable.
+#   doctor.sh sources this in the SAME shell after its generic checks, so the
+#   helpers ok/warn/fail/section are already in scope (use them for consistent
+#   output + exit-code aggregation). Put anything stack-specific here:
+#   migration drift, an upstream chain/API probe, extra CLI auth surfaces, etc.
+
+section "project-specific"
+
+# Example checks (uncomment + adapt):
+# command -v gcloud >/dev/null 2>&1 && ok "gcloud present" || warn "gcloud missing (deploy/logs)"
+# if [ -d backend/prisma ]; then
+#   ( cd backend && npx prisma migrate status >/dev/null 2>&1 ) && ok "prisma migrations applied" || warn "prisma drift"
+# fi

@@ -1,0 +1,36 @@
+# sub-repos — each has its own git tree, do not track from the workspace root
+__SUBREPO_IGNORES__
+
+# workspace runtime
+node_modules/
+logs/
+
+# if the ROOT uses pnpm: pnpm 11 writes an empty root lockfile before every
+# `pnpm <script>` and regenerates it on every run; config can't suppress it in v11.
+# Root-anchored so a real lockfile in a sub-repo is unaffected. (Harmless for an
+# npm/yarn/bun root.)
+/pnpm-lock.yaml
+
+# env files (per-repo .env is the source of truth; .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# OS / editor junk
+.DS_Store
+*.swp
+*.swo
+
+# Claude Code workspace state — track the shared AI context (commands/, settings.json)
+# but ignore per-session + snapshot files
+.claude/transcript.md
+.claude/projects/
+
+# Worktree state — local registry, transient lock dirs, generated per-worktree env
+.worktrees/*
+!.worktrees/.gitkeep
+worktree.env
+
+# Auto-generated planning/spec artifacts (skill output — not source of truth)
+.plans/
+.specs/

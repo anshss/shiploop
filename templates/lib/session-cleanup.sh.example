@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# OPTIONAL project cleanup hook.
+#   Rename to scripts/lib/session-cleanup.sh (drop the .example) to enable.
+#   Run best-effort by the SessionEnd hook and by worktree/rm.sh BEFORE a worktree
+#   is torn down. Use it to release real/billable resources a session created —
+#   e.g. close test deploys, stop containers, drop a scratch DB.
+#
+#   Runs from the worktree (or main checkout) root. worktree.env is already sourced
+#   by the SessionEnd hook, so $WORKTREE_SLOT / $WORKTREE_*_PORT are available there.
+set -uo pipefail
+
+# Example: close any open test deployments via the project's own command.
+# bash scripts/test-env.sh clean --quiet || true
+
+echo "[session-cleanup] done"
