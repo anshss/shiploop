@@ -89,7 +89,7 @@ A durable, file-based backlog the whole harness reads.
 - **Supervisor** every N resolved tickets (+ on anomaly) audits for duplicates/dependency-ordering/failure-patterns and can `halt`. **Self-improvement** proposes harness fixes to `governor/improvements.md` (observe→propose; opt-in guarded auto-apply).
 - **Escalations** land in `governor/escalations.md` for the operator. Answer inline; mark "make this a rule" to grow the doctrine.
 
-Before a live run, confirm a child can auth: `claude -p "ping" --model sonnet` should print text, not a 401 (run `claude login` once if it 401s).
+Before a live run, from a **plain terminal** (not nested in a Claude session), confirm a child can auth: `claude -p "ping" --model sonnet --strict-mcp-config` should print text, not a 401 (run `claude login` once if it 401s). Workers run lean (`--strict-mcp-config`, no MCP) and scrub inherited `CLAUDE_CODE_*` env — a headless worker that inherits `CLAUDE_CODE_ENTRYPOINT` from a parent session never finalizes (answers but emits no `result`, hangs to the timeout), so `spawn-worker.sh` strips it; a manual nested `claude -p` won't, which is why the preflight wants a real terminal.
 
 ## Hooks (deterministic session scaffolding)
 

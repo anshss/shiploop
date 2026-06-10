@@ -46,6 +46,30 @@ Determine the mode:
 
 ---
 
+## Phase 0.5 — Branch guard (the tooling MUST live on the root's default branch)
+
+**Load-bearing — do this before generating or bumping anything.** The workspace tooling
+(`scripts/`, `governor/`, `package.json`, `.gitignore`, hooks) is versioned in the ROOT git repo.
+Whatever branch you commit it on is where the harness lives — and the doctrine + the
+`check-main-on-main` SessionStart hook both assume the root stays on its **default branch** (`main`).
+If setup runs while the root is on a feature branch and the tooling gets committed there, the entire
+governor strands off-main: `bash scripts/govern/run-loop.sh` is "file not found" from main, and the
+hook nags forever about drift it can't fix. This has actually happened — guard against it.
+
+```bash
+def=$(git -C . symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+def="${def:-main}"; cur=$(git -C . rev-parse --abbrev-ref HEAD 2>/dev/null)
+echo "root default branch: $def   currently on: $cur"
+```
+- If `cur` == `def` → good, continue.
+- If `cur` != `def` → **STOP and warn:** "The meta-repo tooling is versioned on the root's default
+  branch (`$def`), but the root is on `$cur`. Committing the tooling here would strand the governor
+  off `$def`. Switch the root to `$def` first? (switch / proceed-anyway / cancel)". On *switch*, run
+  `git switch "$def"` (commit/stash any unrelated dirty work first) and re-confirm before generating.
+  Only *proceed-anyway* if the operator explicitly accepts an off-default install.
+
+---
+
 ## Phase 1 — Inventory sub-repos (fresh)
 
 Find sub-folders that are their own git repos:
@@ -188,7 +212,19 @@ provides). Mention the optional next steps:
   codegen, DB wiring) if you want `worktree:new` to produce a runnable stack;
 - rename `session-cleanup.sh.example` / `doctor-extra.sh.example` similarly;
 - customize `governor/preferences.md` (the doctrine) and set `GOVERN_MERGE_REPOS` in `workspace.sh`;
-- before the first `/govern`, run `claude -p "ping" --model sonnet` to confirm worker auth.
+- before the first `/govern`, from a **plain terminal** (not nested in a Claude session) run
+  `claude -p "ping" --model sonnet --strict-mcp-config` to confirm worker auth (prints text, not a 401).
+
+**Commit the tooling to the default branch (don't leave it uncommitted/stranded).** Setup only writes
+files; nothing is versioned until you commit. On the root's default branch (verified in Phase 0.5),
+stage and commit the workspace tooling as ONE commit so the harness actually lives on `main`:
+```bash
+git add scripts governor package.json .gitignore .worktrees/.gitkeep \
+        tickets.md tickets-parked.md learnings.md .claude/settings.json .mcp.json 2>/dev/null
+git commit -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)"
+```
+Do NOT `git add .` (that would sweep `.env`/secrets); stage the tooling paths explicitly. Leave the
+push to the operator. If this commit lands anywhere but the default branch, the governor is stranded.
 
 Then jump to "Phase Z — Report".
 
@@ -249,6 +285,13 @@ each chosen component:
 After applying, `bash -n` every `.sh` under `scripts/`, `source scripts/lib/workspace.sh` to confirm
 it parses, and run `npm run doctor`. Report what changed.
 
+**Then commit the refreshed tooling to the default branch.** A bump that stays uncommitted (or gets
+committed on a feature branch) drifts the harness off `main` exactly like a fresh install can. On the
+root's default branch (verified in Phase 0.5), stage the changed tooling paths explicitly (never
+`git add .`) and commit, e.g. `git commit -m "chore: bump meta-repo workspace tooling"`. Leave the
+push to the operator. Call out in the Phase Z report whether the tooling is committed and on which
+branch — if it's not on the default branch, that's a drift the operator must resolve.
+
 ---
 
 ## Phase Z — Report
@@ -268,6 +311,7 @@ Still needs you:
   - per-sub-repo .env files (see <repo>/.env.example)
   - enable optional hooks: rename scripts/lib/*.sh.example → .sh
   - set GOVERN_MERGE_REPOS in scripts/lib/workspace.sh + customize governor/preferences.md
-  - confirm worker auth: claude -p "ping" --model sonnet
+  - commit the tooling to the default branch if not done (governor must live on main)
+  - confirm worker auth (plain terminal): claude -p "ping" --model sonnet --strict-mcp-config
 ```
 Stop. Do not proactively build further features unless asked.

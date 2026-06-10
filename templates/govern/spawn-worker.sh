@@ -50,6 +50,12 @@ permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] 
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_WORKER_MODEL:-opus}"
 
+# Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
+# inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
+# risks a teardown stall on exit. --strict-mcp-config = load ONLY --mcp-config files (we pass
+# none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers.
+strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && strict_mcp=""
+
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
 govern::log "spawning worker for #$N (mode=$mode, model=$model, timeout=${to}s) in $wtpath"
@@ -57,9 +63,22 @@ set +e
 # --setting-sources user: drop the PROJECT .claude/settings.json hooks so a worker does NOT
 # inherit a ticket-sweep Stop hook (clobbers stdout), a SessionEnd cleanup (fleet-wide side
 # effects), or a SessionStart flood. `exec` so $cpid IS the claude process → clean kill.
-( cd "$wtpath" && exec env GOVERN_REPORT_PATH="$report_path" "$claude_bin" -p "$prompt" \
+#
+# env -u CLAUDE_CODE_*: SCRUB the parent-session runtime markers. If this run-loop was launched
+# from inside an interactive Claude session (or anything that leaked Claude env), the child
+# `claude -p` inherits CLAUDE_CODE_ENTRYPOINT et al. and then NEVER finalizes — it answers but
+# emits no `result` event and hangs until the watchdog kills it at GOVERN_WORKER_TIMEOUT. From a
+# bare terminal these are unset so it "just works", which makes the bug invisible until someone
+# drives the governor from a Claude session. Scrubbing them makes the worker self-contained and
+# terminate cleanly regardless of how the loop was launched. (CLAUDE_CODE_ENTRYPOINT is the
+# proven culprit; the rest are scrubbed defensively — none are needed by a fresh worker.)
+( cd "$wtpath" && exec env \
+    -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
+    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
+    GOVERN_REPORT_PATH="$report_path" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
+    $strict_mcp \
     --permission-mode "$permflag" --model "$model" ) >"$jsonl" 2>&1 &
 cpid=$!
 wd=""

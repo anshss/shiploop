@@ -11,15 +11,22 @@ stays flat (near-zero parent cost). Claude runs only in fresh, bounded sub-sessi
 one ticket · `--dry-run` = prove it, ship nothing · `--exclude N,N` = skip tickets a parallel govern
 session owns.
 
-Run from the **main checkout** of the meta-repo (not a worktree).
+Run from the **main checkout** of the meta-repo (not a worktree), in a **plain terminal** — NOT from
+inside an interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env
+and the headless worker then never finalizes (answers but emits no `result`, hangs to the timeout).
+`spawn-worker.sh` defensively scrubs those vars so the loop itself survives a nested launch, but your
+manual preflight ping below won't — so run the preflight (and ideally the whole loop) from a real
+terminal.
 
 ## Before a live run (once)
-Workers authenticate via subscription OAuth — confirm a child `claude` can auth:
+Workers authenticate via subscription OAuth — confirm a child `claude` can auth (in a plain terminal):
 ```bash
-claude -p "ping" --model sonnet   # should print text, NOT "401 Invalid authentication credentials"
+claude -p "ping" --model sonnet --strict-mcp-config   # should print "pong"-ish text, NOT a 401
 ```
-If it 401s, run `claude login` in this shell first. (Don't set `ANTHROPIC_API_KEY` unless you
-deliberately want the API-key fallback.)
+`--strict-mcp-config` matches how workers actually launch (no MCP servers — they'd only slow startup
+and can stall exit). If it 401s, run `claude login` in this shell first. (Don't set
+`ANTHROPIC_API_KEY` unless you deliberately want the API-key fallback.) If it *hangs* with no output,
+you're almost certainly running it nested inside a Claude session — open a real terminal.
 
 Also confirm the doctrine + allowlist are set: `governor/preferences.md` reflects how you'd decide,
 and `GOVERN_MERGE_REPOS` in `scripts/lib/workspace.sh` lists exactly the repos safe to auto-merge.
