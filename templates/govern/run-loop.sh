@@ -177,7 +177,9 @@ while :; do
       nres=$((nres+1)); since_review=$((since_review+1)); bad_streak=0
       # only a cleanly-resolved worktree is torn down (live, real worktree only).
       if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" && -z "$resumed" ]]; then
-        ( cd "$WS_ROOT" && $ROOT_PM run worktree:rm -- "ticket-$N" --force >/dev/null 2>&1 ) \
+        # Direct bash (not `$ROOT_PM run`): pnpm v11's pre-run gate aborts in a non-TTY
+        # shell before the script runs; our worktree scripts are PM-agnostic, so call them directly.
+        ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "ticket-$N" --force >/dev/null 2>&1 ) \
           || govern::log "worktree:rm ticket-$N failed — clean up manually"
       fi
       [[ "$crossN" -gt 0 ]] && { anomaly=1; govern::log "worker flagged $crossN cross-ref(s) on #$N"; }

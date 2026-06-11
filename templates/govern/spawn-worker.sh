@@ -35,7 +35,12 @@ wt_cmd="${GOVERN_WORKTREE_CMD:-}"
 if [[ -n "$wt_cmd" ]]; then
   wtpath="$("$wt_cmd" "$slug")"
 else
-  ( cd "$WS_ROOT" && $ROOT_PM run worktree:new -- "$slug" >/dev/null )
+  # Call the worktree script DIRECTLY (not via `$ROOT_PM run`): it's our own
+  # PM-agnostic bash (pure git, no pnpm), and routing through `pnpm run` adds the
+  # package-manager's pre-run gate — pnpm v11 aborts in a non-TTY shell
+  # (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) before the script ever runs, which
+  # silently kills every governor worker at the worktree step. Direct bash sidesteps it.
+  ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/new.sh" "$slug" >/dev/null )
   wtpath="$WORKTREE_BASE/$slug"
 fi
 [[ -d "$wtpath" ]] || govern::die "worktree not created at $wtpath"

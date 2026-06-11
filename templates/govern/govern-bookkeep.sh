@@ -42,9 +42,16 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     anchor="$(printf '%s' "$report" | jq -r '.lessonPatch.anchor // empty')"
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
     if [[ -n "$anchor" ]] && grep -qF "$anchor" "$target"; then
-      tmpf="$(mktemp)"
-      awk -v a="$anchor" -v t="$text" 'index($0,a) && !done {print; print ""; print t; done=1; next} {print}' "$target" > "$tmpf"
-      mv "$tmpf" "$target"
+      # Insert the (possibly multi-line) lesson AFTER the anchor line. Pass the text via a
+      # FILE read with getline — NEVER `awk -v t="$text"`: awk's -v cannot hold literal
+      # newlines, so multi-line lesson text dies with "awk: newline in string" and the patch
+      # silently fails (the resolve then aborts before its commit under set -e).
+      tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$text" > "$tf"
+      awk -v a="$anchor" -v tf="$tf" '
+        index($0,a) && !done { print; print ""; while ((getline line < tf) > 0) print line; close(tf); done=1; next }
+        { print }
+      ' "$target" > "$tmpf"
+      mv "$tmpf" "$target"; rm -f "$tf"
     else
       printf '\n%s\n' "$text" >> "$target"
     fi
