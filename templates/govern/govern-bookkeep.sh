@@ -11,6 +11,13 @@ report="$(cat)"
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 patched=""
 
+# Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers
+# (parallel sessions on disjoint tickets, #41) would otherwise race the mktemp→mv (lost
+# block-delete) and the git index. mkdir-mutex; reclaim if a crashed holder left it >5min.
+BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
+govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "bookkeep lock busy >60s — proceeding (degraded)"
+trap 'govern::lock_release "$BK_LOCK"' EXIT
+
 # 1. Delete the ## #N block (heading through its trailing ---).
 tmp="$(mktemp)"
 awk -v n="$N" '
