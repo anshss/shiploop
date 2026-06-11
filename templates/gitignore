@@ -5,6 +5,13 @@ __SUBREPO_IGNORES__
 node_modules/
 logs/
 
+# governor runtime mkdir-mutexes (#41 — never commit; transient lock dirs)
+governor/.govern.lock/
+governor/.bookkeep.lock/
+governor/.locks/
+# governor cross-run failure history (#60) — per-machine runtime state, not source
+governor/ticket-history.jsonl
+
 # if the ROOT uses pnpm: pnpm 11 writes an empty root lockfile before every
 # `pnpm <script>` and regenerates it on every run; config can't suppress it in v11.
 # Root-anchored so a real lockfile in a sub-repo is unaffected. (Harmless for an
