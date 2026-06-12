@@ -155,3 +155,24 @@ govern::find_pr() {
   done
   return 1
 }
+
+# govern::ticket_present_on_origin — cross-driver re-selection guard for parallel drivers
+# (GOVERN_ALLOW_CONCURRENT=1, #41). After a FRESH fetch, is a `## #N` block still present in
+# origin/main's tickets.md? When two drivers share one origin/main, a second driver may have
+# resolved+deleted #N (and pushed) AFTER this driver last pulled, so this driver's LOCAL
+# tickets.md (what select-ticket read) is stale and still lists the done ticket. The run loop
+# calls this right before spawning so it never burns a worker (or opens a duplicate PR / re-merges)
+# on an already-resolved ticket — the per-ticket claim lock is a local-FS mutex that can't see
+# another driver's origin push. Returns 0 = present (spawn), 1 = absent (skip). FAIL-OPEN
+# (returns 0) when there's no origin, the fetch fails (offline), the file is unreadable, or
+# GOVERN_NO_PUSH=1 — never block selection on an environment that can't verify against origin.
+govern::ticket_present_on_origin() { # <repo-dir> <N>
+  local d="$1" n="$2" rel content
+  [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] || return 0
+  git -C "$d" remote get-url origin >/dev/null 2>&1 || return 0
+  git -C "$d" fetch -q origin main 2>/dev/null || return 0
+  rel="$(basename "$TICKETS_FILE")"
+  content="$(git -C "$d" show "origin/main:$rel" 2>/dev/null)" || return 0
+  printf '%s\n' "$content" | grep -qE "^##[[:space:]]+#$n([^0-9]|\$)" && return 0
+  return 1
+}
