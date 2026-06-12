@@ -32,16 +32,27 @@ $(cat "$PREFERENCES_FILE")"
 
 # 3. Create the worktree.
 wt_cmd="${GOVERN_WORKTREE_CMD:-}"
+wtpath="$WORKTREE_BASE/$slug"
 if [[ -n "$wt_cmd" ]]; then
   wtpath="$("$wt_cmd" "$slug")"
+elif [[ -d "$wtpath" ]]; then
+  # Resume: a preserved worktree from a prior failed/parked attempt already exists.
+  # worktree:new hard-exits on an existing path → under set -e that aborts spawn-worker and
+  # fast-fails the resume before the worker even runs. Reuse it, and re-run the project
+  # bootstrap hook (if any) to restore deps a slim/cleanup may have stripped. (aquanode #53)
+  govern::log "reusing preserved worktree for #$N at $wtpath (resume)"
+  if [[ -x "$WS_ROOT/scripts/lib/worktree-bootstrap.sh" ]]; then
+    wslot="$(awk -F= '/WORKTREE_SLOT/{gsub(/ /,"",$2);print $2}' "$wtpath/worktree.env" 2>/dev/null)"
+    bash "$WS_ROOT/scripts/lib/worktree-bootstrap.sh" "$slug" "${wslot:-0}" "$wtpath" || true
+  fi
 else
-  # Call the worktree script DIRECTLY (not via `$ROOT_PM run`): it's our own
-  # PM-agnostic bash (pure git, no pnpm), and routing through `pnpm run` adds the
-  # package-manager's pre-run gate — pnpm v11 aborts in a non-TTY shell
-  # (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) before the script ever runs, which
-  # silently kills every governor worker at the worktree step. Direct bash sidesteps it.
-  ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/new.sh" "$slug" >/dev/null )
-  wtpath="$WORKTREE_BASE/$slug"
+  # Call the worktree script DIRECTLY (not via `$ROOT_PM run`): it's our own PM-agnostic bash
+  # (pure git), and routing through `pnpm run` adds the package-manager's pre-run gate — pnpm
+  # v11 aborts in a non-TTY shell (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) before the script
+  # runs, silently killing every worker at the worktree step. WORKTREE_ASSUME_YES=1: a headless
+  # worker has no TTY to answer new.sh's <5GB disk prompt; without it the guard EOF-aborts and
+  # reads as a phantom worker failure (aquanode #48). Direct bash + assume-yes sidestep both.
+  ( cd "$WS_ROOT" && WORKTREE_ASSUME_YES=1 bash "$WS_ROOT/scripts/worktree/new.sh" "$slug" >/dev/null )
 fi
 [[ -d "$wtpath" ]] || govern::die "worktree not created at $wtpath"
 

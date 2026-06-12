@@ -43,13 +43,29 @@ fi
 # Default sub-repo scope: all of them
 if [ -z "$ONLY" ]; then ONLY="$(wsp_repos_csv)"; fi
 
-# Disk-space sanity check (warn if < 5 GB free in HOME)
-free_gb=$(df -k "$HOME" | awk 'NR==2 {printf "%d", $4/1024/1024}')
+# Disk-space sanity check (< 5 GB free in HOME). MUST be non-interactive-safe: a headless
+# caller (e.g. a govern worker) has no TTY, so a bare `read` hits EOF and `confirm` stays
+# empty → the guard exits silently, read as a phantom worker "failure" (aquanode ticket #48).
+# So: honor WORKTREE_ASSUME_YES=1 to proceed unattended, only prompt when stdin IS a TTY, and
+# on no-TTY exit with a DISTINCT code (3) + actionable message instead of a silent abort.
+# Test seams: WORKTREE_FREE_GB_OVERRIDE forces the measured free space; WORKTREE_DISK_CHECK_ONLY
+# exits right after the guard (so branch logic is testable without creating a real worktree).
+free_gb="${WORKTREE_FREE_GB_OVERRIDE:-$(df -k "$HOME" | awk 'NR==2 {printf "%d", $4/1024/1024}')}"
 if [ "$free_gb" -lt 5 ]; then
-  echo "⚠ disk free <5GB in \$HOME ($free_gb GB). Continue? [y/N]" >&2
-  read -r confirm
-  [ "$confirm" = "y" ] || exit 1
+  if [ "${WORKTREE_ASSUME_YES:-0}" = "1" ]; then
+    echo "⚠ disk free <5GB in \$HOME ($free_gb GB) — proceeding (WORKTREE_ASSUME_YES=1)" >&2
+  elif [ -t 0 ]; then
+    echo "⚠ disk free <5GB in \$HOME ($free_gb GB). Continue? [y/N]" >&2
+    read -r confirm
+    [ "$confirm" = "y" ] || exit 1
+  else
+    echo "✗ disk free <5GB in \$HOME ($free_gb GB) and no TTY to confirm." >&2
+    echo "  Free space (e.g. '$ROOT_PM run worktree:status' then remove stale worktrees)," >&2
+    echo "  or set WORKTREE_ASSUME_YES=1 to proceed unattended." >&2
+    exit 3
+  fi
 fi
+[ "${WORKTREE_DISK_CHECK_ONLY:-0}" = "1" ] && exit 0
 
 WORKTREE_PATH="$WORKTREE_BASE/$NAME"
 
