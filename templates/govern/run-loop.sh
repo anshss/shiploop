@@ -124,6 +124,10 @@ trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in ticke
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
 
+# Checkout that holds tickets.md (== origin/main when parallel drivers share one origin). Defined
+# once so the per-ticket cross-driver re-verify (#108) can fetch + check the freshest origin/main.
+META_DIR="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+
 while :; do
   # --- hard bounds: stop BEFORE starting another ticket ---
   if [[ "$done_count" -ge "$MAX_TICKETS" ]]; then govern::log "reached GOVERN_MAX_TICKETS=$MAX_TICKETS — stopping"; break; fi
@@ -141,6 +145,20 @@ while :; do
     govern::log "#$N already claimed by another driver — skipping"
     CUR_CLAIM=""
     [[ -n "$TARGET" ]] && break
+    excludes="$excludes,$N"; continue
+  fi
+
+  # #108: cross-driver re-verify — confirm #N still exists on origin/main BEFORE spawning. With
+  # parallel drivers sharing one origin (GOVERN_ALLOW_CONCURRENT=1, #41), another driver may have
+  # resolved+deleted #N (and pushed) AFTER this driver last pulled, so the LOCAL tickets.md that
+  # select-ticket read is stale and still lists an already-resolved ticket. The per-ticket claim
+  # lock (above) is a local-FS mutex — it does NOT serialize across drivers/origin — so without
+  # this fresh origin check the loop would burn a worker (and risk a duplicate PR / re-merge)
+  # re-processing a ticket one driver already shipped. Fail-open (no origin / offline /
+  # GOVERN_NO_PUSH → present), so a local-only repo or a network blip never wrongly skips a ticket.
+  if [[ "$MODE" == "live" && -z "$TARGET" ]] && ! govern::ticket_present_on_origin "$META_DIR" "$N"; then
+    govern::log "#$N no longer on origin/main (resolved+pushed by a concurrent driver) — skipping, no worker burned (#108)"
+    govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
     excludes="$excludes,$N"; continue
   fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
