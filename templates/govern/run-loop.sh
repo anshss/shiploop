@@ -152,13 +152,34 @@ while :; do
             # ADDITIVE migration: apply to prod right after merge — old running code ignores the new
             # nullable/default column, new code arrives after, so column exists when needed (safe).
             # Only reached when GOVERN_MIGRATE_CMD is set (empty case parked above).
+            #
+            # Your GOVERN_MIGRATE_CMD MUST fast-forward the relevant checkout to origin/main BEFORE it
+            # inspects/applies migration status. A migrate tool reads the migration dirs ON DISK in the
+            # working tree; if the checkout still sits at a pre-merge SHA the just-merged migration dir
+            # is absent, status compares an incomplete set, falsely reports "up to date", the apply
+            # silently no-ops, and verify then false-alarms as "half-applied" (the #85 stale-checkout
+            # bug). If it cannot ff-pull (diverged/dirty) it should REFUSE rather than trust a stale
+            # set. Capture its output so the escalation can name the actual failure class.
             govern::log "applying additive prod migration for #$N via GOVERN_MIGRATE_CMD"
-            if ( cd "$WS_ROOT" && eval "$GOVERN_MIGRATE_CMD" ) >/dev/null 2>&1 \
+            mout="$( cd "$WS_ROOT" && eval "$GOVERN_MIGRATE_CMD" 2>&1 )"; mrc=$?
+            if [[ "$mrc" -eq 0 ]] \
                && { [[ -z "${GOVERN_VERIFY_CMD:-}" ]] || ( cd "$WS_ROOT" && eval "$GOVERN_VERIFY_CMD" ) >/dev/null 2>&1; }; then
               govern::log "prod migration applied + verified for #$N"
             else
-              govern::log "prod migration/verify FAILED for #$N — escalating (PR merged; migration may be half-applied)"
-              report="$(printf '%s' "$report" | jq -c '.escalation={reason:"additive prod migration applied/verify FAILED after merge — check migration status on prod",question:"finish/repair the migration manually",options:[]}')"
+              # Classify the failure so the operator gets the RIGHT next action (#85): a FAILED/
+              # half-applied migration needs a `migrate resolve` (NOT another deploy); a stale/diverged
+              # checkout needs reconciling first; anything else is a generic verify miss. The markers
+              # below match what the recommended deploy-check emits — emit the same strings from your
+              # GOVERN_MIGRATE_CMD to light up the specific guidance.
+              if printf '%s' "$mout" | grep -qiE 'FAILED / half-applied|failed state|migrate resolve'; then
+                esc_reason='prod migration is in a FAILED / half-applied state after merge — needs `prisma migrate resolve` (do NOT re-run the migrate/deploy step); inspect migration status on prod'
+              elif printf '%s' "$mout" | grep -qiE 'ff-pull FAILED|BEHIND origin/main|STALE on-disk'; then
+                esc_reason='could not fast-forward the merged checkout to origin/main before applying the migration (local main diverged/dirty, so the migration dir may be absent on disk) — reconcile the checkout, then re-run the migrate step (#85)'
+              else
+                esc_reason='additive prod migration applied/verify FAILED after merge — check migration status on prod'
+              fi
+              govern::log "prod migration/verify FAILED for #$N — escalating ($esc_reason)"
+              report="$(printf '%s' "$report" | jq -c --arg r "$esc_reason" '.escalation={reason:$r,question:"finish/repair the migration manually",options:[]}')"
               status="parked"
             fi
           fi
