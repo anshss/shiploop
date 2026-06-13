@@ -77,7 +77,8 @@ write_summary() {
     echo
     if [[ "${npark:-0}" -gt 0 || "${nfail:-0}" -gt 0 ]]; then
       echo "## Needs you"
-      echo "- Open decisions: \`governor/escalations.md\`. Preserved worktrees (work not lost): \`$WORKTREE_BASE/ticket-<N>\`."; echo
+      echo "- Open decisions: \`governor/escalations.md\` (\`## Open\`). The /govern relay presents the still-unanswered ones from \`governor/pending-escalations.json\` via AskUserQuestion — answer there and the next run applies them (un-park / migrate-to-parked / add-rule)."
+      echo "- Preserved worktrees (work not lost): \`$WORKTREE_BASE/ticket-<N>\`."; echo
     fi
     [[ -s "$REVIEW" ]] && { echo "## Supervisor notes"; cat "$REVIEW"; echo; }
     echo "## To resume"
@@ -91,6 +92,17 @@ trap 'on_exit' EXIT
 trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; exit 130' INT TERM
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
+
+# #62: close the escalation lifecycle BEFORE selecting tickets — apply any operator answers the
+# relay recorded into escalations.md since the last run. "do-the-work" un-parks (the ticket
+# becomes selectable again this run); "defer" migrates the ticket to tickets-parked.md; a
+# "make this a rule" answer grows preferences.md. Without this, answers stay inert file text and
+# parked decisions never migrate (the gap #62 fixes). Live only; dry-run logs intent.
+if [[ "$MODE" == "live" ]]; then
+  "$DIR/escalations-apply-answers.sh" >&2 || govern::log "escalations-apply-answers failed (non-fatal) — continuing"
+else
+  govern::log "[dry] would apply recorded escalation answers (un-park / migrate-to-parked / preferences) from escalations.md"
+fi
 
 while :; do
   # --- hard bounds: stop BEFORE starting another ticket ---
@@ -185,10 +197,15 @@ while :; do
       [[ "$crossN" -gt 0 ]] && { anomaly=1; govern::log "worker flagged $crossN cross-ref(s) on #$N"; }
       ;;
     parked)
-      { printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Answer:** _(operator)_\n- **Make this a rule?:** _(operator)_\n' \
+      # #62: the Disposition field carries a machine-readable token the relay writes when the
+      # operator answers (do-the-work | defer | keep-open); escalations-apply-answers.sh reads it
+      # at the next run-start to un-park / migrate-to-parked, closing the lifecycle. Options is the
+      # worker's known choices, surfaced to the operator by the relay.
+      { printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
           "$N" "$(printf '%s' "$report" | jq -r '.escalation.reason // "parked"')" \
           "$(printf '%s' "$report" | jq -r '.escalation.reason // ""')" \
-          "$(printf '%s' "$report" | jq -r '.escalation.question // ""')"
+          "$(printf '%s' "$report" | jq -r '.escalation.question // ""')" \
+          "$(printf '%s' "$report" | jq -r '(.escalation.options // []) | if type=="array" then join(" / ") else tostring end')"
       } >> "$ESCALATIONS_FILE" 2>/dev/null || true
       record "$N" parked "escalated; worktree preserved: $(wt_path "$N")"
       govern::log "#$N PARKED — escalation filed; worktree PRESERVED at $(wt_path "$N")"
@@ -218,6 +235,17 @@ while :; do
   if [[ "$bad_streak" -ge "$MAX_BAD_STREAK" ]]; then govern::log "circuit breaker: $bad_streak consecutive parked/failed — halting"; break; fi
   [[ -n "$TARGET" ]] && break
 done
+
+# #62: run-end operator hand-off. The driver is headless, so without this a parked decision is
+# write-only — it lands in escalations.md and nothing ever asks the operator. Emit a
+# machine-readable governor/pending-escalations.json of the still-unanswered "## Open" entries so
+# the launching /govern relay can present them via AskUserQuestion + record answers (which the
+# NEXT run-start applies). Also fires GOVERN_NOTIFY_CMD when pending escalations exist, so a
+# no-session run still surfaces a signal.
+if [[ "$MODE" == "live" ]]; then
+  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
+    || govern::log "escalations-emit-pending failed (non-fatal)"
+fi
 
 # Self-improvement (observe → propose, never auto-apply): when a run hit friction, a fresh
 # read-only reviewer proposes concrete harness improvements into governor/improvements.md.

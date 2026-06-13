@@ -18,6 +18,11 @@ ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
 TICKETS_FILE="${GOVERN_TICKETS_FILE:-$WS_ROOT/tickets.md}"
+# Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
+# answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
+TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$WS_ROOT/tickets-parked.md}"
+# Driver→relay escalation hand-off (#62) — regenerated every run-end, gitignored runtime state.
+PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh. Frontend =
@@ -33,6 +38,73 @@ govern::die() { printf '[govern ERROR] %s\n' "$*" >&2; exit 1; }
 
 govern::require() {
   command -v "$1" >/dev/null 2>&1 || govern::die "missing required tool: $1"
+}
+
+# ── escalation lifecycle (#62) ──────────────────────────────────────────────
+# Parse the entries under "## Open" in escalations.md into NDJSON (one object per
+# line) so the emit/apply scripts share ONE deterministic parser instead of each
+# re-implementing markdown parsing. Fields are read line-oriented (each `- **X:**`
+# is a single-line value — exactly how run-loop.sh writes a park block). Emits:
+#   {ticket,title,reason,question,options,answer,disposition,makeRule}
+# Reads $1 (defaults to ESCALATIONS_FILE). Prints nothing if the file/section is empty.
+govern::escalations_open_ndjson() { # [escalations-file]
+  local file="${1:-$ESCALATIONS_FILE}"
+  [[ -f "$file" ]] || return 0
+  awk '
+    function jesc(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\t/,"\\t",s); gsub(/\r/,"",s); return s }
+    function flush(){
+      if(have){
+        printf "{\"ticket\":%s,\"title\":\"%s\",\"reason\":\"%s\",\"question\":\"%s\",\"options\":\"%s\",\"answer\":\"%s\",\"disposition\":\"%s\",\"makeRule\":\"%s\"}\n", \
+          t, jesc(title), jesc(reason), jesc(question), jesc(options), jesc(answer), jesc(disp), jesc(rule)
+      }
+      have=0; title="";reason="";question="";options="";answer="";disp="";rule=""
+    }
+    BEGIN{ in_open=0; have=0 }
+    /^## Open/ { if(in_open) flush(); in_open=1; next }
+    /^## /     { if(in_open) flush(); in_open=0; next }
+    in_open && /^### +#[0-9]+/ {
+      flush(); have=1
+      t=$0; sub(/^### +#/,"",t); sub(/[^0-9].*/,"",t)
+      title=$0; sub(/^### +#[0-9]+[^A-Za-z0-9]*/,"",title)
+      next
+    }
+    in_open && have {
+      line=$0
+      if      (match(line,/^- \*\*Reason:\*\* ?/))            reason=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Question:\*\* ?/))          question=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Options:\*\* ?/))           options=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Answer:\*\* ?/))            answer=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Disposition:\*\* ?/))       disp=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Make this a rule\?:\*\* ?/)) rule=substr(line,RLENGTH+1)
+    }
+    END{ if(in_open) flush() }
+  ' "$file"
+}
+
+# Is an Answer/Disposition field still the unfilled placeholder (or empty)?  The
+# park template writes `_(operator)_`; treat any value containing it (or blank) as
+# "operator has not answered yet".  Used to keep apply idempotent + pending honest.
+govern::is_placeholder() { # value
+  local v="$1"
+  [[ -z "$v" ]] && return 0
+  # Match the `_(operator...` stub regardless of what follows (the Disposition placeholder embeds
+  # the option words, e.g. `_(operator: do-the-work | defer | keep-open)_`, so don't require `)`).
+  case "$v" in *"(operator"*) return 0;; esac
+  return 1
+}
+
+# Canonicalize a free-text disposition into one of: do-the-work | defer | keep-open
+# (empty for unrecognized so the caller can leave the entry untouched). Tolerant of
+# operator hand-edits / synonyms; the relay writes the canonical token directly.
+govern::norm_disposition() { # raw -> canonical|""
+  local d; d="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' ' ')"
+  d=" $d "
+  case "$d" in
+    *" do the work "*|*" dothework "*|*" unpark "*|*" un park "*|*" retry "*|*" work it "*|*" resolve "*|*" redo "*) echo "do-the-work";;
+    *" defer "*|*" defer indefinitely "*|*" wont do "*|*" won t do "*|*" keep manual "*|*" close "*|*" park "*|*" parked "*|*" no "*) echo "defer";;
+    *" keep open "*|*" keepopen "*|*" wait "*|*" pending "*) echo "keep-open";;
+    *) echo "";;
+  esac
 }
 
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)

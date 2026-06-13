@@ -142,7 +142,10 @@ touch .worktrees/.gitkeep
 chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh
 ```
 These are copied **verbatim** — they read everything from `workspace.sh`. Run `bash -n` over all of
-them to confirm. (Do NOT edit them.)
+them to confirm. (Do NOT edit them.) The `$T/govern/*.sh` glob includes the **escalation lifecycle**
+pair `escalations-emit-pending.sh` (run-end: writes `governor/pending-escalations.json`) and
+`escalations-apply-answers.sh` (run-start: un-park / migrate-to-parked / grow `preferences.md`),
+which `run-loop.sh` and the `/govern` relay drive (#62) — they scaffold automatically, no extra step.
 
 ## Phase 6 — Root files (fresh)
 

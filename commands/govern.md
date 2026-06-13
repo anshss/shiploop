@@ -40,8 +40,20 @@ Relay its log lines to the operator as they appear. The driver does everything �
 
 ## What you (this Claude session) do
 - **Launch** `run-loop.sh` and report its progress + the final `resolved / parked / failed` tally.
-- **Surface escalations** when it finishes: read `governor/escalations.md` (`## Open`) and the run's
-  `logs/govern/run-*/summary.md`, and summarize what needs the operator.
+- **Surface + ANSWER escalations** when it finishes (#62 — escalations are no longer write-only):
+  1. Read `governor/pending-escalations.json` (the driver writes it at run-end: the still-
+     unanswered `## Open` entries). If `count` is 0, nothing needs the operator — just summarize.
+  2. For each pending escalation, present it to the operator via **AskUserQuestion** — use its
+     `question` + `options`, and ALWAYS include these standing choices so the answer drives the
+     lifecycle: **Do the work** (un-park → governor retries), **Defer / keep-manual** (auto-moves
+     the ticket to `tickets-parked.md`), and **Keep open** (decide later).
+  3. Write the operator's choice back into `governor/escalations.md` under that `### #N` entry:
+     fill `- **Answer:**` with their words and `- **Disposition:**` with the canonical token
+     (`do-the-work` | `defer` | `keep-open`). If they want it to become standing policy, put the
+     rule sentence in `- **Make this a rule?:**`.
+  - The NEXT `run-loop.sh` start applies these automatically (`escalations-apply-answers.sh`):
+    un-park, migrate-to-parked, and/or append the rule to `preferences.md`. You don't act on them
+    by hand — just record the answers.
 - **Do NOT re-implement the loop in-context** — driving tickets by hand in this session is the
   anti-pattern this design replaces. If the driver halts (circuit breaker / supervisor halt), report
   the reason; don't take over.

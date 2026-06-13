@@ -22,13 +22,34 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
 
 ## Pieces
 - `preferences.md` — doctrine injected into every worker (input; the operator customizes it).
-- `escalations.md` — parked decisions awaiting you (output). Answer inline; mark "make this a rule" to
-  grow the doctrine.
+- `escalations.md` — parked decisions awaiting you (output). Answer inline (or via the relay, below);
+  mark "make this a rule" to grow the doctrine.
+- `pending-escalations.json` — machine-readable driver→relay hand-off of the unanswered `## Open`
+  entries (regenerated every run-end; gitignored runtime state).
 - `worker-prompt.md` / `supervisor-prompt.md` — the templates workers / the supervisor run.
 - `improvements.md` — self-improvement proposals (output; observe→propose, never auto-applied unless
   you opt in).
-- `scripts/govern/*.sh` — the mechanism (select / spawn / await-ci / merge / bookkeep / supervise).
-- `tickets-parked.md` — move tickets here to defer them; the governor ignores it.
+- `scripts/govern/*.sh` — the mechanism (select / spawn / await-ci / merge / bookkeep / supervise /
+  escalation lifecycle).
+- `tickets-parked.md` — manual defer queue the governor ignores. A `defer` escalation answer
+  auto-migrates a ticket here (#62).
+
+## Escalation lifecycle (#62 — answers feed back into the loop)
+Parked decisions used to be **write-only**: a worker appended a `## Open` entry and nothing ever
+asked the operator, so they sat unanswered indefinitely. Now the loop closes itself:
+- **Run-end (`escalations-emit-pending.sh`):** writes `pending-escalations.json` (the unanswered
+  `## Open` entries) and fires `GOVERN_NOTIFY_CMD` if set — so a headless run still signals you.
+- **Relay (`/govern` session):** presents each via **AskUserQuestion** and records the operator's
+  **Answer** + a canonical **Disposition** (`do-the-work` | `defer` | `keep-open`) back into
+  `escalations.md` (plus an optional "Make this a rule?" sentence).
+- **Next run-start (`escalations-apply-answers.sh`):** acts on each recorded answer —
+  `do-the-work` un-parks (governor retries the ticket), `defer` auto-migrates the ticket to
+  `tickets-parked.md` (renumbered) and resolves the escalation, and a rule sentence is appended to
+  `preferences.md`. Idempotent and committed like the bookkeep.
+
+`GOVERN_NOTIFY_CMD` (optional): a command fed the alert message on stdin when pending escalations
+exist (e.g. `GOVERN_NOTIFY_CMD='terminal-notifier -title Governor'` or a Slack webhook curl).
+Unset → the run summary's "Needs you" section is the signal.
 
 ## Policy (enforced by the scripts)
 - Sequential: one ticket fully resolved before the next.
