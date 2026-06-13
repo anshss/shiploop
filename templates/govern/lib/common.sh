@@ -176,3 +176,38 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   printf '%s\n' "$content" | grep -qE "^##[[:space:]]+#$n([^0-9]|\$)" && return 0
   return 1
 }
+
+# ── infra/auth-outage detection (#90) ───────────────────────────────────────
+# An infra outage (expired OAuth token, API unreachable, network down) kills a worker with a
+# transport-level error BEFORE it can emit any report — on the surface IDENTICAL to a genuine
+# ticket-fault failure. Recording it as a ticket `failed` (a) pollutes the cross-run #60 history
+# (two such runs for the same ticket would FALSELY auto-escalate it as a systemic blocker) and
+# (b) misleads govern-improve (it would analyse an auth outage as if the tickets were hard). These
+# helpers let the loop tell the two apart: tag the outage distinctly (status:"infra"), skip the
+# history record, and halt with a re-auth signal instead of the generic bad-streak message.
+#
+# The signature set is deliberately NARROW — auth (401 / invalid credentials / expired token) and
+# transport (API unreachable / connection refused / socket / DNS / network) — and is only ever
+# matched against the worker's AUTHORITATIVE result event (why the session ended) or the CLI's
+# explicit "API Error:" stream lines, never arbitrary ticket content, so ordinary worker output
+# can't trip it. Observed signatures: "API Error: Unable to connect to API (FailedToOpenSocket)" /
+# "(ConnectionRefused)" and "401 Invalid authentication credentials".
+GOVERN_INFRA_ERROR_RE='401[^A-Za-z0-9]*(Invalid authentication|Unauthorized)|Invalid authentication credentials|invalid x-api-key|authentication_error|OAuth token (has )?expired|token (has )?expired|Unable to connect to API|FailedToOpenSocket|Connection ?Refused|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|getaddrinfo (ENOTFOUND|EAI_AGAIN)|Could not resolve host|network is unreachable'
+
+# Print a short human signature of an infra/auth outage if the worker's stream ($1 = worker.jsonl)
+# shows one in its final (error) result event or an explicit "API Error:" line; print nothing
+# otherwise. Always returns 0 — the caller branches on whether the output is non-empty.
+govern::infra_error_signature() { # worker-jsonl -> signature|""
+  local jsonl="${1:-}" msg
+  [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
+  # Authoritative: the LAST result event, only when it ended in an error.
+  msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 \
+        | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
+  if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INFRA_ERROR_RE"; then
+    printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
+  fi
+  # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
+  msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
+  [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
+  return 0
+}

@@ -121,13 +121,28 @@ else
   report="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
 fi
 
-# 6. Validate; synthesize a failed report if the worker produced nothing parseable.
+# 6. Validate; synthesize a report only if the worker produced nothing parseable.
 #    A timeout/kill is reported as failed-with-preserved-worktree (recoverable, not lost work).
 if ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
-  reason="no valid report from worker (inspect $jsonl)"
-  [[ "$worker_killed" -eq 1 ]] && reason="worker exceeded ${to}s timeout and was terminated; partial work PRESERVED at $wtpath"
-  govern::log "worker for #$N → failed: $reason"
-  report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
-    '{status:"failed",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("resume from "+$wt+" or re-run the ticket"),options:[]}}')"
+  # #90: BEFORE recording a generic ticket `failed`, check whether the worker actually died on an
+  # INFRA/auth outage (expired token, API unreachable, network down) — a transport error that kills
+  # the worker before it can emit any report. That is NOT the ticket's fault: emit a DISTINCT
+  # status:"infra" carrying the signature so run-loop neither records the ticket `failed` (→ #60
+  # false auto-escalation / govern-improve noise) nor blames it — it halts the run with a re-auth
+  # signal instead. A real timeout (worker_killed) is a genuine failure, not infra, so skip the
+  # infra check in that case.
+  infra_sig=""
+  [[ "$worker_killed" -eq 0 ]] && infra_sig="$(govern::infra_error_signature "$jsonl" || true)"
+  if [[ -n "$infra_sig" ]]; then
+    govern::log "worker for #$N → INFRA/auth outage (not a ticket fault): $infra_sig"
+    report="$(jq -nc --arg e "$infra_sig" --arg wt "$wtpath" \
+      '{status:"infra",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},infra:{error:$e},escalation:null}')"
+  else
+    reason="no valid report from worker (inspect $jsonl)"
+    [[ "$worker_killed" -eq 1 ]] && reason="worker exceeded ${to}s timeout and was terminated; partial work PRESERVED at $wtpath"
+    govern::log "worker for #$N → failed: $reason"
+    report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
+      '{status:"failed",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("resume from "+$wt+" or re-run the ticket"),options:[]}}')"
+  fi
 fi
 printf '%s\n' "$report"
