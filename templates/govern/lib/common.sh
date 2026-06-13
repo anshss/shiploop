@@ -177,6 +177,34 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   return 1
 }
 
+# ── commit a tracked meta/runtime file to main (ported from harness #111 via #112) ──────────────
+# Stage ONE tracked meta/runtime file, commit it (pathspec-scoped — never sweeps up unrelated staged
+# changes), and publish to origin/main, keeping local main == origin/main. Used by the WRITER of a
+# tracked governor runtime artifact (govern-improve.sh's governor/improvements.md) so it never lingers
+# UNCOMMITTED — an uncommitted tracked file makes a later `git pull --rebase` on the main checkout
+# (e.g. govern-bookkeep.sh's pre-edit origin sync, step 0) abort with "cannot pull with rebase: You
+# have unstaged changes", a failure easily misread as a merge conflict. Mirrors bookkeep's commit+CAS-
+# push: if origin advanced under us, rebase our append-only commit and retry; NEVER force-push (the
+# #105 ff-only/no-force invariant that test-no-force-push.sh locks). Guarded + non-fatal — no-op
+# outside a git repo or when there's nothing to commit; commits locally but skips the push under
+# GOVERN_NO_PUSH=1 or with no origin (tests / offline). Always returns 0.
+# Usage: govern::commit_meta_to_main <repo-dir> <relpath> <msg>
+govern::commit_meta_to_main() {
+  local d="$1" rel="$2" msg="$3" _a
+  git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  ( cd "$d"
+    git add -- "$rel" 2>/dev/null || true
+    git diff --cached --quiet -- "$rel" 2>/dev/null && exit 0   # nothing staged for $rel → no commit
+    git commit -q -m "$msg" -- "$rel" || exit 0
+    if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
+      for _a in 1 2 3 4 5; do
+        git push origin HEAD:main >/dev/null 2>&1 && break
+        git pull --rebase origin main >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1 || true; break; }
+      done
+    fi )
+  return 0
+}
+
 # ── infra/auth-outage detection (#90) ───────────────────────────────────────
 # An infra outage (expired OAuth token, API unreachable, network down) kills a worker with a
 # transport-level error BEFORE it can emit any report — on the surface IDENTICAL to a genuine
