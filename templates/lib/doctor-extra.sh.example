@@ -11,5 +11,15 @@ section "project-specific"
 # Example checks (uncomment + adapt):
 # command -v gcloud >/dev/null 2>&1 && ok "gcloud present" || warn "gcloud missing (deploy/logs)"
 # if [ -d backend/prisma ]; then
-#   ( cd backend && npx prisma migrate status >/dev/null 2>&1 ) && ok "prisma migrations applied" || warn "prisma drift"
+#   # #85: `prisma migrate status` reads the migration dirs ON DISK in the working tree. If the
+#   # checkout sits behind origin/main, status compares a STALE set and can falsely report "up to
+#   # date" (the bug that silently no-op'd a govern --heal). Fast-forward FIRST so a just-merged
+#   # migration is actually present; if ff-pull is impossible (diverged/dirty), refuse rather than
+#   # trust a stale set. Do the same in whatever command you wire up as GOVERN_MIGRATE_CMD.
+#   if git -C backend merge-base --is-ancestor origin/main HEAD 2>/dev/null \
+#      || git -C backend pull --ff-only origin main >/dev/null 2>&1; then
+#     ( cd backend && npx prisma migrate status >/dev/null 2>&1 ) && ok "prisma migrations applied" || warn "prisma drift"
+#   else
+#     warn "backend checkout BEHIND origin/main and ff-pull FAILED — migrate status would read a STALE on-disk set (#85)"
+#   fi
 # fi
