@@ -98,3 +98,5 @@ meta-repo/
 ## Status
 
 A small, opinionated skill maintained for personal use. It scaffolds a pattern used in production but isn't a polished open-source product. PRs welcome; expect terse responses.
+
+The templates are a **deliberately-minimal baseline**, not a byte-for-byte mirror of the production harness this skill was extracted from. They track the governor's core loop; several governor-internal hardening refinements (monotonic ticket numbering, tolerant PR-head matching, tolerant worker-report extraction, run-start preflight-main reconcile, run-scoped worker logs) are intentionally omitted until you run a large, long, fleet-concurrent backlog. See **"Baseline vs. the production reference harness (intentional omissions)"** in `SKILL.md` for the full list and rationale.
