@@ -129,7 +129,7 @@ Also copy the example hooks for reference (user renames to enable):
 ## Phase 5 — Copy mechanism scripts (fresh)
 
 ```bash
-mkdir -p scripts/worktree/lib scripts/govern/lib governor .worktrees .claude
+mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude
 cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh scripts/
 cp $T/hooks/check-main-on-main.sh scripts/
 cp $T/hooks/ticket-sweep-reminder.sh scripts/
@@ -137,15 +137,20 @@ cp $T/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh scripts/worktree
 cp $T/worktree/lib/registry.sh scripts/worktree/lib/
 cp $T/govern/*.sh scripts/govern/
 cp $T/govern/lib/common.sh scripts/govern/lib/
+cp $T/govern/test/*.sh scripts/govern/test/
 cp $T/governor/*.md governor/
 touch .worktrees/.gitkeep
-chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh
+chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh scripts/govern/test/*.sh
 ```
 These are copied **verbatim** — they read everything from `workspace.sh`. Run `bash -n` over all of
 them to confirm. (Do NOT edit them.) The `$T/govern/*.sh` glob includes the **escalation lifecycle**
 pair `escalations-emit-pending.sh` (run-end: writes `governor/pending-escalations.json`) and
 `escalations-apply-answers.sh` (run-start: un-park / migrate-to-parked / grow `preferences.md`),
 which `run-loop.sh` and the `/govern` relay drive (#62) — they scaffold automatically, no extra step.
+The `$T/govern/test/*.sh` copy ships the governor's smoke tests (`assert.sh` + `test-no-force-push.sh`,
+the ff-only/no-force-push invariant guard) so a fresh workspace can `bash scripts/govern/test/<name>.sh`
+to prove the governor never force-pushes the shared `main`. They read only the scaffolded scripts —
+no extra wiring.
 
 ## Phase 6 — Root files (fresh)
 
