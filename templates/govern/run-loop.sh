@@ -45,7 +45,7 @@ SUP_EVERY="${GOVERN_SUPERVISOR_EVERY:-5}"
 MAX_TICKETS="${GOVERN_MAX_TICKETS:-20}"
 MAX_BAD_STREAK="${GOVERN_MAX_BAD_STREAK:-4}"
 MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-14400}"
-START_EPOCH="$(date +%s)"; INTERRUPTED=0
+START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
 
 # --- run lock. Default: single-run (one exclusive driver). GOVERN_ALLOW_CONCURRENT=1 opts into
 # parallel drivers on disjoint tickets (#41): the global lock is skipped, and safety comes from
@@ -70,6 +70,10 @@ excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
   # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
+  # #90: NEVER record an infra/auth outage to the cross-run history — it is not the ticket's fault,
+  # so it must not count toward #60 auto-escalation or be read back by govern-improve as a hard
+  # ticket. (It still lands in this run's STATE above, for the human-readable session summary.)
+  case "$2" in infra) return 0;; esac
   printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}\n' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)" >> "$HISTORY" 2>/dev/null || true
 }
 wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
@@ -91,6 +95,7 @@ consecutive_fails() { # ticket -> count
 write_summary() {
   local now dur m s reason; now="$(date +%s)"; dur=$(( now - START_EPOCH )); m=$(( dur/60 )); s=$(( dur%60 ))
   reason="completed normally"; [[ "$INTERRUPTED" -eq 1 ]] && reason="INTERRUPTED (crash / kill / Ctrl-C / battery / OOM)"
+  [[ "${INFRA_HALT:-0}" -eq 1 ]] && reason="HALTED — infra/auth outage: ${INFRA_HALT_ERR:-unknown} (re-auth: \`claude login\`, then re-run)"
   local f="$RUNDIR/summary.md"
   {
     echo "# Governor session — $(basename "$RUNDIR")"; echo
@@ -98,6 +103,12 @@ write_summary() {
     echo "- **Ran for:** ${m}m ${s}s"
     echo "- **Mode:** $MODE${TARGET:+ (single ticket #$TARGET)}"
     echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0}"; echo
+    if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
+      echo "## ⚠ Action needed — re-authenticate / restore connectivity"
+      echo "- The run HALTED because workers could not authenticate or reach the API: \`${INFRA_HALT_ERR:-unknown}\`."
+      echo "- Fix: run \`claude login\` (or restore network / VPN), then re-run the governor."
+      echo "- No ticket was recorded as \`failed\` — affected tickets keep clean cross-run history and are retried next run (#90)."; echo
+    fi
     echo "## What it did, ticket by ticket"
     if [[ -s "$STATE" ]]; then
       jq -r '"- #\(.ticket): \(.status)" + (if (.note//"")!="" then " — \(.note)" else "" end)' "$STATE" 2>/dev/null || cat "$STATE"
@@ -199,6 +210,20 @@ while :; do
   fi
 
   status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
+
+  # #90: spawn-worker tags an INFRA/auth outage (expired token, API unreachable, network down) as
+  # status:"infra" — NOT a ticket fault. Retry ONCE after a short pause to ride out a transient
+  # network blip; if it's still infra, the outage is real (every subsequent worker would fail
+  # identically) and the `infra` case below HALTS the run with a distinct re-auth signal instead of
+  # burning the backlog + tripping the generic bad-streak breaker.
+  if [[ "$status" == "infra" && "$MODE" == "live" && -z "$resumed" && "${GOVERN_INFRA_RETRY:-1}" == "1" ]]; then
+    ierr="$(printf '%s' "$report" | jq -r '.infra.error // "infra/auth outage"' 2>/dev/null || echo 'infra/auth outage')"
+    govern::log "#$N hit an INFRA/auth outage ($ierr) — pausing ${GOVERN_INFRA_RETRY_PAUSE:-20}s, retrying once before halting (#90)"
+    sleep "${GOVERN_INFRA_RETRY_PAUSE:-20}"
+    report="$(GOVERN_MODE="$MODE" "$DIR/spawn-worker.sh" "$N" 2>/dev/null || true)"
+    status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
+  fi
+
   crossN="$(printf '%s' "$report" | jq -r '((.crossRefs.overlaps//[])+(.crossRefs.dependsOn//[]))|length' 2>/dev/null || echo 0)"
   anomaly=0
 
@@ -306,6 +331,20 @@ while :; do
       govern::log "#$N PARKED — escalation filed; worktree PRESERVED at $(wt_path "$N")"
       excludes="$excludes,$N"; npark=$((npark+1)); bad_streak=$((bad_streak+1))
       ;;
+    infra)
+      # #90: a CONFIRMED infra/auth outage (the retry above also failed, or retry was disabled). NOT
+      # a ticket fault: record() drops `infra` from the cross-run history (no #60 pollution), we file
+      # NO per-ticket escalation, and it does NOT touch bad_streak. HALT the whole run with a
+      # DISTINCT re-auth signal — every subsequent worker would fail identically until the operator
+      # re-authenticates (`claude login`) or connectivity is restored. The ticket stays in tickets.md
+      # with clean history, so the next (re-authed) run picks it up normally.
+      INFRA_HALT_ERR="$(printf '%s' "$report" | jq -r '.infra.error // "infra/auth outage"' 2>/dev/null || echo 'infra/auth outage')"
+      INFRA_HALT=1
+      record "$N" infra "infra/auth outage — not a ticket fault; worktree preserved: $(wt_path "$N")"
+      [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
+      govern::log "INFRA HALT — workers cannot authenticate / reach the API ($INFRA_HALT_ERR). Re-authenticate (\`claude login\`) or restore connectivity, then re-run. #$N and the remaining backlog were NOT recorded as failed (#90)."
+      break
+      ;;
     *)
       record "$N" failed "see $LOG_ROOT/ticket-$N/worker.jsonl; worktree preserved: $(wt_path "$N")"
       govern::log "#$N FAILED — worktree PRESERVED at $(wt_path "$N") (nothing discarded; re-run resumes)"
@@ -359,6 +398,9 @@ if [[ "${GOVERN_SELF_APPLY:-0}" == "1" && "$MODE" == "live" ]]; then
   "$DIR/govern-self-apply.sh" "$RUNDIR" 2>&1 | sed 's/^/[self-apply] /' || true
 fi
 
+if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
+  govern::log "RUN HALTED on infra/auth outage ($INFRA_HALT_ERR) — re-authenticate (\`claude login\`) or restore connectivity, then re-run. No ticket recorded \`failed\`; affected tickets keep clean #60 history (#90)."
+fi
 govern::log "DONE — resolved=$nres parked=$npark failed=$nfail (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '$ROOT_PM run worktree:rm -- ticket-<N>'"
 exit 0
