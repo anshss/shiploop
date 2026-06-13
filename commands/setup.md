@@ -147,10 +147,12 @@ them to confirm. (Do NOT edit them.) The `$T/govern/*.sh` glob includes the **es
 pair `escalations-emit-pending.sh` (run-end: writes `governor/pending-escalations.json`) and
 `escalations-apply-answers.sh` (run-start: un-park / migrate-to-parked / grow `preferences.md`),
 which `run-loop.sh` and the `/govern` relay drive (#62) — they scaffold automatically, no extra step.
-The `$T/govern/test/*.sh` copy ships the governor's smoke tests (`assert.sh` + `test-no-force-push.sh`,
-the ff-only/no-force-push invariant guard) so a fresh workspace can `bash scripts/govern/test/<name>.sh`
-to prove the governor never force-pushes the shared `main`. They read only the scaffolded scripts —
-no extra wiring.
+The `$T/govern/test/*.sh` copy ships the governor's smoke tests (`assert.sh`; `test-no-force-push.sh`,
+the ff-only/no-force-push invariant guard; and `test-improvements-commit.sh`, the #111 regression that
+the self-improvement step commits its own `governor/improvements.md` so it never lingers uncommitted)
+so a fresh workspace can `bash scripts/govern/test/<name>.sh` to prove the governor never force-pushes
+the shared `main` and never self-blocks on an uncommitted runtime artifact. They read only the
+scaffolded scripts — no extra wiring.
 
 ## Phase 6 — Root files (fresh)
 
