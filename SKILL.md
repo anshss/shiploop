@@ -142,6 +142,33 @@ Invoke **`/meta-repo:setup`**. It is idempotent:
 
 If a user asks "should I migrate from meta-repo to Turborepo?" — depends on whether their services *actually* deploy independently and whether the abstraction cost has been paid. Don't recommend migration unless they're hitting concrete pain.
 
+## Baseline vs. the production reference harness (intentional omissions)
+
+These templates are a **deliberately-minimal baseline**, not a byte-for-byte mirror of the
+production harness this skill was extracted from. The scaffold tracks the governor's *core loop*
+(select → spawn worker in a worktree → open PR → green-or-none auto-merge → deterministic
+bookkeeping → escalations → supervisor → observe→propose self-improvement). On top of that loop the
+production harness has accreted several **governor-internal hardening refinements** that only start
+to matter once you run a *large, long, fleet-concurrent* backlog. Those are **intentionally not
+vendored into the scaffold** — they add moving parts a fresh or small workspace doesn't need, and
+each is easy to port the day you actually hit its failure mode. Recording them here makes the
+divergence a *documented choice* rather than silent lag.
+
+Currently omitted from the templates (port from the reference harness as you scale):
+
+| Feature | Reference harness has | The baseline does instead | Why it's safe to omit at first |
+|---|---|---|---|
+| **Monotonic ticket numbering** (#54) | `govern-bookkeep` allocates new ticket numbers above a persisted high-water mark, so deleting the highest `## #N` then filing a new ticket leaves a *gap* instead of reusing the id | `this-file max + 1` — reuses a number if the previous top ticket was just deleted | Id reuse only bites when an in-flight PR references a now-recycled number; rare below high churn |
+| **Tolerant PR-head matching + same-run adoption** (#55) | `find_pr` first tries an exact `ticket-N` head, then falls back to a tolerant `(^\|[^0-9])ticket-N([^0-9]\|$)` regex, and adopts a PR opened earlier in the same run | exact-head only (`--head "ticket-N"`) | A worker that names its branch exactly `ticket-<N>` (the doctrine *requires* this) is always found by the exact match |
+| **Tolerant worker-report extraction** (#66) | `extract_report` / `_json_objects` pull the *last* balanced `{…}` object carrying a `status` field out of arbitrary text, so a worker that drifts to "JSON + trailing prose" still counts | whole final message must `jq`-parse as one object | A compliant worker emits *only* the JSON object (the contract); tolerance only rescues a drifting worker |
+| **Run-start preflight-main reconcile** (#71) | `preflight-main.sh` reconciles every repo onto a clean `main` before a run starts | no preflight; the run trusts the checkout is on `main` | The main-on-main SessionStart hook already warns on drift; a tidy workspace starts clean |
+| **Run-scoped worker logs** (#75) | `worker_logdir` + an exported `GOVERN_RUN_DIR` isolate each run's worker logs so a re-run never reads a prior run's stale log | flat per-ticket log paths | Stale-log confusion only appears across many re-runs of the *same* ticket number |
+
+The `govern-improve.sh` / `govern-self-apply.sh` self-improvement loop **is** scaffolded, but is kept
+leaner than the reference harness's copy for the same reason. If you later want the templates to
+track the full harness, port the rows above as their own template PRs; otherwise this list is the
+record of what the baseline deliberately leaves out.
+
 ## Skill location
 
 `~/.claude/skills/meta-repo/`. Templates for everything scaffolded above are under `templates/` — `lib/workspace.sh` (config contract), the core git-ops scripts, `worktree/`, `govern/`, `governor/` (prompt scaffolds), `hooks/`, `seed/`, and example `lib/*.sh.example` project hooks.
