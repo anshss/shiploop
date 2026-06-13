@@ -7,6 +7,10 @@
 #   --dry-run      → worker runs plan-mode; merge + bookkeep are skipped (logged)
 #   --exclude N,N  → skip these ticket numbers (e.g. a parallel govern session owns them)
 #
+# GOVERN_ALLOW_CONCURRENT=1 → run alongside another driver (parallel sessions on disjoint
+#   tickets, #41): skips the single-run lock; safety comes from the per-ticket claim lock
+#   (governor/.locks/ticket-N) + the bookkeep lock. Pair with --exclude to partition the backlog.
+#
 # Hard bounds (so an unattended run always ends; tune via env):
 #   GOVERN_MAX_TICKETS     (20)    stop after this many tickets processed this run
 #   GOVERN_MAX_BAD_STREAK  (4)     stop after this many CONSECUTIVE parked/failed
@@ -43,20 +47,44 @@ MAX_BAD_STREAK="${GOVERN_MAX_BAD_STREAK:-4}"
 MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-14400}"
 START_EPOCH="$(date +%s)"; INTERRUPTED=0
 
-# --- single-run lock (prevents two drivers / a concurrent session trampling tickets.md) ---
-LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  govern::die "another govern run holds $LOCK — remove it if stale."
+# --- run lock. Default: single-run (one exclusive driver). GOVERN_ALLOW_CONCURRENT=1 opts into
+# parallel drivers on disjoint tickets (#41): the global lock is skipped, and safety comes from
+# the per-ticket CLAIM lock (no two drivers work the same ticket) + the bookkeep lock in
+# govern-bookkeep.sh (no two drivers race tickets.md). Use --exclude to partition the backlog. ---
+LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"; TOOK_LOCK=0; CUR_CLAIM=""
+if [[ "${GOVERN_ALLOW_CONCURRENT:-0}" == "1" ]]; then
+  govern::log "GOVERN_ALLOW_CONCURRENT=1 — running alongside other drivers (per-ticket claim + bookkeep lock keep tickets.md safe)"
+elif mkdir "$LOCK" 2>/dev/null; then
+  TOOK_LOCK=1
+else
+  govern::die "another govern run holds $LOCK — remove it if stale, or set GOVERN_ALLOW_CONCURRENT=1 to run in parallel on disjoint tickets (--exclude)."
 fi
 
 RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$RUNDIR"
 STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
+# Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
+# run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
+HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; done_count=0
 
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
+  # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
+  printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}\n' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)" >> "$HISTORY" 2>/dev/null || true
 }
 wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
+
+# #60: trailing CONSECUTIVE failed/timeout outcomes for ticket $1 across the cross-run history
+# (a resolved/parked outcome resets the streak). Prints the count (0 if no history).
+consecutive_fails() { # ticket -> count
+  [[ -f "$HISTORY" ]] || { echo 0; return; }
+  jq -s --argjson t "$1" '
+    [ .[] | select(.ticket == $t) ] | reverse
+    | (reduce .[] as $e ({n:0,stop:false};
+        if .stop then .
+        elif ($e.status=="failed" or $e.status=="timeout") then {n:(.n+1),stop:false}
+        else {n:.n,stop:true} end)).n' "$HISTORY" 2>/dev/null || echo 0
+}
 
 # Plain-words session log — written on EVERY exit (clean OR crash/kill/Ctrl-C). Says what ran +
 # how long, so an interruption always leaves an explanation behind.
@@ -87,7 +115,11 @@ write_summary() {
   cp "$f" "$LOG_ROOT/last-session.md" 2>/dev/null || true
   govern::log "session summary → $f  (also logs/govern/last-session.md)"
 }
-on_exit() { write_summary; rmdir "$LOCK" 2>/dev/null || true; }
+on_exit() {
+  write_summary
+  [[ -n "$CUR_CLAIM" ]] && govern::lock_release "$CUR_CLAIM"   # free the in-flight ticket for a re-run (#41)
+  [[ "$TOOK_LOCK" -eq 1 ]] && rmdir "$LOCK" 2>/dev/null || true
+}
 trap 'on_exit' EXIT
 trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; exit 130' INT TERM
 
@@ -112,16 +144,38 @@ while :; do
 
   if [[ -n "$TARGET" ]]; then N="$TARGET"; else N="$("$DIR/select-ticket.sh" "$excludes" 2>/dev/null || true)"; fi
   [[ -n "$N" ]] || { govern::log "no eligible tickets — done"; break; }
+
+  # Per-ticket CLAIM lock (#41): two concurrent drivers must never work the same ticket. Non-
+  # blocking — if a live other driver holds it, exclude it this run and pick another (or stop in
+  # single-ticket mode). Released after the ticket's outcome; on_exit frees an in-flight claim.
+  CUR_CLAIM="$GOVERNOR_DIR/.locks/ticket-$N"
+  if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] && ! govern::lock_try "$CUR_CLAIM"; then
+    govern::log "#$N already claimed by another driver — skipping"
+    CUR_CLAIM=""
+    [[ -n "$TARGET" ]] && break
+    excludes="$excludes,$N"; continue
+  fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
 
   # --- resume: if a prior (crashed) run already opened a PR for this ticket, don't re-spawn ---
-  resumed=""
-  if [[ "$MODE" == "live" ]]; then resumed="$(govern::find_pr "$N" || true)"; fi
+  resumed=""; cf=0
+  if [[ "$MODE" == "live" ]]; then
+    resumed="$(govern::find_pr "$N" || true)"
+    # #60: only consider the cross-run failure streak when there's no PR to resume and we're
+    # not targeting a single ticket (an explicit target overrides the auto-escalation).
+    [[ -z "$resumed" && -z "$TARGET" ]] && cf="$(consecutive_fails "$N" 2>/dev/null || echo 0)"
+  fi
   if [[ -n "$resumed" ]]; then
     set -- $resumed; rrepo="$1"; rpr="$2"; rurl="${3:-}"
     govern::log "found existing PR $rrepo#$rpr for #$N — resuming (no new worker, no duplicate PR)"
     report="$(jq -nc --arg r "$rrepo" --argjson n "$rpr" --arg u "$rurl" \
       '{status:"resolved",pr:{repo:$r,number:$n,url:$u},lessonPatch:null,newTickets:[],crossRefs:{},escalation:null}')"
+  elif [[ "${cf:-0}" -ge "${GOVERN_MAX_TICKET_FAILS:-2}" ]]; then
+    # #60: this ticket already failed/timed-out on the last N runs — re-attempting it just burns
+    # another worker. Auto-escalate it as a systemic blocker (goes under "## Open" → skipped next
+    # run too) so the operator/root-cause path takes over instead of an infinite retry.
+    govern::log "#$N failed $cf consecutive runs — auto-escalating as a systemic blocker; not re-spawning (#60)"
+    report="$(jq -nc --argjson c "$cf" '{status:"parked",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{title:("systemic blocker — " + ($c|tostring) + " consecutive failed runs"),reason:("systemic blocker — failed " + ($c|tostring) + " consecutive runs; needs operator / root-cause, not another auto-retry"),question:"inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)",options:[]}}')"
   else
     report="$(GOVERN_MODE="$MODE" "$DIR/spawn-worker.sh" "$N" 2>/dev/null || true)"
   fi
@@ -197,12 +251,14 @@ while :; do
       [[ "$crossN" -gt 0 ]] && { anomaly=1; govern::log "worker flagged $crossN cross-ref(s) on #$N"; }
       ;;
     parked)
+      # #58: the heading is a short slug (escalation.title if the worker gave one, else the first
+      # 80 chars of reason) so the escalations list stays scannable; the full prose lives under Reason.
       # #62: the Disposition field carries a machine-readable token the relay writes when the
       # operator answers (do-the-work | defer | keep-open); escalations-apply-answers.sh reads it
       # at the next run-start to un-park / migrate-to-parked, closing the lifecycle. Options is the
       # worker's known choices, surfaced to the operator by the relay.
       { printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
-          "$N" "$(printf '%s' "$report" | jq -r '.escalation.reason // "parked"')" \
+          "$N" "$(printf '%s' "$report" | jq -r '.escalation.title // ((.escalation.reason // "parked")[0:80])')" \
           "$(printf '%s' "$report" | jq -r '.escalation.reason // ""')" \
           "$(printf '%s' "$report" | jq -r '.escalation.question // ""')" \
           "$(printf '%s' "$report" | jq -r '(.escalation.options // []) | if type=="array" then join(" / ") else tostring end')"
@@ -217,6 +273,9 @@ while :; do
       excludes="$excludes,$N"; nfail=$((nfail+1)); bad_streak=$((bad_streak+1))
       ;;
   esac
+
+  # release this ticket's claim now its outcome is recorded (#41)
+  [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
 
   [[ "$bad_streak" -ge "$MAX_BAD_STREAK" ]] && anomaly=1
 

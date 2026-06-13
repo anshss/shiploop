@@ -107,6 +107,33 @@ govern::norm_disposition() { # raw -> canonical|""
   esac
 }
 
+# ── concurrency primitives (#41: safe parallel govern drivers on disjoint tickets) ──
+# mkdir is atomic on POSIX, so an empty dir is a portable mutex. Both helpers reclaim a
+# STALE lock (holder crashed) so a dead driver can't wedge the queue forever.
+govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
+  local m; m="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
+  echo $(( $(date +%s) - m ))
+}
+# Blocking acquire: spin up to timeout_s. Returns 0 acquired, 1 timed out. Caller releases.
+govern::lock_acquire() { # lockdir [timeout_s=60] [stale_s=300]
+  local lock="$1" timeout="${2:-60}" stale="${3:-300}" waited=0
+  mkdir -p "$(dirname "$lock")" 2>/dev/null || true
+  while ! mkdir "$lock" 2>/dev/null; do
+    [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]] && { rmdir "$lock" 2>/dev/null && continue; }
+    sleep 1; waited=$((waited+1)); [[ "$waited" -ge "$timeout" ]] && return 1
+  done
+  return 0
+}
+# Non-blocking try: claim once. Returns 0 claimed, 1 held by a live other holder.
+govern::lock_try() { # lockdir [stale_s=4200]
+  local lock="$1" stale="${2:-4200}"
+  mkdir -p "$(dirname "$lock")" 2>/dev/null || true
+  mkdir "$lock" 2>/dev/null && return 0
+  [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]] && { rmdir "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null && return 0; }
+  return 1
+}
+govern::lock_release() { rmdir "$1" 2>/dev/null || true; }
+
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
 
