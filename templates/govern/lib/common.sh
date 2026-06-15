@@ -25,6 +25,15 @@ TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$WS_ROOT/tickets-parked.md}"
 PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
+# Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
+# it = $LOG_ROOT/run-<ts>), so a re-run of ticket N writes to a fresh run-<ts>/ticket-N/ and can
+# NEVER read a PRIOR run's stale worker.jsonl. Falls back to the legacy flat $LOG_ROOT/ticket-N/
+# only for a standalone spawn-worker invocation (tests / manual) where no run is in scope.
+govern::worker_logdir() { # ticket -> dir
+  local n="$1"
+  if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
+}
+
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh. Frontend =
 # everything else (PR-only).
 GOVERN_FRONTEND_REPOS=()
@@ -93,9 +102,25 @@ govern::is_placeholder() { # value
   return 1
 }
 
+# Extract ONLY the leading token of a Disposition field — the first whitespace-delimited
+# word, before any explanatory parenthetical (`_(...)_` or `(...)`). The disposition is
+# ANCHORED to this leading token so a clarifying parenthetical that names another canonical
+# token (e.g. `keep-open _(deliberately NOT do-the-work)_`, `defer (not do-the-work)`) is
+# NOT misclassified by norm_disposition's anywhere-in-string match (#87). Returns "" if blank.
+govern::disposition_lead_token() { # raw -> leading token (may be "")
+  local d="$1"
+  d="${d#"${d%%[![:space:]]*}"}"   # strip leading whitespace
+  d="${d%%[[:space:]]*}"           # take up to the first whitespace (drops " _(...)_ ", " (...)")
+  d="${d%%(*}"                     # drop a "(" attached with no space, e.g. defer(x)
+  d="${d%%_*}"                     # drop a "_(" markdown wrapper attached with no space
+  printf '%s' "$d"
+}
+
 # Canonicalize a free-text disposition into one of: do-the-work | defer | keep-open
 # (empty for unrecognized so the caller can leave the entry untouched). Tolerant of
 # operator hand-edits / synonyms; the relay writes the canonical token directly.
+# NOTE: this matches a canonical token ANYWHERE in the input — so when classifying a
+# structured Disposition FIELD, anchor first via govern::disposition_lead_token (#87).
 govern::norm_disposition() { # raw -> canonical|""
   local d; d="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' ' ')"
   d=" $d "
@@ -134,22 +159,119 @@ govern::lock_try() { # lockdir [stale_s=4200]
 }
 govern::lock_release() { rmdir "$1" 2>/dev/null || true; }
 
+# ── monotonic ticket numbering (#54, #73) ───────────────────────────────────
+# THE single source of truth for "what's the next tickets.md number". Both the governor's
+# auto-filing (govern-bookkeep) AND any manual filing (operator/relay sessions, /resolve sweeps,
+# scripts/govern/file-ticket.sh) MUST route through here so a number is never silently reused.
+#
+# govern::ticket_filemax — highest `## #N` heading number in a file (0 if none). Scans ONE file:
+# tickets.md and the parked queue are independent serial lists, so never cross-check them.
+govern::ticket_filemax() { # [tickets-file] -> N
+  local f="${1:-$TICKETS_FILE}" m
+  m="$(grep -oE '^## #[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
+  echo "${m:-0}"
+}
+
+# govern::next_ticket_number — allocate the next number: max(highest `## #N` in tickets.md,
+# persisted high-water mark in governor/.ticket-seq) + 1, then bump .ticket-seq to it. A number is
+# therefore NEVER reused — not after the highest ticket is resolved+deleted (#54), and not by a
+# manual filing that never read/bumped the seq (#73). The read+bump is serialized under the bookkeep
+# lock so two concurrent filers (a govern driver and an operator sweep) can't read the same max and
+# collide on one number. Reentrant: a caller already holding the bookkeep lock (govern-bookkeep does)
+# sets GOVERN_BOOKKEEP_LOCK_HELD=1 to skip re-acquiring (the mkdir mutex is NOT reentrant — a second
+# acquire from the same process would spin to timeout). Prints the allocated number to stdout.
+govern::next_ticket_number() { # [tickets-file] -> N
+  local tickets_file="${1:-$TICKETS_FILE}"
+  local seq_file="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
+  local lock="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
+  local got_lock=0
+  if [[ "${GOVERN_BOOKKEEP_LOCK_HELD:-0}" != "1" ]]; then
+    if govern::lock_acquire "$lock" 60 300; then got_lock=1
+    else govern::log "next_ticket_number: bookkeep lock busy >60s — proceeding (degraded)"; fi
+  fi
+  local hwm filemax maxn
+  hwm="$( [[ -f "$seq_file" ]] && tr -dc '0-9' < "$seq_file" 2>/dev/null || echo 0)"; hwm="${hwm:-0}"
+  filemax="$(govern::ticket_filemax "$tickets_file")"
+  maxn=$(( hwm > filemax ? hwm : filemax ))
+  maxn=$((maxn+1))
+  printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
+  [[ "$got_lock" == "1" ]] && govern::lock_release "$lock"
+  printf '%s\n' "$maxn"
+}
+
+# govern::duplicate_ticket_headings — cheap collision detector (#73): print each ticket number that
+# appears more than once as a `## #N` heading in the file (with its count), one per line. Returns 0
+# (silent) when clean, 1 when any duplicate exists. The Stop hook / lint-tickets.sh treat a non-zero
+# return as a fault to surface immediately. Scans ONE file (see ticket_filemax).
+govern::duplicate_ticket_headings() { # [tickets-file]
+  local f="${1:-$TICKETS_FILE}" dups n
+  [[ -f "$f" ]] || return 0
+  dups="$(grep -oE '^## #[0-9]+' "$f" | grep -oE '[0-9]+' | sort -n | uniq -d || true)"
+  [[ -n "$dups" ]] || return 0
+  while IFS= read -r n; do
+    [[ -n "$n" ]] || continue
+    printf '#%s ×%s\n' "$n" "$(grep -cE "^## #${n}([^0-9]|\$)" "$f")"
+  done <<<"$dups"
+  return 1
+}
+
+# ── not-govern-automatable markers (#92) ────────────────────────────────────
+# A ticket whose BODY carries a bold "not govern-automatable" marker
+# (**NOT govern-automatable…**, **requires web-UI…**, **handle interactively…**) cannot be
+# resolved by a headless CLI worker — selecting it just burns a worker / fast-fails every run
+# until an operator manually `--exclude`s it. This helper is the SINGLE source of truth for that
+# set: select-ticket.sh excludes them from selection, run-loop.sh logs the human-readable why
+# (select-ticket's stderr is suppressed, so the log must come from the loop).
+# Prints one "N<TAB>reason" line per flagged ticket (reason = the canonical marker keyword).
+# Bold-ANCHORED on purpose: the marker must appear as `**marker…` so a ticket that merely
+# DISCUSSES automatability in prose is NOT matched — only a real `**marker**` directive whose
+# bold span STARTS with the marker phrase. Reads $1 (defaults to TICKETS_FILE).
+govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  awk '
+    /^## #[0-9]+/ { cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); emitted=0; next }
+    cur!="" && !emitted {
+      low=tolower($0)
+      if      (low ~ /\*\*[ \t]*not[ \t]+govern-automatable/) m="NOT govern-automatable"
+      else if (low ~ /\*\*[ \t]*requires[ \t]+web-?ui/)       m="requires web-UI"
+      else if (low ~ /\*\*[ \t]*handled?[ \t]+interactively/) m="handle interactively"
+      else m=""
+      if (m!="") { printf "%s\t%s\n", cur, m; emitted=1 }
+    }
+  ' "$f"
+}
+
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
 
-# Find an already-open PR for ticket $1 (branch standardized to "ticket-<N>" by
-# worktree:new). Prints "repo number url" if found — lets a re-run resume instead
-# of opening a duplicate PR.
+# owner/repo slug + local checkout dir for a short repo name (both delegate to
+# workspace.sh, where any cross-owner / out-of-tree overrides live). Default slug
+# is "$GITHUB_ORG/<repo>"; default localdir is "$WS_ROOT/<repo>". merge-pr.sh uses
+# these so a repo on a different owner / checked out elsewhere still merges + has
+# its lingering local ticket-<N> branch cleaned up.
+govern::repo_slug()     { wsp_repo_slug "$1"; }
+govern::repo_localdir() { wsp_repo_localdir "$1"; }
+
+# Find an already-open PR for ticket $1. The standard head is "ticket-<N>" (worktree:new), but a
+# worker may have named its branch e.g. "fix/ticket-<N>-..." (#55) — so we match an exact
+# "ticket-<N>" head FIRST, then fall back to ANY open-PR head CONTAINING "ticket-<N>" at a digit
+# boundary (so "ticket-12" never matches "ticket-120"). Prints "repo number url" if found — lets a
+# re-run resume instead of opening a duplicate PR, AND lets a same-run worker that opened a PR but
+# returned a bad report still be adopted as resolved instead of recorded "failed".
 govern::find_pr() {
-  local n="$1" repo j num
+  local n="$1" repo j row
   command -v gh >/dev/null 2>&1 || return 1
   # Search every sub-repo (REPOS is the union of merge + frontend, always
   # non-empty — avoids expanding a possibly-empty array under set -u on bash 3.2).
   for repo in "${REPOS[@]}"; do
-    j="$(gh pr list --repo "$GITHUB_ORG/$repo" --head "ticket-$n" --state open --json number,url 2>/dev/null || echo '[]')"
-    num="$(jq -r '.[0].number // empty' <<<"$j" 2>/dev/null || true)"
-    if [[ -n "$num" ]]; then
-      printf '%s %s %s\n' "$repo" "$num" "$(jq -r '.[0].url // ""' <<<"$j")"
+    j="$(gh pr list --repo "$GITHUB_ORG/$repo" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
+    row="$(jq -c --arg n "$n" '
+      ( [ .[] | select(.headRefName == ("ticket-" + $n)) ][0] )
+      // ( [ .[] | select(.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)")) ][0] )
+      // empty' <<<"$j" 2>/dev/null || true)"
+    if [[ -n "$row" ]]; then
+      printf '%s %s %s\n' "$repo" "$(jq -r '.number' <<<"$row")" "$(jq -r '.url // ""' <<<"$row")"
       return 0
     fi
   done
@@ -238,4 +360,64 @@ govern::infra_error_signature() { # worker-jsonl -> signature|""
   msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
   return 0
+}
+
+# ── tolerant worker-report extraction (#66) ─────────────────────────────────
+# The strict contract is "the worker's final message is ONLY a single JSON object", but a worker
+# that DID the work sometimes drifts to "JSON + trailing prose" (or writes prose into report.json).
+# Requiring the WHOLE text to `jq empty`-parse then turns real work into a recorded `failed` (#66).
+# These helpers make extraction tolerant: pull the LAST balanced {...} object that carries a
+# `status` field out of arbitrary text, validating each candidate with jq. Happy path (the whole
+# text is one clean object) still short-circuits, so the strict contract stays the fast path.
+
+# Emit every top-level balanced {...} object found in stdin, each followed by a 0x1e (record
+# separator — a control char JSON can't carry unescaped, so it never collides with content).
+# String/escape-aware: braces inside JSON strings are not counted. Nested objects stay inside
+# their parent (we only cut when depth returns to 0), so each emitted chunk is a whole object.
+govern::_json_objects() {
+  awk '
+    { buf = buf $0 "\n" }
+    END {
+      n = length(buf); depth = 0; ins = 0; esc = 0; start = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(buf, i, 1)
+        if (ins) {
+          if (esc) { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { ins = 0 }
+          continue
+        }
+        if (c == "\"") { ins = 1; continue }
+        if (c == "{") { if (depth == 0) start = i; depth++ }
+        else if (c == "}") {
+          if (depth > 0) {
+            depth--
+            if (depth == 0) { printf "%s", substr(buf, start, i - start + 1); printf "%c", 30 }
+          }
+        }
+      }
+    }
+  '
+}
+
+# Read arbitrary text on stdin (report.json content, or a worker .result message that may be
+# "JSON + trailing prose"); print the chosen contract report — the LAST balanced object that
+# parses AND has a `status` field. Prints nothing and returns 1 if no such object exists.
+govern::extract_report() {
+  local raw cand best=""
+  raw="$(cat)"
+  [[ -n "$raw" ]] || return 1
+  # Happy path: the whole text is EXACTLY one valid object with a status field → emit verbatim.
+  # (-s slurps the entire input into an array: length==1 rejects "JSON + trailing prose" and
+  # multi-object streams, which fall through to the scanner so the LAST status object wins.)
+  if printf '%s' "$raw" | jq -e -s 'length==1 and (.[0]|type=="object") and (.[0]|has("status"))' >/dev/null 2>&1; then
+    printf '%s' "$raw"; return 0
+  fi
+  # Otherwise scan out balanced objects and keep the last one that is a valid status-bearing report.
+  while IFS= read -r -d $'\x1e' cand; do
+    [[ -n "$cand" ]] || continue
+    if printf '%s' "$cand" | jq -e 'has("status")' >/dev/null 2>&1; then best="$cand"; fi
+  done < <(printf '%s' "$raw" | govern::_json_objects)
+  [[ -n "$best" ]] || return 1
+  printf '%s' "$best"
 }

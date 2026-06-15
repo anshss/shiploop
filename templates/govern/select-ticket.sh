@@ -22,6 +22,14 @@ if [[ -f "$ESCALATIONS_FILE" ]]; then
   done < "$ESCALATIONS_FILE"
 fi
 
+# #92: drop tickets whose body carries a bold "NOT govern-automatable" / "requires web-UI" /
+# "handle interactively" marker — a headless worker can't resolve them, so selecting one just
+# burns a worker and fast-fails every run. They stay in tickets.md (workable again once a human
+# un-parks/handles them); the loop logs the human-readable why (this script's stderr is suppressed).
+while IFS=$'\t' read -r na_n _; do
+  [[ -n "$na_n" ]] && exclude+="${na_n},"
+done < <(govern::not_automatable_tickets "$TICKETS_FILE")
+
 # Parse tickets into "sev num" rows. sev: 1=High 2=Medium 3=Low 4=unknown.
 rows=()
 current=""; sev=4

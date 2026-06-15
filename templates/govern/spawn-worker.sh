@@ -9,9 +9,15 @@ govern::require jq
 
 N="${1:?ticket number required}"
 slug="ticket-$N"
-logdir="$LOG_ROOT/$slug"; mkdir -p "$logdir"
+# #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set by run-loop),
+# so a re-run never reads a PRIOR run's worker.jsonl. Standalone invocation falls back to the flat
+# logs/govern/ticket-N/.
+logdir="$(govern::worker_logdir "$N")"; mkdir -p "$logdir"
 jsonl="$logdir/worker.jsonl"
 report_path="$logdir/report.json"; rm -f "$report_path"
+# #75: when run-scoped, truncate any LEGACY flat log so no consumer can tail a prior run's stale
+# data from logs/govern/ticket-N/ (we never read it again, but other tails might).
+if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then rm -f "$LOG_ROOT/$slug/worker.jsonl" "$LOG_ROOT/$slug/report.json"; fi
 
 # 1. Extract the ticket block: from "## #N" up to the next "---".
 block="$(awk -v n="$N" '
@@ -113,17 +119,24 @@ if [[ -n "$wd" ]]; then pkill -P "$wd" 2>/dev/null; kill "$wd" 2>/dev/null; fi
 set -e
 if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
 
-# 5. Resolve the report: prefer the file (live), else the last result event's .result (dry).
+# 5. Resolve the report. The strict contract is "the final message is ONLY a JSON object", but a
+#    worker that DID the work sometimes emits "JSON + trailing prose" (or writes prose into
+#    report.json) — so rather than requiring the WHOLE text to parse, pull the last balanced
+#    JSON object carrying a `status` field out of each candidate source (#66). Prefer the file
+#    (live), then the last result event's .result (dry / no-file). govern::extract_report keeps
+#    the clean-object happy path as a fast short-circuit.
 report=""
 if [[ -s "$report_path" ]]; then
-  report="$(cat "$report_path")"
-else
-  report="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
+  report="$(govern::extract_report < "$report_path" || true)"
+fi
+if [[ -z "$report" ]]; then
+  result_msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
+  [[ -n "$result_msg" ]] && report="$(printf '%s' "$result_msg" | govern::extract_report || true)"
 fi
 
-# 6. Validate; synthesize a report only if the worker produced nothing parseable.
+# 6. Validate; synthesize a failed report ONLY if no parseable status-bearing object exists anywhere.
 #    A timeout/kill is reported as failed-with-preserved-worktree (recoverable, not lost work).
-if ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
+if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
   # #90: BEFORE recording a generic ticket `failed`, check whether the worker actually died on an
   # INFRA/auth outage (expired token, API unreachable, network down) — a transport error that kills
   # the worker before it can emit any report. That is NOT the ticket's fault: emit a DISTINCT

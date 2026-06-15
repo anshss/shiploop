@@ -43,10 +43,15 @@ read `$GITHUB_ORG` + `$REPOS` — use them in the `gh` calls below.
    - any error, log line, mock, hardcoded stub, TODO, or broken-adjacent code you walked past,
    - anything in the ticket's "Where" area that's still wrong but out of this fix's scope.
 
-   For **each** genuinely new bug / gap / missing capability / follow-up, append its own numbered
-   `## #N — Title` entry to `tickets.md` (numbered as **`tickets.md`'s own highest `## #N` + 1**) with
-   the standard fields: **Severity / Where / Observed / Fix direction / Done when / Ref**. A discovered
-   gap ALWAYS goes to `tickets.md` — never `learnings.md`. If the sweep genuinely finds nothing, say
+   For **each** genuinely new bug / gap / missing capability / follow-up, file its own numbered
+   `## #N — Title` entry in `tickets.md` with the standard fields: **Severity / Where / Observed /
+   Fix direction / Done when / Ref**. File it through the **collision-safe path** —
+   `printf '<body>' | scripts/govern/file-ticket.sh "<Title>" <Severity>` — which allocates the
+   number via the shared monotonic counter (max of `tickets.md`'s highest `## #N` and
+   `governor/.ticket-seq`, +1, serialized under the bookkeep lock), so two concurrent filers (you +
+   a running governor) can never reuse a number (#73). Do NOT hand-append a guessed `## #N`. Each
+   queue is an independent serial sequence; the parked queue numbers separately. A discovered gap
+   ALWAYS goes to `tickets.md` — never `learnings.md`. If the sweep genuinely finds nothing, say
    "no new tickets found" in one line — don't invent filler.
 
 6. **Commit the tickets.md change directly to `main`** in the main checkout (coordination files are

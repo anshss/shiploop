@@ -87,7 +87,10 @@ while IFS= read -r row; do
 
   # Read the canonical token from the Disposition field (skip it if still the placeholder — its
   # help text embeds the option words and would otherwise parse as a real disposition).
-  if govern::is_placeholder "$dispraw"; then disp=""; else disp="$(govern::norm_disposition "$dispraw")"; fi
+  # #87: anchor on the LEADING token first (govern::disposition_lead_token), so a clarifying
+  # parenthetical that names another canonical token (e.g. `keep-open _(NOT do-the-work)_`) is not
+  # misclassified by norm_disposition's anywhere-in-string match.
+  if govern::is_placeholder "$dispraw"; then disp=""; else disp="$(govern::norm_disposition "$(govern::disposition_lead_token "$dispraw")")"; fi
   # Fall back to reading the disposition out of the free-text answer if the field is blank.
   [[ -z "$disp" ]] && ! govern::is_placeholder "$ans" && disp="$(govern::norm_disposition "$ans")"
 
@@ -166,11 +169,18 @@ rm -f "$notes_file"
 "$DIR/escalations-emit-pending.sh" >/dev/null 2>&1 || true
 
 # 5. Commit the result in the dir holding tickets.md (the main checkout in real use), the same
-#    place + style govern-bookkeep.sh commits. The base scaffold commits locally and leaves the
-#    push to the operator's push policy; concurrent-driver builds can layer a guarded push on top.
+#    place + style govern-bookkeep.sh commits. Guarded push so local main stays == origin/main —
+#    the same invariant govern-bookkeep.sh / preflight-main.sh rely on (a concurrent operator
+#    session commits meta files to the SAME main, so the harness must keep them in sync). The push
+#    is plain ff-only (never forced) and is skipped with no remote (local-only / test repo) and
+#    under GOVERN_NO_PUSH=1.
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 ( cd "$commit_dir"
   git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
   git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, rules ${n_rule})" || true
+  if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
+    git push origin HEAD:main >/dev/null 2>&1 \
+      || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
+  fi
 )
 echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, rules added $n_rule"
