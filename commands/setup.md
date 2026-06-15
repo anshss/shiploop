@@ -28,7 +28,7 @@ Workspace layout this command produces:
   .worktrees/.gitkeep     scripts/{check-main-on-main,ticket-sweep-reminder}.sh
   governor/*.md           scripts/worktree/*  + worktree/lib/registry.sh + session-end-cleanup.sh
   .claude/settings.json   scripts/govern/*    + govern/lib/common.sh
-  learnings.md
+  CLAUDE.md               learnings.md
 ```
 
 ---
@@ -187,8 +187,14 @@ Copy `$T/gitignore` to `.gitignore` and replace `__SUBREPO_IGNORES__` with one `
 sub-repo. If a `.gitignore` exists, merge (don't clobber) — append any missing lines.
 
 ### Seeds
-Copy `$T/seed/tickets.md`, `$T/seed/tickets-parked.md`, `$T/seed/learnings.md` to the root **only if
-absent** (never overwrite an existing queue).
+Copy `$T/seed/tickets.md`, `$T/seed/tickets-parked.md`, `$T/seed/learnings.md`, and
+`$T/seed/CLAUDE.md` to the root **only if absent** (never overwrite an existing queue or CLAUDE.md).
+The seed `CLAUDE.md` is the workspace's **always-on context** — it carries the operate-first guidance,
+the stability-routing table (tickets / CLAUDE.md / learnings / project memory), the root-vs-sub-repo
+`CLAUDE.md` hierarchy, and the anti-patterns, with `<…>` placeholders for the sub-repo map. After
+copying, fill the `<workspace>` / `<org>` / sub-repo table placeholders from the Phase 1–3 detection.
+Mention the operator should also create a per-sub-repo `CLAUDE.md` (and optional `learnings.md`) as
+each sub-repo accrues its own patterns — "sub-repo CLAUDE.md wins in its scope".
 
 ## Phase 7 — Wire `.claude/settings.json` hooks (fresh)
 
@@ -230,7 +236,7 @@ files; nothing is versioned until you commit. On the root's default branch (veri
 stage and commit the workspace tooling as ONE commit so the harness actually lives on `main`:
 ```bash
 git add scripts governor package.json .gitignore .worktrees/.gitkeep \
-        tickets.md tickets-parked.md learnings.md .claude/settings.json .mcp.json 2>/dev/null
+        tickets.md tickets-parked.md learnings.md CLAUDE.md .claude/settings.json .mcp.json 2>/dev/null
 git commit -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)"
 ```
 Do NOT `git add .` (that would sweep `.env`/secrets); stage the tooling paths explicitly. Leave the
@@ -287,6 +293,10 @@ each chosen component:
   removing the user's own. Convert a legacy pnpm root to npm ONLY if the user confirms (anti-pattern
   #7) — otherwise leave `ROOT_PM` matching their current root.
 - **tickets:** if `tickets.md` is missing, seed it from `$T/seed/`. NEVER overwrite an existing queue.
+- **root CLAUDE.md:** if `CLAUDE.md` is missing, offer to seed it from `$T/seed/CLAUDE.md` (then fill
+  the placeholders). If it's present, NEVER overwrite it — instead check whether it documents the
+  stability-routing table (tickets / CLAUDE.md / learnings / project memory) and the root-vs-sub-repo
+  hierarchy; if not, offer to append just those convention sections (show a diff, confirm first).
 - **hooks wiring:** merge any missing hook entries into `.claude/settings.json` (don't drop existing
   ones).
 - **example project hooks:** copy any missing `scripts/lib/*.sh.example` for reference.
