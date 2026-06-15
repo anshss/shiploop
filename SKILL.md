@@ -70,13 +70,16 @@ A durable, file-based backlog the whole harness reads.
 - **`/resolve <N>`** does this disciplined close-out: confirm the PR, promote the lesson, delete the entry, then sweep the session diff for newly-discovered tickets and file them.
 - The **Stop hook** (`ticket-sweep-reminder.sh`) fires once at the end of a code-touching session (marker-gated on session_id, honors `stop_hook_active`) reminding you to file/delete tickets. Read-only sessions stop silently.
 
-**Route findings by stability, not topic:**
+**Capture learnings at natural breakpoints — don't wait to be asked. Route findings by stability, not topic:**
 
 | Where | Use when |
 |---|---|
 | `tickets.md` | Work items — anything to fix/build later |
-| `CLAUDE.md` (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug |
-| `learnings.md` | Only transient/evolving operational knowledge not yet stable enough for CLAUDE.md. Never a work item; never a fixed-bug writeup |
+| `CLAUDE.md` (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. **Sub-repo `CLAUDE.md` wins in its scope**; the root file is cross-repo orchestration only |
+| `learnings.md` (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for CLAUDE.md. Never a work item; never a fixed-bug writeup |
+| Project memory (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences |
+
+Bar: would knowing this save a future session 5+ min? If yes, propose the edit and ask before ending the session. The scaffolded root `CLAUDE.md` (`templates/seed/CLAUDE.md`) is the always-on home for these conventions — it auto-loads every session, whereas this skill loads only on demand.
 
 ## Governor (autonomous ticket loop)
 

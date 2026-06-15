@@ -1,0 +1,100 @@
+# <workspace> (meta-repo)
+
+A **meta-repo**: a workspace root holding N independent git repos as sub-folders, each with its own
+remote, PR queue, and CI. The root is also its own git repo, holding workspace config, cross-cutting
+scripts, the ticket queue, the governor, and shared AI context.
+
+> This file is the workspace's **always-on context** — it auto-loads every session, so it is the home
+> for the conventions below. Keep it current; it is the first thing a new session (human or agent) reads.
+
+## How to operate (read first)
+
+1. **Any task that will touch code → start with `npm run worktree:new -- <task-slug>` and `cd` into
+   it.** The main checkout is read / plan / main-branch-ops only — never edit code there. A worktree is
+   an isolated copy (own branches, own dev stack, own ports, own SessionEnd cleanup) so parallel
+   sessions don't collide. Clean up with `npm run worktree:rm -- <slug>` after PRs merge. The only
+   exception is purely read-only work (explain / "where is X").
+
+2. **Default to the full local loop for non-trivial work** (`npm run dev`), and validate through the
+   real UI/API path a user touches — not a shortcut that skips the layers where bugs hide.
+
+3. **Offload context-heavy sub-tasks to subagents** (a diagnosis, a codebase sweep, a multi-file
+   investigation) so this session's context stays flat — the subagent's logs stay in its context; only
+   the conclusion returns to yours. Reserve the main session for orchestration + decisions.
+
+4. **When an issue is reported conversationally, default to investigate → file → ask, not
+   file-and-drop.** Confirm it's real and locate the root cause first (delegate if context-heavy), THEN
+   file the ticket with that evidence, THEN ask whether to start fixing now. File a bare uninvestigated
+   ticket only when explicitly told to just track it for later.
+
+**Capture learnings at natural breakpoints — don't wait to be asked.** Route findings by **stability**,
+not topic:
+
+| Where | Use when |
+|---|---|
+| **`tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. |
+| **`CLAUDE.md`** (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. |
+| **`learnings.md`** (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for `CLAUDE.md` ("X provider flaky this week"). **Never** a work item (→ tickets) and **never** a fixed-bug writeup (→ promote or delete). |
+| **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. |
+
+Bar: would knowing this save a future session 5+ min? If yes, propose the edit and ask before ending
+the session. **At session start, skim `learnings.md` (root + the sub-repo you're in).**
+
+## The CLAUDE.md hierarchy
+
+- **Root `CLAUDE.md`** (this file) — cross-repo orchestration only: how to operate, the ticket/learnings
+  routing above, the sub-repo map, and the load-bearing anti-patterns.
+- **Sub-repo `CLAUDE.md` wins in its scope.** Inside a sub-repo, that repo's `CLAUDE.md` is the source
+  of truth for its own patterns. The root file is cross-repo only — don't duplicate sub-repo content
+  here, and don't put cross-repo orchestration in a sub-repo file.
+- The same split applies to `learnings.md` (a root one for cross-repo discoveries, a per-sub-repo one
+  for repo-local transient knowledge).
+
+## Sub-repos
+
+The sub-repo list + dev commands + ports are a single source of truth: `scripts/lib/workspace.sh`.
+Adding/removing a sub-repo is a one-file edit there.
+
+| Folder | Remote | Stack | Port |
+|--------|--------|-------|------|
+| `<repo>/` | `<org>/<repo>` | `<stack>` | `<port>` |
+
+## Operating commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Boot all sub-repos (`-- --only a,b` to scope); tee output to `logs/<name>.log` |
+| `npm run dev:<name>` | Boot one sub-repo |
+| `npm run status` | Branch / dirty / ahead / behind / PR# / CI per repo |
+| `npm run doctor` | Health audit: tooling, env, ports, repo presence |
+| `npm run branch -- <name>` | Create a branch across repos (`--only a,b` to scope) |
+| `npm run switch -- <name>` | Checkout a branch across all (tracks origin if local missing) |
+| `npm run pull` / `npm run push` | `git pull --ff-only` per repo / push changed repos + open PRs |
+| `npm run health` | curl each dev server |
+| `npm run worktree:new -- <slug>` | Allocate a slot; create isolated worktrees on branch `<slug>` |
+| `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
+| `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
+
+**npm needs `--` before any arg/flag** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`.
+
+## Anti-patterns (load-bearing)
+
+1. **MCP servers always at workspace root.** Never `claude mcp add` from a sub-repo.
+2. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files; each
+   commits independently.
+3. **Never assume sub-repos share a branch.** They drift. Run `npm run status` first.
+4. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
+5. **PRs aren't transactional across sub-repos — merge backend-first.** When the backend adds a
+   capability the frontend consumes (enum, endpoint, response field), the backend PR merges + deploys
+   before the frontend PR. State the merge order in each sibling PR.
+6. **`.env.example` is the contract.** Never commit `.env`. `doctor` checks each `.env` exists.
+7. **The root is npm.** No pnpm/yarn/bun at the root — a stray root lockfile diverges. Sub-repos keep
+   their own package manager.
+8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo
+   coordination files (`CLAUDE.md`, `tickets.md`, `learnings.md`, `scripts/`) commit directly to `main`
+   in the main checkout — never branched/PR'd.
+9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next
+   `dev` serves stale code on `EADDRINUSE`).
+
+> Replace the `<…>` placeholders and the Sub-repos table with your workspace's specifics, then append
+> your own conventions, gotchas, and architecture notes below as you learn them.
