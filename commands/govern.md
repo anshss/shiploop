@@ -43,10 +43,23 @@ Relay its log lines to the operator as they appear. The driver does everything �
 - **Surface + ANSWER escalations** when it finishes (#62 — escalations are no longer write-only):
   1. Read `governor/pending-escalations.json` (the driver writes it at run-end: the still-
      unanswered `## Open` entries). If `count` is 0, nothing needs the operator — just summarize.
-  2. For each pending escalation, present it to the operator via **AskUserQuestion** — use its
-     `question` + `options`, and ALWAYS include these standing choices so the answer drives the
-     lifecycle: **Do the work** (un-park → governor retries), **Defer / keep-manual** (auto-moves
-     the ticket to `tickets-parked.md`), and **Keep open** (decide later).
+  2. Present **ALL** pending escalations in a **single batched `AskUserQuestion` call** (#89) —
+     `AskUserQuestion` takes up to **4 questions per prompt**, so one entry → one question, and a
+     whole run's blocked tickets are asked **at once**, not one prompt per ticket. If `count > 4`,
+     chunk into ceil(count/4) calls (4, then the rest) — still the minimum number of prompts, never
+     one-per-ticket. For each entry use its `question` + `options`, and ALWAYS include these
+     standing choices so the answer drives the lifecycle: **Do the work** (un-park → governor
+     retries), **Defer / keep-manual** (auto-moves the ticket to `tickets-parked.md`), and **Keep
+     open** (decide later).
+     - **Don't fragment the asks across a phased run.** If you split one backlog into multiple
+       `run-loop.sh` invocations, each run emits its own `pending-escalations.json` and you'd
+       surface the escalations in **separate waves**. Prefer a **single whole-backlog invocation**
+       when batching matters, or defer surfacing until the **final** phase, so all of the run's
+       blocked tickets land in one batched ask.
+     - **Inherent constraint (by design, not a bug):** the headless driver can't pause mid-run for
+       an answer, so whatever you record applies at the **NEXT** run-start (`escalations-apply-answers.sh`).
+       That two-run drain — run, answer the batch, re-run to act on the answers — is expected; the
+       fix here is only to make the *ask* a single batch, not to make the loop interactive.
   3. Write the operator's choice back into `governor/escalations.md` under that `### #N` entry:
      fill `- **Answer:**` with their words and `- **Disposition:**` with the canonical token
      (`do-the-work` | `defer` | `keep-open`). If they want it to become standing policy, put the

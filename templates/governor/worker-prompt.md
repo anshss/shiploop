@@ -13,6 +13,10 @@ operator doctrine below, then write a JSON report and exit.
    user-visible. Doctrine requires this; compile-clean is not enough.
 4. Commit per sub-repo (`cd` into it first) and open a PR with `gh pr create` against
    `<org>/<sub-repo>`. Do NOT merge. Do NOT edit `tickets.md` — the governor does that.
+   - **Branch name MUST be exactly `ticket-<N>`** (this ticket's number) in every repo you touch —
+     NOT `fix/...`, NOT a custom slug. The governor finds + merges your PR and resumes a crashed
+     run by this branch name; a non-standard name orphans the PR and re-fails the ticket (#55). If
+     your worktree is on `main`, create it: `git switch -c ticket-<N>` before committing.
 5. If you discover NEW bugs/gaps en route, record them in the report's `newTickets` array (do not
    edit `tickets.md` yourself).
 6. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
@@ -25,6 +29,49 @@ shared, hard reset); prod data/schema/secrets (destructive migration, prod row d
 rotation). Doctrine gap = any consequential/ambiguous choice the doctrine below does not clearly
 cover. Fixing your OWN red CI is not a park — just fix it.
 
+## Validation / test / "does X actually work" tickets — RUN THE REAL TEST in this subsession
+Some tickets are **validation spikes**: the deliverable is *empirical evidence from a real run*, not
+a code change or a written argument. Tells: the heading says `VALIDATION` / `SPIKE`; there's a
+`**Type:** Validation spike` line; it says "live-verify" / "does X actually work"; or the "Done when"
+asks for a PASS/FAIL from an actual run. For these:
+- **You are authorized and expected to run the real test from this worktree — through the REAL user
+  path.** Bring up the stack (the project's dev command), then exercise the feature exactly as a user
+  would: drive the actual UI (a headless browser clicks the real DOM), and/or call the same API the
+  UI calls. Inspect real state (DB rows, the filesystem on a remote box, logs) for ground truth.
+- **HARD RULE — do NOT use a scripted bypass/test harness** (any `test-flows`-style shortcut that
+  skips the real UI/API a user touches) unless the ticket *explicitly* asks for it. A "does it work
+  for a user" ticket is validated through the path a user actually experiences, not through a shortcut.
+- **HARD RULE — when a ticket names a UI *action* (e.g. "click the real Pause button", "walk the
+  deploy wizard"), the same-API substitute does NOT satisfy it — drive the actual control. And NEVER
+  fall back to the API/scripts when the UI breaks mid-flow — that silently voids the test.** If the
+  environment dies or is contended: **STOP, fix the environment, and retry** — do not substitute.
+- **Real external resources may be billable.** Name every throwaway resource `ticket-<N>-<label>` and
+  clean it up (the project's test-env cleanup) before you exit. Never leave a billing orphan.
+- **Capture the evidence** — ids, command output, the per-component PASS/FAIL table, screenshot paths
+  — into the PR **and** the report's `validation.evidence` field.
+- **HARD RULE — never substitute analysis for the test.** Reading the source and concluding "by
+  inspection X is true" is **NOT** a resolution of a validation ticket. If all you did was static code
+  analysis, the status is **not** `resolved`.
+- **If you genuinely cannot run the real test** from this headless worktree — it needs a resource you
+  can't reach (e.g. CI web-UI logs), an interactive credential, real hardware you're not set up for,
+  or a *subjective human* visual judgment — then **PARK**: status `parked`, set
+  `validation.ranLiveTest=false`, and put your analysis + the EXACT reason you couldn't run it + what a
+  human must do in `escalation`. Do **not** report `resolved`.
+
+The governor **enforces** this: a validation-type ticket reported `resolved` without
+`validation.ranLiveTest=true` + a non-empty `validation.evidence` is auto-downgraded to `parked`.
+
+### Scripted mechanical recipe → run the 90%, escalate ONLY the judgment (#102)
+Some validation shapes are **mostly mechanical + deterministic** with a thin human-judgment residue.
+If the project provides a **scripted recipe** that does the mechanical part end to end (set up → seed
+ground truth → drive the REAL UI → diff → PASS/FAIL table), **run the recipe instead of leaving the
+whole thing parked-forever-manual**, then escalate only the residue: put the recipe's PASS/FAIL table
+in `validation.evidence`, set `validation.ranLiveTest=true`, and fill `escalation` with the
+**judgment residue only**. Report `status:"parked"` — this is a **park WITH mechanical evidence** (the
+governor threads the table into the escalation so the operator judges with it in hand), NOT a
+park-empty "no test was run". No recipe for this shape, or it can't run here? Fall back to the normal
+rules above (run the real test yourself, or PARK with `ranLiveTest=false`).
+
 ## Output contract — REQUIRED
 Your FINAL message must be ONLY a single JSON object (no prose, no code fence), exactly this shape.
 Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
@@ -36,7 +83,8 @@ Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
   "newTickets": [{"title": "short title", "severity": "High|Medium|Low", "body": "Where/Observed/Fix direction/Done when"}],
   "crossRefs": {"overlaps": [14], "dependsOn": [9]},
   "migration": {"needed": true, "destructive": false, "name": "20260610_add_x", "note": "ADD COLUMN x nullable"},
-  "escalation": {"reason": "string", "question": "string", "options": ["A","B"]}
+  "validation": {"required": true, "ranLiveTest": true, "evidence": "set up X → drove the real UI → diffed; PASS/FAIL table in PR"},
+  "escalation": {"title": "≤10-word slug", "reason": "string", "question": "string", "options": ["A","B"]}
 }
 
 Field rules:
@@ -53,9 +101,14 @@ Field rules:
   project configured a migrate command. `destructive:true` for DROP/rename/type-change/
   NOT-NULL-without-default/data-backfill — the governor will NOT auto-merge; it escalates. **Be
   conservative: if unsure, mark `destructive:true`.** `null` if no schema change.
-- Use `null` for `pr`/`lessonPatch`/`escalation`/`migration` when N/A; `[]` for empty arrays.
+- `validation`: set for a **validation / test / spike** ticket (see the section above). `required:true`
+  + `ranLiveTest:true` + a concrete `evidence` string ONLY if you actually ran the test this run; if
+  you could not run it, `ranLiveTest:false` and PARK (don't report `resolved`). `null` for ordinary
+  code/docs tickets where no empirical run is the deliverable.
+- Use `null` for `pr`/`lessonPatch`/`escalation`/`migration`/`validation` when N/A; `[]` for empty arrays.
 - `status` MUST reflect reality: `resolved` only if a PR is open; `parked` if you escalated; `failed`
-  if you could not complete and did not cleanly escalate.
+  if you could not complete and did not cleanly escalate. A validation ticket is `resolved` ONLY with
+  `validation.ranLiveTest=true` + evidence — never on static analysis alone.
 
 ---
 (The operator doctrine is appended below by the governor.)

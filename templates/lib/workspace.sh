@@ -108,3 +108,30 @@ wsp_is_merge_repo() {
   for a in "${GOVERN_MERGE_REPOS[@]}"; do [ "$r" = "$a" ] && return 0; done
   return 1
 }
+
+# owner/repo slug for a short repo name — what `gh --repo` wants. The DEFAULT is
+# "$GITHUB_ORG/<repo>", which covers every sub-repo that lives under your org.
+# OVERRIDE this if a repo lives under a DIFFERENT owner (e.g. a skill-template
+# repo on your personal account while sub-repos are org-owned) — add a `case`
+# arm returning the cross-owner slug. Keep the default arm intact.
+wsp_repo_slug() { # short-repo-name -> owner/repo
+  case "$1" in
+    # example cross-owner override:
+    #   my-templates) printf '%s' "someuser/my-templates" ;;
+    *) printf '%s/%s' "$GITHUB_ORG" "$1" ;;
+  esac
+}
+
+# Local checkout dir for a short repo name. The DEFAULT is "$META_ROOT/<repo>"
+# (a sub-folder of the main checkout). OVERRIDE for a repo whose working copy
+# lives elsewhere (e.g. the meta-repo itself = $META_ROOT, or a repo cloned
+# outside the workspace). Used by merge-pr.sh to delete a lingering local
+# ticket-<N> branch after a squash-merge. Keep the default arm intact.
+wsp_repo_localdir() { # short-repo-name -> abs path
+  case "$1" in
+    # example overrides:
+    #   harness)   printf '%s' "$META_ROOT" ;;
+    #   my-templates) printf '%s' "$HOME/.config/my-templates" ;;
+    *) printf '%s/%s' "$META_ROOT" "$1" ;;
+  esac
+}

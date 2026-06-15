@@ -51,12 +51,17 @@ awk -v n="$N" '
 ' "$TICKETS_FILE" > "$tmp"
 mv "$tmp" "$TICKETS_FILE"
 
-# 2. Append newTickets (this file's own highest ## #N + 1, incrementing per item).
-maxn="$(grep -oE '^## #[0-9]+' "$TICKETS_FILE" | grep -oE '[0-9]+' | sort -n | tail -1 || true)"; maxn="${maxn:-0}"
+# 2. Append newTickets. Number each via the shared monotonic allocator (#54, #73):
+# govern::next_ticket_number returns max(persisted high-water mark in governor/.ticket-seq,
+# current tickets.md max) + 1 and bumps the seq, so deleting the highest `## #N` then filing leaves
+# a GAP instead of reclaiming the number, AND a number is never shared with a manual filing that
+# routes through the same helper. We already hold the bookkeep lock (BK_LOCK above), so tell the
+# helper to skip re-acquiring it — the mkdir mutex is not reentrant. The seq file is git-added below.
+SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
 count="$(printf '%s' "$report" | jq '.newTickets | length' 2>/dev/null || echo 0)"
 i=0
 while [[ "$i" -lt "$count" ]]; do
-  maxn=$((maxn+1))
+  maxn="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE")"
   title="$(printf '%s' "$report" | jq -r ".newTickets[$i].title")"
   sev="$(printf '%s' "$report" | jq -r ".newTickets[$i].severity // \"Medium\"")"
   body="$(printf '%s' "$report" | jq -r ".newTickets[$i].body")"
@@ -93,6 +98,7 @@ fi
 pr="$(printf '%s' "$report" | jq -r '(.pr.repo // "?") + "#" + ((.pr.number // 0)|tostring)')"
 ( cd "$commit_dir"
   git add "$(basename "$TICKETS_FILE")" ${patched:+"$patched"}
+  git add "$SEQ_FILE" 2>/dev/null || true  # #54 high-water mark (absolute path; no-op if outside repo, e.g. tests)
   git commit -q -m "docs(tickets): resolve #$N ($pr)" || true
 
   # Publish the bookkeep commit as a CAS-with-retry loop so a concurrent driver sharing one
