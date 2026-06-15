@@ -61,11 +61,21 @@ else
 fi
 
 RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$RUNDIR"
+# #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
+# so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
+# (a child process) inherits it.
+export GOVERN_RUN_DIR="$RUNDIR"
 STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; done_count=0
+# #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
+# merged dependency unblocked one) — drained BEFORE normal severity selection so the advice changes
+# behavior, not just the log. NA_SET = comma-wrapped set of "NOT govern-automatable" tickets (bold
+# marker in body); select-ticket already excludes them, this set lets the loop log the why + keep a
+# prioritized pick from ever resurrecting one.
+PRIORITY=""; NA_SET=","
 
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
@@ -88,6 +98,21 @@ consecutive_fails() { # ticket -> count
         if .stop then .
         elif ($e.status=="failed" or $e.status=="timeout") then {n:(.n+1),stop:false}
         else {n:.n,stop:true} end)).n' "$HISTORY" 2>/dev/null || echo 0
+}
+
+# Reclaim disk from a PRESERVED (parked/failed) worktree WITHOUT discarding any work.
+# node_modules / .next / dist are gitignored + regenerable — never uncommitted work — so
+# stripping them frees the bulk of a bootstrapped worktree while keeping the source checkout +
+# any diffs for inspection/resume. This is what stops a run from self-bricking: a handful of parks
+# no longer fills the disk (#48). Skipped in dry mode and when a worktree-cmd override is set (tests).
+slim_worktree() {
+  [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] || return 0
+  local wt; wt="$(wt_path "$1")"; [[ -d "$wt" ]] || return 0
+  local before after
+  before=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
+  find "$wt" -type d \( -name node_modules -o -name .next -o -name dist \) -prune -exec rm -rf {} + 2>/dev/null || true
+  after=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
+  govern::log "slimmed worktree ticket-$1: ${before:-?}MB → ${after:-?}MB (node_modules/.next/dist stripped; source + diffs kept)"
 }
 
 # Plain-words session log — written on EVERY exit (clean OR crash/kill/Ctrl-C). Says what ran +
@@ -136,6 +161,10 @@ trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in ticke
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
 
+# Meta-repo checkout that holds tickets.md (== origin/main for the harness lane). Defined once
+# here so both the run-start preflight (#71) and the per-ticket cross-driver re-verify (#108) share it.
+META_DIR="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+
 # #62: close the escalation lifecycle BEFORE selecting tickets — apply any operator answers the
 # relay recorded into escalations.md since the last run. "do-the-work" un-parks (the ticket
 # becomes selectable again this run); "defer" migrates the ticket to tickets-parked.md; a
@@ -147,24 +176,83 @@ else
   govern::log "[dry] would apply recorded escalation answers (un-park / migrate-to-parked / preferences) from escalations.md"
 fi
 
-# Checkout that holds tickets.md (== origin/main when parallel drivers share one origin). Defined
-# once so the per-ticket cross-driver re-verify (#108) can fetch + check the freshest origin/main.
-META_DIR="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+# #71: run-start preflight — reconcile the meta checkout's main with origin/main BEFORE cutting any
+# harness-lane PR. The harness lane branches every ticket-<N> PR off main; a stale/ahead/DIVERGED
+# local main (e.g. one pre-existing unpushed commit + a squash-merged harness PR) otherwise makes
+# every later harness PR conflict on tickets.md → un-mergeable → parked, cascading the whole run.
+# preflight-main.sh auto-reconciles (ff / push / rebase+push); it returns non-zero ONLY when main
+# truly diverged and couldn't be reconciled — then we HALT with one clear message instead of
+# silently cascading. Live only (dry-run logs intent).
+if [[ "$MODE" == "live" ]]; then
+  "$DIR/preflight-main.sh" "$META_DIR" \
+    || govern::die "run-start preflight: could NOT reconcile the meta-repo main checkout with origin/main — see the SPECIFIC reason logged just above (an uncommitted runtime artifact to commit/stash, a genuine rebase conflict, or a rejected push), not necessarily a divergence. Until reconciled, the harness lane would cut PRs off a stale base (#71). Resolve it — e.g. cd '$META_DIR' && git status && git pull --rebase origin main && git push — then re-run."
+else
+  govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
+fi
+
+# #92: announce (once) every ticket auto-skipped because its body carries a "NOT govern-automatable"
+# marker. select-ticket.sh excludes them silently (its stderr is suppressed by the caller), so
+# WITHOUT this log the skip would be invisible — the operator would never learn why a marked ticket
+# is never picked. They stay in tickets.md until a human handles them interactively / un-parks them.
+while IFS=$'\t' read -r na_n na_reason; do
+  [[ -n "$na_n" ]] || continue
+  NA_SET+="$na_n,"
+  govern::log "auto-skipping #$na_n — body marked '$na_reason' (not govern-automatable; handle interactively) — not selecting, no worker burned (#92)"
+done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 
 while :; do
   # --- hard bounds: stop BEFORE starting another ticket ---
   if [[ "$done_count" -ge "$MAX_TICKETS" ]]; then govern::log "reached GOVERN_MAX_TICKETS=$MAX_TICKETS — stopping"; break; fi
   elapsed=$(( $(date +%s) - START_EPOCH ))
   if [[ "$elapsed" -ge "$MAX_RUNTIME" ]]; then govern::log "reached GOVERN_MAX_RUNTIME=${MAX_RUNTIME}s (elapsed ${elapsed}s) — stopping"; break; fi
+  # Pre-flight disk guard (#48): never cascade phantom fast-fails on a full disk. If free space
+  # is below the worktree headroom, stop CLEANLY with a distinct reason — a disk artifact must
+  # not masquerade as worker failures and trip the bad-streak brake. Preserved worktrees are
+  # slimmed on park/fail, so this rarely fires; it's the backstop when it does.
+  if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
+    free_gb=$(df -k "$HOME" | awk 'NR==2 {printf "%d", $4/1024/1024}')
+    if [[ "${free_gb:-99}" -lt "${GOVERN_MIN_FREE_GB:-5}" ]]; then
+      govern::log "disk low (${free_gb}GB < ${GOVERN_MIN_FREE_GB:-5}GB) — stopping cleanly. Free space or resolve escalations to reclaim parked worktrees, then re-run."
+      break
+    fi
+  fi
 
-  if [[ -n "$TARGET" ]]; then N="$TARGET"; else N="$("$DIR/select-ticket.sh" "$excludes" 2>/dev/null || true)"; fi
+  if [[ -n "$TARGET" ]]; then
+    N="$TARGET"
+  else
+    # #92: drain the supervisor's "attempt-now" PRIORITY queue before normal severity selection,
+    # so an "unblocked-now" recommendation actually moves the ticket to the front. Pop the first
+    # entry that's still eligible (not excluded, not NOT-automatable, still in tickets.md); carry
+    # the rest forward. Fall back to the severity-ordered selector when the queue yields nothing.
+    N=""
+    if [[ -n "$PRIORITY" ]]; then
+      _newpri=""
+      for p in ${PRIORITY//,/ }; do
+        [[ -n "$p" ]] || continue
+        if [[ -z "$N" && ",$excludes," != *",$p,"* && "$NA_SET" != *",$p,"* ]] \
+             && grep -qE "^## #$p([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
+          N="$p"; govern::log "supervisor → attempting #$p now (prioritized over severity order) (#92)"
+        else
+          _newpri="${_newpri:+$_newpri,}$p"
+        fi
+      done
+      PRIORITY="$_newpri"
+    fi
+    [[ -n "$N" ]] || N="$("$DIR/select-ticket.sh" "$excludes" 2>/dev/null || true)"
+  fi
   [[ -n "$N" ]] || { govern::log "no eligible tickets — done"; break; }
 
   # Per-ticket CLAIM lock (#41): two concurrent drivers must never work the same ticket. Non-
-  # blocking — if a live other driver holds it, exclude it this run and pick another (or stop in
+  # blocking — if another driver holds it, exclude it this run and pick another (or stop in
   # single-ticket mode). Released after the ticket's outcome; on_exit frees an in-flight claim.
+  # #104: take the claim in EVERY mode (dry too), not just live. The acquire/release is purely a
+  # mkdir/rmdir under governor/.locks — no PR, no commit, no real side effect — so a dry dual-run
+  # faithfully REHEARSES the no-double-claim safety net (two dry drivers on the same backlog with
+  # NO --exclude visibly contend on .locks/ticket-N) without opening a single real PR. The
+  # live-only gate stays on merge/bookkeep/worktree teardown (those DO have side effects); the
+  # claim does not.
   CUR_CLAIM="$GOVERNOR_DIR/.locks/ticket-$N"
-  if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] && ! govern::lock_try "$CUR_CLAIM"; then
+  if ! govern::lock_try "$CUR_CLAIM"; then
     govern::log "#$N already claimed by another driver — skipping"
     CUR_CLAIM=""
     [[ -n "$TARGET" ]] && break
@@ -227,6 +315,40 @@ while :; do
   crossN="$(printf '%s' "$report" | jq -r '((.crossRefs.overlaps//[])+(.crossRefs.dependsOn//[]))|length' 2>/dev/null || echo 0)"
   anomaly=0
 
+  # #55 safety net: a worker may have OPENED a PR but then failed to emit a valid JSON report
+  # (so status came back failed/empty) — and/or pushed a non-standard branch. Before treating
+  # this as failed/parked, check for a real open PR for this ticket; if one exists, adopt it as
+  # the resolved outcome so the work is merged + bookkept instead of orphaned and re-failed.
+  if [[ "$status" != "resolved" && "$MODE" == "live" && -z "$resumed" ]]; then
+    found="$(govern::find_pr "$N" || true)"
+    if [[ -n "$found" ]]; then
+      set -- $found; frepo="$1"; fpr="$2"; furl="${3:-}"
+      govern::log "#$N reported '$status' but PR $frepo#$fpr exists — adopting it as resolved (#55)"
+      report="$(jq -nc --arg r "$frepo" --argjson n "$fpr" --arg u "$furl" \
+        '{status:"resolved",pr:{repo:$r,number:$n,url:$u},lessonPatch:null,newTickets:[],crossRefs:{},escalation:null}')"
+      status="resolved"
+    fi
+  fi
+
+  # #67 VALIDATION-EVIDENCE GATE: a ticket whose deliverable is a LIVE/empirical result (a
+  # "VALIDATION"/"SPIKE" ticket, a "**Type:** Validation spike" line, or "live-verify") must NOT
+  # be auto-resolved on static code analysis. If the worker didn't actually run the test
+  # (validation.ranLiveTest!=true or no evidence), downgrade to parked + escalate so a human (or a
+  # properly-equipped re-run) produces real evidence — never silently accept a code-reading verdict.
+  # Fires only on validation-type tickets, so ordinary code tickets are unaffected.
+  if [[ "$status" == "resolved" && "$MODE" == "live" ]]; then
+    tblock="$(awk -v n="$N" 'index($0,"## #" n " ")==1{f=1} f{print} f&&/^---$/{exit}' "$TICKETS_FILE" 2>/dev/null || true)"
+    if printf '%s' "$tblock" | grep -qE '^## #[0-9]+ —.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
+      ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
+      eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
+      if [[ "$ranlive" != "true" || -z "$eviden" ]]; then
+        govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence (ranLiveTest=$ranlive) — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
+        report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation ticket needs a real test",reason:"reported resolved without running the live test — a validation/spike ticket requires empirical evidence (deploy/snapshot/restore/UI run with captured output), not static code analysis",question:"run the actual test and attach evidence, OR confirm it cannot be automated and decide disposition",options:[]}' 2>/dev/null || printf '%s' "$report")"
+        status="parked"; anomaly=1
+      fi
+    fi
+  fi
+
   if [[ "$status" == "resolved" ]]; then
     repo="$(printf '%s' "$report" | jq -r '.pr.repo // empty' 2>/dev/null || true)"
     pr="$(printf '%s' "$report" | jq -r '.pr.number // empty' 2>/dev/null || true)"
@@ -256,8 +378,29 @@ while :; do
           st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"; tries=$((tries+1))
         done
         if [[ "$st" == "green" || "$st" == "none" ]]; then
-          "$DIR/merge-pr.sh" "$repo" "$pr" || govern::log "merge failed $repo#$pr"
-          if [[ "$mneeded" == "true" ]]; then
+          merged=0
+          if "$DIR/merge-pr.sh" "$repo" "$pr"; then
+            merged=1
+          else
+            # #71: a "not mergeable" failure is most often a STALE PR base (origin/main moved
+            # under the PR), not a real content conflict. Try ONE 'gh pr update-branch' (rebase
+            # the PR onto origin/main) + re-await-CI + re-merge before giving up — this auto-clears
+            # the common case without an operator. A genuine conflict still falls through to park.
+            if [[ "$MODE" == "live" ]] && gh pr update-branch "$pr" --repo "$GITHUB_ORG/$repo" >/dev/null 2>&1; then
+              govern::log "merge failed $repo#$pr — rebased PR onto origin/main (gh pr update-branch); re-checking CI + retrying merge [#71]"
+              st2="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+              if [[ "$st2" == "green" || "$st2" == "none" ]] && "$DIR/merge-pr.sh" "$repo" "$pr"; then merged=1; fi
+            fi
+          fi
+          if [[ "$merged" == "0" ]]; then
+            # Merge FAILED (conflict / failing required check) even after a rebase-onto-origin
+            # attempt. Do NOT fall through as "resolved" — that would bookkeep the ticket as done
+            # and DELETE its block while the PR sits unmerged (#42). Park instead: keeps the
+            # ticket, leaves the PR open, preserves the worktree, and escalates to the operator.
+            govern::log "merge failed $repo#$pr — PR left open; parking (ticket NOT deleted) [#42]"
+            report="$(printf '%s' "$report" | jq -c --arg p "$repo#$pr" '.escalation={reason:("PR "+$p+" could not be merged (conflict or failing required check) — needs a manual rebase onto origin/main + merge"),question:("rebase "+$p+" onto origin/main, resolve conflicts, then merge"),options:[]}')"
+            status="parked"
+          elif [[ "$mneeded" == "true" ]]; then
             # ADDITIVE migration: apply to prod right after merge — old running code ignores the new
             # nullable/default column, new code arrives after, so column exists when needed (safe).
             # Only reached when GOVERN_MIGRATE_CMD is set (empty case parked above).
@@ -315,20 +458,40 @@ while :; do
       [[ "$crossN" -gt 0 ]] && { anomaly=1; govern::log "worker flagged $crossN cross-ref(s) on #$N"; }
       ;;
     parked)
+      # Insert the escalation UNDER the "## Open" header — NOT at EOF. select-ticket.sh only
+      # excludes ticket #s whose `### #N` entry sits beneath "## Open", so an EOF append (which
+      # lands under "## Resolved") would NOT be skipped on a resume → the park gets re-attempted.
+      _blk="$(mktemp)"
       # #58: the heading is a short slug (escalation.title if the worker gave one, else the first
-      # 80 chars of reason) so the escalations list stays scannable; the full prose lives under Reason.
+      # 80 chars of reason) so the Open list stays scannable; the full prose lives under Reason.
       # #62: the Disposition field carries a machine-readable token the relay writes when the
       # operator answers (do-the-work | defer | keep-open); escalations-apply-answers.sh reads it
-      # at the next run-start to un-park / migrate-to-parked, closing the lifecycle. Options is the
-      # worker's known choices, surfaced to the operator by the relay.
-      { printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
+      # at the next run-start to un-park / migrate-to-parked, closing the lifecycle.
+      printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
           "$N" "$(printf '%s' "$report" | jq -r '.escalation.title // ((.escalation.reason // "parked")[0:80])')" \
           "$(printf '%s' "$report" | jq -r '.escalation.reason // ""')" \
           "$(printf '%s' "$report" | jq -r '.escalation.question // ""')" \
-          "$(printf '%s' "$report" | jq -r '(.escalation.options // []) | if type=="array" then join(" / ") else tostring end')"
-      } >> "$ESCALATIONS_FILE" 2>/dev/null || true
+          "$(printf '%s' "$report" | jq -r '(.escalation.options // []) | if type=="array" then join(" / ") else tostring end')" > "$_blk"
+      # #102: a "park WITH mechanical evidence" — the worker ran a scripted recipe (ranLiveTest=true
+      # + evidence) and is escalating ONLY the human-judgment residue. Surface that PASS/FAIL table
+      # in the escalation so the operator judges WITH the mechanical result, not a park-empty "no
+      # test was run". (The mechanical 90% is already done; only the judgment 10% is left.)
+      _evid="$(printf '%s' "$report" | jq -r 'if (.validation.ranLiveTest==true) and ((.validation.evidence // "")|length>0) then .validation.evidence else "" end' 2>/dev/null || true)"
+      if [[ -n "$_evid" ]]; then
+        printf -- '- **Mechanical evidence (recipe ran — judge the residue):** %s\n' "$_evid" >> "$_blk"
+        govern::log "#$N parked WITH mechanical evidence — escalating judgment residue only (#102)"
+      fi
+      if grep -q '^## Open' "$ESCALATIONS_FILE" 2>/dev/null; then
+        _tmp="$(mktemp)"
+        awk -v bf="$_blk" '{print} /^## Open/ && !done {while ((getline l < bf) > 0) print l; close(bf); done=1}' \
+          "$ESCALATIONS_FILE" > "$_tmp" && mv "$_tmp" "$ESCALATIONS_FILE"
+      else
+        cat "$_blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
+      fi
+      rm -f "$_blk"
       record "$N" parked "escalated; worktree preserved: $(wt_path "$N")"
       govern::log "#$N PARKED — escalation filed; worktree PRESERVED at $(wt_path "$N")"
+      slim_worktree "$N"
       excludes="$excludes,$N"; npark=$((npark+1)); bad_streak=$((bad_streak+1))
       ;;
     infra)
@@ -341,13 +504,15 @@ while :; do
       INFRA_HALT_ERR="$(printf '%s' "$report" | jq -r '.infra.error // "infra/auth outage"' 2>/dev/null || echo 'infra/auth outage')"
       INFRA_HALT=1
       record "$N" infra "infra/auth outage — not a ticket fault; worktree preserved: $(wt_path "$N")"
+      slim_worktree "$N"
       [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
       govern::log "INFRA HALT — workers cannot authenticate / reach the API ($INFRA_HALT_ERR). Re-authenticate (\`claude login\`) or restore connectivity, then re-run. #$N and the remaining backlog were NOT recorded as failed (#90)."
       break
       ;;
     *)
-      record "$N" failed "see $LOG_ROOT/ticket-$N/worker.jsonl; worktree preserved: $(wt_path "$N")"
+      record "$N" failed "see $(govern::worker_logdir "$N")/worker.jsonl; worktree preserved: $(wt_path "$N")"
       govern::log "#$N FAILED — worktree PRESERVED at $(wt_path "$N") (nothing discarded; re-run resumes)"
+      slim_worktree "$N"
       excludes="$excludes,$N"; nfail=$((nfail+1)); bad_streak=$((bad_streak+1))
       ;;
   esac
@@ -363,6 +528,22 @@ while :; do
     since_review=0
     concerns="$(printf '%s' "$verdict" | jq -r '(.concerns // [])|join("; ")' 2>/dev/null || true)"
     [[ -n "$concerns" ]] && printf -- '- after #%s: %s\n' "$N" "$concerns" >> "$REVIEW"
+    # #57: the supervisor can defer specific tickets for the rest of THIS run (soft in-run skip —
+    # not a park). Add them to the exclude set so select-ticket stops picking them this run.
+    for s in $(printf '%s' "$verdict" | jq -r '(.skipThisRun // [])[]' 2>/dev/null || true); do
+      if [[ "$s" =~ ^[0-9]+$ && ",$excludes," != *",$s,"* ]]; then
+        excludes="$excludes,$s"; govern::log "supervisor → deferring #$s for the rest of this run (skipThisRun)"
+      fi
+    done
+    # #92: the supervisor can also recommend a ticket be ATTEMPTED NOW (e.g. its dependency merged
+    # this run → it's unblocked). Enqueue it onto PRIORITY so the next selection picks it before
+    # normal severity order — turning the "unblocked-now" advice into an actual selection change,
+    # not just a logged concern. Ignored if it's excluded, NOT-automatable, or already queued.
+    for a in $(printf '%s' "$verdict" | jq -r '(.attemptNext // [])[]' 2>/dev/null || true); do
+      if [[ "$a" =~ ^[0-9]+$ && ",$excludes," != *",$a,"* && "$NA_SET" != *",$a,"* && ",$PRIORITY," != *",$a,"* ]]; then
+        PRIORITY="${PRIORITY:+$PRIORITY,}$a"; govern::log "supervisor → will attempt #$a next (attemptNext / unblocked-now) (#92)"
+      fi
+    done
     if [[ "$(printf '%s' "$verdict" | jq -r '.verdict // "ok"' 2>/dev/null)" == "halt" ]]; then
       govern::log "SUPERVISOR HALT: $(printf '%s' "$verdict" | jq -r '.haltReason // ""')"; break
     fi
@@ -380,7 +561,10 @@ done
 # NEXT run-start applies). Also fires GOVERN_NOTIFY_CMD when pending escalations exist, so a
 # no-session run still surfaces a signal.
 if [[ "$MODE" == "live" ]]; then
-  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
+  # #92: pass the run's accumulated supervisor concerns ($REVIEW) so they're surfaced to the
+  # relay/operator at run-end (folded into pending-escalations.json + the notify message), not
+  # buried only in review.md. A concern with no matching escalation would otherwise be invisible.
+  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" "$REVIEW" >/dev/null 2>&1 \
     || govern::log "escalations-emit-pending failed (non-fatal)"
 fi
 

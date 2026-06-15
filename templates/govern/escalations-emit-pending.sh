@@ -2,19 +2,32 @@
 # #62 — driver→relay hand-off. Scan escalations.md "## Open" and write a machine-readable
 # governor/pending-escalations.json listing the entries that STILL need an operator answer
 # (Answer field is the `_(operator)_` placeholder). The launching Claude session (the /govern
-# relay) reads this file, presents each via AskUserQuestion, and writes the chosen Answer +
+# relay) reads this file, presents ALL entries in a single batched AskUserQuestion (#89 — ≤4 per
+# prompt, chunk if >4, never one prompt per ticket), and writes the chosen Answer +
 # Disposition back into escalations.md — closing the write-only gap where parked decisions sat
 # unanswered indefinitely. Also fires the configured notification channel (GOVERN_NOTIFY_CMD)
 # when pending escalations exist and no session is watching (the driver is headless).
 #
-# Usage:  escalations-emit-pending.sh [run-id]
+# Usage:  escalations-emit-pending.sh [run-id] [review-file]
 #   prints the pending count to stdout; writes governor/pending-escalations.json
+#   review-file (#92): the run's review.md of supervisor concerns — its non-empty lines are folded
+#   into the JSON as `supervisorConcerns` and into the notify message, so the supervisor's advice
+#   reaches the relay/operator at run-end instead of dying in review.md.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 
 RUN_ID="${1:-}"
+REVIEW_FILE="${2:-}"
 OUT="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
+
+# #92: collect the run's supervisor concerns (one JSON array of trimmed, non-empty lines).
+concerns='[]'
+if [[ -n "$REVIEW_FILE" && -s "$REVIEW_FILE" ]]; then
+  concerns="$(grep -v '^[[:space:]]*$' "$REVIEW_FILE" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo '[]')"
+  [[ -n "$concerns" ]] || concerns='[]'
+fi
+nconcerns="$(printf '%s' "$concerns" | jq 'length' 2>/dev/null || echo 0)"
 
 # Collect open entries that are genuinely unanswered (Answer is still the placeholder).
 pending="$(govern::escalations_open_ndjson | jq -s '
@@ -24,21 +37,31 @@ pending="$(govern::escalations_open_ndjson | jq -s '
 count="$(printf '%s' "$pending" | jq 'length' 2>/dev/null || echo 0)"
 
 # Stamp with epoch (date is allowed in bash) so the relay/operator can see staleness.
-jq -n --argjson e "$pending" --arg run "$RUN_ID" --argjson ts "$(date +%s)" \
-  '{generatedAt: $ts, run: $run, count: ($e|length), escalations: $e}' > "$OUT" 2>/dev/null \
+# #92: supervisorConcerns rides alongside the escalations so the relay surfaces the supervisor's
+# run-end advice (e.g. "#N unblocked — attempt now", "#M NOT automatable") even when it produced
+# no formal escalation of its own.
+jq -n --argjson e "$pending" --argjson c "$concerns" --arg run "$RUN_ID" --argjson ts "$(date +%s)" \
+  '{generatedAt: $ts, run: $run, count: ($e|length), escalations: $e, supervisorConcerns: $c}' > "$OUT" 2>/dev/null \
   || govern::log "could not write $OUT"
 
 if [[ "$count" -gt 0 ]]; then
   govern::log "$count open escalation(s) await an operator answer → $OUT (relay presents these via AskUserQuestion)"
-  # Notification channel (#62): the driver is headless, so a no-session run would otherwise leave
-  # the decisions silent. If GOVERN_NOTIFY_CMD is configured, feed it a one-line message on stdin
-  # (best-effort, never fatal). Default unset → the run summary's "Needs you" section is the signal.
-  if [[ -n "${GOVERN_NOTIFY_CMD:-}" ]]; then
-    msg="governor: $count escalation(s) need your answer — see governor/pending-escalations.json (tickets: $(printf '%s' "$pending" | jq -r 'map(.ticket)|join(", ")'))"
-    printf '%s\n' "$msg" | eval "${GOVERN_NOTIFY_CMD}" >/dev/null 2>&1 \
-      || govern::log "GOVERN_NOTIFY_CMD failed (non-fatal)"
-  fi
+elif [[ "$nconcerns" -gt 0 ]]; then
+  govern::log "no pending escalations, but $nconcerns supervisor concern(s) surfaced → $OUT (supervisorConcerns)"
 else
   govern::log "no pending escalations → $OUT (count 0)"
+fi
+
+# Notification channel (#62, extended #92): the driver is headless, so a no-session run would
+# otherwise leave the decisions/advice silent. Fire GOVERN_NOTIFY_CMD when EITHER an escalation
+# needs an answer OR the supervisor raised a concern (best-effort, never fatal). Default unset →
+# the run summary's "Needs you" / "Supervisor notes" sections are the signal.
+if [[ -n "${GOVERN_NOTIFY_CMD:-}" ]] && { [[ "$count" -gt 0 ]] || [[ "$nconcerns" -gt 0 ]]; }; then
+  msg="governor:"
+  [[ "$count" -gt 0 ]] && msg="$msg $count escalation(s) need your answer (tickets: $(printf '%s' "$pending" | jq -r 'map(.ticket)|join(", ")'))."
+  [[ "$nconcerns" -gt 0 ]] && msg="$msg $nconcerns supervisor concern(s) to review."
+  msg="$msg See governor/pending-escalations.json"
+  printf '%s\n' "$msg" | eval "${GOVERN_NOTIFY_CMD}" >/dev/null 2>&1 \
+    || govern::log "GOVERN_NOTIFY_CMD failed (non-fatal)"
 fi
 echo "$count"
