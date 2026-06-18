@@ -1,0 +1,66 @@
+name: CI
+
+# Lightweight gate for the templates that scaffold OTHER workspaces.
+# The governor auto-merges this repo's PRs on a "green-or-no-checks" rule, so without
+# a PR-level check every PR merges on "no-checks" = always-mergeable, with the worker's
+# self-reported `bash -n` as the only (unenforced) verification. This workflow turns that
+# into a real green gate: a PR that ports a broken template (syntax error, leftover
+# conflict marker) goes RED here and is NOT auto-merged.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-templates:
+    name: Lint shell templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Blocking gate #1: every shell script must parse ---
+      - name: bash -n (syntax check every shell script)
+        run: |
+          set -uo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "No shell scripts found — nothing to check"
+            exit 0
+          fi
+          fail=0
+          for f in "${scripts[@]}"; do
+            if bash -n "$f" 2>/tmp/bashn.err; then
+              echo "ok   - $f"
+            else
+              echo "FAIL - $f"
+              sed 's/^/         /' /tmp/bashn.err
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::One or more shell scripts have a syntax error"
+            exit 1
+          fi
+
+      # --- Blocking gate #2: no leftover merge-conflict markers ---
+      - name: Conflict-marker scan
+        run: |
+          set -uo pipefail
+          # Git writes these exact markers; any one at line-start = an unresolved conflict.
+          # Require the marker to be followed by a space (branch name) or end-of-line so
+          # decorative rules of <, =, > don't false-positive. Exclude this workflow itself.
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)( |$)' -- ':!.github/workflows/ci.yml'; then
+            echo "::error::Leftover git conflict markers found (see matches above)"
+            exit 1
+          fi
+          echo "ok - no conflict markers"
+
+      # --- Advisory only: surface shellcheck findings, never block the gate ---
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          mapfile -t scripts < <(git ls-files '*.sh')
+          # -S warning keeps the signal high; `|| true` makes it advisory.
+          shellcheck -S warning "${scripts[@]}" || true
