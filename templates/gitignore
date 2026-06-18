@@ -14,11 +14,17 @@ governor/.bookkeep.lock/
 governor/.locks/
 # governor cross-run failure history (#60) — per-machine runtime state, not source
 governor/ticket-history.jsonl
-# if the ROOT uses pnpm: pnpm 11 writes an empty root lockfile before every
-# `pnpm <script>` and regenerates it on every run; config can't suppress it in v11.
-# Root-anchored so a real lockfile in a sub-repo is unaffected. (Harmless for an
-# npm/yarn/bun root.)
-/pnpm-lock.yaml
+# governor TokenJam run id — per-run runtime state (one per loop invocation; removed on clean exit)
+governor/.run-id
+# Root lockfile policy — the ROOT uses ONE package manager (ROOT_PM in
+# scripts/lib/workspace.sh). The off-PM root lockfiles are ignored so a stray
+# `npm install` / `pnpm install` in the wrong PM can't commit a divergent root
+# lockfile. (A pnpm root also ignores its OWN lockfile: pnpm v11 rewrites an empty
+# root lockfile on every run; config can't suppress it.) All entries are root-
+# anchored, so a real lockfile inside a sub-repo is unaffected. /meta-repo:setup
+# replaces the line below with the off-PM lockfiles for the chosen ROOT_PM
+# (npm root → /pnpm-lock.yaml /yarn.lock /bun.lockb).
+__ROOT_LOCKFILE_IGNORES__
 
 # env files (per-repo .env is the source of truth; .env.example is committed)
 .env
