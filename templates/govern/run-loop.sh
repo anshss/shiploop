@@ -65,6 +65,36 @@ RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$RUNDIR"
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
 # (a child process) inherits it.
 export GOVERN_RUN_DIR="$RUNDIR"
+# TokenJam cross-session run id — ONE per loop invocation, shared by every worker this run spawns.
+# TokenJam groups all sessions that share a `tokenjam.run_id` OTel resource attribute into a single
+# "Run", so a whole governor run shows up as one unit. Generate the id here (before the ticket loop),
+# persist it, and EXPORT it; spawn-worker.sh stamps it into each worker claude's
+# OTEL_RESOURCE_ATTRIBUTES. The file lets a crashed/interrupted run that gets RE-RUN resume under the
+# SAME id (its workers still group with the original Run) — on_exit removes it on a CLEAN finish so
+# the next genuine invocation starts a fresh Run. Format/path overridable for tests.
+#
+# Freshness guard (#3): only ADOPT a persisted id when the file is still FRESH. tj_heartbeat (below)
+# bumps the file's mtime every loop iteration, so "age" measures time since the run's last activity,
+# NOT time since it started — a resume happens shortly after a crash and re-adopts, while a STALE
+# leftover from an unrelated earlier run is ignored so its id can't silently swallow this run into the
+# same Run. The window auto-scales past one ticket's max wall-clock (worker timeout + 1h) so a mid-run
+# resume always re-adopts; override with GOVERN_RUN_ID_MAX_AGE.
+TJ_RUN_ID_FILE="${GOVERN_RUN_ID_FILE:-$GOVERNOR_DIR/.run-id}"
+TJ_RUN_ID_MAX_AGE="${GOVERN_RUN_ID_MAX_AGE:-$(( ${GOVERN_WORKER_TIMEOUT:-3600} + 3600 ))}"
+if [[ -s "$TJ_RUN_ID_FILE" ]]; then
+  if [[ "$(govern::_lock_age "$TJ_RUN_ID_FILE")" -le "$TJ_RUN_ID_MAX_AGE" ]]; then
+    TJ_RUN_ID="$(tr -d '[:space:]' < "$TJ_RUN_ID_FILE" 2>/dev/null || true)"
+  else
+    govern::log "ignoring stale run-id file ($(govern::_lock_age "$TJ_RUN_ID_FILE")s old > ${TJ_RUN_ID_MAX_AGE}s) — starting a fresh TokenJam Run"
+  fi
+fi
+if [[ -z "${TJ_RUN_ID:-}" ]]; then
+  TJ_RUN_ID="gov-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$(dirname "$TJ_RUN_ID_FILE")" 2>/dev/null || true
+fi
+printf '%s\n' "$TJ_RUN_ID" > "$TJ_RUN_ID_FILE" 2>/dev/null || true   # (re)stamp content + mtime at run start
+export TJ_RUN_ID
+govern::log "TokenJam run id: $TJ_RUN_ID (every worker tagged tokenjam.run_id=$TJ_RUN_ID)"
 STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
@@ -87,6 +117,15 @@ record() { # ticket status note
   printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}\n' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)" >> "$HISTORY" 2>/dev/null || true
 }
 wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
+
+# TokenJam: bump the run-id file's mtime so its age reflects LIVENESS (the run-start freshness guard
+# reads it to tell a prompt resume from an unrelated stale leftover) — and self-heal it if a concurrent
+# driver's clean exit removed it out from under us. Cheap; once per ticket iteration is ample.
+tj_heartbeat() {
+  [[ -n "${TJ_RUN_ID_FILE:-}" && -n "${TJ_RUN_ID:-}" ]] || return 0
+  if [[ -s "$TJ_RUN_ID_FILE" ]]; then touch "$TJ_RUN_ID_FILE" 2>/dev/null || true
+  else printf '%s\n' "$TJ_RUN_ID" > "$TJ_RUN_ID_FILE" 2>/dev/null || true; fi
+}
 
 # #60: trailing CONSECUTIVE failed/timeout outcomes for ticket $1 across the cross-run history
 # (a resolved/parked outcome resets the streak). Prints the count (0 if no history).
@@ -153,6 +192,12 @@ write_summary() {
 }
 on_exit() {
   write_summary
+  # TokenJam run id: KEEP the run-id file on an INTERRUPTED / infra-halted run so a resume reuses the
+  # same id (its workers still group with the original Run); REMOVE it on a clean finish so the next
+  # invocation starts a fresh Run (one run id per loop invocation).
+  if [[ "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 && -n "${TJ_RUN_ID_FILE:-}" ]]; then
+    rm -f "$TJ_RUN_ID_FILE" 2>/dev/null || true
+  fi
   [[ -n "$CUR_CLAIM" ]] && govern::lock_release "$CUR_CLAIM"   # free the in-flight ticket for a re-run (#41)
   [[ "$TOOK_LOCK" -eq 1 ]] && rmdir "$LOCK" 2>/dev/null || true
 }
@@ -201,6 +246,7 @@ while IFS=$'\t' read -r na_n na_reason; do
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 
 while :; do
+  tj_heartbeat   # keep the run-id file fresh (liveness) so a prompt resume re-adopts this run's id (#3)
   # --- hard bounds: stop BEFORE starting another ticket ---
   if [[ "$done_count" -ge "$MAX_TICKETS" ]]; then govern::log "reached GOVERN_MAX_TICKETS=$MAX_TICKETS — stopping"; break; fi
   elapsed=$(( $(date +%s) - START_EPOCH ))

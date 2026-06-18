@@ -159,6 +159,26 @@ govern::lock_try() { # lockdir [stale_s=4200]
 }
 govern::lock_release() { rmdir "$1" 2>/dev/null || true; }
 
+# ── TokenJam cross-session run tagging (OTel resource attributes) ────────────
+# Build the OTEL_RESOURCE_ATTRIBUTES string for a governor-spawned claude session so TokenJam groups
+# EVERY session of one run (per-ticket workers + supervisor + self-improve) under a single
+# `tokenjam.run_id` "Run". APPENDS to any INHERITED attributes (an onboarding / per-terminal claude
+# wrapper may already set service.name / service.namespace / service.instance.id) — never clobbering
+# them. The run id comes from TJ_RUN_ID (exported by run-loop.sh) or, for a standalone invocation, the
+# persisted run-id file. service.instance.id is set to $1 (a distinct per-session label) ONLY when one
+# isn't already present in the inherited attrs. Prints the assembled string; callers pass it to the
+# child via `env OTEL_RESOURCE_ATTRIBUTES=...` — it is NEVER exported into the governor's own shell.
+govern::otel_attrs() { # <instance-label> -> "k=v,k=v,..."
+  local label="${1:-}" rid="${TJ_RUN_ID:-}" rfile attrs="${OTEL_RESOURCE_ATTRIBUTES:-}"
+  if [[ -z "$rid" ]]; then
+    rfile="${GOVERN_RUN_ID_FILE:-$GOVERNOR_DIR/.run-id}"
+    [[ -s "$rfile" ]] && rid="$(tr -d '[:space:]' < "$rfile" 2>/dev/null || true)"
+  fi
+  [[ -n "$rid" ]] && attrs="${attrs:+$attrs,}tokenjam.run_id=$rid"
+  [[ -n "$label" && "$attrs" != *"service.instance.id="* ]] && attrs="${attrs:+$attrs,}service.instance.id=$label"
+  printf '%s' "$attrs"
+}
+
 # ── monotonic ticket numbering (#54, #73) ───────────────────────────────────
 # THE single source of truth for "what's the next tickets.md number". Both the governor's
 # auto-filing (govern-bookkeep) AND any manual filing (operator/relay sessions, /resolve sweeps,

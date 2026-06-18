@@ -80,7 +80,15 @@ strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && stri
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
+
+# TokenJam cross-session run tagging: stamp this worker's OTEL_RESOURCE_ATTRIBUTES so TokenJam groups
+# every session of one run under a single tokenjam.run_id "Run", labelled with the ticket slug.
+# govern::otel_attrs appends to any inherited attrs (never clobbers) and is passed ONLY to the spawned
+# claude via `env VAR=...` below — the governor's own shell OTEL_RESOURCE_ATTRIBUTES is unchanged.
+otel_attrs="$(govern::otel_attrs "$slug")"
+
 govern::log "spawning worker for #$N (mode=$mode, model=$model, timeout=${to}s) in $wtpath"
+govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 set +e
 # --setting-sources user: drop the PROJECT .claude/settings.json hooks so a worker does NOT
 # inherit a ticket-sweep Stop hook (clobbers stdout), a SessionEnd cleanup (fleet-wide side
@@ -97,7 +105,7 @@ set +e
 ( cd "$wtpath" && exec env \
     -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
     -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
-    GOVERN_REPORT_PATH="$report_path" "$claude_bin" -p "$prompt" \
+    GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
     $strict_mcp \
