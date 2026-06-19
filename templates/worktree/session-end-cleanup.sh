@@ -17,12 +17,22 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/workspace.sh
 source "$ROOT/scripts/lib/workspace.sh"
 
-# Kill whatever holds a TCP port. macOS bash has no `xargs -r`, so guard empty.
+# Kill processes on $port that THIS checkout owns (cwd under $2), never a parallel
+# session's (anti-pattern #10). Killing whoever holds the port would SIGKILL a
+# neighbor's stack mid-run on a slot collision — or via the slot-0 base-port
+# fallback below. A process from another checkout is left alone; this is a cleanup
+# hook, so we silently skip rather than erroring.
 kill_port() {
-  local port="$1" pids
+  local port="$1" owner_root="$2" pids pid pcwd
   [ -n "$port" ] || return 0
   pids=$(lsof -ti tcp:"$port" 2>/dev/null) || true
-  [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+  for pid in $pids; do
+    pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    case "$pcwd" in
+      "$owner_root"|"$owner_root"/*) kill -9 "$pid" 2>/dev/null || true ;;
+      *) : ;;  # another checkout's process — never ours to kill
+    esac
+  done
 }
 
 dir="$PWD"
@@ -50,7 +60,7 @@ while [ "$dir" != "/" ]; do
       if [ -z "$port" ]; then
         port=$(wsp_repo_port "$repo" "${WORKTREE_SLOT:-0}")
       fi
-      kill_port "$port"
+      kill_port "$port" "$dir"   # only if cwd under this worktree
     done
     exit 0
   fi
@@ -64,6 +74,6 @@ fi
 
 for repo in "${REPOS[@]}"; do
   port=$(wsp_repo_port "$repo" 0)
-  kill_port "$port"
+  kill_port "$port" "$ROOT"   # only if cwd under the main checkout
 done
 exit 0
