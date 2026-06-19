@@ -12,14 +12,22 @@
 # Design constraints (a Stop hook that always blocks would loop forever):
 #   1. Fire AT MOST ONCE per session    — marker keyed on session_id.
 #   2. Never re-fire inside its own loop — honor stop_hook_active.
-#   3. Only fire when the session touched code — uncommitted changes OR a branch
-#      ahead of origin/main in any sub-repo, OR uncommitted tickets.md. Pure
-#      Q&A / read-only sessions produce none of these, so they stop silently.
+#   3. Only fire when THIS session touched code — measured against a baseline the
+#      SessionStart hook (session-snapshot.sh) snapshots at session start, so
+#      prior-session residue (commits already ahead of origin/main, dirty trees a
+#      previous run left behind) does NOT count. Without that gate the single fire
+#      was spent at session START on stale state, and the marker then short-
+#      circuited the REAL end of a long session. If no baseline exists (older
+#      session, or SessionStart didn't run), fall back to the cruder absolute
+#      check (any dirty tree / ahead branch / dirty tickets.md). Pure Q&A /
+#      read-only sessions change nothing vs the baseline, so they stop silently.
 set -uo pipefail
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/workspace.sh
 source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
+# shellcheck source=../lib/session-state.sh
+source "$SELF_ROOT/scripts/lib/session-state.sh" 2>/dev/null || source "$SELF_ROOT/lib/session-state.sh" 2>/dev/null || true
 MAIN="$META_ROOT"
 
 # --- read the Stop hook stdin payload (session_id, stop_hook_active, cwd) ---
@@ -43,7 +51,26 @@ while [ "$root" != "/" ] && [ ! -f "$root/worktree.env" ] && [ ! -f "$root/ticke
 done
 [ -d "$root" ] || root="$MAIN"
 
+# Did THIS session touch code? Compare the current state against the baseline the
+# SessionStart hook (session-snapshot.sh) snapshotted, so pre-existing residue
+# does not count. When no baseline exists, fall back to the cruder absolute check.
 did_code_work() {
+  local baseline="${TMPDIR:-/tmp}/metarepo-ticket-sweep-baseline-${session_id}"
+  if [ ! -f "$baseline" ] || ! command -v ticket_sweep_state_fingerprint >/dev/null 2>&1; then
+    # No baseline (session predates this hook, or SessionStart didn't run), or the
+    # fingerprint lib isn't available: fall back to the absolute check. It over-
+    # fires on residue, but over-firing is cheap; SILENTLY losing the reminder is
+    # the failure mode we care about.
+    did_code_work_absolute
+    return
+  fi
+  # State changed since session start ⇒ work happened this session.
+  [ "$(ticket_sweep_state_fingerprint "$MAIN" "$root")" != "$(cat "$baseline" 2>/dev/null)" ]
+}
+
+# Cruder fallback, used only when no SessionStart baseline exists: ANY dirty tree /
+# ahead branch / dirty tickets.md, regardless of when it happened.
+did_code_work_absolute() {
   # tickets.md itself dirty in the main checkout → work in progress.
   if [ -f "$MAIN/tickets.md" ] && ! git -C "$MAIN" diff --quiet -- tickets.md 2>/dev/null; then
     return 0

@@ -130,9 +130,12 @@ Also copy the example hooks for reference (user renames to enable):
 
 ```bash
 mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude/commands
-cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh scripts/
+cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health,sync,tail}.sh scripts/
 cp $T/hooks/check-main-on-main.sh scripts/
 cp $T/hooks/ticket-sweep-reminder.sh scripts/
+cp $T/hooks/session-snapshot.sh scripts/
+cp $T/lib/session-state.sh scripts/lib/
+cp $T/lib/preflight.sh scripts/lib/
 cp $T/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh scripts/worktree/
 cp $T/worktree/lib/registry.sh scripts/worktree/lib/
 cp $T/govern/*.sh scripts/govern/
@@ -144,7 +147,12 @@ touch .worktrees/.gitkeep
 chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh scripts/govern/test/*.sh
 ```
 These are copied **verbatim** — they read everything from `workspace.sh`. Run `bash -n` over all of
-them to confirm. (Do NOT edit them.) The `$T/govern/*.sh` glob includes the **escalation lifecycle**
+them to confirm. (Do NOT edit them.) New in this set: `sync.sh` (session-hygiene multi-repo sync) and
+`tail.sh` (interleaved dev-log tail) are top-level scripts; `hooks/session-snapshot.sh` is the
+SessionStart baseline hook (installs to `scripts/`) that pairs with the `ticket-sweep-reminder.sh` Stop
+hook; `lib/session-state.sh` (the code-work fingerprint the baseline + Stop hook share) and
+`lib/preflight.sh` (the node_modules-vs-package.json drift probe `doctor.sh` calls) are sourced libs in
+`scripts/lib/` — they need no `+x`. The `$T/govern/*.sh` glob includes the **escalation lifecycle**
 pair `escalations-emit-pending.sh` (run-end: writes `governor/pending-escalations.json`) and
 `escalations-apply-answers.sh` (run-start: un-park / migrate-to-parked / grow `preferences.md`),
 which `run-loop.sh` and the `/govern` relay drive (#62) — they scaffold automatically, no extra step.
@@ -181,6 +189,8 @@ Without this step the headline `/govern` in the final "Try" block would be a dea
     "switch": "bash scripts/switch.sh",
     "pull": "bash scripts/pull-all.sh",
     "push": "bash scripts/push-prs.sh",
+    "sync": "bash scripts/sync.sh",
+    "tail": "bash scripts/tail.sh",
     "health": "bash scripts/health.sh",
     "worktree": "bash scripts/worktree/main.sh",
     "worktree:new": "bash scripts/worktree/new.sh",
@@ -214,6 +224,7 @@ file exists, merge the `hooks` keys rather than overwriting:
 {
   "hooks": {
     "SessionStart": [{ "matcher": "*", "hooks": [
+      { "type": "command", "command": "bash <ROOT>/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
       { "type": "command", "command": "if [ -f <ROOT>/learnings.md ]; then echo '── workspace learnings ──'; head -30 <ROOT>/learnings.md; echo '...'; fi", "timeout": 5 },
       { "type": "command", "command": "bash <ROOT>/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
@@ -226,8 +237,11 @@ file exists, merge the `hooks` keys rather than overwriting:
   }
 }
 ```
-Tell the user they can add a project drift check (e.g. a deploy-behind-main probe) as a third
-SessionStart hook later.
+`session-snapshot.sh` MUST be the first SessionStart hook — it writes the per-session code-work
+baseline that the `ticket-sweep-reminder.sh` Stop hook reads to fire its reminder only when work
+happened THIS session (without the baseline the Stop hook falls back to a cruder always-fires check).
+Tell the user they can add a project drift check (e.g. a deploy-behind-main probe) as a later
+SessionStart hook.
 
 ## Phase 8 — Initialize (fresh)
 
@@ -276,8 +290,10 @@ Check presence/freshness of each component and build a table `component | status
   `GOVERN_MERGE_REPOS`, `WORKTREE_BASE`, `wsp_repo_port`)? If it's an OLDER core-only meta-repo with
   inline `REPOS=` arrays in each script (no workspace.sh), mark config `missing` — this is the big
   upgrade: you'll introduce workspace.sh and re-point the scripts.
-- **core scripts** — `scripts/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh`. Outdated
-  if they still inline `REPOS=` instead of sourcing workspace.sh, or if they use a non-npm root.
+- **core scripts** — `scripts/{status,doctor,branch,switch,dev,pull-all,push-prs,health,sync,tail}.sh`.
+  Outdated if they still inline `REPOS=` instead of sourcing workspace.sh, or if they use a non-npm
+  root. `sync.sh` (multi-repo session-hygiene sync) and `tail.sh` (interleaved dev-log tail) are newer
+  additions — mark `missing` if absent.
 - **worktrees** — `scripts/worktree/` present?
 - **tickets** — `tickets.md` present?
 - **commands** — project-local `.claude/commands/govern.md` + `.claude/commands/resolve.md` present?
@@ -286,7 +302,11 @@ Check presence/freshness of each component and build a table `component | status
   a dead command). Mark `missing` so the bump installs them.
 - **governor** — `scripts/govern/` + `governor/` present?
 - **hooks** — `scripts/check-main-on-main.sh`, `scripts/ticket-sweep-reminder.sh`,
-  `scripts/worktree/session-end-cleanup.sh`, and the `.claude/settings.json` wiring.
+  `scripts/session-snapshot.sh` (the SessionStart code-work baseline hook — newer; an older workspace
+  lacks it, so its Stop reminder falls back to the cruder always-fires check) plus its
+  `scripts/lib/session-state.sh` lib, `scripts/lib/preflight.sh` (the deps-drift probe doctor.sh
+  calls), `scripts/worktree/session-end-cleanup.sh`, and the `.claude/settings.json` wiring (the
+  SessionStart `session-snapshot.sh` entry is newer — mark `missing` if absent).
 
 To judge "outdated" cheaply, `diff` an installed mechanism script against `$T/<same path>` — if they
 differ and the installed one doesn't source workspace.sh, it's outdated.
@@ -300,7 +320,9 @@ each chosen component:
   while PRESERVING the user's existing values — show a diff and confirm before writing.
 - **core scripts / worktrees / governor / hooks:** copy the latest templates from `$T` into place
   (same paths as Phase 5), `chmod +x`. Because they only read workspace.sh, this is safe — but still
-  `diff` first and show the user what changes. Preserve `governor/preferences.md`, `escalations.md`,
+  `diff` first and show the user what changes. This set now also installs `sync.sh`/`tail.sh`,
+  `hooks/session-snapshot.sh`, and the `lib/session-state.sh` + `lib/preflight.sh` libs (libs need no
+  `+x`) — copy any that are missing on an older workspace. Preserve `governor/preferences.md`, `escalations.md`,
   and `improvements.md` if present (those are the operator's data, not mechanism) — only refresh the
   prompt templates (`worker-prompt.md`, `supervisor-prompt.md`, `README.md`) and the seed structure.
 - **commands (project-local `/govern` + `/resolve`):** `mkdir -p .claude/commands` and copy
@@ -309,8 +331,8 @@ each chosen component:
   being globally installed — the most common missing component on a workspace scaffolded before this
   step existed. Safe to refresh: they carry no workspace-specific values (they read `scripts/govern/*`
   and `workspace.sh` at runtime).
-- **package.json scripts:** add any missing script aliases (worktree:*, govern, health, …) without
-  removing the user's own. Convert a legacy pnpm root to npm ONLY if the user confirms (anti-pattern
+- **package.json scripts:** add any missing script aliases (worktree:*, govern, health, sync, tail, …)
+  without removing the user's own. Convert a legacy pnpm root to npm ONLY if the user confirms (anti-pattern
   #7) — otherwise leave `ROOT_PM` matching their current root.
 - **tickets:** if `tickets.md` is missing, seed it from `$T/seed/`. NEVER overwrite an existing queue.
 - **root CLAUDE.md:** if `CLAUDE.md` is missing, offer to seed it from `$T/seed/CLAUDE.md` (then fill
@@ -318,7 +340,8 @@ each chosen component:
   stability-routing table (tickets / CLAUDE.md / learnings / project memory) and the root-vs-sub-repo
   hierarchy; if not, offer to append just those convention sections (show a diff, confirm first).
 - **hooks wiring:** merge any missing hook entries into `.claude/settings.json` (don't drop existing
-  ones).
+  ones) — in particular add the SessionStart `session-snapshot.sh` entry FIRST (before the
+  learnings-skim + check-main-on-main entries) if it's absent, so the Stop reminder gets its baseline.
 - **example project hooks:** copy any missing `scripts/lib/*.sh.example` for reference.
 
 ### B3 — Verify the bump

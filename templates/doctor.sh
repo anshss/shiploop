@@ -87,6 +87,52 @@ section "workspace"
 [ -f "$ROOT/package.json" ] && ok "root package.json present" || warn "root package.json missing"
 [ -f "$ROOT/scripts/lib/workspace.sh" ] && ok "scripts/lib/workspace.sh present" || fail "scripts/lib/workspace.sh missing — run meta-repo setup"
 
+# Git drift across the checkout (root + every sub-repo): off-main branch, dirty
+# tree, and ahead/behind vs the tracked upstream. Pure read.
+git_drift() {
+  local label="$1" dir="$2"
+  [ -d "$dir/.git" ] || [ -f "$dir/.git" ] || { warn "$label: not a git repo"; return; }
+  local br dirty ahead behind upstream
+  br=$(git -C "$dir" branch --show-current 2>/dev/null)
+  [ -n "$br" ] || br="(detached)"
+  dirty=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  ahead=0; behind=0
+  if upstream=$(git -C "$dir" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null); then
+    ahead=$(git -C "$dir" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 0)
+    behind=$(git -C "$dir" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)
+  fi
+  local msg="$label on $br"
+  [ "$dirty" != "0" ] && msg="$msg, $dirty dirty"
+  [ "${ahead:-0}" -gt 0 ] 2>/dev/null && msg="$msg, +$ahead ahead"
+  [ "${behind:-0}" -gt 0 ] 2>/dev/null && msg="$msg, -$behind behind"
+  if [ "$dirty" = "0" ] && [ "${ahead:-0}" -eq 0 ] && [ "${behind:-0}" -eq 0 ]; then
+    ok "$msg (clean)"
+  else
+    warn "$msg"
+  fi
+}
+git_drift "root" "$ROOT"
+for sub in "${REPOS[@]}"; do git_drift "$sub" "$ROOT/$sub"; done
+
+# Dependency drift (node_modules vs package.json) — a declared-but-uninstalled
+# dep crashes the dev server with "Cannot find module" at runtime. Pure probe
+# from scripts/lib/preflight.sh.
+# shellcheck source=/dev/null
+if [ -f "$ROOT/scripts/lib/preflight.sh" ]; then
+  source "$ROOT/scripts/lib/preflight.sh"
+  for sub in "${REPOS[@]}"; do
+    [ -f "$ROOT/$sub/package.json" ] || continue
+    missing=$(preflight_missing_deps "$ROOT/$sub") || continue   # return 2 → skip (no node / no pkg)
+    if [ "$missing" = "__NO_NODE_MODULES__" ]; then
+      warn "$sub: node_modules absent — run install in $sub/"
+    elif [ -n "$missing" ]; then
+      warn "$sub: declared deps not installed: $missing (run install in $sub/)"
+    else
+      ok "$sub: node_modules satisfies package.json"
+    fi
+  done
+fi
+
 # ── Worktrees ──
 section "worktrees"
 if [ -f "$ROOT/.worktrees/registry.json" ] && command -v jq >/dev/null 2>&1; then
