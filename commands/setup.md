@@ -129,7 +129,7 @@ Also copy the example hooks for reference (user renames to enable):
 ## Phase 5 — Copy mechanism scripts (fresh)
 
 ```bash
-mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude
+mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude/commands
 cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh scripts/
 cp $T/hooks/check-main-on-main.sh scripts/
 cp $T/hooks/ticket-sweep-reminder.sh scripts/
@@ -139,6 +139,7 @@ cp $T/govern/*.sh scripts/govern/
 cp $T/govern/lib/common.sh scripts/govern/lib/
 cp $T/govern/test/*.sh scripts/govern/test/
 cp $T/governor/*.md governor/
+cp $T/.claude/commands/*.md .claude/commands/
 touch .worktrees/.gitkeep
 chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh scripts/govern/test/*.sh
 ```
@@ -153,6 +154,15 @@ the self-improvement step commits its own `governor/improvements.md` so it never
 so a fresh workspace can `bash scripts/govern/test/<name>.sh` to prove the governor never force-pushes
 the shared `main` and never self-blocks on an uncommitted runtime artifact. They read only the
 scaffolded scripts — no extra wiring.
+
+The `$T/.claude/commands/*.md` copy installs the **project-local** `/govern` and `/resolve` slash
+commands into the workspace's own `.claude/commands/`. This is what makes the autonomous loop usable
+in the scaffolded repo **without depending on the meta-repo skill being globally installed** on that
+machine: a fresh workspace gets a working `/govern` (and `/resolve`) on its own. (Where the meta-repo
+skill IS installed globally, the namespaced `meta-repo:govern` / `meta-repo:resolve` also exist —
+harmless duplication; the project commands are the self-contained ones the Phase Z message points to.)
+Without this step the headline `/govern` in the final "Try" block would be a dead command. The
+`npm run govern` alias (Phase 6 `package.json`) is the equivalent CLI entry point either way.
 
 ## Phase 6 — Root files (fresh)
 
@@ -236,7 +246,8 @@ files; nothing is versioned until you commit. On the root's default branch (veri
 stage and commit the workspace tooling as ONE commit so the harness actually lives on `main`:
 ```bash
 git add scripts governor package.json .gitignore .worktrees/.gitkeep \
-        tickets.md tickets-parked.md learnings.md CLAUDE.md .claude/settings.json .mcp.json 2>/dev/null
+        tickets.md tickets-parked.md learnings.md CLAUDE.md \
+        .claude/settings.json .claude/commands .mcp.json 2>/dev/null
 git commit -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)"
 ```
 Do NOT `git add .` (that would sweep `.env`/secrets); stage the tooling paths explicitly. Leave the
@@ -268,8 +279,11 @@ Check presence/freshness of each component and build a table `component | status
 - **core scripts** — `scripts/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh`. Outdated
   if they still inline `REPOS=` instead of sourcing workspace.sh, or if they use a non-npm root.
 - **worktrees** — `scripts/worktree/` present?
-- **tickets** — `tickets.md` present? `/meta-repo:resolve` command available (it's a skill command,
-  always available once installed)?
+- **tickets** — `tickets.md` present?
+- **commands** — project-local `.claude/commands/govern.md` + `.claude/commands/resolve.md` present?
+  An older workspace that predates this step has NEITHER — it relied on the global `meta-repo:govern`
+  skill, so a bare `/govern` / `/resolve` never worked there (and the Phase Z "Try" message advertised
+  a dead command). Mark `missing` so the bump installs them.
 - **governor** — `scripts/govern/` + `governor/` present?
 - **hooks** — `scripts/check-main-on-main.sh`, `scripts/ticket-sweep-reminder.sh`,
   `scripts/worktree/session-end-cleanup.sh`, and the `.claude/settings.json` wiring.
@@ -289,6 +303,12 @@ each chosen component:
   `diff` first and show the user what changes. Preserve `governor/preferences.md`, `escalations.md`,
   and `improvements.md` if present (those are the operator's data, not mechanism) — only refresh the
   prompt templates (`worker-prompt.md`, `supervisor-prompt.md`, `README.md`) and the seed structure.
+- **commands (project-local `/govern` + `/resolve`):** `mkdir -p .claude/commands` and copy
+  `$T/.claude/commands/*.md` into it (`diff` first if present). These are the self-contained slash
+  commands a scaffolded workspace needs so `/govern` / `/resolve` work without the meta-repo skill
+  being globally installed — the most common missing component on a workspace scaffolded before this
+  step existed. Safe to refresh: they carry no workspace-specific values (they read `scripts/govern/*`
+  and `workspace.sh` at runtime).
 - **package.json scripts:** add any missing script aliases (worktree:*, govern, health, …) without
   removing the user's own. Convert a legacy pnpm root to npm ONLY if the user confirms (anti-pattern
   #7) — otherwise leave `ROOT_PM` matching their current root.
@@ -322,11 +342,11 @@ upgraded, and what still needs the user:
 ── meta-repo workspace ready ──
 Mode:        <fresh | bumped>
 Sub-repos:   <name (port)> …
-Installed:   core scripts · worktrees · tickets · governor · hooks
+Installed:   core scripts · worktrees · tickets · governor · /govern + /resolve commands · hooks
 Try:
   npm run status
   npm run worktree:new -- try-it && cd <worktree-base>/try-it
-  /govern --dry-run         # prove the autonomous loop, ship nothing
+  /govern --dry-run         # prove the autonomous loop, ship nothing (or: npm run govern -- --dry-run)
 Still needs you:
   - per-sub-repo .env files (see <repo>/.env.example)
   - enable optional hooks: rename scripts/lib/*.sh.example → .sh
