@@ -29,6 +29,8 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
 - `worker-prompt.md` / `supervisor-prompt.md` — the templates workers / the supervisor run.
 - `improvements.md` — self-improvement proposals (output; observe→propose, never auto-applied unless
   you opt in).
+- `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
+  a recurring decision here graduates into a `preferences.md` rule.
 - `scripts/govern/*.sh` — the mechanism (select / spawn / await-ci / merge / bookkeep / supervise /
   escalation lifecycle).
 - `tickets-parked.md` — manual defer queue the governor ignores. A `defer` escalation answer
@@ -39,13 +41,16 @@ Parked decisions used to be **write-only**: a worker appended a `## Open` entry 
 asked the operator, so they sat unanswered indefinitely. Now the loop closes itself:
 - **Run-end (`escalations-emit-pending.sh`):** writes `pending-escalations.json` (the unanswered
   `## Open` entries) and fires `GOVERN_NOTIFY_CMD` if set — so a headless run still signals you.
-- **Relay (`/govern` session):** presents each via **AskUserQuestion** and records the operator's
-  **Answer** + a canonical **Disposition** (`do-the-work` | `defer` | `keep-open`) back into
-  `escalations.md` (plus an optional "Make this a rule?" sentence).
+- **Relay (`/govern` session):** presents all pending escalations in a **single batched
+  `AskUserQuestion`** (#89 — ≤4 questions per prompt; chunk if >4, never one prompt per ticket) and
+  records each operator's **Answer** + a canonical **Disposition** (`do-the-work` | `defer` |
+  `mitigated` | `keep-open`) back into `escalations.md` (plus an optional "Make this a rule?" sentence).
 - **Next run-start (`escalations-apply-answers.sh`):** acts on each recorded answer —
   `do-the-work` un-parks (governor retries the ticket), `defer` auto-migrates the ticket to
-  `tickets-parked.md` (renumbered) and resolves the escalation, and a rule sentence is appended to
-  `preferences.md`. Idempotent and committed like the bookkeep.
+  `tickets-parked.md` (renumbered, still TODO) and resolves the escalation, `mitigated` removes the
+  ticket from `tickets.md` and closes it as accepted-current-state (harm already zero — NOT parked as
+  still-todo), and a rule sentence is appended to `preferences.md`. Idempotent and committed like the
+  bookkeep.
 
 `GOVERN_NOTIFY_CMD` (optional): a command fed the alert message on stdin when pending escalations
 exist (e.g. `GOVERN_NOTIFY_CMD='terminal-notifier -title Governor'` or a Slack webhook curl).

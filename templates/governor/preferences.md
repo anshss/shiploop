@@ -49,6 +49,18 @@ decision recurs ~2–3 times (see `escalations.md`).
   column, ADD table/index) are NOT a hard-stop — classify them via the report's `migration` field
   and the governor handles them.
 
+## Closing & escalation judgment
+- **Closeable umbrella → CLOSE, don't park.** If a ticket's core deliverable is already merged AND
+  verified, AND every residual is already filed as its own child ticket (so the umbrella has no
+  actionable scope of its own), **close it** — delete the block, note "resolved — core shipped +
+  verified; residuals tracked as #a/#b/…" — rather than park-and-escalate. Don't keep a no-op umbrella
+  alive. (See `decisions-log.md` for the operator decisions this generalizes.)
+- **Respect an embedded operator deferral.** If the ticket body carries a dated operator DECISION
+  deferring the remaining work — and the reactive mitigation already shipped — keep it parked (or
+  close as mitigated) per that deferral. Do **not** autonomously re-attempt the deferred work before
+  its stated condition is met, even if it's technically feasible now. This applies especially when the
+  only remaining path is a hard-stop (live prod infra / secrets).
+
 ## Default rule
 - **Anything this doctrine does not clearly cover → park the ticket and escalate.** Do not guess on
   a consequential or ambiguous choice. Fixing your *own* red CI (≤2 attempts) is NOT an escalation

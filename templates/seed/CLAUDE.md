@@ -35,10 +35,12 @@ not topic:
 | **`tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. |
 | **`CLAUDE.md`** (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. |
 | **`learnings.md`** (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for `CLAUDE.md` ("X provider flaky this week"). **Never** a work item (→ tickets) and **never** a fixed-bug writeup (→ promote or delete). |
-| **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. |
+| **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. The memory dir is fronted by a `MEMORY.md` index — a list of one-line `[title](file.md) — gist` links pointing at per-topic note files; add the link when you add a note so it stays discoverable. |
 
 Bar: would knowing this save a future session 5+ min? If yes, propose the edit and ask before ending
-the session. **At session start, skim `learnings.md` (root + the sub-repo you're in).**
+the session. **At session start, skim `learnings.md` (root + the sub-repo you're in)** — the
+SessionStart hook auto-prints only the **root** `learnings.md`, so when working inside a sub-repo you
+must open that sub-repo's `learnings.md` yourself.
 
 ## The CLAUDE.md hierarchy
 
