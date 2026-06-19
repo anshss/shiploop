@@ -49,6 +49,14 @@ asks for a PASS/FAIL from an actual run. For these:
   clean it up (the project's test-env cleanup) before you exit. Never leave a billing orphan.
 - **Capture the evidence** — ids, command output, the per-component PASS/FAIL table, screenshot paths
   — into the PR **and** the report's `validation.evidence` field.
+- **HARD RULE — YOU (this orchestrating worker) persist the evidence report to disk; a spawned
+  subagent cannot.** This session runs under the worker's permissive policy and can write the full
+  PASS/FAIL `REPORT.md` (+ screenshots, ground-truth) anywhere it needs to. A subagent you spawn runs
+  under a **restrictive write policy** that may block the investigation/log path, so its report
+  silently comes back chat-only and is lost when the terminal truncates it (#95). If you offload the
+  validation *run* to a subagent, have it **return** the report as structured text and persist that
+  text yourself — do NOT delegate the final report-file write. Report-on-disk is a hard requirement: a
+  run whose only record is a subagent's final chat message is **not** done.
 - **HARD RULE — never substitute analysis for the test.** Reading the source and concluding "by
   inspection X is true" is **NOT** a resolution of a validation ticket. If all you did was static code
   analysis, the status is **not** `resolved`.

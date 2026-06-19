@@ -10,6 +10,12 @@ appended below), look for:
   operator can fix the systemic issue instead of burning more worker runs.
 - **Drift:** the run doing something clearly off (e.g. churning the same ticket, or escalations piling
   up unaddressed).
+- **Template-sync amplification (#115):** if this is a meta-repo whose harness scripts are mirrored
+  into a skill/templates directory, watch for the backlog filling with 1:1 `port #N into templates`
+  tickets — one per harness change. That amplification is the anti-pattern: a `concerns` note should
+  recommend collapsing them into ONE *batched* "sync templates" PR (port all accumulated harness
+  changes together, then advance the sync marker), not a per-change ticket. Surface a single batched
+  sync ticket when the drift has accrued; never one per harness fix.
 
 Be conservative: only raise a concern you'd act on, and only `halt` for a genuine systemic problem. A
 clean run with independent tickets resolving normally → `verdict: "ok"`.

@@ -49,8 +49,10 @@ Relay its log lines to the operator as they appear. The driver does everything �
      chunk into ceil(count/4) calls (4, then the rest) — still the minimum number of prompts, never
      one-per-ticket. For each entry use its `question` + `options`, and ALWAYS include these
      standing choices so the answer drives the lifecycle: **Do the work** (un-park → governor
-     retries), **Defer / keep-manual** (auto-moves the ticket to `tickets-parked.md`), and **Keep
-     open** (decide later).
+     retries), **Defer / keep-manual** (auto-moves the still-TODO ticket to `tickets-parked.md`),
+     **Mitigated** (harm already zero / accept current state → removes the ticket from `tickets.md`
+     and closes it as accepted-current-state, NOT parked as still-todo), and **Keep open** (decide
+     later).
      - **Don't fragment the asks across a phased run.** If you split one backlog into multiple
        `run-loop.sh` invocations, each run emits its own `pending-escalations.json` and you'd
        surface the escalations in **separate waves**. Prefer a **single whole-backlog invocation**
@@ -62,8 +64,8 @@ Relay its log lines to the operator as they appear. The driver does everything �
        fix here is only to make the *ask* a single batch, not to make the loop interactive.
   3. Write the operator's choice back into `governor/escalations.md` under that `### #N` entry:
      fill `- **Answer:**` with their words and `- **Disposition:**` with the canonical token
-     (`do-the-work` | `defer` | `keep-open`). If they want it to become standing policy, put the
-     rule sentence in `- **Make this a rule?:**`.
+     (`do-the-work` | `defer` | `mitigated` | `keep-open`). If they want it to become standing policy,
+     put the rule sentence in `- **Make this a rule?:**`.
   - The NEXT `run-loop.sh` start applies these automatically (`escalations-apply-answers.sh`):
     un-park, migrate-to-parked, and/or append the rule to `preferences.md`. You don't act on them
     by hand — just record the answers.
