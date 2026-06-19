@@ -7,6 +7,11 @@
 #       ticket: move its `## #N` block from tickets.md to tickets-parked.md (renumber to that queue's
 #       max+1) AND move the escalation to "## Resolved", so tickets.md stays the live workable set
 #       and doesn't silently fill with decided-but-undead escalations.
+#   • Disposition "mitigated" (#121) → CLOSE as accepted-current-state: the situation is already
+#       acceptable / harm is zero but the literal done-condition needs out-of-band action. Mechanically
+#       like "defer" (the `## #N` block leaves tickets.md), but the ticket is NOT parked as still-todo —
+#       it's just removed, and the escalation moves to "## Resolved" with a "resolved — mitigated" note.
+#       Distinct from defer (still-todo, manual queue) and do-the-work (retry).
 #   • "Make this a rule?" answered with a rule → append it to preferences.md (grows the doctrine).
 # Unanswered / keep-open entries are left exactly as-is. Idempotent: an already-Resolved entry is
 # never re-touched. Commits the result in the dir holding tickets.md (like govern-bookkeep.sh).
@@ -36,7 +41,7 @@ fi
 
 resolved_csv=","          # tickets to move Open → Resolved
 notes_file="$(mktemp)"    # tab-separated: ticket<TAB>resolution note
-acted=0; n_unpark=0; n_defer=0; n_rule=0
+acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_rule=0
 
 # Migrate a ticket block tickets.md → tickets-parked.md, renumbered to the parked queue's max+1.
 # Prints the new number, or empty if the block wasn't found in tickets.md.
@@ -65,6 +70,23 @@ migrate_to_parked() { # N -> M
     {print}
   ' "$TICKETS_FILE" > "$tmp" && mv "$tmp" "$TICKETS_FILE"
   echo "$M"
+}
+
+# Delete a ticket block from tickets.md WITHOUT parking it (#121 — the `mitigated` disposition).
+# Mechanically the same removal migrate_to_parked does, but the block is NOT appended to
+# tickets-parked.md: the ticket is closed as accepted-current-state, not parked as still-todo.
+# Returns 0 if a block was removed, 1 if no `## #N` block was present.
+delete_ticket_block() { # N -> 0 removed | 1 not found
+  local N="$1" tmp
+  grep -qE "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null || return 1
+  tmp="$(mktemp)"
+  awk -v n="$N" '
+    $0 ~ "^##[[:space:]]+#" n "([^0-9]|$)" {grab=1}
+    grab && /^---[[:space:]]*$/ {grab=0; next}
+    grab {next}
+    {print}
+  ' "$TICKETS_FILE" > "$tmp" && mv "$tmp" "$TICKETS_FILE"
+  return 0
 }
 
 # Append an operator-confirmed rule to preferences.md (grows the doctrine slowly, #62).
@@ -123,6 +145,18 @@ while IFS= read -r row; do
         govern::log "apply-answers: #$tk answered defer but no tickets.md block found — closing escalation only"
       fi
       ;;
+    mitigated)
+      if delete_ticket_block "$tk"; then
+        resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "resolved — mitigated: accepted current state (harm already zero); ticket closed (removed from tickets.md), NOT parked (operator: mitigated)" >> "$notes_file"
+        n_mitigated=$((n_mitigated+1)); acted=1
+        govern::log "apply-answers: #$tk answered mitigated → closing as accepted-current-state (removed from tickets.md, not parked); escalation resolved"
+      else
+        # Ticket block already gone from tickets.md (e.g. resolved elsewhere) — still close the escalation.
+        resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "resolved — mitigated; no live ticket block in tickets.md (already removed); escalation closed (operator: mitigated)" >> "$notes_file"
+        n_mitigated=$((n_mitigated+1)); acted=1
+        govern::log "apply-answers: #$tk answered mitigated but no tickets.md block found — closing escalation only"
+      fi
+      ;;
     keep-open|"")
       : ;;  # operator wrote something but not a terminal disposition → leave open
   esac
@@ -177,10 +211,10 @@ rm -f "$notes_file"
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 ( cd "$commit_dir"
   git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
-  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, rules ${n_rule})" || true
+  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, rules ${n_rule})" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
   fi
 )
-echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, rules added $n_rule"
+echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, rules added $n_rule"

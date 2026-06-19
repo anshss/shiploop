@@ -23,6 +23,10 @@ TICKETS_FILE="${GOVERN_TICKETS_FILE:-$WS_ROOT/tickets.md}"
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$WS_ROOT/tickets-parked.md}"
 # Driver→relay escalation hand-off (#62) — regenerated every run-end, gitignored runtime state.
 PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
+# Cross-run wait-for-merge / dependency deferrals (#119). Persists supervisor "defer #N until PR #M
+# merges" advice (in-memory skipThisRun #57 evaporated at run-end) so a blocked ticket stays skipped
+# across runs until its blocker lands. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
+PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.json}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
 # Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
@@ -97,9 +101,40 @@ govern::is_placeholder() { # value
   local v="$1"
   [[ -z "$v" ]] && return 0
   # Match the `_(operator...` stub regardless of what follows (the Disposition placeholder embeds
-  # the option words, e.g. `_(operator: do-the-work | defer | keep-open)_`, so don't require `)`).
+  # the option words, e.g. `_(operator: do-the-work | defer | mitigated | keep-open)_`, so don't require `)`).
   case "$v" in *"(operator"*) return 0;; esac
   return 1
+}
+
+# Does escalations.md already carry an OPEN `### #N` escalation for ticket $1? Used to make the #120
+# permanent-park nudge ONE-TIME: while a prior recommendation still sits under "## Open" awaiting the
+# operator (or was kept open), don't re-file it. Returns 0 if an open entry exists, 1 otherwise.
+govern::has_open_escalation() { # ticket -> 0 if an open ### #N entry exists
+  local t="$1" hit
+  [[ "$t" =~ ^[0-9]+$ ]] || return 1
+  hit="$(govern::escalations_open_ndjson 2>/dev/null \
+         | jq -r --argjson t "$t" 'select(.ticket == $t) | .ticket' 2>/dev/null | head -1)"
+  [[ -n "$hit" ]]
+}
+
+# Insert a standard escalation block under the "## Open" header in escalations.md (append to EOF if
+# the header is absent). Writes the SAME field structure run-loop.sh's park path writes — Reason /
+# Question / Options / Answer / Disposition / Make-this-a-rule — so escalations-apply-answers.sh can
+# process the operator's Disposition (do-the-work | defer | mitigated | keep-open) at the next run-start.
+# Args: ticket title reason question options. Live-only side effect — callers gate on mode.
+govern::file_open_escalation() { # N title reason question options
+  local N="$1" title="$2" reason="$3" question="$4" options="$5" blk tmp
+  blk="$(mktemp)"
+  printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
+    "$N" "$title" "$reason" "$question" "$options" > "$blk"
+  if grep -q '^## Open' "$ESCALATIONS_FILE" 2>/dev/null; then
+    tmp="$(mktemp)"
+    awk -v bf="$blk" '{print} /^## Open/ && !done {while ((getline l < bf) > 0) print l; close(bf); done=1}' \
+      "$ESCALATIONS_FILE" > "$tmp" && mv "$tmp" "$ESCALATIONS_FILE"
+  else
+    cat "$blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
+  fi
+  rm -f "$blk"
 }
 
 # Extract ONLY the leading token of a Disposition field — the first whitespace-delimited
@@ -116,16 +151,22 @@ govern::disposition_lead_token() { # raw -> leading token (may be "")
   printf '%s' "$d"
 }
 
-# Canonicalize a free-text disposition into one of: do-the-work | defer | keep-open
+# Canonicalize a free-text disposition into one of: do-the-work | defer | mitigated | keep-open
 # (empty for unrecognized so the caller can leave the entry untouched). Tolerant of
 # operator hand-edits / synonyms; the relay writes the canonical token directly.
 # NOTE: this matches a canonical token ANYWHERE in the input — so when classifying a
 # structured Disposition FIELD, anchor first via govern::disposition_lead_token (#87).
+# `mitigated` (#121): the situation is already acceptable / harm is zero — close the ticket as
+# accepted-current-state. Mechanically like `defer` (leaves the live queue) but NOT parked as
+# still-todo; the apply step removes the block from tickets.md and resolves the escalation with a
+# "resolved — mitigated" note (see escalations-apply-answers.sh). Matched BEFORE defer so its
+# synonyms (e.g. "accept current state", "harm already zero") never fall through to defer.
 govern::norm_disposition() { # raw -> canonical|""
   local d; d="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' ' ')"
   d=" $d "
   case "$d" in
     *" do the work "*|*" dothework "*|*" unpark "*|*" un park "*|*" retry "*|*" work it "*|*" resolve "*|*" redo "*) echo "do-the-work";;
+    *" mitigated "*|*" mitigate "*|*" accept current state "*|*" accept as is "*|*" accepted "*|*" already acceptable "*|*" harm zero "*|*" harm already zero "*) echo "mitigated";;
     *" defer "*|*" defer indefinitely "*|*" wont do "*|*" won t do "*|*" keep manual "*|*" close "*|*" park "*|*" parked "*|*" no "*) echo "defer";;
     *" keep open "*|*" keepopen "*|*" wait "*|*" pending "*) echo "keep-open";;
     *) echo "";;
@@ -262,6 +303,48 @@ govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   ' "$f"
 }
 
+# ── chronically-skipped NA tickets → permanent-disposition nudge (#120) ──────
+# The #92 selector auto-skips a "NOT govern-automatable" ticket every run — correct, but on its own
+# the ticket churns a skip note forever and never leaves the live queue. We persist a per-ticket
+# count of CONSECUTIVE runs each NA ticket is auto-skipped so the loop can, after K runs, file ONE
+# escalation recommending the operator escalate+defer it permanently (migrate to tickets-parked.md),
+# instead of re-noting it every run. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
+NA_SKIP_FILE="${GOVERN_NA_SKIP_FILE:-$GOVERNOR_DIR/na-skip-counts.json}"
+
+# Increment ticket $1's consecutive auto-skip count; print the new count (>=1). Prints 0 (no-op)
+# without jq. Creates the file if absent.
+govern::na_skip_bump() { # ticket -> new count
+  local t="$1" f="$NA_SKIP_FILE" cur tmp
+  command -v jq >/dev/null 2>&1 || { echo 0; return 0; }
+  [[ "$t" =~ ^[0-9]+$ ]] || { echo 0; return 0; }
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  cur="$([[ -s "$f" ]] && cat "$f" || echo '{"counts":{}}')"
+  tmp="$f.tmp.$$"
+  if printf '%s' "$cur" | jq -c --arg t "$t" '.counts[$t] = ((.counts[$t] // 0) + 1)' > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$f"
+    jq -r --arg t "$t" '.counts[$t] // 0' "$f" 2>/dev/null || echo 0
+  else
+    rm -f "$tmp" 2>/dev/null || true; echo 0
+  fi
+}
+
+# Drop count entries for any ticket NOT in the given current-NA set (comma-WRAPPED, e.g. ",45,72,"),
+# so a ticket that becomes automatable / gets resolved resets its streak and never triggers a stale
+# nudge later. Pass "," to reset everything (no NA tickets this run). No-op without jq.
+govern::na_skip_prune() { # ",N,N," (current NA set, comma-wrapped)
+  local set="$1" f="$NA_SKIP_FILE" tmp
+  command -v jq >/dev/null 2>&1 || return 0
+  [[ -s "$f" ]] || return 0
+  tmp="$f.tmp.$$"
+  if jq -c --arg set "$set" \
+       '{counts: ((.counts // {}) | with_entries(.key as $k | select($set | contains("," + $k + ","))))}' \
+       "$f" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+}
+
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
 
@@ -296,6 +379,136 @@ govern::find_pr() {
     fi
   done
   return 1
+}
+
+# ── cross-run wait-for-merge / dependency deferrals (#119) ───────────────────
+# skipThisRun (#57) defers a ticket for the CURRENT run only (in-memory excludes), so a supervisor
+# "defer #N until PR #M merges" advisory vanished at run-end and the selector re-picked the blocked
+# ticket next run (re-deriving — or failing to re-derive — the same conflict). These helpers persist
+# such waits to governor/pending-waits.json and re-evaluate them at every run-start, so the deferral
+# SURVIVES across runs and auto-clears only once the blocker actually lands.
+
+# Remove value $2 from a comma-list $1; print the cleaned list (no surrounding commas, "" if empty).
+govern::csv_remove() { # list value -> cleaned-list
+  local list=",${1}," v="$2"; list="${list//,$v,/,}"; list="${list#,}"; list="${list%,}"; printf '%s' "$list"
+}
+
+# Print a PR's state — OPEN | MERGED | CLOSED — or "" when it can't be verified (no gh, offline,
+# unknown PR/repo). The caller treats "" as "still blocking" (fail-CLOSED) so a transient network
+# blip never silently evaporates a persisted wait — the whole point of #119.
+govern::pr_state() { # repo pr -> STATE|""
+  local repo="$1" pr="$2"
+  command -v gh >/dev/null 2>&1 || return 0
+  gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
+}
+
+# Retarget an open PR's base branch. Usage: govern::retarget_pr_base <repo> <pr> <base>.
+# Uses the REST PATCH form, NOT `gh pr edit --base` (#116): on these repos `gh pr edit --base`
+# resolves the PR through gh's GraphQL `projectCards` query, which now hard-fails with
+# `GraphQL: Projects (classic) is being deprecated ... (repository.pullRequest.projectCards)` and
+# leaves the base UNCHANGED — silently, since the rest of the edit can still succeed. The REST
+# endpoint takes no projectCards and applies the change reliably. Honors GOVERN_ECHO=1 (dry-run).
+govern::retarget_pr_base() { # repo pr base -> 0 on success
+  local repo="$1" pr="$2" base="$3"
+  command -v gh >/dev/null 2>&1 || { govern::log "gh missing — cannot retarget $repo#$pr base"; return 1; }
+  local slug; slug="$(govern::repo_slug "$repo")"
+  if [[ "${GOVERN_ECHO:-0}" == "1" ]]; then
+    printf 'WOULD RUN: gh api -X PATCH repos/%s/pulls/%s -f base=%s\n' "$slug" "$pr" "$base"
+    return 0
+  fi
+  govern::log "retargeting $repo#$pr base -> $base (REST)"
+  gh api -X PATCH "repos/$slug/pulls/$pr" -f "base=$base" >/dev/null
+}
+
+# Dependency numbers a ticket DECLARES via a body line like `**Depends on:** #K` (or `Depends on: #K,
+# #J`). Prints one bare number per declared dep (deduped order-preserving). Reads #N's block only —
+# bounded by the next `## #` heading — so a later ticket's deps never leak in. Reads $2 (def TICKETS_FILE).
+govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
+  local n="$1" f="${2:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  awk -v n="$n" '
+    $0 ~ ("^## #" n "([^0-9]|$)") { inblk=1; next }
+    inblk && /^## #[0-9]+/        { inblk=0 }
+    inblk {
+      low=tolower($0)
+      if (low ~ /depends[ \t]+on/) {
+        s=$0
+        while (match(s,/#[0-9]+/)) {
+          d=substr(s,RSTART+1,RLENGTH-1); if (!seen[d]++) print d
+          s=substr(s,RSTART+RLENGTH)
+        }
+      }
+    }
+  ' "$f"
+}
+
+# Add/merge ONE wait entry (a JSON object carrying at least `.ticket`; optional `.pr`+`.repo` and/or
+# `.dependsOn`) into pending-waits.json, de-duped by ticket number (newest wins). Creates the file if
+# absent. No-op without jq / a ticket field. Live-only side effect — callers gate on MODE.
+govern::waits_add() { # entry-json
+  local entry="$1" f="$PENDING_WAITS_FILE" t cur
+  command -v jq >/dev/null 2>&1 || return 0
+  t="$(jq -r '.ticket // empty' <<<"$entry" 2>/dev/null || true)"
+  [[ "$t" =~ ^[0-9]+$ ]] || return 0
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  cur="$([[ -s "$f" ]] && cat "$f" || echo '{"waits":[]}')"
+  printf '%s' "$cur" | jq -c --argjson e "$entry" --argjson t "$t" \
+    '{waits: (((.waits // []) | map(select(.ticket != $t))) + [$e])}' > "$f" 2>/dev/null || true
+}
+
+# Drop the wait entry for ticket $1 from pending-waits.json (no-op if absent). Used when a blocker
+# lands mid-run (an attemptNext for a wait-deferred ticket).
+govern::waits_remove() { # ticket
+  local t="$1" f="$PENDING_WAITS_FILE" tmp
+  [[ -s "$f" ]] && command -v jq >/dev/null 2>&1 || return 0
+  tmp="$f.tmp.$$"
+  jq -c --argjson t "$t" '{waits: ((.waits // []) | map(select(.ticket != $t)))}' "$f" > "$tmp" 2>/dev/null \
+    && mv "$tmp" "$f" || rm -f "$tmp" 2>/dev/null || true
+}
+
+# Re-check every entry in pending-waits.json against its blocker; REWRITE the file keeping only the
+# still-blocking entries, and print "ticket<TAB>why" for each so the run-loop can exclude + log it.
+# An entry blocks while: its PR is still OPEN (or its state can't be verified — fail-closed), OR its
+# `.dependsOn` ticket is still in tickets.md. It CLEARS (entry dropped, ticket selectable again) when:
+# the PR merged/closed, the dep resolved, or the waiting ticket itself is gone from tickets.md.
+govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites pending-waits.json
+  local f="$PENDING_WAITS_FILE"
+  [[ -s "$f" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local kept="[]" line t pr repo dep why blocking state
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    t="$(jq -r '.ticket // empty' <<<"$line" 2>/dev/null || true)"
+    [[ "$t" =~ ^[0-9]+$ ]] || continue
+    # The waiting ticket itself was resolved/closed → its wait is moot; drop it.
+    if ! grep -qE "^## #$t([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
+      govern::log "wait #$t — ticket no longer in tickets.md; clearing wait (#119)"; continue
+    fi
+    pr="$(jq -r '.pr // empty' <<<"$line" 2>/dev/null || true)"
+    repo="$(jq -r '.repo // "harness"' <<<"$line" 2>/dev/null || echo harness)"
+    dep="$(jq -r '.dependsOn // empty' <<<"$line" 2>/dev/null || true)"
+    why=""; blocking=0
+    if [[ "$pr" =~ ^[0-9]+$ ]]; then
+      state="$(govern::pr_state "$repo" "$pr")"
+      case "$state" in
+        OPEN)          blocking=1; why="waiting on $repo PR #$pr (still open)";;
+        MERGED|CLOSED) govern::log "wait #$t — $repo PR #$pr is $state; clearing wait (#119)";;
+        *)             blocking=1; why="waiting on $repo PR #$pr (state unverifiable — keeping wait)";;
+      esac
+    fi
+    if [[ "$blocking" -eq 0 && "$dep" =~ ^[0-9]+$ ]]; then
+      if grep -qE "^## #$dep([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
+        blocking=1; why="depends on #$dep (still open)"
+      else
+        govern::log "wait #$t — dependency #$dep resolved; clearing wait (#119)"
+      fi
+    fi
+    if [[ "$blocking" -eq 1 ]]; then
+      kept="$(jq -c --argjson e "$line" '. + [$e]' <<<"$kept" 2>/dev/null || echo "$kept")"
+      printf '%s\t%s\n' "$t" "$why"
+    fi
+  done < <(jq -c '.waits[]?' "$f" 2>/dev/null)
+  jq -n --argjson w "$kept" '{waits:$w}' > "$f" 2>/dev/null || true
 }
 
 # govern::ticket_present_on_origin — cross-driver re-selection guard for parallel drivers
