@@ -239,11 +239,50 @@ fi
 # marker. select-ticket.sh excludes them silently (its stderr is suppressed by the caller), so
 # WITHOUT this log the skip would be invisible — the operator would never learn why a marked ticket
 # is never picked. They stay in tickets.md until a human handles them interactively / un-parks them.
+# #120: a ticket auto-skipped as NOT-automatable for K consecutive runs (GOVERN_NA_NUDGE_AFTER,
+# default 3) churns a skip note every run but never leaves the live queue. After K, file ONE
+# escalation recommending the operator escalate+defer it permanently (→ tickets-parked.md) instead
+# of re-noting it forever. One-time: guarded by an existing-open-escalation check so it isn't re-filed
+# while the prior recommendation is still awaiting an answer. The streak is reset (na_skip_prune below)
+# for any ticket no longer NA, so a re-marked/resolved ticket never triggers a stale nudge.
+NA_NUDGE_AFTER="${GOVERN_NA_NUDGE_AFTER:-3}"
 while IFS=$'\t' read -r na_n na_reason; do
   [[ -n "$na_n" ]] || continue
   NA_SET+="$na_n,"
   govern::log "auto-skipping #$na_n — body marked '$na_reason' (not govern-automatable; handle interactively) — not selecting, no worker burned (#92)"
+  if [[ "$MODE" == "live" ]]; then
+    na_count="$(govern::na_skip_bump "$na_n" 2>/dev/null || echo 0)"
+    if [[ "${na_count:-0}" -ge "$NA_NUDGE_AFTER" ]] && ! govern::has_open_escalation "$na_n"; then
+      govern::log "#$na_n auto-skipped $na_count consecutive runs ('$na_reason') — filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
+      govern::file_open_escalation "$na_n" \
+        "permanently park chronically-skipped '$na_reason' ticket" \
+        "auto-skipped as '$na_reason' for $na_count consecutive govern runs — it can't be resolved headlessly and is churning a skip note every run instead of leaving the live queue (#120)" \
+        "remove it from the live queue: answer Disposition 'defer' to migrate it to tickets-parked.md (or 'do-the-work' to keep retrying it, 'keep-open' to leave it in the live queue)" \
+        "defer (recommended) / do-the-work / keep-open"
+    fi
+  fi
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
+# #120: reset the consecutive-skip streak for any ticket no longer NA (resolved / un-marked) so a
+# stale count can never fire a spurious nudge. NA_SET is comma-wrapped (",N,N,") — "," resets all.
+[[ "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
+
+# #119: cross-run wait-for-merge / dependency deferrals. skipThisRun (#57) is in-memory only, so a
+# supervisor "defer #N until PR #M merges" advisory evaporated at run-end and the selector re-picked
+# the blocked ticket next run. We persist such waits to governor/pending-waits.json and, at run-start,
+# re-check each blocker: a wait whose PR is still OPEN (or whose depended-on ticket is still in
+# tickets.md) RE-EXCLUDES its ticket; a cleared wait (PR merged/closed, dep resolved, ticket gone) is
+# dropped so the ticket is selectable again. WAIT_EXCLUDES tracks the tickets a wait deferred THIS run
+# (comma-wrapped) so an in-run attemptNext (#92) — its blocker landed mid-run — can clear the wait.
+WAIT_EXCLUDES=","
+if [[ "$MODE" == "live" ]]; then
+  while IFS=$'\t' read -r _wt _wwhy; do
+    [[ "$_wt" =~ ^[0-9]+$ ]] || continue
+    WAIT_EXCLUDES+="$_wt,"; excludes="${excludes:+$excludes,}$_wt"
+    govern::log "#$_wt still blocked — $_wwhy; deferring (cross-run wait persists) (#119)"
+  done < <(govern::waits_refresh)
+else
+  govern::log "[dry] would re-check governor/pending-waits.json + defer tickets whose blocker is unresolved (#119)"
+fi
 
 while :; do
   tj_heartbeat   # keep the run-id file fresh (liveness) so a prompt resume re-adopts this run's id (#3)
@@ -317,6 +356,24 @@ while :; do
     govern::log "#$N no longer on origin/main (resolved+pushed by a concurrent driver) — skipping, no worker burned (#108)"
     govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
     excludes="$excludes,$N"; continue
+  fi
+
+  # #119: pre-spawn dependency gate. If #N's body declares **Depends on:** #K and #K is STILL in
+  # tickets.md (unlanded), defer #N this run instead of burning a worker building on something not yet
+  # merged (the #80-class wasted run). Same in-run exclude as an escalation skip; the dep is re-derived
+  # from the body each run, so #N becomes selectable automatically once #K lands — no persistence needed.
+  # Skipped for an explicit single-ticket TARGET (the operator chose it deliberately, like the #60 override).
+  if [[ -z "$TARGET" ]]; then
+    _unmet=""
+    while IFS= read -r _k; do
+      [[ "$_k" =~ ^[0-9]+$ ]] || continue
+      grep -qE "^## #$_k([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null && _unmet="${_unmet:+$_unmet, }#$_k"
+    done < <(govern::ticket_deps "$N" "$TICKETS_FILE")
+    if [[ -n "$_unmet" ]]; then
+      govern::log "#$N depends on unresolved $_unmet (still in tickets.md) — deferring this run, no worker burned (#119)"
+      govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
+      excludes="$excludes,$N"; continue
+    fi
   fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
 
@@ -511,9 +568,10 @@ while :; do
       # #58: the heading is a short slug (escalation.title if the worker gave one, else the first
       # 80 chars of reason) so the Open list stays scannable; the full prose lives under Reason.
       # #62: the Disposition field carries a machine-readable token the relay writes when the
-      # operator answers (do-the-work | defer | keep-open); escalations-apply-answers.sh reads it
-      # at the next run-start to un-park / migrate-to-parked, closing the lifecycle.
-      printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
+      # operator answers (do-the-work | defer | mitigated | keep-open); escalations-apply-answers.sh
+      # reads it at the next run-start to un-park / migrate-to-parked / close-as-mitigated, closing
+      # the lifecycle. #121: `mitigated` closes a ticket as accepted-current-state (harm already zero).
+      printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
           "$N" "$(printf '%s' "$report" | jq -r '.escalation.title // ((.escalation.reason // "parked")[0:80])')" \
           "$(printf '%s' "$report" | jq -r '.escalation.reason // ""')" \
           "$(printf '%s' "$report" | jq -r '.escalation.question // ""')" \
@@ -586,10 +644,36 @@ while :; do
     # normal severity order — turning the "unblocked-now" advice into an actual selection change,
     # not just a logged concern. Ignored if it's excluded, NOT-automatable, or already queued.
     for a in $(printf '%s' "$verdict" | jq -r '(.attemptNext // [])[]' 2>/dev/null || true); do
-      if [[ "$a" =~ ^[0-9]+$ && ",$excludes," != *",$a,"* && "$NA_SET" != *",$a,"* && ",$PRIORITY," != *",$a,"* ]]; then
+      [[ "$a" =~ ^[0-9]+$ ]] || continue
+      # #119: an attemptNext for a wait-deferred ticket means the supervisor saw its blocker land THIS
+      # run — clear the persisted wait + the in-run exclude so the priority pick can actually fire
+      # (otherwise it stays wait-excluded until the next run-start re-check).
+      if [[ "$WAIT_EXCLUDES" == *",$a,"* ]]; then
+        [[ "$MODE" == "live" ]] && govern::waits_remove "$a"
+        WAIT_EXCLUDES=",$(govern::csv_remove "$WAIT_EXCLUDES" "$a"),"
+        excludes="$(govern::csv_remove "$excludes" "$a")"
+        govern::log "supervisor → #$a unblocked; cleared its pending-wait (#119)"
+      fi
+      if [[ ",$excludes," != *",$a,"* && "$NA_SET" != *",$a,"* && ",$PRIORITY," != *",$a,"* ]]; then
         PRIORITY="${PRIORITY:+$PRIORITY,}$a"; govern::log "supervisor → will attempt #$a next (attemptNext / unblocked-now) (#92)"
       fi
     done
+    # #119: persist supervisor wait-for-merge / dependency deferrals to governor/pending-waits.json so
+    # they SURVIVE run-end (skipThisRun #57 is in-memory only). Each {ticket,pr,repo} / {ticket,dependsOn}
+    # entry re-excludes its ticket at every subsequent run-start until the blocker lands. Also exclude it
+    # for the rest of THIS run (the wait is at least as strong as a skipThisRun).
+    while IFS= read -r _w; do
+      [[ -n "$_w" ]] || continue
+      _wt="$(printf '%s' "$_w" | jq -r '.ticket // empty' 2>/dev/null || true)"
+      [[ "$_wt" =~ ^[0-9]+$ ]] || continue
+      if [[ "$MODE" == "live" ]]; then
+        govern::waits_add "$_w"; govern::log "supervisor → persisted wait for #$_wt → pending-waits.json (survives run-end) (#119)"
+      else
+        govern::log "[dry] would persist supervisor wait for #$_wt to pending-waits.json (#119)"
+      fi
+      [[ ",$excludes," != *",$_wt,"* ]] && excludes="${excludes:+$excludes,}$_wt"
+      [[ "$WAIT_EXCLUDES" == *",$_wt,"* ]] || WAIT_EXCLUDES+="$_wt,"
+    done < <(printf '%s' "$verdict" | jq -c '(.waitForMerge // [])[]' 2>/dev/null || true)
     if [[ "$(printf '%s' "$verdict" | jq -r '.verdict // "ok"' 2>/dev/null)" == "halt" ]]; then
       govern::log "SUPERVISOR HALT: $(printf '%s' "$verdict" | jq -r '.haltReason // ""')"; break
     fi
