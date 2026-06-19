@@ -120,8 +120,18 @@ for repo in "${REPOS[@]}"; do
       git -C "$src" worktree add -b "$NAME" "$dst" main 2>&1 | sed "s/^/[$repo] /"
     fi
   else
-    echo "[$repo] not in --only, worktree on main (read-only)"
-    git -C "$src" worktree add "$dst" main 2>&1 | sed "s/^/[$repo] /"
+    # Not in --only: a DETACHED checkout at main (read-only convention). Must be
+    # --detach, NOT `worktree add <dst> main`: git refuses to check out a branch
+    # already checked out elsewhere, and the main checkout normally holds `main`,
+    # so a plain `worktree add main` FAILS with "'main' is already used by worktree
+    # at <main-checkout>" and leaves this sub-repo with NO checkout — while the run
+    # still "succeeds" (the per-repo error just scrolls past). That silently breaks
+    # the headline use case (run the full stack in a worktree, validate via the real
+    # UI) whenever --only scopes to a subset of repos: the others end up empty. A
+    # detached-at-main checkout is runnable and never collides — the same pattern the
+    # meta worktree uses above at the `worktree add --detach` line.
+    echo "[$repo] not in --only, detached worktree at main (read-only)"
+    git -C "$src" worktree add --detach "$dst" main 2>&1 | sed "s/^/[$repo] /"
   fi
 
   # Copy sub-repo .env-style files from the main checkout. Only copy when the
