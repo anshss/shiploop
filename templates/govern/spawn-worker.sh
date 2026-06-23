@@ -58,7 +58,26 @@ else
   # runs, silently killing every worker at the worktree step. WORKTREE_ASSUME_YES=1: a headless
   # worker has no TTY to answer new.sh's <5GB disk prompt; without it the guard EOF-aborts and
   # reads as a phantom worker failure (aquanode #48). Direct bash + assume-yes sidestep both.
-  ( cd "$WS_ROOT" && WORKTREE_ASSUME_YES=1 bash "$WS_ROOT/scripts/worktree/new.sh" "$slug" >/dev/null )
+  #
+  # #76: capture worktree:new's output and DON'T let a non-zero exit `set -e`-abort spawn-worker.
+  # The driver runs us as `spawn-worker.sh N 2>/dev/null || true`, so a bare abort discards our
+  # stderr and surfaces only an opaque "#N FAILED" with no cause. new.sh now self-heals a stale
+  # ticket-<N> registry entry (registry path-gone self-heal), so the common re-open collision just
+  # succeeds; if it STILL fails (a genuine live collision), emit a `failed` report carrying the
+  # REAL reason so the driver records something actionable instead of a bare FAILED.
+  set +e
+  wt_out="$( cd "$WS_ROOT" && WORKTREE_ASSUME_YES=1 bash "$WS_ROOT/scripts/worktree/new.sh" "$slug" 2>&1 )"
+  wt_rc=$?
+  set -e
+  if [[ "$wt_rc" -ne 0 || ! -d "$wtpath" ]]; then
+    reason="worktree:new for $slug failed (rc=$wt_rc): $(printf '%s' "$wt_out" | grep -iE 'already in registry|already exists|already checked out|already used|fatal|error' | tail -2 | tr '\n' ' ' | sed 's/  */ /g')"
+    [[ "$reason" == *': ' || "$reason" == *':' ]] && reason="worktree:new for $slug failed (rc=$wt_rc) — inspect $jsonl; tail: $(printf '%s' "$wt_out" | tail -2 | tr '\n' ' ')"
+    govern::log "worker for #$N → failed at worktree create: $reason"
+    rm_hint="$ROOT_PM run worktree:rm -- $slug --force"
+    jq -nc --arg r "$reason" --arg rm "$rm_hint" \
+      '{status:"failed",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("clear the ticket-<N> worktree/branch/registry collision ("+$rm+") then re-run"),options:[]}}'
+    exit 0
+  fi
 fi
 [[ -d "$wtpath" ]] || govern::die "worktree not created at $wtpath"
 
