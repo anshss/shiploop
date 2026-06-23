@@ -15,7 +15,8 @@
 #   wt_registry_alloc_slot                     — pick smallest free slot ≥ 1, print it
 #   wt_registry_add NAME PATH SLOT             — append slot entry, bump nextSlot
 #   wt_registry_alloc_and_register NAME PATH   — atomic alloc + add (wrap in with_lock);
-#                                                refuses on name collision; prints slot
+#                                                self-heals a STALE entry (registered path gone)
+#                                                but refuses a LIVE name collision; prints slot
 #   wt_registry_remove NAME                    — drop slot entry by name, print its slot
 #   wt_registry_path_for NAME                  — print path of named slot, exit 1 if missing
 #   wt_registry_slot_for NAME                  — print slot number of named slot, exit 1 if missing
@@ -103,11 +104,25 @@ wt_registry_alloc_and_register() {
   # Splitting alloc and add into two locks lets two parallel `new` calls grab the
   # same slot, then the second add silently clobbers the first entry.
   local name="$1" path="$2"
-  local reg used i slot now
+  local reg used i slot now existing_path
   reg=$(wt_registry_read)
-  if printf '%s' "$reg" | jq -e --arg n "$name" '.slots | to_entries[] | select(.value.name == $n)' >/dev/null 2>&1; then
-    echo "worktree '$name' already in registry" >&2
-    return 1
+  # A name collision is only a REAL collision if the registered worktree still exists on disk.
+  # A `git worktree remove` (or a manual rm -rf) done OUTSIDE worktree:rm leaves a STALE registry
+  # entry whose path is gone — which used to abort worktree:new with "already in registry" and
+  # fast-fail a govern re-run of a resolved/re-opened ticket (aquanode #76). Self-heal: drop the
+  # stale entry and fall through to re-allocate (freeing its slot for reuse). Keep the hard error
+  # only when the path is still present (a genuine live collision).
+  existing_path=$(printf '%s' "$reg" | jq -r --arg n "$name" \
+    '.slots | to_entries[] | select(.value.name == $n) | .value.path' | head -1)
+  if [ -n "$existing_path" ] && [ "$existing_path" != "null" ]; then
+    if [ -e "$existing_path" ]; then
+      echo "worktree '$name' already in registry (path exists: $existing_path)" >&2
+      return 1
+    fi
+    echo "worktree '$name' had a STALE registry entry (path gone: $existing_path) — self-healing" >&2
+    reg=$(printf '%s' "$reg" | jq --arg n "$name" \
+      '((.slots | to_entries | map(select(.value.name == $n)))[0].key) as $k
+       | if $k then del(.slots[$k]) else . end')
   fi
   used=$(printf '%s' "$reg" | jq -r '.slots | keys[]' | sort -n)
   slot=""
