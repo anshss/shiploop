@@ -208,7 +208,8 @@ rm -f "$notes_file"
 #    session commits meta files to the SAME main, so the harness must keep them in sync). The push
 #    is plain ff-only (never forced) and is skipped with no remote (local-only / test repo) and
 #    under GOVERN_NO_PUSH=1.
-commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # '|| true' → "" if dir missing
+govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing (#28)
 ( cd "$commit_dir"
   git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
   git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, rules ${n_rule})" || true
