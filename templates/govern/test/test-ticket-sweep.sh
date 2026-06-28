@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Guard test for the ticket-sweep Stop hook + SessionStart snapshot (aquanode #61).
-# Builds a sandbox "main checkout" (owns tickets.md) and a "worktree" with one
+# Builds a sandbox "main checkout" (owns queue/tickets.md) and a "worktree" with one
 # sub-repo, then drives session-snapshot.sh and ticket-sweep-reminder.sh through
 # the #61 "Done when" scenarios — all deterministic, no real Claude, no network.
 set -euo pipefail
@@ -17,13 +17,13 @@ SWEEP="$DIR/../../ticket-sweep-reminder.sh"
 source "$DIR/../../lib/workspace.sh"
 REPO="${REPOS[0]}"
 
-# Build a sandbox: $T/main (tickets.md) + $T/wt (worktree.env + sub-repo $REPO).
+# Build a sandbox: $T/main (queue/tickets.md) + $T/wt (worktree.env + sub-repo $REPO).
 # Echoes $T.
 mk_sandbox() {
   local T; T="$(mktemp -d)"
-  mkdir -p "$T/main" "$T/wt"
+  mkdir -p "$T/main/queue" "$T/wt"
   ( cd "$T/main" && git init -q && git config user.email t@t && git config user.name t \
-      && printf '## #99 — placeholder\n' > tickets.md && git add -A && git commit -q -m init )
+      && printf '## #99 — placeholder\n' > queue/tickets.md && git add -A && git commit -q -m init )
   printf 'export WORKTREE_NAME=test\n' > "$T/wt/worktree.env"
   ( cd "$T/wt" && mkdir "$REPO" && cd "$REPO" && git init -q \
       && git config user.email t@t && git config user.name t \
@@ -75,12 +75,12 @@ dirty_subrepo "$T"; commit_subrepo "$T"
 out="$(sweep "$T" sess4)"
 assert_contains "$out" '"decision":"block"' "fresh commit after a clean baseline → fires"
 
-# ── 5. tickets.md edited this session → fires ──
+# ── 5. queue/tickets.md edited this session → fires ──
 T="$(mk_sandbox)"
 snap "$T" sess5
-printf '## #100 — new\n' >> "$T/main/tickets.md"
+printf '## #100 — new\n' >> "$T/main/queue/tickets.md"
 out="$(sweep "$T" sess5)"
-assert_contains "$out" '"decision":"block"' "tickets.md changed this session → fires"
+assert_contains "$out" '"decision":"block"' "queue/tickets.md changed this session → fires"
 
 # ── 6. At-most-once: after a fire drops the marker, a second stop is silent ──
 T="$(mk_sandbox)"
