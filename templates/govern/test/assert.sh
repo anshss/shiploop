@@ -52,10 +52,10 @@ assert_eq() { # actual expected message
   else printf 'FAIL - %s\n       expected: [%s]\n       actual:   [%s]\n' "$3" "$2" "$1"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
 }
 assert_contains() { # haystack needle message
-  # Here-string, not `printf | grep`: with set -o pipefail, grep -q exits on the first match and
-  # closes the pipe, so a large haystack (e.g. the 50KB run-loop.sh) makes printf race into a
-  # SIGPIPE/EPIPE write error → pipeline status 141 → a spurious FAIL. A here-string has no pipe. (#255)
-  if grep -qF -- "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
+  # `grep <<<"$1"` (here-string), NOT `printf "$1" | grep -q`: a -q grep exits on first match and
+  # SIGPIPEs the printf, which `set -o pipefail` then reports as a pipeline failure once the haystack
+  # exceeds the 64KB pipe buffer (e.g. cat of a large script) — a false "not found" (#183).
+  if grep -qF "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
   else printf 'FAIL - %s\n       [%s] not found in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
 }
 assert_done() { [[ "$ASSERT_FAILS" -eq 0 ]] || { printf '\n%d assertion(s) failed\n' "$ASSERT_FAILS"; exit 1; }; printf '\nall assertions passed\n'; }
