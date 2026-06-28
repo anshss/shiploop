@@ -9,6 +9,9 @@ SPAWN="$DIR/../spawn-worker.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/governor" "$TMP/wt"
+# Seed a hermetic workspace.sh + GOVERN_WS_ROOT so spawn-worker's common.sh can source it in
+# the template layout (cases 1-3 don't set GOVERN_WS_ROOT; cases 4-5 override it inline). (#255)
+mk_ws_stub "$TMP"
 
 cat > "$TMP/tickets.md" <<'EOF'
 ## #7 — sample ticket A

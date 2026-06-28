@@ -8,9 +8,24 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-NEW="$DIR/../../worktree/new.sh"
 SPAWN="$DIR/../spawn-worker.sh"
 RL="$DIR/../run-loop.sh"
+
+# new.sh sources scripts/lib/workspace.sh + worktree/lib/registry.sh (for ROOT_PM, wsp_repos_csv),
+# present only in a real workspace; its no-TTY exit-3 message references $ROOT_PM, so under set -u it
+# would crash (exit 1, no message) when they're absent — exactly the template layout. Run a verbatim
+# copy from a stubbed scripts/ tree that mirrors the workspace layout so the guard branches are
+# exercised faithfully with no aquanode workspace present (#255).
+SB="$(mktemp -d)"
+mkdir -p "$SB/scripts/worktree/lib" "$SB/scripts/lib"
+cp "$DIR/../../worktree/new.sh" "$SB/scripts/worktree/new.sh"
+: > "$SB/scripts/worktree/lib/registry.sh"
+cat > "$SB/scripts/lib/workspace.sh" <<'EOF'
+ROOT_PM=npm
+WORKTREE_BASE=/tmp/wt-stub
+wsp_repos_csv() { echo alpha; }
+EOF
+NEW="$SB/scripts/worktree/new.sh"
 
 # ── 1. new.sh disk guard branches (check-only mode → exits right after the guard) ──
 # assert.sh runs `set -e`, so capture the (intentionally non-zero) exit codes safely.
@@ -28,7 +43,7 @@ msg="$(WORKTREE_FREE_GB_OVERRIDE=1 WORKTREE_DISK_CHECK_ONLY=1 bash "$NEW" diag <
 assert_contains "$msg" "WORKTREE_ASSUME_YES=1" "no-TTY guard tells the caller how to proceed"
 
 # ── 2. the slim strip: regenerable dirs go, source + uncommitted diffs stay ──
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+T="$(mktemp -d)"; trap 'rm -rf "$T" "$SB"' EXIT
 mkdir -p "$T/sub/node_modules/pkg" "$T/sub/.next/cache" "$T/sub/dist" "$T/sub/src"
 echo junk > "$T/sub/node_modules/pkg/index.js"
 echo built > "$T/sub/.next/cache/x"

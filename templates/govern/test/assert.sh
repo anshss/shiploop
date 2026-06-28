@@ -3,6 +3,24 @@
 set -euo pipefail
 ASSERT_FAILS=0
 
+# ── Layout resolver (#255) ──────────────────────────────────────────────────
+# These tests run in TWO layouts: a live workspace (govern at scripts/govern/, prompt
+# files at <root>/governor/, hooks at <root>/scripts/) and the template repo itself
+# (govern at templates/govern/, prompts at templates/governor/, hooks at templates/hooks/).
+# Probe both so the suite is green out-of-the-box in either — with NO aquanode workspace
+# present. assert.sh sits in <…>/govern/test/, so resolve relative to its own location.
+ASSERT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Governor prompt dir: templates/governor (template) | <root>/governor (workspace).
+for _cand in "$ASSERT_DIR/../../governor" "$ASSERT_DIR/../../../governor"; do
+  if [[ -f "$_cand/worker-prompt.md" ]]; then GOVERN_PROMPTS_DIR="$(cd "$_cand" && pwd)"; break; fi
+done
+# Hooks dir (session-snapshot.sh + ticket-sweep-reminder.sh): templates/hooks (template) |
+# <root>/scripts (workspace, where the hooks install beside govern/).
+for _cand in "$ASSERT_DIR/../../hooks" "$ASSERT_DIR/../.."; do
+  if [[ -f "$_cand/session-snapshot.sh" ]]; then GOVERN_HOOKS_DIR="$(cd "$_cand" && pwd)"; break; fi
+done
+export GOVERN_PROMPTS_DIR="${GOVERN_PROMPTS_DIR:-}" GOVERN_HOOKS_DIR="${GOVERN_HOOKS_DIR:-}"
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it
