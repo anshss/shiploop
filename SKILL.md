@@ -1,6 +1,6 @@
 ---
 name: meta-repo
-description: Multi-subrepo workspace pattern — an npm-rooted workspace that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /meta-repo:setup slash command.
+description: Multi-subrepo workspace pattern — a workspace (npm, pnpm, or yarn at the root) that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /meta-repo:setup slash command.
 ---
 
 # Meta-repo — multi-subrepo workspace + autonomous harness
@@ -9,9 +9,9 @@ description: Multi-subrepo workspace pattern — an npm-rooted workspace that wr
 
 A workspace root that contains multiple independent git repositories as sub-folders. Each sub-repo has its own remote, PR queue, and CI. The root is *also* its own git repo, holding workspace config, cross-cutting scripts, the ticket queue, the governor, and shared AI context. You operate N services as one product without sacrificing their independent deploy cadences or PR isolation — and a harness (worktrees + tickets + governor + hooks) lets a Claude session run for long stretches autonomously, without stopping to ask permission.
 
-Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git repo, an npm-run launcher at the root.
+Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git repo, a script launcher at the root invoked via your chosen package manager.
 
-The **root package manager is npm** (`npm run <script>`). The root is private and zero-dependency — it only holds script aliases. Each sub-repo keeps its OWN package manager (whatever its lockfile says). Don't introduce pnpm/yarn at the root: a stray root lockfile diverges and some PMs rewrite root state on every invocation.
+**The root uses ONE package manager — your choice of npm, pnpm, yarn, or bun** (`ROOT_PM` in `scripts/lib/workspace.sh`, default `npm`). The root is private and near-zero-dependency: its `package.json` holds only thin `bash scripts/<x>.sh` aliases, so `npm run dev`, `pnpm dev`, and `yarn dev` all execute the same PM-agnostic bash. `ROOT_PM` only governs which CLI you type and what `doctor` checks for. Each sub-repo independently keeps its OWN package manager (whatever its lockfile says). The one rule: **don't mix two package managers at the root** — a stray second root lockfile (e.g. a `package-lock.json` left by an accidental `npm install` in a pnpm root) diverges from the real one, and some PMs (pnpm v11) rewrite root state on every invocation. The root `.gitignore` ignores the off-PM lockfiles so a stray install can't pollute the tree.
 
 ## When to use this pattern
 
@@ -30,6 +30,8 @@ If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opi
 
 ## Operating commands (once installed)
 
+Examples below use `npm run` (the default `ROOT_PM`); substitute your root PM — `pnpm <script>`, `yarn <script>`, or `bun run <script>` (the `<pm> run <script>` form works for all four).
+
 | Command | Purpose |
 |---------|---------|
 | `npm run dev` | Boot all sub-repos; tee each one's output to `logs/<name>.log`. `-- --only a,b` to scope |
@@ -46,7 +48,7 @@ If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opi
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
 
-**npm needs `--` before any arg/flag** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`. Bare verbs are fine; flags get swallowed without the `--`.
+**Pass args/flags after the script with `--`** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`. npm and pnpm both need the `--` or they swallow the flags; yarn classic tolerates it either way. Bare verbs are fine without it.
 
 ## Parallel worktrees (the isolation primitive)
 
@@ -116,7 +118,7 @@ The harness is configured so a session runs **long without stopping to ask permi
 4. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
 5. **PRs aren't transactional across sub-repos — merge backend-first.** When the backend adds a capability the frontend consumes (enum, endpoint, response field), the backend PR merges + deploys before the frontend PR — else the frontend ships UI the live backend rejects. State the merge order in each sibling PR.
 6. **`.env.example` is the contract.** Never commit `.env`. `doctor` checks each `.env` exists.
-7. **The root is npm.** No pnpm/yarn/bun at the root — a stray root lockfile diverges. Sub-repos keep their own PM.
+7. **One package manager at the root — never two.** The root PM is your choice (`ROOT_PM` = npm/pnpm/yarn/bun in `workspace.sh`); the root scripts are PM-agnostic bash aliases, so any of them works. What breaks is *mixing*: a stray second root lockfile (e.g. a `package-lock.json` left by an accidental `npm install` in a pnpm root) diverges from the real one. The root `.gitignore` ignores the off-PM lockfiles to prevent this. Sub-repos keep their own PM independently.
 8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo coordination files (CLAUDE.md, tickets.md, learnings.md, scripts/) commit directly to main in the main checkout — never branched/PR'd.
 9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next `dev` serves stale code on `EADDRINUSE`). Worktree: `npm run worktree:rm`. Backstops: SessionEnd hook + `dev.sh` frees each port before binding.
 10. **Workers never write `tickets.md`** — the governor's bookkeeper does, in the main checkout (avoids two writers racing the file).
@@ -134,7 +136,7 @@ PRs land independently — don't expect atomicity.
 ## Setup / upgrade a workspace
 
 Invoke **`/meta-repo:setup`**. It is idempotent:
-- **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; writes `package.json`, `pnpm`→npm scripts, `.gitignore`, `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
+- **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; asks which package manager you'll use at the root (sets `ROOT_PM`); writes `package.json` (thin bash-alias scripts), `.gitignore` (ignoring the off-PM root lockfiles), `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
 - **Existing meta-repo (bump):** detects which capabilities are present (core scripts / worktrees / tickets / governor / hooks) vs missing or outdated, then offers to add/upgrade each. Because all customization lives in `scripts/lib/workspace.sh`, the mechanism scripts are refreshed from latest templates without clobbering your tweaks.
 
 ## Tradeoffs (state honestly)

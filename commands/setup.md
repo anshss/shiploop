@@ -1,11 +1,11 @@
 ---
 model: opus
 effort: medium
-description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold (npm root, worktrees, ticket queue, governor, hooks). Existing meta-repo → idempotent component-by-component bump: detect which capabilities are present vs missing/outdated and offer to add/upgrade each, refreshing mechanism scripts from latest templates without clobbering customization (which lives only in scripts/lib/workspace.sh).
+description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold (root PM of your choice — npm/pnpm/yarn — plus worktrees, ticket queue, governor, hooks). Existing meta-repo → idempotent component-by-component bump: detect which capabilities are present vs missing/outdated and offer to add/upgrade each, refreshing mechanism scripts from latest templates without clobbering customization (which lives only in scripts/lib/workspace.sh).
 ---
 
 You are the meta-repo setup command. You convert the current folder into — or upgrade an existing —
-**meta-repo workspace**: an npm-rooted workspace that wraps N independent git sub-repos and provides
+**meta-repo workspace**: a workspace (npm, pnpm, or yarn at the root — your choice via `ROOT_PM`) that wraps N independent git sub-repos and provides
 cross-cutting tooling, parallel worktrees, a ticket queue, a governor (autonomous ticket loop), and
 the SessionStart/End/Stop hooks.
 
@@ -22,8 +22,8 @@ for customization. **Never hand-edit a mechanism script during setup; put the va
 Workspace layout this command produces:
 ```
 <root>/
-  package.json            scripts/lib/workspace.sh        tickets.md
-  .gitignore              scripts/lib/*.sh.example        tickets-parked.md
+  package.json            scripts/lib/workspace.sh        queue/tickets.md
+  .gitignore              scripts/lib/*.sh.example        queue/tickets-parked.md
   .mcp.json (if any)      scripts/{status,doctor,branch,switch,dev,pull-all,push-prs,health}.sh
   .worktrees/.gitkeep     scripts/{check-main-on-main,ticket-sweep-reminder}.sh
   governor/*.md           scripts/worktree/*  + worktree/lib/registry.sh + session-end-cleanup.sh
@@ -95,8 +95,13 @@ For each confirmed sub-repo:
 
 Print a table (repo / port / lockfile / dev command) and ask "Correct? (yes / fix)".
 
-## Phase 3 — Detect org + worktree base (fresh)
+## Phase 3 — Detect org + worktree base + root PM (fresh)
 
+- **Root package manager (`ROOT_PM`):** the root scripts are PM-agnostic bash aliases, so this only
+  sets which CLI the operator types (`npm run <x>` / `pnpm <x>` / `yarn <x>` / `bun run <x>`) and what
+  `doctor` checks for. If a root lockfile already exists, detect from it (`package-lock.json`→`npm`,
+  `pnpm-lock.yaml`→`pnpm`, `yarn.lock`→`yarn`, `bun.lockb`→`bun`); otherwise ask, default `npm`. This
+  value fills `ROOT_PM` in Phase 4 and drives the off-PM lockfile ignores in Phase 6.
 - **GitHub org:** `git -C <first-repo> remote get-url origin` → parse `<org>/<repo>`. Confirm.
 - **Worktree base:** default `$(dirname "$(pwd)")/<folder-name>.wt` (a sibling of the workspace).
   Confirm or let the user override.
@@ -117,7 +122,8 @@ length:
 - `__REPO_PORTS__` → base port per repo, same order; `""` for a repo with no HTTP port: `3080 3000 ""`
 - `__WORKTREE_BASE__` → the worktree base path (keep the `$HOME` form if under home)
 - `__GOVERN_MERGE_REPOS__` → space-separated allowlist (may be empty)
-Leave `ROOT_PM="npm"`. After writing, verify with the user's env bash AND the system bash:
+Set `ROOT_PM` to the package manager chosen/detected in Phase 3 (`npm` | `pnpm` | `yarn` | `bun`;
+default `npm`). After writing, verify with the user's env bash AND the system bash:
 `bash -n scripts/lib/workspace.sh` and
 `bash -c 'source scripts/lib/workspace.sh && echo "${REPOS[@]}" && echo "$(wsp_repo_port <some-repo> 1)"'`
 to prove it parses and the helpers resolve (run it once with `/bin/bash` too, since the harness must
@@ -203,17 +209,29 @@ Without this step the headline `/govern` in the final "Try" block would be a dea
 ```
 
 ### `.gitignore`
-Copy `$T/gitignore` to `.gitignore` and replace `__SUBREPO_IGNORES__` with one `/<repo>/` line per
-sub-repo. If a `.gitignore` exists, merge (don't clobber) — append any missing lines.
+Copy `$T/gitignore` to `.gitignore`, then:
+- Replace `__SUBREPO_IGNORES__` with one `/<repo>/` line per sub-repo.
+- Replace `__ROOT_LOCKFILE_IGNORES__` with the root lockfiles to ignore, keyed to `ROOT_PM` — list the
+  **other** PMs' root lockfiles so a stray install can't commit a divergent one. A pnpm root also
+  ignores its OWN (pnpm v11 rewrites it every run). Each line is root-anchored (`/`):
+  - `npm` → `/pnpm-lock.yaml` `/yarn.lock` `/bun.lockb`
+  - `pnpm` → `/pnpm-lock.yaml` `/package-lock.json` `/yarn.lock` `/bun.lockb` (all four)
+  - `yarn` → `/package-lock.json` `/pnpm-lock.yaml` `/bun.lockb`
+  - `bun` → `/package-lock.json` `/pnpm-lock.yaml` `/yarn.lock`
+
+If a `.gitignore` exists, merge (don't clobber) — append any missing lines.
 
 ### Seeds
-Copy `$T/seed/tickets.md`, `$T/seed/tickets-parked.md`, `$T/seed/learnings.md`, and
-`$T/seed/CLAUDE.md` to the root **only if absent** (never overwrite an existing queue or CLAUDE.md).
+Create the `queue/` folder and copy `$T/seed/tickets.md` → `queue/tickets.md` and
+`$T/seed/tickets-parked.md` → `queue/tickets-parked.md` (the live + parked queues live together in
+`queue/`). Copy `$T/seed/learnings.md` and `$T/seed/CLAUDE.md` to the root. All **only if absent**
+(never overwrite an existing queue or CLAUDE.md).
 The seed `CLAUDE.md` is the workspace's **always-on context** — it carries the operate-first guidance,
 the stability-routing table (tickets / CLAUDE.md / learnings / project memory), the root-vs-sub-repo
 `CLAUDE.md` hierarchy, and the anti-patterns, with `<…>` placeholders for the sub-repo map. After
 copying, fill the `<workspace>` / `<org>` / sub-repo table placeholders from the Phase 1–3 detection.
-Mention the operator should also create a per-sub-repo `CLAUDE.md` (and optional `learnings.md`) as
+If `ROOT_PM` is not `npm`, also replace the literal `npm run` in its command examples with the chosen
+PM form (`pnpm run` / `yarn run` / `bun run`). Mention the operator should also create a per-sub-repo `CLAUDE.md` (and optional `learnings.md`) as
 each sub-repo accrues its own patterns — "sub-repo CLAUDE.md wins in its scope".
 
 ## Phase 7 — Wire `.claude/settings.json` hooks (fresh)
@@ -245,8 +263,9 @@ SessionStart hook.
 
 ## Phase 8 — Initialize (fresh)
 
-Ask: "Run `npm install` + `npm run doctor` now? (yes / skip)". If yes: `npm install` (background),
-then `npm run doctor`; show output. Don't auto-fix missing `.env` files (they hold secrets the user
+Ask: "Run `<ROOT_PM> install` + `<ROOT_PM> run doctor` now? (yes / skip)" (substitute the chosen PM —
+`npm install`, `pnpm install`, `yarn`, or `bun install`). If yes: run the install (background), then
+`<ROOT_PM> run doctor`; show output. Don't auto-fix missing `.env` files (they hold secrets the user
 provides). Mention the optional next steps:
 - rename `scripts/lib/worktree-bootstrap.sh.example` → `.sh` and fill in per-worktree setup (deps,
   codegen, DB wiring) if you want `worktree:new` to produce a runnable stack;
@@ -260,7 +279,7 @@ files; nothing is versioned until you commit. On the root's default branch (veri
 stage and commit the workspace tooling as ONE commit so the harness actually lives on `main`:
 ```bash
 git add scripts governor package.json .gitignore .worktrees/.gitkeep \
-        tickets.md tickets-parked.md learnings.md CLAUDE.md \
+        queue learnings.md CLAUDE.md \
         .claude/settings.json .claude/commands .mcp.json 2>/dev/null
 git commit -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)"
 ```
@@ -291,11 +310,13 @@ Check presence/freshness of each component and build a table `component | status
   inline `REPOS=` arrays in each script (no workspace.sh), mark config `missing` — this is the big
   upgrade: you'll introduce workspace.sh and re-point the scripts.
 - **core scripts** — `scripts/{status,doctor,branch,switch,dev,pull-all,push-prs,health,sync,tail}.sh`.
-  Outdated if they still inline `REPOS=` instead of sourcing workspace.sh, or if they use a non-npm
-  root. `sync.sh` (multi-repo session-hygiene sync) and `tail.sh` (interleaved dev-log tail) are newer
-  additions — mark `missing` if absent.
+  Outdated if they still inline `REPOS=` instead of sourcing workspace.sh, or if they hard-code a
+  package manager instead of using `$ROOT_PM` (a non-npm root is valid — the scripts must honor
+  `ROOT_PM`). `sync.sh` (multi-repo session-hygiene sync) and `tail.sh` (interleaved dev-log tail) are
+  newer additions — mark `missing` if absent.
 - **worktrees** — `scripts/worktree/` present?
-- **tickets** — `tickets.md` present?
+- **tickets** — `queue/tickets.md` present? An older workspace keeps `tickets.md` + `tickets-parked.md`
+  at the ROOT (pre-`queue/` layout) — mark `outdated` so the bump migrates them into `queue/` (below).
 - **commands** — project-local `.claude/commands/govern.md` + `.claude/commands/resolve.md` present?
   An older workspace that predates this step has NEITHER — it relied on the global `meta-repo:govern`
   skill, so a bare `/govern` / `/resolve` never worked there (and the Phase Z "Try" message advertised
@@ -332,9 +353,21 @@ each chosen component:
   step existed. Safe to refresh: they carry no workspace-specific values (they read `scripts/govern/*`
   and `workspace.sh` at runtime).
 - **package.json scripts:** add any missing script aliases (worktree:*, govern, health, sync, tail, …)
-  without removing the user's own. Convert a legacy pnpm root to npm ONLY if the user confirms (anti-pattern
-  #7) — otherwise leave `ROOT_PM` matching their current root.
-- **tickets:** if `tickets.md` is missing, seed it from `$T/seed/`. NEVER overwrite an existing queue.
+  without removing the user's own. Keep `ROOT_PM` matching the operator's existing root lockfile — npm,
+  pnpm, and yarn roots are all valid (the scripts are PM-agnostic bash aliases). Only change the root PM
+  if the operator explicitly asks. If the existing root has a stray off-PM lockfile (e.g. a
+  `package-lock.json` in a pnpm root), flag it and offer to remove it + add it to the `.gitignore`
+  off-PM ignores (anti-pattern #7) rather than switching PMs.
+- **tickets:** the live + parked queues live in `queue/`. Three cases:
+  - Neither `queue/tickets.md` nor a root `tickets.md` → seed `queue/tickets.md` + `queue/tickets-parked.md`
+    from `$T/seed/` (create `queue/` first). NEVER overwrite an existing queue.
+  - Root-level `tickets.md` / `tickets-parked.md` present (pre-`queue/` layout) → **migrate**: `mkdir -p queue`
+    then `git mv tickets.md queue/tickets.md` and `git mv tickets-parked.md queue/tickets-parked.md` (preserve
+    history; create `queue/tickets-parked.md` from the seed if the root one is absent). Confirm first. The
+    refreshed mechanism scripts already read `queue/` (the `QUEUE_DIR` default in `common.sh`), so the move
+    is all that's needed. If the root also has a `governor/externalized.md` (externalization-lane installs),
+    `git mv` it to `queue/externalized.md` too.
+  - `queue/tickets.md` already present → up to date; leave it.
 - **root CLAUDE.md:** if `CLAUDE.md` is missing, offer to seed it from `$T/seed/CLAUDE.md` (then fill
   the placeholders). If it's present, NEVER overwrite it — instead check whether it documents the
   stability-routing table (tickets / CLAUDE.md / learnings / project memory) and the root-vs-sub-repo

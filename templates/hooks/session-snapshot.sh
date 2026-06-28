@@ -33,7 +33,7 @@ baseline="${TMPDIR:-/tmp}/metarepo-ticket-sweep-baseline-${session_id}"
 # --- resolve the repo root: a worktree (has worktree.env) or the main checkout ---
 # Same resolution the Stop hook uses, so both fingerprint the same tree.
 root="$cwd"
-while [ "$root" != "/" ] && [ ! -f "$root/worktree.env" ] && [ ! -f "$root/tickets.md" ]; do
+while [ "$root" != "/" ] && [ ! -f "$root/worktree.env" ] && [ ! -f "$root/queue/tickets.md" ]; do
   root="$(dirname "$root")"
 done
 [ -d "$root" ] || root="$MAIN"

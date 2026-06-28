@@ -1,7 +1,7 @@
 # Governor harness — operating guide
 
 One long-running **governor** drives fresh per-ticket **headless `claude -p`** workers. The operator
-job shrinks to: managing `tickets.md`, answering `escalations.md`, and the two hard-stop decision
+job shrinks to: managing `queue/tickets.md`, answering `escalations.md`, and the two hard-stop decision
 classes. The governor itself is a **pure-bash driver** (`scripts/govern/run-loop.sh`) — it spends ~zero
 Claude context; Claude runs only inside the bounded worker and supervisor sub-sessions.
 
@@ -33,7 +33,7 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
   a recurring decision here graduates into a `preferences.md` rule.
 - `scripts/govern/*.sh` — the mechanism (select / spawn / await-ci / merge / bookkeep / supervise /
   escalation lifecycle).
-- `tickets-parked.md` — manual defer queue the governor ignores. A `defer` escalation answer
+- `queue/tickets-parked.md` — manual defer queue the governor ignores. A `defer` escalation answer
   auto-migrates a ticket here (#62).
 
 ## Escalation lifecycle (#62 — answers feed back into the loop)
@@ -47,8 +47,8 @@ asked the operator, so they sat unanswered indefinitely. Now the loop closes its
   `mitigated` | `keep-open`) back into `escalations.md` (plus an optional "Make this a rule?" sentence).
 - **Next run-start (`escalations-apply-answers.sh`):** acts on each recorded answer —
   `do-the-work` un-parks (governor retries the ticket), `defer` auto-migrates the ticket to
-  `tickets-parked.md` (renumbered, still TODO) and resolves the escalation, `mitigated` removes the
-  ticket from `tickets.md` and closes it as accepted-current-state (harm already zero — NOT parked as
+  `queue/tickets-parked.md` (renumbered, still TODO) and resolves the escalation, `mitigated` removes the
+  ticket from `queue/tickets.md` and closes it as accepted-current-state (harm already zero — NOT parked as
   still-todo), and a rule sentence is appended to `preferences.md`. Idempotent and committed like the
   bookkeep.
 
@@ -76,11 +76,11 @@ Unset → the run summary's "Needs you" section is the signal.
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
   are kept** on disk (uncommitted work survives) + their path is logged. A timeout is a *pause*, not
-  lost work — the PR (if opened) is safe on GitHub and the ticket stays in `tickets.md`.
+  lost work — the PR (if opened) is safe on GitHub and the ticket stays in `queue/tickets.md`.
 - **No duplicate PRs on resume:** before spawning, an existing open PR on branch `ticket-<N>` is
   detected and the run resumes from CI→merge→bookkeep.
 - A clean interrupt (Ctrl-C / SIGTERM / sleep) leaves the in-flight ticket + worktree; re-running
-  continues (resolved → gone from `tickets.md`; parked → skipped via `escalations.md`).
+  continues (resolved → gone from `queue/tickets.md`; parked → skipped via `escalations.md`).
 - A run writes a plain-words summary on **every exit (clean OR crash/kill)** to
   `logs/govern/run-*/summary.md` and `logs/govern/last-session.md`.
 
@@ -101,5 +101,5 @@ agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-
 next run.
 
 ## Constraints to respect
-- Workers never write `tickets.md` — `govern-bookkeep.sh` does, in the main checkout.
+- Workers never write `queue/tickets.md` — `govern-bookkeep.sh` does, in the main checkout.
 - Going live from a dry-run is just running without `--dry-run`; no code change.

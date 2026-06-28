@@ -5,6 +5,7 @@ source "$DIR/assert.sh"
 SEL="$DIR/../select-ticket.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+mk_ws_stub "$TMP"  # hermetic workspace stub (independent of the live workspace.sh)
 cat > "$TMP/tickets.md" <<'EOF'
 ## #2 — low one
 **Severity:** Low — minor.

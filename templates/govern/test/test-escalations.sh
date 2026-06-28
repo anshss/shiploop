@@ -8,6 +8,7 @@ EMIT="$DIR/../escalations-emit-pending.sh"
 APPLY="$DIR/../escalations-apply-answers.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+mk_ws_stub "$T"  # hermetic workspace stub (independent of the live workspace.sh)
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
 cat > "$T/tickets.md" <<'EOF'

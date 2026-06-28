@@ -46,7 +46,7 @@ marker="${TMPDIR:-/tmp}/metarepo-ticket-sweep-${session_id}"
 
 # --- resolve the repo root: a worktree (has worktree.env) or the main checkout ---
 root="$cwd"
-while [ "$root" != "/" ] && [ ! -f "$root/worktree.env" ] && [ ! -f "$root/tickets.md" ]; do
+while [ "$root" != "/" ] && [ ! -f "$root/worktree.env" ] && [ ! -f "$root/queue/tickets.md" ]; do
   root="$(dirname "$root")"
 done
 [ -d "$root" ] || root="$MAIN"
@@ -72,7 +72,7 @@ did_code_work() {
 # ahead branch / dirty tickets.md, regardless of when it happened.
 did_code_work_absolute() {
   # tickets.md itself dirty in the main checkout → work in progress.
-  if [ -f "$MAIN/tickets.md" ] && ! git -C "$MAIN" diff --quiet -- tickets.md 2>/dev/null; then
+  if [ -f "$MAIN/queue/tickets.md" ] && ! git -C "$MAIN" diff --quiet -- queue/tickets.md 2>/dev/null; then
     return 0
   fi
   local r dir
@@ -101,7 +101,7 @@ fi
 reason="Before ending: reconcile tickets.md (root meta-repo). \
 (1) NEW TICKETS — review what you touched/discovered this session. Any bug, gap, \
 missing capability, or follow-up that is NOT already a ticket gets its own numbered \
-## #N entry in $MAIN/tickets.md (Severity / Where / Observed / Fix direction / Done when / Ref). \
+## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / Done when / Ref). \
 A discovered gap ALWAYS goes to tickets.md, never learnings.md. \
 (2) RESOLVED TICKETS — for any ticket whose fix PR you OPENED this session (PR opened = resolved, \
 not merged), DELETE its entry from tickets.md now; promote any durable lesson to CLAUDE.md first, \

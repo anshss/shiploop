@@ -17,14 +17,14 @@
 # two calls with no intervening edits produce byte-identical output.
 
 # ticket_sweep_state_fingerprint <main_checkout> <worktree_root>
-#   <main_checkout> — fixed path that owns tickets.md (the meta-repo root).
+#   <main_checkout> — fixed path that owns the queue/ folder (the meta-repo root).
 #   <worktree_root> — the resolved repo root the session is operating in; sub-repos
 #                     are read from "<worktree_root>/<repo>".
 ticket_sweep_state_fingerprint() {
   local main="$1" root="$2" r dir
-  # MAIN tickets.md content (a content hash, so in-place edits are detected).
-  if [ -f "$main/tickets.md" ]; then
-    printf 'tickets:%s\n' "$(git -C "$main" hash-object "$main/tickets.md" 2>/dev/null || echo unknown)"
+  # MAIN queue/tickets.md content (a content hash, so in-place edits are detected).
+  if [ -f "$main/queue/tickets.md" ]; then
+    printf 'tickets:%s\n' "$(git -C "$main" hash-object "$main/queue/tickets.md" 2>/dev/null || echo unknown)"
   else
     printf 'tickets:absent\n'
   fi

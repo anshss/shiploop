@@ -8,7 +8,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 N="${1:?ticket number required}"
 report="$(cat)"
-commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"   # the queue/ folder (holds tickets.md)
 patched=""
 
 # Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers
@@ -69,10 +69,13 @@ while [[ "$i" -lt "$count" ]]; do
   i=$((i+1))
 done
 
-# 3. Root-level lessonPatch (only files inside commit_dir; never a sub-repo's own git tree).
+# 3. Root-level lessonPatch (only files at the meta-repo ROOT, e.g. CLAUDE.md; never a sub-repo's own
+# git tree, and never the queue/ folder — the lesson file sits beside it at the root).
 lp_file="$(printf '%s' "$report" | jq -r '.lessonPatch.file // empty' 2>/dev/null || true)"
 if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no slash)
-  target="$commit_dir/$lp_file"
+  meta_root="$(govern::meta_root)"   # repo root — computed lazily, ONLY when a root lesson exists, and
+                                      # inside the BK_LOCK critical section (never a pre-lock git call).
+  target="$meta_root/$lp_file"
   if [[ -f "$target" ]]; then
     anchor="$(printf '%s' "$report" | jq -r '.lessonPatch.anchor // empty')"
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
@@ -90,7 +93,8 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     else
       printf '\n%s\n' "$text" >> "$target"
     fi
-    patched="$lp_file"
+    patched="$target"   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
+                        # root-relative name would miss it; absolute resolves from anywhere in the repo.
   fi
 fi
 

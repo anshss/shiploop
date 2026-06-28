@@ -11,6 +11,7 @@ REPO="$(cd "$DIR/../../.." && pwd)"
 RL="$DIR/../run-loop.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+mk_ws_stub "$T"  # hermetic workspace stub (independent of the live workspace.sh)
 mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
