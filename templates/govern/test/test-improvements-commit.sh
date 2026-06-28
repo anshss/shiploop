@@ -24,10 +24,12 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
+ROOT="$(mktemp -d)"; trap 'rm -rf "$ROOT"' EXIT
+# common.sh sources $GOVERN_WS_ROOT/scripts/lib/workspace.sh — present only in a real workspace.
+# Seed a hermetic stub + GOVERN_WS_ROOT so the source succeeds in the template layout too (#255).
+mk_ws_stub "$ROOT"
 # shellcheck source=/dev/null
 source "$DIR/../lib/common.sh"
-
-ROOT="$(mktemp -d)"; trap 'rm -rf "$ROOT"' EXIT
 
 # Build a fresh bare-origin + local-clone pair under $1 with a TRACKED governor/improvements.md.
 setup() {

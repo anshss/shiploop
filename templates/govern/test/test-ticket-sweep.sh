@@ -6,10 +6,11 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-# Both hooks install to scripts/ at scaffold time (see commands/setup.md), so from
-# scripts/govern/test/ they sit two levels up.
-SNAP="$DIR/../../session-snapshot.sh"
-SWEEP="$DIR/../../ticket-sweep-reminder.sh"
+# Both hooks install to scripts/ at scaffold time (see commands/setup.md) so in a live
+# workspace they sit two levels up; in the template repo they live under templates/hooks/.
+# GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in (#255).
+SNAP="$GOVERN_HOOKS_DIR/session-snapshot.sh"
+SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
 
 # Discover the workspace's first sub-repo generically — the fingerprint iterates the
 # REAL REPOS list from workspace.sh, so the sandbox sub-repo must be a name it knows.
