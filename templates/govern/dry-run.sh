@@ -33,12 +33,20 @@ echo "    worker report:"; printf '%s\n' "$report" | jq . 2>/dev/null || printf 
 
 status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
 
-# 3. Echo the merge decision.
+# 3. Echo the merge decision — for EVERY PR of the ticket (reported .pr/.prs[] + discovered open
+#    ticket-<N> heads), merge-repo-first, so a multi-repo ticket's siblings are previewed too, not
+#    just the single reported PR (#129).
 echo "[3/5] merge decision:"
-repo="$(printf '%s' "$report" | jq -r '.pr.repo // empty' 2>/dev/null || true)"
-pr="$(printf '%s' "$report" | jq -r '.pr.number // empty' 2>/dev/null || true)"
-if [[ "$status" == "resolved" && -n "$repo" && -n "$pr" ]]; then
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" || echo "    (would refuse: frontend PR-only)"
+if [[ "$status" == "resolved" ]]; then
+  pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
+  if [[ -n "$pr_lines" ]]; then
+    while IFS=$'\t' read -r prepo pnum _purl; do
+      [[ -n "$prepo" && -n "$pnum" ]] || continue
+      GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$prepo" "$pnum" || echo "    (would refuse $prepo#$pnum: frontend PR-only — left open)"
+    done <<< "$pr_lines"
+  else
+    echo "    no PR to merge (status=$status) — nothing to do"
+  fi
 else
   echo "    no PR to merge (status=$status) — nothing to do"
 fi

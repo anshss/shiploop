@@ -237,6 +237,36 @@ govern::lock_try() { # lockdir [stale_s=4200]
 }
 govern::lock_release() { rmdir "$1" 2>/dev/null || true; }
 
+# ── Worker process-tree teardown (#242) ─────────────────────────────────────
+# Killing the governor (Stop / SIGTERM) used to leave its spawn-worker.sh + child worker process
+# (and any grandchildren it spawned) ALIVE — reparented to init, needing a manual `kill -9` sweep; a
+# worker orphaned mid-task can keep a billable resource alive. The fix has two layers, both wired here:
+#   1. the worker process is launched under `set -m` so it leads its OWN process group (pgid==pid),
+#      so a SINGLE `kill -- -pid` reaches the whole subtree at once, even descendants that reparent.
+#   2. these helpers tear that subtree down on EVERY stop path (timeout watchdog, spawn-worker
+#      INT/TERM/EXIT trap, run-loop INT/TERM/EXIT trap).
+#
+# _kill_tree_walk recursively signals a pid's live descendants (pgrep -P) before the pid itself —
+# the belt-and-suspenders fallback that still reaches a child which escaped into its own group.
+govern::_kill_tree_walk() { # pid signal
+  local pid="$1" sig="$2" c
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  for c in $(pgrep -P "$pid" 2>/dev/null); do govern::_kill_tree_walk "$c" "$sig"; done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+# kill_tree: TERM the whole subtree of LEADER pid (process group first — reaches reparented kin —
+# then a pid-tree walk for anything in its own group), wait up to grace_s for the leader to die,
+# then KILL whatever is left the same two ways. Best-effort throughout; safe if pid is already gone.
+govern::kill_tree() { # leader_pid [grace_s=5]
+  local pid="$1" grace="${2:-5}" i=0
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -TERM -"$pid" 2>/dev/null || true   # whole process group (set -m leader)
+  govern::_kill_tree_walk "$pid" TERM
+  while kill -0 "$pid" 2>/dev/null && [[ "$i" -lt "$grace" ]]; do sleep 1; i=$((i+1)); done
+  kill -KILL -"$pid" 2>/dev/null || true
+  govern::_kill_tree_walk "$pid" KILL
+}
+
 # ── TokenJam cross-session run tagging (OTel resource attributes) ────────────
 # Build the OTEL_RESOURCE_ATTRIBUTES string for a governor-spawned claude session so TokenJam groups
 # EVERY session of one run (per-ticket workers + supervisor + self-improve) under a single
@@ -418,6 +448,53 @@ govern::find_pr() {
   return 1
 }
 
+# Merge-first repo order (auto-merge repos before frontend), so a multi-repo ticket's live backend
+# always merges before any frontend sibling (anti-pattern #5-safe). Built from workspace.sh's REPOS.
+govern::_repos_merge_first() {
+  local r
+  for r in "${REPOS[@]}"; do wsp_is_merge_repo "$r" && printf '%s\n' "$r"; done
+  for r in "${GOVERN_FRONTEND_REPOS[@]:-}"; do [[ -n "$r" ]] && printf '%s\n' "$r"; done
+}
+
+# #129: like find_pr, but enumerate EVERY open PR whose head matches ticket-<N> across ALL repos
+# (merge + frontend) — not just the first. A worker for a multi-repo ticket may open N PRs; find_pr
+# returned only the first repo's, so the siblings were orphaned unmerged. Prints one
+# "repo<TAB>number<TAB>url" line per matching open PR, in merge-then-frontend order (backend-first,
+# anti-pattern #5-safe). Empty if none.
+govern::find_all_prs() {
+  local n="$1" repo j rows
+  command -v gh >/dev/null 2>&1 || return 0
+  while IFS= read -r repo; do
+    [[ -n "$repo" ]] || continue
+    j="$(gh pr list --repo "$GITHUB_ORG/$repo" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
+    rows="$(jq -r --arg n "$n" --arg repo "$repo" '
+      [ .[] | select(.headRefName == ("ticket-" + $n) or (.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)"))) ]
+      | .[] | "\($repo)\t\(.number)\t\(.url // "")"' <<<"$j" 2>/dev/null || true)"
+    [[ -n "$rows" ]] && printf '%s\n' "$rows"
+  done < <(govern::_repos_merge_first)
+}
+
+# #129: the FULL, deduped, backend-first PR set for ticket $1 — the worker-reported PR(s) in the
+# report JSON $2 (the single `.pr` PLUS the multi-PR `.prs[]` array) UNION every open ticket-<N>
+# head discovered across all repos. Deduped by repo#number (first occurrence wins, preserving its
+# url) and emitted in merge-then-frontend order so the live backend always merges before any
+# frontend sibling (anti-pattern #5). Prints "repo<TAB>number<TAB>url" lines; empty if the ticket
+# has no PR at all.
+govern::collect_ticket_prs() {
+  local n="$1" report="$2" reported discovered all repo
+  reported="$(printf '%s' "$report" | jq -r '
+    ([ .pr ] + (.prs // []))
+    | map(select(. != null and ((.repo // "") != "") and ((.number // "") | tostring | length > 0)))
+    | .[] | "\(.repo)\t\(.number)\t\(.url // "")"' 2>/dev/null || true)"
+  discovered="$(govern::find_all_prs "$n" 2>/dev/null || true)"
+  all="$(printf '%s\n%s\n' "$reported" "$discovered" | awk -F'\t' 'NF>=2 && !seen[$1"#"$2]++')"
+  [[ -n "$all" ]] || return 0
+  while IFS= read -r repo; do
+    [[ -n "$repo" ]] || continue
+    printf '%s\n' "$all" | awk -F'\t' -v r="$repo" '$1==r'
+  done < <(govern::_repos_merge_first)
+}
+
 # ── cross-run wait-for-merge / dependency deferrals (#119) ───────────────────
 # skipThisRun (#57) defers a ticket for the CURRENT run only (in-memory excludes), so a supervisor
 # "defer #N until PR #M merges" advisory vanished at run-end and the selector re-picked the blocked
@@ -520,6 +597,23 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
     # The waiting ticket itself was resolved/closed → its wait is moot; drop it.
     if ! grep -qE "^## #$t([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
       govern::log "wait #$t — ticket no longer in tickets.md; clearing wait (#119)"; continue
+    fi
+    # #191: a wait must NEVER hold back a ticket whose OWN open PR is in an auto-merge repo. Such a PR
+    # is the governor's to DRIVE TO MERGE (resume → merge; on conflict → rebase-resolve → merge), not
+    # an external PR to "wait on" — the #119 defer is for PRs a human / another lane lands (frontend,
+    # or a true cross-ticket dependency the ticket has no PR for). Conflating the two left the 2nd of
+    # two interdependent un-parked tickets permanently deferred while its blocker was green+MERGEABLE,
+    # needing a manual merge. If #t has its OWN open PR (head ticket-$t) in an auto-merge repo, drop
+    # the wait so the selector resumes + merges it. Frontend own-PRs (is_merge_repo false) and
+    # dependency waits where #t has no own PR fall through to the normal block logic below.
+    local own o_repo o_pr _o_url
+    own="$(govern::find_pr "$t" 2>/dev/null || true)"
+    if [[ -n "$own" ]]; then
+      read -r o_repo o_pr _o_url <<<"$own"
+      if govern::is_merge_repo "$o_repo"; then
+        govern::log "wait #$t — ticket owns open $o_repo PR #$o_pr in an auto-merge repo; governor will resume+merge it (not defer); clearing wait (#191)"
+        continue
+      fi
     fi
     pr="$(jq -r '.pr // empty' <<<"$line" 2>/dev/null || true)"
     repo="$(jq -r '.repo // "harness"' <<<"$line" 2>/dev/null || echo harness)"

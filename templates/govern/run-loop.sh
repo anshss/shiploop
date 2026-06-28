@@ -14,7 +14,8 @@
 # Hard bounds (so an unattended run always ends; tune via env):
 #   GOVERN_MAX_TICKETS     (20)    stop after this many tickets processed this run
 #   GOVERN_MAX_BAD_STREAK  (4)     stop after this many CONSECUTIVE parked/failed
-#   GOVERN_MAX_RUNTIME     (14400) stop starting new tickets after this many seconds (~4h, < the 5h window)
+#   GOVERN_MAX_RUNTIME     (0)     stop starting new tickets after this many seconds; 0 = no cap (default).
+#                                  (MAX_TICKETS + per-worker timeout + bad-streak still bound the run.)
 #   GOVERN_SUPERVISOR_EVERY(5)     supervisor review cadence (+ on anomaly)
 #   GOVERN_WORKER_TIMEOUT  (3600)  per-worker wall-clock cap (enforced in spawn-worker)
 #
@@ -44,27 +45,82 @@ done
 SUP_EVERY="${GOVERN_SUPERVISOR_EVERY:-5}"
 MAX_TICKETS="${GOVERN_MAX_TICKETS:-20}"
 MAX_BAD_STREAK="${GOVERN_MAX_BAD_STREAK:-4}"
-MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-14400}"
+MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-0}"   # 0 = no runtime cap (default)
 START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
-
-# --- run lock. Default: single-run (one exclusive driver). GOVERN_ALLOW_CONCURRENT=1 opts into
-# parallel drivers on disjoint tickets (#41): the global lock is skipped, and safety comes from
-# the per-ticket CLAIM lock (no two drivers work the same ticket) + the bookkeep lock in
-# govern-bookkeep.sh (no two drivers race tickets.md). Use --exclude to partition the backlog. ---
-LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"; TOOK_LOCK=0; CUR_CLAIM=""
-if [[ "${GOVERN_ALLOW_CONCURRENT:-0}" == "1" ]]; then
-  govern::log "GOVERN_ALLOW_CONCURRENT=1 — running alongside other drivers (per-ticket claim + bookkeep lock keep tickets.md safe)"
-elif mkdir "$LOCK" 2>/dev/null; then
-  TOOK_LOCK=1
-else
-  govern::die "another govern run holds $LOCK — remove it if stale, or set GOVERN_ALLOW_CONCURRENT=1 to run in parallel on disjoint tickets (--exclude)."
-fi
+# #151: abnormal-abort + in-flight-ticket tracking. ABORTED/ABORT_RC are set by on_exit when the run
+# ends on a non-zero exit that is NOT a handled interrupt or infra halt (e.g. `set -e` fired on an
+# unguarded post-merge migrate/verify failure). CUR_TICKET is the ticket currently being processed
+# (cleared once it reaches a recorded outcome); CUR_TICKET_MERGED accumulates its merged-but-not-yet-
+# bookkept PRs — so an abort/interrupt summary names the abort cause AND surfaces the half-resolved
+# ticket instead of silently dropping it.
+ABORTED=0; ABORT_RC=0; CUR_TICKET=""; CUR_TICKET_MERGED=""
 
 RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$RUNDIR"
 # #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
-# (a child process) inherits it.
+# (a child process) inherits it. #183: defined BEFORE the lock so the holder file can record this run id.
 export GOVERN_RUN_DIR="$RUNDIR"
+
+# --- run lock. Default: single-run (one exclusive driver). GOVERN_ALLOW_CONCURRENT=1 opts into
+# parallel drivers on disjoint tickets (#41): the global lock is skipped, and safety comes from
+# the per-ticket CLAIM lock (no two drivers work the same ticket) + the bookkeep lock in
+# govern-bookkeep.sh (no two drivers race tickets.md). Use --exclude to partition the backlog.
+#
+# #183: the lock is SELF-VALIDATING. The holder's run id + pid are recorded INSIDE the lock dir, so a
+# second starter that finds the lock occupied checks whether that pid is still ALIVE before deciding:
+#   - live, non-self holder → REFUSE (govern::die). Reliable single-run serialization, as designed.
+#   - dead / unknown holder → the lock is STALE (a crashed run never reached its on_exit, or it was
+#                             left behind); reclaim it automatically so NOBODY ever has to
+#                             `rm -rf governor/.govern.lock` by hand. That manual clear was the
+#                             footgun behind the #183 symptom: a plain `mkdir` lock with no liveness
+#                             check would `die` on a stale lock, so an operator clears it — and if
+#                             they misjudge a LIVE lock as stale and remove it, the next start sails
+#                             through `mkdir` and you get two unflagged drivers. Pid-checked reclaim
+#                             removes the manual clear entirely: a live holder is never reclaimable.
+# The run ALWAYS logs which concurrency mode it took (PARALLEL / SINGLE-RUN acquired / stale-reclaimed).
+LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"; TOOK_LOCK=0; CUR_CLAIM=""
+govern::_lock_holder() { [[ -f "$LOCK/holder" ]] && cat "$LOCK/holder" 2>/dev/null || true; }
+govern::_lock_holder_pid() { govern::_lock_holder | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p'; }
+govern::_stamp_lock() { printf 'run=%s pid=%s started=%s\n' "${RUNDIR##*/}" "$$" "$START_EPOCH" > "$LOCK/holder" 2>/dev/null || true; }
+# Take the single-run lock, reclaiming a STALE (dead-holder) one. Returns 0 took, 1 refused.
+govern::_take_single_lock() {
+  mkdir -p "$(dirname "$LOCK")" 2>/dev/null || true
+  if mkdir "$LOCK" 2>/dev/null; then govern::_stamp_lock; return 0; fi
+  local hpid age stale="${GOVERN_LOCK_STALE_S:-$(( ${GOVERN_WORKER_TIMEOUT:-3600} + 3600 ))}"
+  hpid="$(govern::_lock_holder_pid)"
+  if [[ -n "$hpid" ]]; then
+    # A holder pid is recorded: refuse iff it is a DIFFERENT, still-running process.
+    if [[ "$hpid" != "$$" ]] && kill -0 "$hpid" 2>/dev/null; then return 1; fi
+    govern::log "found a STALE .govern.lock (recorded holder pid $hpid is not alive) — reclaiming it"
+  else
+    # No holder pid (a pre-#183 lock, or a partial write): fall back to mtime — reclaim only if the
+    # lock is older than the stale window, else assume a live holder and refuse (don't steal a live lock).
+    age="$(govern::_lock_age "$LOCK")"
+    if [[ "$age" -le "$stale" ]]; then return 1; fi
+    govern::log "found an UNATTRIBUTED .govern.lock with no holder pid, ${age}s old (> ${stale}s) — reclaiming it as stale"
+  fi
+  rm -rf "$LOCK" 2>/dev/null || true
+  if mkdir "$LOCK" 2>/dev/null; then govern::_stamp_lock; return 0; fi
+  return 1   # lost a reclaim race to another fresh driver — treat as held
+}
+if [[ "${GOVERN_ALLOW_CONCURRENT:-0}" == "1" ]]; then
+  # #183: ALWAYS make a parallel run unmistakable in the output. The danger isn't the intentional
+  # `GOVERN_ALLOW_CONCURRENT=1 --exclude …` partition (claim + bookkeep locks keep that safe, #41) —
+  # it's an INHERITED flag: the governor exports its env to every worker, so a run-loop launched from
+  # a worker/operator shell that already has GOVERN_ALLOW_CONCURRENT=1 silently skips the single-run
+  # lock with no `--exclude` partition. That is the most likely #183 root cause, so call it out loudly
+  # when there's no partition signal — the operator scanning the run can then spot an unintended flag.
+  if [[ -z "$EXCLUDE_INIT" && -z "$TARGET" ]]; then
+    govern::log "concurrency mode: PARALLEL (GOVERN_ALLOW_CONCURRENT=1) with NO --exclude / single ticket — sharing the FULL backlog with any peer driver (per-ticket claim + bookkeep lock keep it exactly-once, #41). ⚠ If you did NOT intend parallel, this flag is likely INHERITED from a governor/worker env — unset GOVERN_ALLOW_CONCURRENT to take the exclusive single-run lock (#183)."
+  else
+    govern::log "concurrency mode: PARALLEL (GOVERN_ALLOW_CONCURRENT=1) — proceeding alongside other drivers on a partitioned backlog (--exclude / single ticket); per-ticket claim + bookkeep lock keep tickets.md safe (#41)"
+  fi
+elif govern::_take_single_lock; then
+  TOOK_LOCK=1
+  govern::log "concurrency mode: SINGLE-RUN — exclusive lock acquired by run ${RUNDIR##*/} pid $$ ($LOCK)"
+else
+  govern::die "another govern run holds $LOCK (live holder: $(govern::_lock_holder | tr -d '\n')) — wait for it to finish, or set GOVERN_ALLOW_CONCURRENT=1 to run in parallel on disjoint tickets (--exclude). Do NOT delete the lock by hand while that run is live (#183)."
+fi
 # TokenJam cross-session run id — ONE per loop invocation, shared by every worker this run spawns.
 # TokenJam groups all sessions that share a `tokenjam.run_id` OTel resource attribute into a single
 # "Run", so a whole governor run shows up as one unit. Generate the id here (before the ticket loop),
@@ -99,7 +155,7 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
-excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; done_count=0
+excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; done_count=0
 # #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
 # merged dependency unblocked one) — drained BEFORE normal severity selection so the advice changes
 # behavior, not just the log. NA_SET = comma-wrapped set of "NOT govern-automatable" tickets (bold
@@ -117,6 +173,91 @@ record() { # ticket status note
   printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}\n' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)" >> "$HISTORY" 2>/dev/null || true
 }
 wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
+
+# #242: every spawn-worker invocation goes through here so the driver always knows the in-flight
+# worker's pid and can tear its WHOLE subtree down on a stop. Previously workers were launched via a
+# blocking `$(spawn-worker)` command-substitution: a stop/SIGTERM on the driver left the
+# spawn-worker.sh + child `claude -p` (+ any tool grandchildren) ALIVE — reparented to init, needing
+# a manual `kill -9` sweep; a worker orphaned mid-deploy can hold a billable resource. Now we
+# background the worker, record WORKER_PID, and `wait` — `wait` is reliably interrupted by a trapped
+# signal (unlike a command substitution, whose trap is deferred until it completes), so the INT/TERM
+# trap fires immediately and reaps the tree. Runs ONE worker at a time exactly as before, so a single
+# global WORKER_PID is correct. The worker's stdout (its JSON report) is written to $SPAWN_OUT for the
+# caller to read; its stderr (govern::log) flows to this function's stderr so callers can /dev/null it.
+# Honors any GOVERN_* env the caller sets on the call (bash exports a call-prefix assignment into the
+# function's child processes), so the GOVERN_FIX_CI / GOVERN_RESOLVE_CONFLICT re-dispatches work too.
+WORKER_PID=""; SPAWN_OUT=""
+spawn_worker_tracked() { # ticket -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
+  local n="$1"
+  SPAWN_OUT="$(mktemp)"
+  "$DIR/spawn-worker.sh" "$n" >"$SPAWN_OUT" &
+  WORKER_PID=$!
+  wait "$WORKER_PID" || true
+  WORKER_PID=""
+}
+# Reap the in-flight worker's whole process subtree on a driver stop (SIGINT/SIGTERM/EXIT). SIGTERM
+# to spawn-worker triggers ITS trap (which kills the worker process group cleanly), and the pid-walk
+# in govern::kill_tree directly reaches the worker + grandchildren as a backstop — TERM, grace, then KILL.
+govern_teardown_worker() {
+  [[ -n "${WORKER_PID:-}" ]] || return 0
+  govern::log "stop received — tearing down in-flight worker (spawn-worker pid $WORKER_PID) + its worker tree [#242]"
+  govern::kill_tree "$WORKER_PID" "${GOVERN_KILL_GRACE_S:-12}"
+  WORKER_PID=""
+}
+
+# #129: await CI then merge ONE merge-repo PR for the current ticket ($N), with the existing
+# CI-fix re-dispatch loop and the #71 stale-base rebase retry. Echoes a single result token:
+#   merged      — merged cleanly
+#   red         — CI still red after up to $GOVERN_CI_FIX_TRIES fix re-dispatches (default 1)
+#   unmergeable — CI green/none but the merge failed (conflict / failing required check), even
+#                 after a rebase-onto-origin/main retry (and the #191 conflict re-dispatch)
+# Reads $N, $MODE, $DIR from the loop scope. Factored out of the single-PR resolved path so the
+# SAME merge discipline applies to every sibling PR of a multi-repo ticket, none orphaned.
+merge_pr_for_ticket() { # repo pr -> echoes merged|red|unmergeable
+  local repo="$1" pr="$2" st tries=0 st2
+  # CI-cost: each fix re-dispatch pushes a commit that re-runs the repo's full PR CI (potentially
+  # a full container build). Default to ONE retry — a second full-CI attempt on a flapping ticket
+  # rarely flips it green and doubles the spend. Tune via GOVERN_CI_FIX_TRIES (0 = park on first
+  # red, no fix attempt).
+  local max_fix="${GOVERN_CI_FIX_TRIES:-1}"
+  st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+  while [[ "$st" == "red" && "$tries" -lt "$max_fix" ]]; do
+    govern::log "CI red on $repo#$pr — re-dispatching worker to fix (try $((tries+1))/$max_fix)"
+    GOVERN_FIX_CI="$repo#$pr" GOVERN_MODE="$MODE" spawn_worker_tracked "$N" >/dev/null 2>&1 || true
+    st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"; tries=$((tries+1))
+  done
+  if [[ "$st" != "green" && "$st" != "none" ]]; then echo red; return; fi
+  # NB: merge-pr.sh stdout (its live `gh pr merge` output / GOVERN_ECHO "WOULD RUN" line) is sent to
+  # stderr so this function's ONLY stdout is the result token the caller captures via $().
+  if "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+  # #71: a "not mergeable" failure is most often a STALE PR base (origin/main moved under the PR),
+  # not a real content conflict. Try ONE 'gh pr update-branch' (rebase onto origin/main) +
+  # re-await-CI + re-merge before giving up — auto-clears the common case without an operator.
+  if [[ "$MODE" == "live" ]] && gh pr update-branch "$pr" --repo "$(govern::repo_slug "$repo")" >/dev/null 2>&1; then
+    govern::log "merge failed $repo#$pr — rebased PR onto origin/main (gh pr update-branch); re-checking CI + retrying merge [#71]"
+    st2="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+    if [[ "$st2" == "green" || "$st2" == "none" ]] && "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+  fi
+  # #191: CI is green/none but the merge still failed even after the #71 rebase-onto-origin/main
+  # retry — a genuine CONTENT conflict (the PR and origin/main edited the same lines; e.g. two
+  # interdependent un-parked PRs touching one file, landed back-to-back so the 2nd conflicts once
+  # the 1st merges). Rather than leave it for a human (#42 park), re-dispatch ONE worker to merge
+  # origin/main INTO the ticket-$N branch, resolve the conflict (no force-push — a merge commit),
+  # build+test, and push; then re-await CI + retry the merge. Bounded by GOVERN_CONFLICT_FIX_TRIES
+  # (default 1; 0 disables) so a genuinely unresolvable conflict still parks cleanly via #42 instead
+  # of looping. This is what lets the governor self-clear the 2nd of N interdependent un-parked
+  # tickets across at most N passes, with no manual merge.
+  local max_conflict="${GOVERN_CONFLICT_FIX_TRIES:-1}" ctries=0 st3
+  while [[ "$MODE" == "live" && "$ctries" -lt "$max_conflict" ]]; do
+    govern::log "merge still failing $repo#$pr after the #71 rebase retry — content conflict; re-dispatching a worker to merge origin/main + resolve, then retry merge (try $((ctries+1))/$max_conflict) [#191]"
+    GOVERN_RESOLVE_CONFLICT="$repo#$pr" GOVERN_MODE="$MODE" spawn_worker_tracked "$N" >/dev/null 2>&1 || true
+    ctries=$((ctries+1))
+    st3="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+    [[ "$st3" == "green" || "$st3" == "none" ]] || continue
+    if "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+  done
+  echo unmergeable
+}
 
 # TokenJam: bump the run-id file's mtime so its age reflects LIVENESS (the run-start freshness guard
 # reads it to tell a prompt resume from an unrelated stale leftover) — and self-heal it if a concurrent
@@ -158,7 +299,12 @@ slim_worktree() {
 # how long, so an interruption always leaves an explanation behind.
 write_summary() {
   local now dur m s reason; now="$(date +%s)"; dur=$(( now - START_EPOCH )); m=$(( dur/60 )); s=$(( dur%60 ))
-  reason="completed normally"; [[ "$INTERRUPTED" -eq 1 ]] && reason="INTERRUPTED (crash / kill / Ctrl-C / battery / OOM)"
+  reason="completed normally"
+  # #151: an ABNORMAL abort (set -e fired mid-run on a non-zero exit, e.g. the post-merge migrate/
+  # verify step failed) must NOT read as "completed normally". Name the cause + the in-flight ticket.
+  # INTERRUPTED/INFRA below override it — both are more-specific, mutually-exclusive states.
+  [[ "${ABORTED:-0}" -eq 1 ]] && reason="ABORTED (exit ${ABORT_RC:-1}) — a step exited non-zero before the loop finished cleanly${CUR_TICKET:+, mid-ticket #$CUR_TICKET}; e.g. a post-merge migrate/verify step failed. See the run log + any ⚠ in-flight note below."
+  [[ "$INTERRUPTED" -eq 1 ]] && reason="INTERRUPTED (crash / kill / Ctrl-C / battery / OOM)"
   [[ "${INFRA_HALT:-0}" -eq 1 ]] && reason="HALTED — infra/auth outage: ${INFRA_HALT_ERR:-unknown} (re-auth: \`claude login\`, then re-run)"
   local f="$RUNDIR/summary.md"
   {
@@ -166,7 +312,7 @@ write_summary() {
     echo "- **Ended:** $reason"
     echo "- **Ran for:** ${m}m ${s}s"
     echo "- **Mode:** $MODE${TARGET:+ (single ticket #$TARGET)}"
-    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0}"; echo
+    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0}"; echo
     if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
       echo "## ⚠ Action needed — re-authenticate / restore connectivity"
       echo "- The run HALTED because workers could not authenticate or reach the API: \`${INFRA_HALT_ERR:-unknown}\`."
@@ -178,6 +324,18 @@ write_summary() {
       jq -r '"- #\(.ticket): \(.status)" + (if (.note//"")!="" then " — \(.note)" else "" end)' "$STATE" 2>/dev/null || cat "$STATE"
     else echo "- (nothing processed yet)"; fi
     echo
+    # #151: a ticket left IN FLIGHT by an abnormal abort/interrupt never got a state entry above —
+    # surface it explicitly so it is never silently dropped. If its PR already merged but the post-
+    # merge step failed, it is half-resolved (merged, not bookkept) and a human/re-run must reconcile.
+    if [[ -n "${CUR_TICKET:-}" && ( "${ABORTED:-0}" -eq 1 || "${INTERRUPTED:-0}" -eq 1 ) ]]; then
+      echo "## ⚠ In-flight ticket — reconcile by hand"
+      if [[ -n "${CUR_TICKET_MERGED:-}" ]]; then
+        echo "- **#$CUR_TICKET — PR(s) MERGED ($CUR_TICKET_MERGED) but a post-merge step FAILED; NOT bookkept.** Half-resolved: the PR is merged, but the \`## #$CUR_TICKET\` block is still in tickets.md with no state entry. Reconcile: confirm the merge landed, finish/repair the post-merge migrate/verify step, then bookkeep it — or just re-run the governor, which reuses the merged/open \`ticket-$CUR_TICKET\` PR and completes the bookkeeping."
+      else
+        echo "- **#$CUR_TICKET was in flight when the run ended abnormally** — not recorded as resolved / parked / failed. Its worktree is preserved at \`$(wt_path "$CUR_TICKET")\`; re-run the governor to resume it (an open \`ticket-$CUR_TICKET\` PR is reused, nothing duplicated)."
+      fi
+      echo
+    fi
     if [[ "${npark:-0}" -gt 0 || "${nfail:-0}" -gt 0 ]]; then
       echo "## Needs you"
       echo "- Open decisions: \`governor/escalations.md\` (\`## Open\`). The /govern relay presents the still-unanswered ones from \`governor/pending-escalations.json\` via AskUserQuestion — answer there and the next run applies them (un-park / migrate-to-parked / add-rule)."
@@ -191,6 +349,17 @@ write_summary() {
   govern::log "session summary → $f  (also logs/govern/last-session.md)"
 }
 on_exit() {
+  local rc=$?
+  govern_teardown_worker   # #242: backstop — never leave an in-flight worker subtree on any exit path
+  # #151: distinguish a CLEAN finish (the loop reached its bottom `exit 0`) from an ABNORMAL abort —
+  # a non-zero exit that is neither a handled interrupt (INTERRUPTED, exits 130) nor an infra halt
+  # (INFRA_HALT, exits 0). `set -euo pipefail` can abort mid-ticket on an unguarded non-zero exit
+  # (the #151 root cause: a post-merge migrate/verify command failing). Flag it so write_summary names
+  # the cause + surfaces any merged-but-unbookkept in-flight ticket instead of reporting "completed
+  # normally" and dropping it.
+  if [[ "$rc" -ne 0 && "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 ]]; then
+    ABORTED=1; ABORT_RC="$rc"
+  fi
   write_summary
   # TokenJam run id: KEEP the run-id file on an INTERRUPTED / infra-halted run so a resume reuses the
   # same id (its workers still group with the original Run); REMOVE it on a clean finish so the next
@@ -199,10 +368,14 @@ on_exit() {
     rm -f "$TJ_RUN_ID_FILE" 2>/dev/null || true
   fi
   [[ -n "$CUR_CLAIM" ]] && govern::lock_release "$CUR_CLAIM"   # free the in-flight ticket for a re-run (#41)
-  [[ "$TOOK_LOCK" -eq 1 ]] && rmdir "$LOCK" 2>/dev/null || true
+  # #183: the single-run lock dir now holds a `holder` file, so `rm -rf` (not rmdir, which fails on a
+  # non-empty dir). Only this run's own lock is removed (TOOK_LOCK=1) — a PARALLEL driver never took it.
+  if [[ "$TOOK_LOCK" -eq 1 ]]; then rm -rf "$LOCK" 2>/dev/null || true; fi
 }
 trap 'on_exit' EXIT
-trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; exit 130' INT TERM
+# #242: on a stop signal, FIRST reap the in-flight worker subtree (spawn-worker + worker + tool
+# grandchildren) so a killed driver never leaves orphans, THEN exit (the EXIT trap's on_exit runs after).
+trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; govern_teardown_worker; exit 130' INT TERM
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
 
@@ -290,7 +463,7 @@ while :; do
   # --- hard bounds: stop BEFORE starting another ticket ---
   if [[ "$done_count" -ge "$MAX_TICKETS" ]]; then govern::log "reached GOVERN_MAX_TICKETS=$MAX_TICKETS — stopping"; break; fi
   elapsed=$(( $(date +%s) - START_EPOCH ))
-  if [[ "$elapsed" -ge "$MAX_RUNTIME" ]]; then govern::log "reached GOVERN_MAX_RUNTIME=${MAX_RUNTIME}s (elapsed ${elapsed}s) — stopping"; break; fi
+  if [[ "$MAX_RUNTIME" -gt 0 && "$elapsed" -ge "$MAX_RUNTIME" ]]; then govern::log "reached GOVERN_MAX_RUNTIME=${MAX_RUNTIME}s (elapsed ${elapsed}s) — stopping"; break; fi
   # Pre-flight disk guard (#48): never cascade phantom fast-fails on a full disk. If free space
   # is below the worktree headroom, stop CLEANLY with a distinct reason — a disk artifact must
   # not masquerade as worker failures and trip the bad-streak brake. Preserved worktrees are
@@ -377,6 +550,7 @@ while :; do
     fi
   fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
+  CUR_TICKET="$N"; CUR_TICKET_MERGED=""   # #151: mark in-flight so an abnormal abort/interrupt surfaces #N (+ any merged-but-unbookkept PR)
 
   # --- resume: if a prior (crashed) run already opened a PR for this ticket, don't re-spawn ---
   resumed=""; cf=0
@@ -398,7 +572,8 @@ while :; do
     govern::log "#$N failed $cf consecutive runs — auto-escalating as a systemic blocker; not re-spawning (#60)"
     report="$(jq -nc --argjson c "$cf" '{status:"parked",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{title:("systemic blocker — " + ($c|tostring) + " consecutive failed runs"),reason:("systemic blocker — failed " + ($c|tostring) + " consecutive runs; needs operator / root-cause, not another auto-retry"),question:"inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)",options:[]}}')"
   else
-    report="$(GOVERN_MODE="$MODE" "$DIR/spawn-worker.sh" "$N" 2>/dev/null || true)"
+    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
   fi
 
   status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
@@ -412,7 +587,8 @@ while :; do
     ierr="$(printf '%s' "$report" | jq -r '.infra.error // "infra/auth outage"' 2>/dev/null || echo 'infra/auth outage')"
     govern::log "#$N hit an INFRA/auth outage ($ierr) — pausing ${GOVERN_INFRA_RETRY_PAUSE:-20}s, retrying once before halting (#90)"
     sleep "${GOVERN_INFRA_RETRY_PAUSE:-20}"
-    report="$(GOVERN_MODE="$MODE" "$DIR/spawn-worker.sh" "$N" 2>/dev/null || true)"
+    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
 
@@ -453,96 +629,135 @@ while :; do
     fi
   fi
 
+  RESOLVED_PR_SUMMARY=""
   if [[ "$status" == "resolved" ]]; then
-    repo="$(printf '%s' "$report" | jq -r '.pr.repo // empty' 2>/dev/null || true)"
-    pr="$(printf '%s' "$report" | jq -r '.pr.number // empty' 2>/dev/null || true)"
     mneeded="$(printf '%s' "$report" | jq -r '.migration.needed // false' 2>/dev/null || echo false)"
     mdestr="$(printf '%s' "$report" | jq -r '.migration.destructive // false' 2>/dev/null || echo false)"
+    # #129: a multi-repo worker can open N PRs for one ticket (e.g. a backend PR + a frontend PR).
+    # Acting only on the single reported .pr orphaned the siblings unmerged. Collect EVERY PR for
+    # this ticket — reported (.pr + .prs[]) UNION every open ticket-<N> head across all repos —
+    # deduped + merge-repo-first so the live merge-repo backend ships before any frontend sibling.
+    pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
+    all_prs_label="$(printf '%s\n' "$pr_lines" | awk -F'\t' 'NF>=2{printf "%s%s#%s",sep,$1,$2; sep=", "}')"
 
     if [[ "$mneeded" == "true" && "$mdestr" == "true" ]]; then
-      # DESTRUCTIVE prod migration → never auto-merge; escalate (hard-stop stays for these).
-      govern::log "#$N needs a DESTRUCTIVE prod migration ($(printf '%s' "$report" | jq -r '.migration.name // "?"')) — NOT auto-merging; escalating"
-      report="$(printf '%s' "$report" | jq -c --arg p "${repo:-?}#${pr:-?}" '.escalation={reason:"destructive prod migration — needs human review + coordinated merge/migrate",question:("review PR "+$p+", apply migration manually, then merge"),options:[]}')"
+      # DESTRUCTIVE prod migration → never auto-merge ANY sibling; escalate (hard-stop stays).
+      govern::log "#$N needs a DESTRUCTIVE prod migration ($(printf '%s' "$report" | jq -r '.migration.name // "?"')) — NOT auto-merging ${all_prs_label:-its PR(s)}; escalating"
+      report="$(printf '%s' "$report" | jq -c --arg p "${all_prs_label:-?}" '.escalation={reason:"destructive prod migration — needs human review + coordinated merge/migrate",question:("review PR(s) "+$p+", apply migration manually, then merge"),options:[]}')"
       status="parked"
     elif [[ "$mneeded" == "true" && -z "${GOVERN_MIGRATE_CMD:-}" ]]; then
       # ADDITIVE prod migration but no migrate command configured → do NOT silently merge-and-forget
       # the code ahead of a schema it needs. Escalate for a manual apply (parked = work preserved).
       govern::log "#$N needs an additive prod migration but no GOVERN_MIGRATE_CMD configured — skipping prod migration; escalating for manual apply"
-      report="$(printf '%s' "$report" | jq -c --arg p "${repo:-?}#${pr:-?}" '.escalation={reason:"additive prod migration required but no GOVERN_MIGRATE_CMD configured",question:("review PR "+$p+", apply the additive migration to prod manually, then merge"),options:[]}')"
+      report="$(printf '%s' "$report" | jq -c --arg p "${all_prs_label:-?}" '.escalation={reason:"additive prod migration required but no GOVERN_MIGRATE_CMD configured",question:("review PR(s) "+$p+", apply the additive migration to prod manually, then merge"),options:[]}')"
       status="parked"
-    elif [[ -n "$repo" && -n "$pr" ]] && govern::is_merge_repo "$repo"; then
-      if [[ "$MODE" == "dry" ]]; then
-        govern::log "[dry] would await CI + merge $repo#$pr$([[ "$mneeded" == "true" ]] && echo ' + apply additive prod migration')"
-      else
-        st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
-        tries=0
-        while [[ "$st" == "red" && "$tries" -lt 2 ]]; do
-          govern::log "CI red on $repo#$pr — re-dispatching worker to fix (try $((tries+1))/2)"
-          GOVERN_FIX_CI="$repo#$pr" GOVERN_MODE="$MODE" "$DIR/spawn-worker.sh" "$N" >/dev/null 2>&1 || true
-          st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"; tries=$((tries+1))
-        done
-        if [[ "$st" == "green" || "$st" == "none" ]]; then
-          merged=0
-          if "$DIR/merge-pr.sh" "$repo" "$pr"; then
-            merged=1
+    elif [[ -n "$pr_lines" ]]; then
+      # Walk every PR merge-repo-first: merge-repo PRs auto-merge on green/none (with the #71 rebase
+      # retry + CI-fix loop + #191 conflict re-dispatch, factored into merge_pr_for_ticket); frontend
+      # siblings are PR-only and left open — but SURFACED in the summary as "left open", never
+      # silently dropped (#129).
+      merge_repo_merged=0; pr_summary=""
+      while IFS=$'\t' read -r prepo pnum _purl; do
+        [[ -n "$prepo" && -n "$pnum" ]] || continue
+        if govern::is_merge_repo "$prepo"; then
+          if [[ "$MODE" == "dry" ]]; then
+            govern::log "[dry] would await CI + merge $prepo#$pnum"
+            pr_summary="$pr_summary $prepo#$pnum(dry-would-merge)"
+            continue
+          fi
+          case "$(merge_pr_for_ticket "$prepo" "$pnum")" in
+            merged)
+              govern::log "merged $prepo#$pnum (#$N)"
+              pr_summary="$pr_summary $prepo#$pnum(merged)"; merge_repo_merged=1
+              # #151: track merged-but-not-yet-bookkept so an abort during a LATER step (e.g. the
+              # additive prod migration below) surfaces #N as half-resolved instead of dropping it.
+              CUR_TICKET_MERGED="${CUR_TICKET_MERGED:+$CUR_TICKET_MERGED, }$prepo#$pnum" ;;
+            red)
+              # CI stayed red after up to $GOVERN_CI_FIX_TRIES fix re-dispatches → this PR cannot
+              # ship. Mark the ticket failed but KEEP merging the remaining siblings so the rest
+              # isn't orphaned.
+              govern::log "CI still red on $prepo#$pnum after fixes → #$N failed"
+              pr_summary="$pr_summary $prepo#$pnum(CI-red-left-open)"
+              [[ "$status" == "resolved" ]] && status="failed" ;;
+            unmergeable)
+              # Merge FAILED (conflict / failing required check) even after a rebase-onto-origin
+              # attempt + the #191 conflict re-dispatch. Park (NOT resolve): keep the ticket block,
+              # leave the PR open, escalate (#42). Don't downgrade an already-failed status back up.
+              govern::log "merge failed $prepo#$pnum — PR left open; parking (ticket NOT deleted) [#42]"
+              pr_summary="$pr_summary $prepo#$pnum(unmergeable-left-open)"
+              report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" could not be merged (conflict or failing required check) — needs a manual rebase onto origin/main + merge"),question:("rebase "+$p+" onto origin/main, resolve conflicts, then merge"),options:[]}')"
+              [[ "$status" == "resolved" ]] && status="parked" ;;
+          esac
+        else
+          # Frontend sibling: PR-only (a different account merges). NOT orphaned — surfaced as
+          # "left open" so the operator sees it and merges it themselves (#129).
+          govern::log "$prepo#$pnum left open (frontend is PR-only) [#129]"
+          pr_summary="$pr_summary $prepo#$pnum(frontend-left-open)"
+        fi
+      done <<< "$pr_lines"
+
+      # ADDITIVE migration: apply ONCE, after a merge-repo PR merged (the merge-repo backend is first
+      # in the merge-repo-first walk, so this runs post-merge). Old running code ignores the new
+      # nullable/default column; the new code arrives with the merge, so the column exists when needed.
+      #
+      # Your GOVERN_MIGRATE_CMD MUST fast-forward the relevant checkout to origin/main BEFORE it
+      # inspects/applies migration status. A migrate tool reads the migration dirs ON DISK in the
+      # working tree; if the checkout still sits at a pre-merge SHA the just-merged migration dir is
+      # absent, status compares an incomplete set, falsely reports "up to date", the apply silently
+      # no-ops, and verify then false-alarms as "half-applied" (the #85 stale-checkout bug). If it
+      # cannot ff-pull (diverged/dirty) it should REFUSE rather than trust a stale set. Only when the
+      # ticket is still cleanly resolved (no sibling merge failed it into parked/failed).
+      if [[ "$mneeded" == "true" && "$status" == "resolved" ]]; then
+        if [[ "$MODE" == "dry" ]]; then
+          govern::log "[dry] would apply additive prod migration for #$N after backend merge"
+        elif [[ "$merge_repo_merged" == "1" ]]; then
+          govern::log "applying additive prod migration for #$N via GOVERN_MIGRATE_CMD"
+          # #151: capture output but NEVER let a non-zero migrate exit abort the whole run via `set -e`.
+          # A quota/billing/build failure exits non-zero; the intent here is to CLASSIFY it (verify +
+          # grep below) and PARK #N with a clear escalation — NOT crash the loop mid-ticket and mislabel
+          # the run "completed normally" while leaving #N merged-but-unbookkept.
+          mout="$( cd "$WS_ROOT" && eval "$GOVERN_MIGRATE_CMD" 2>&1 )" || true
+          # #184/#151-safe: read the VERIFY output first (the authoritative post-apply state). Capture
+          # its exit code without aborting the loop via `set -e` — `&& vrc=0 || vrc=$?` keeps control on
+          # the classify path. Skip verify (treat as pass) when no GOVERN_VERIFY_CMD is configured.
+          if [[ -n "${GOVERN_VERIFY_CMD:-}" ]]; then
+            vout="$( cd "$WS_ROOT" && eval "$GOVERN_VERIFY_CMD" 2>&1 )" && vrc=0 || vrc=$?
           else
-            # #71: a "not mergeable" failure is most often a STALE PR base (origin/main moved
-            # under the PR), not a real content conflict. Try ONE 'gh pr update-branch' (rebase
-            # the PR onto origin/main) + re-await-CI + re-merge before giving up — this auto-clears
-            # the common case without an operator. A genuine conflict still falls through to park.
-            if [[ "$MODE" == "live" ]] && gh pr update-branch "$pr" --repo "$GITHUB_ORG/$repo" >/dev/null 2>&1; then
-              govern::log "merge failed $repo#$pr — rebased PR onto origin/main (gh pr update-branch); re-checking CI + retrying merge [#71]"
-              st2="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
-              if [[ "$st2" == "green" || "$st2" == "none" ]] && "$DIR/merge-pr.sh" "$repo" "$pr"; then merged=1; fi
-            fi
+            vout=""; vrc=0
           fi
-          if [[ "$merged" == "0" ]]; then
-            # Merge FAILED (conflict / failing required check) even after a rebase-onto-origin
-            # attempt. Do NOT fall through as "resolved" — that would bookkeep the ticket as done
-            # and DELETE its block while the PR sits unmerged (#42). Park instead: keeps the
-            # ticket, leaves the PR open, preserves the worktree, and escalates to the operator.
-            govern::log "merge failed $repo#$pr — PR left open; parking (ticket NOT deleted) [#42]"
-            report="$(printf '%s' "$report" | jq -c --arg p "$repo#$pr" '.escalation={reason:("PR "+$p+" could not be merged (conflict or failing required check) — needs a manual rebase onto origin/main + merge"),question:("rebase "+$p+" onto origin/main, resolve conflicts, then merge"),options:[]}')"
-            status="parked"
-          elif [[ "$mneeded" == "true" ]]; then
-            # ADDITIVE migration: apply to prod right after merge — old running code ignores the new
-            # nullable/default column, new code arrives after, so column exists when needed (safe).
-            # Only reached when GOVERN_MIGRATE_CMD is set (empty case parked above).
-            #
-            # Your GOVERN_MIGRATE_CMD MUST fast-forward the relevant checkout to origin/main BEFORE it
-            # inspects/applies migration status. A migrate tool reads the migration dirs ON DISK in the
-            # working tree; if the checkout still sits at a pre-merge SHA the just-merged migration dir
-            # is absent, status compares an incomplete set, falsely reports "up to date", the apply
-            # silently no-ops, and verify then false-alarms as "half-applied" (the #85 stale-checkout
-            # bug). If it cannot ff-pull (diverged/dirty) it should REFUSE rather than trust a stale
-            # set. Capture its output so the escalation can name the actual failure class.
-            govern::log "applying additive prod migration for #$N via GOVERN_MIGRATE_CMD"
-            mout="$( cd "$WS_ROOT" && eval "$GOVERN_MIGRATE_CMD" 2>&1 )"; mrc=$?
-            if [[ "$mrc" -eq 0 ]] \
-               && { [[ -z "${GOVERN_VERIFY_CMD:-}" ]] || ( cd "$WS_ROOT" && eval "$GOVERN_VERIFY_CMD" ) >/dev/null 2>&1; }; then
-              govern::log "prod migration applied + verified for #$N"
+          if [[ $vrc -eq 0 ]]; then
+            govern::log "prod migration applied + verified for #$N"
+          else
+            # Classify the failure so the operator gets the RIGHT next action. Read the VERIFY output
+            # first (authoritative post-apply state), then fall back to the apply output. FAILED/half-
+            # applied needs a `migrate resolve` (NOT another deploy); a stale/diverged checkout that
+            # couldn't ff-pull needs reconciling first; a still-NOT-applied migration after a heal means
+            # the apply genuinely failed (quota/billing/build); anything else is a generic verify miss.
+            # The markers below match what the recommended migrate/verify helper emits — emit the same
+            # strings from your GOVERN_MIGRATE_CMD/GOVERN_VERIFY_CMD to light up the specific guidance.
+            mverify="$vout"$'\n'"$mout"
+            if printf '%s' "$mverify" | grep -qiE 'FAILED / half-applied|failed state|migrate resolve'; then
+              esc_reason='prod migration is in a FAILED / half-applied state after merge — needs a `migrate resolve` (do NOT re-run the migrate step); inspect migration status on prod'
+            elif printf '%s' "$mverify" | grep -qiE 'ff-pull FAILED|BEHIND origin/main|STALE on-disk'; then
+              esc_reason='could not fast-forward the merged checkout to origin/main before applying the migration (local main diverged/dirty, so the migration dir may be absent on disk) — reconcile the checkout, then re-run the migrate step (#85)'
+            elif printf '%s' "$mverify" | grep -qiE 'NOT applied|not yet been applied|have not'; then
+              esc_reason='additive prod migration is still NOT applied after the post-merge heal (the apply step failed — e.g. billing/quota/build) — re-run the migrate step once the cause is cleared (#184)'
             else
-              # Classify the failure so the operator gets the RIGHT next action (#85): a FAILED/
-              # half-applied migration needs a `migrate resolve` (NOT another deploy); a stale/diverged
-              # checkout needs reconciling first; anything else is a generic verify miss. The markers
-              # below match what the recommended deploy-check emits — emit the same strings from your
-              # GOVERN_MIGRATE_CMD to light up the specific guidance.
-              if printf '%s' "$mout" | grep -qiE 'FAILED / half-applied|failed state|migrate resolve'; then
-                esc_reason='prod migration is in a FAILED / half-applied state after merge — needs `prisma migrate resolve` (do NOT re-run the migrate/deploy step); inspect migration status on prod'
-              elif printf '%s' "$mout" | grep -qiE 'ff-pull FAILED|BEHIND origin/main|STALE on-disk'; then
-                esc_reason='could not fast-forward the merged checkout to origin/main before applying the migration (local main diverged/dirty, so the migration dir may be absent on disk) — reconcile the checkout, then re-run the migrate step (#85)'
-              else
-                esc_reason='additive prod migration applied/verify FAILED after merge — check migration status on prod'
-              fi
-              govern::log "prod migration/verify FAILED for #$N — escalating ($esc_reason)"
-              report="$(printf '%s' "$report" | jq -c --arg r "$esc_reason" '.escalation={reason:$r,question:"finish/repair the migration manually",options:[]}')"
-              status="parked"
+              esc_reason='additive prod migration applied/verify FAILED after merge — check migration status on prod'
             fi
+            govern::log "prod migration/verify FAILED for #$N — escalating ($esc_reason)"
+            report="$(printf '%s' "$report" | jq -c --arg r "$esc_reason" '.escalation={reason:$r,question:"finish/repair the migration manually",options:[]}')"
+            status="parked"
           fi
-        elif [[ "$st" == "red" ]]; then govern::log "CI still red after $tries fixes → failed"; status="failed"; fi
+        else
+          # mneeded but no merge-repo PR merged (e.g. only a frontend sibling exists) — the additive
+          # migration never got applied. Don't silently resolve: escalate so a human applies it.
+          govern::log "#$N needs an additive prod migration but no merge-repo PR merged — escalating (migration NOT applied)"
+          report="$(printf '%s' "$report" | jq -c '.escalation={reason:"ticket reported an additive prod migration but no merge-repo PR merged this run, so the migration was not applied — apply it manually or re-run once a merge-repo PR is open",question:"apply the additive migration to prod, then bookkeep",options:[]}')"
+          status="parked"
+        fi
       fi
-    elif [[ -n "$repo" ]]; then
-      govern::log "$repo#$pr left open (frontend is PR-only)"
+      RESOLVED_PR_SUMMARY="$(printf '%s' "${pr_summary# }")"
     fi
   fi
 
@@ -550,7 +765,17 @@ while :; do
     resolved)
       if [[ "$MODE" == "dry" ]]; then govern::log "[dry] would bookkeep #$N"
       else printf '%s' "$report" | "$DIR/govern-bookkeep.sh" "$N" >&2 || govern::log "bookkeep failed #$N"; fi
-      record "$N" resolved "$(printf '%s' "$report" | jq -r '.pr.url // ""' 2>/dev/null || true)"
+      # #129: record EVERY PR + its disposition (merged / frontend-left-open) so the session summary
+      # lists them all — no sibling PR silently dropped. Fall back to the single .pr.url for an
+      # ordinary one-PR ticket.
+      _rnote="${RESOLVED_PR_SUMMARY:-$(printf '%s' "$report" | jq -r '.pr.url // ""' 2>/dev/null || true)}"
+      # #241: a resolved VALIDATION ticket carries empirical evidence (report.json / evidence dir) in
+      # validation.evidence — thread it into the state.jsonl note so a genuine REAL-PASS is never
+      # recorded as an evidence-less pass (the #231 symptom: a full report.json + evidence dir but an
+      # EMPTY note). The PASS/FAIL verdict + evidence path now travel WITH the recorded outcome.
+      _vnote="$(printf '%s' "$report" | jq -r 'if (.validation.ranLiveTest==true) and ((.validation.evidence // "")|length>0) then .validation.evidence else "" end' 2>/dev/null || true)"
+      [[ -n "$_vnote" ]] && _rnote="${_rnote:+$_rnote — }validation evidence: $_vnote"
+      record "$N" resolved "$_rnote"
       nres=$((nres+1)); since_review=$((since_review+1)); bad_streak=0
       # only a cleanly-resolved worktree is torn down (live, real worktree only).
       if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" && -z "$resumed" ]]; then
@@ -594,7 +819,7 @@ while :; do
         cat "$_blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
       fi
       rm -f "$_blk"
-      record "$N" parked "escalated; worktree preserved: $(wt_path "$N")"
+      record "$N" parked "escalated; worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
       govern::log "#$N PARKED — escalation filed; worktree PRESERVED at $(wt_path "$N")"
       slim_worktree "$N"
       excludes="$excludes,$N"; npark=$((npark+1)); bad_streak=$((bad_streak+1))
@@ -614,8 +839,22 @@ while :; do
       govern::log "INFRA HALT — workers cannot authenticate / reach the API ($INFRA_HALT_ERR). Re-authenticate (\`claude login\`) or restore connectivity, then re-run. #$N and the remaining backlog were NOT recorded as failed (#90)."
       break
       ;;
+    timeout)
+      # #241: the worker was HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write a verdict.
+      # This is INCOMPLETE, not a genuine FAIL — the killed worker may have done real, green work and
+      # simply never reached the report write. Recording it as `failed` would mask a working feature as
+      # broken (false launch-blocking signal) and waste re-runs treating "the trick is broken". So
+      # record a DISTINCT `timeout` status: worktree preserved (re-run resumes), NOT counted as a
+      # feature failure. It still counts toward the in-run bad-streak (a run that only ever times out
+      # must stop) and the cross-run #60 streak (consecutive_fails counts `timeout`), so a ticket that
+      # times out run after run is auto-escalated — but it is never blamed as a broken feature.
+      record "$N" timeout "killed mid-run before verdict — INCOMPLETE, not failed; re-run resumes. worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
+      govern::log "#$N TIMEOUT — killed before verdict; recorded INCOMPLETE (not failed), worktree PRESERVED at $(wt_path "$N") (re-run resumes) [#241]"
+      slim_worktree "$N"
+      excludes="$excludes,$N"; ntimeout=$((ntimeout+1)); bad_streak=$((bad_streak+1))
+      ;;
     *)
-      record "$N" failed "see $(govern::worker_logdir "$N")/worker.jsonl; worktree preserved: $(wt_path "$N")"
+      record "$N" failed "see $(govern::worker_logdir "$N")/worker.jsonl; worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
       govern::log "#$N FAILED — worktree PRESERVED at $(wt_path "$N") (nothing discarded; re-run resumes)"
       slim_worktree "$N"
       excludes="$excludes,$N"; nfail=$((nfail+1)); bad_streak=$((bad_streak+1))
@@ -624,6 +863,10 @@ while :; do
 
   # release this ticket's claim now its outcome is recorded (#41)
   [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
+  # #151: #N reached a recorded terminal outcome (resolved/parked/failed/timeout) above — clear the
+  # in-flight marker so a later CLEAN break (circuit-breaker / MAX_TICKETS / supervisor-halt) is not
+  # wrongly reported as having a half-resolved ticket in flight.
+  CUR_TICKET=""; CUR_TICKET_MERGED=""
 
   [[ "$bad_streak" -ge "$MAX_BAD_STREAK" ]] && anomaly=1
 
@@ -716,6 +959,6 @@ fi
 if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
   govern::log "RUN HALTED on infra/auth outage ($INFRA_HALT_ERR) — re-authenticate (\`claude login\`) or restore connectivity, then re-run. No ticket recorded \`failed\`; affected tickets keep clean #60 history (#90)."
 fi
-govern::log "DONE — resolved=$nres parked=$npark failed=$nfail (processed $done_count) | state=$STATE review=$REVIEW"
+govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '$ROOT_PM run worktree:rm -- ticket-<N>'"
 exit 0

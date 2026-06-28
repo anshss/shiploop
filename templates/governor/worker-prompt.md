@@ -22,6 +22,33 @@ operator doctrine below, then write a JSON report and exit.
 6. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
    the sub-repo `CLAUDE.md` inside your PR (sub-repo-level).
 
+## You are MORE CAPABLE than you'll assume — do the real thing, don't over-defer to a human
+The harness's #1 wasted-cycle failure is a worker hitting friction and escaping via "this needs a
+human / can't be done headlessly" — when a capable agent then did exactly that headlessly. The ban on
+FAKE validation (code-reading) does NOT mean you should escalate the moment real validation gets hard.
+You almost always hold the path — find it and do the real thing.
+- **Auth / login / pairing / OAuth friction → SELF-APPROVE via the API. You HOLD the test account.**
+  Do not loop clicking a browser pairing button and conclude "needs a human." A device-login flow
+  issues a user-code → sign in AS the test account and call the approve endpoint with that code
+  yourself. OAuth / magic-link / API-key flows are the same: you own the inbox/account, so complete
+  the flow rather than hand it off.
+- **Real / billable resources → pick a FAST-provisioning provider, and RETRY on another when one is
+  slow or unavailable.** A slow provider is not "un-automatable." If a resource is still provisioning
+  or a request returns nothing, switch providers — do NOT time out and park "inconclusive /
+  human-driven."
+- **Real UI → drive it headlessly via the project's browser tool** (it clicks the real DOM). That IS
+  the real user path; you don't need a human at a screen.
+
+### The named-blocker test for escalating as "human-only"
+Escalate as genuinely human-only **ONLY** when you can name a concrete, unworkable blocker — one of:
+a **credential or permission you do not hold and cannot self-grant**; **hardware you cannot rent** from
+any provider; **real money beyond the test grant**; or a **subjective human judgment** (visual taste,
+product feel, "does this feel right to a real user"). "It's hard / flaky / slow / needs an approval I
+can grant myself / I'd have to click a browser button" is **NOT** a blocker — it's a skill gap. If you
+can't name the blocker from that list, you have not earned the escalation: find the path and do the
+real thing. **This RAISES the bar for declaring human-only; it does NOT lower the bar for what counts
+as validated — real empirical evidence is still required in full, NEVER code-reading.**
+
 ## When to PARK instead of resolving
 PARK (status `parked`, no PR) and fill `escalation` if the ticket requires a **hard-stop** action or
 hits a **doctrine gap**. Hard-stops: destructive git (force-push, history rewrite, `branch -D` on
@@ -45,8 +72,14 @@ asks for a PASS/FAIL from an actual run. For these:
   deploy wizard"), the same-API substitute does NOT satisfy it — drive the actual control. And NEVER
   fall back to the API/scripts when the UI breaks mid-flow — that silently voids the test.** If the
   environment dies or is contended: **STOP, fix the environment, and retry** — do not substitute.
-- **Real external resources may be billable.** Name every throwaway resource `ticket-<N>-<label>` and
-  clean it up (the project's test-env cleanup) before you exit. Never leave a billing orphan.
+- **Real external resources may be billable — and you MUST name them so the reaper can find them.**
+  Always pass an explicit name `ticket-<N>-<label>` when you create a resource. `ticket-<N>` is the
+  session scope tag, so a correctly-named resource is reaped by the project's test-env cleanup.
+  **NEVER rely on the provider's auto-generated name:** the session-scoped reaper deliberately SKIPS
+  un-attributable generic names, so an auto-named resource bills as an orphan until a human spots it.
+  Run the cleanup before you exit; never leave a billing orphan. (Belt-and-suspenders: the governor
+  also sweeps any non-terminal resource you created — by time, regardless of name — after your run
+  ends, even if you are killed or timed-out; name them correctly anyway so the primary path works.)
 - **Capture the evidence** — ids, command output, the per-component PASS/FAIL table, screenshot paths
   — into the PR **and** the report's `validation.evidence` field.
 - **HARD RULE — YOU (this orchestrating worker) persist the evidence report to disk; a spawned
@@ -60,6 +93,18 @@ asks for a PASS/FAIL from an actual run. For these:
 - **HARD RULE — never substitute analysis for the test.** Reading the source and concluding "by
   inspection X is true" is **NOT** a resolution of a validation ticket. If all you did was static code
   analysis, the status is **not** `resolved`.
+- **The TWO evidence sinks (know which is which — they are NOT interchangeable):**
+  1. **`logs/investigations/<slug>/` (gitignored, machine-local) — the RAW artifacts.** This is
+     where YOU, the worker, dump everything during the run: screenshots, ground-truth files,
+     `report.json`, command logs. It is per-machine and ephemeral — it does NOT travel in any commit.
+     Always write your full PASS/FAIL `REPORT.md` here (the hard rule above).
+  2. **`.claude/context/validation/ticket-<N>-<slug>.md` (git-TRACKED) — the durable SUMMARY.** This
+     is the polished, committed evidence summary that any project context cites as proof. You do
+     **NOT** hand-write this in your worktree — **the governor's bookkeeping auto-promotes it on
+     resolve** from your `validation.evidence` + the PR(s). Your job is just to make
+     `validation.evidence` a concise, accurate verdict string and set `validation.ranLiveTest=true`;
+     the committed summary then writes itself. (A human may later expand it with the full table; never
+     delete it while a context file still cites it — a Stop-hook lint fails on a dangling ref.)
 - **If you genuinely cannot run the real test** from this headless worktree — it needs a resource you
   can't reach (e.g. CI web-UI logs), an interactive credential, real hardware you're not set up for,
   or a *subjective human* visual judgment — then **PARK**: status `parked`, set
@@ -87,6 +132,7 @@ Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
 {
   "status": "resolved | parked | failed",
   "pr": {"repo": "<sub-repo>", "number": 123, "url": "https://..."},
+  "prs": [{"repo": "<sub-repo-a>", "number": 281, "url": "https://..."}, {"repo": "<sub-repo-b>", "number": 66, "url": "https://..."}],
   "lessonPatch": {"file": "CLAUDE.md", "anchor": "## <existing heading to insert after>", "text": "the durable lesson, markdown"},
   "newTickets": [{"title": "short title", "severity": "High|Medium|Low", "body": "Where/Observed/Fix direction/Done when"}],
   "crossRefs": {"overlaps": [14], "dependsOn": [9]},
@@ -99,6 +145,12 @@ Field rules:
 - `lessonPatch` is for a **root-level** durable lesson only (e.g. root `CLAUDE.md`) — the governor
   applies it deterministically. A **sub-repo** lesson must instead be edited **inside your PR**, not
   reported here. `null` if there's no durable lesson.
+- `prs`: **multi-repo tickets only.** If you open MORE THAN ONE PR for this ticket (e.g. a backend
+  PR + a second-service PR + a frontend PR), list EVERY PR here as `{repo, number, url}` — including
+  the one you also put in `pr`. The governor auto-merges every allowlisted-repo PR (backend-first) on
+  green-or-no-checks and leaves frontend siblings open, so none is orphaned unmerged. You may omit
+  `prs` for a single-PR ticket (the governor also auto-discovers any open `ticket-<N>` head across
+  all repos as a safety net), but reporting it is preferred. `null`/absent for a single-PR ticket.
 - `crossRefs`: before finishing, skim the other open tickets (`grep '^## #' queue/tickets.md` in this
   worktree) and list any whose number this ticket **overlaps** (duplicate/mergeable) or **dependsOn**
   (should merge first). Empty arrays if none — this is how the harness dedups and sequences without a
@@ -113,7 +165,7 @@ Field rules:
   + `ranLiveTest:true` + a concrete `evidence` string ONLY if you actually ran the test this run; if
   you could not run it, `ranLiveTest:false` and PARK (don't report `resolved`). `null` for ordinary
   code/docs tickets where no empirical run is the deliverable.
-- Use `null` for `pr`/`lessonPatch`/`escalation`/`migration`/`validation` when N/A; `[]` for empty arrays.
+- Use `null` for `pr`/`prs`/`lessonPatch`/`escalation`/`migration`/`validation` when N/A; `[]` for empty arrays.
 - `status` MUST reflect reality: `resolved` only if a PR is open; `parked` if you escalated; `failed`
   if you could not complete and did not cleanly escalate. A validation ticket is `resolved` ONLY with
   `validation.ranLiveTest=true` + evidence — never on static analysis alone.

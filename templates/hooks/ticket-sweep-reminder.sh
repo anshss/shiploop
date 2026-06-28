@@ -40,6 +40,25 @@ case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exi
 [ -n "$cwd" ] || cwd="$PWD"
 [ -n "$session_id" ] || session_id="nosession"
 
+# --- dangling-validation-ref backstop (#252): a founder-os layout migration can DELETE a
+# `.claude/context/validation/*.md` summary while `features.md`/`direction.md`/`CLAUDE.md` still cite
+# it as proof → an orphaned claim. Surface it at session end: blocking, and UNgated by the
+# once-per-session marker below, so it nags until fixed. Run as a subprocess so the lint's set flags
+# can't leak into this hook.
+vlint="$SELF_ROOT/scripts/govern/lint-validation-refs.sh"
+[ -x "$vlint" ] || vlint="$SELF_ROOT/govern/lint-validation-refs.sh"
+if [ -x "$vlint" ]; then
+  if ! dangling="$("$vlint" "$MAIN" 2>&1)" && [ -n "${dangling:-}" ]; then
+    dangling_flat="$(printf '%s' "$dangling" | tr '\n' ' ')"
+    reason="A .claude/context/validation/*.md evidence summary is MISSING but still cited (#252): \
+${dangling_flat} Fix now: restore the deleted summary (git show <migration>^:<path>) or correct the \
+reference, commit, then stop. A migration likely orphaned it. This is the only blocker."
+    esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"decision":"block","reason":"%s"}\n' "$esc"
+    exit 0
+  fi
+fi
+
 # --- once-per-session marker ---
 marker="${TMPDIR:-/tmp}/metarepo-ticket-sweep-${session_id}"
 [ -e "$marker" ] && exit 0
