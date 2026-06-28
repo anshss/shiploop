@@ -61,6 +61,14 @@ awk -v n="$N" '
 ' "$TICKETS_FILE" > "$tmp"
 mv "$tmp" "$TICKETS_FILE"
 
+# Collapse the blank-line residue the block-delete leaves behind. The awk above removes the
+# heading-through-`---`, but the blank line that PRECEDED the heading and the one that FOLLOWED
+# the `---` are not part of the grab, so each resolved ticket leaves ~1 stray blank line. Over the
+# file's life (hundreds of tickets resolved + deleted) these accumulate into large whitespace voids.
+# `cat -s` squeezes any run of consecutive blank lines back down to one — idempotent, and it also
+# compacts already-accumulated gaps. (Legitimate single blanks between blocks are unaffected.)
+tmp="$(mktemp)"; cat -s "$TICKETS_FILE" > "$tmp"; mv "$tmp" "$TICKETS_FILE"
+
 # 2. Append newTickets. Number each via the shared monotonic allocator (#54, #73):
 # govern::next_ticket_number returns max(persisted high-water mark in governor/.ticket-seq,
 # current tickets.md max) + 1 and bumps the seq, so deleting the highest `## #N` then filing leaves
