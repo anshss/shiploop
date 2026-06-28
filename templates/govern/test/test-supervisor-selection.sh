@@ -73,9 +73,9 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_TICKETS_FILE="$T/tickets.md" \
   GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
   GOVERN_PENDING_FILE="$T/governor/pending-escalations.json" \
-  GOVERN_WORKER_PROMPT_FILE="$REPO/governor/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$REPO/governor/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$REPO/governor/supervisor-prompt.md" \
+  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
+  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
+  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
   GOVERN_LOG_ROOT="$T/logs" \
   GOVERN_TICKET_SEQ_FILE="$T/.ticket-seq" \
   GOVERN_NA_SKIP_FILE="$T/governor/na-skip-counts.json" \
