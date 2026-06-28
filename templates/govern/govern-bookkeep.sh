@@ -8,7 +8,10 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 N="${1:?ticket number required}"
 report="$(cat)"
-commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"   # the queue/ folder (holds tickets.md)
+# '|| true' so a MISSING queue dir yields "" (not an unreliable set -e abort with a confusing cd error);
+# the explicit assert below is the deterministic fail-closed guard (#28).
+commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # the queue/ folder (holds tickets.md)
+govern::assert_commit_dir "$commit_dir"                  # fail closed if the queue dir is missing (#28)
 patched=""
 
 # Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers

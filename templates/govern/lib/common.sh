@@ -79,6 +79,17 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
   printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
 }
 
+# Fail CLOSED if a commit dir didn't resolve to a real git work-tree (#28). A commit dir is derived as
+# `$(cd "$(dirname "$TICKETS_FILE")" && pwd)`; when that directory is MISSING the substitution yields an
+# EMPTY string, and a later `cd "$commit_dir"` becomes `cd ""` — a no-op that leaves git running against
+# the CURRENT working directory, so bookkeep could commit/push into the WRONG repo. Call this right after
+# deriving any such commit dir, BEFORE any `cd`/git on it.
+govern::assert_commit_dir() { # <dir>
+  local d="${1:-}"
+  [[ -n "$d" ]] && git -C "$d" rev-parse --show-toplevel >/dev/null 2>&1 \
+    || govern::die "refusing to commit: '$d' is not a git work-tree (TICKETS_FILE='$TICKETS_FILE' — its dir missing?). A bare cd here would hit the CURRENT repo (#28)."
+}
+
 # ── escalation lifecycle (#62) ──────────────────────────────────────────────
 # Parse the entries under "## Open" in escalations.md into NDJSON (one object per
 # line) so the emit/apply scripts share ONE deterministic parser instead of each
