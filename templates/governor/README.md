@@ -68,7 +68,9 @@ Unset → the run summary's "Needs you" section is the signal.
 ## Hard bounds (a run always ends; tune via env)
 - `GOVERN_MAX_TICKETS` (20) — stop after N tickets this run (caps a tickets-beget-tickets loop).
 - `GOVERN_MAX_BAD_STREAK` (4) — stop after N **consecutive** parked/failed.
-- `GOVERN_MAX_RUNTIME` (14400s ≈ 4h) — stop starting tickets past this.
+- `GOVERN_MAX_RUNTIME` (`0` = no cap, default) — stop starting tickets past this many seconds. Set a
+  positive value to impose a wall-clock cap (e.g. to fit a provider usage window). MAX_TICKETS +
+  per-worker timeout + bad-streak still bound the run.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall the loop. `0` = unbounded.
 - `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
