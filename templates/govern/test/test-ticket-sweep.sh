@@ -11,6 +11,12 @@ source "$DIR/assert.sh"
 # GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in (#255).
 SNAP="$GOVERN_HOOKS_DIR/session-snapshot.sh"
 SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
+# The Stop hook also runs the #252 dangling-validation-ref lint, which sources common.sh →
+# $GOVERN_WS_ROOT/scripts/lib/workspace.sh. Seed a hermetic stub + export GOVERN_WS_ROOT so it
+# resolves in the template layout; otherwise common.sh's source-error noise is captured as a
+# spurious "evidence summary MISSING" block and fails the silent-stop cases (#255).
+WSSTUB="$(mktemp -d)"; trap 'rm -rf "$WSSTUB"' EXIT
+mk_ws_stub "$WSSTUB"
 
 # Discover the workspace's first sub-repo generically — the fingerprint iterates the
 # REAL REPOS list from workspace.sh, so the sandbox sub-repo must be a name it knows.
