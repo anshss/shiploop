@@ -16,6 +16,7 @@ SPAWN="$DIR/../spawn-worker.sh"
 RL="$DIR/../run-loop.sh"
 
 # ── unit: the detection helper itself ───────────────────────────────────────
+mk_ws_stub "$(mktemp -d)"  # hermetic workspace stub (independent of the live workspace.sh) — seed before common.sh is sourced
 source "$DIR/../lib/common.sh"
 U="$(mktemp -d)"; trap 'rm -rf "$U"' EXIT
 printf '%s\n' '{"type":"result","is_error":true,"result":"API Error: 401 Invalid authentication credentials"}' > "$U/auth.jsonl"

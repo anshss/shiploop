@@ -69,9 +69,12 @@ printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md" 2>/dev/null || 
 ( cd "$T" && git add -A && git commit -q -m init )
 
 rpt() { printf '{"status":"resolved","pr":{"repo":"x","number":%s},"newTickets":[],"lessonPatch":null}' "$1"; }
-# fire two bookkeeps at once, each resolving a different ticket — they MUST serialize on BK_LOCK
-GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" rpt 1 | bash "$BK" 1 >/dev/null 2>&1 &
-GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" rpt 2 | bash "$BK" 2 >/dev/null 2>&1 &
+# fire two bookkeeps at once, each resolving a different ticket — they MUST serialize on BK_LOCK.
+# NOTE: GOVERN_TICKETS_FILE must sit on the CONSUMER side of the pipe — a prefix before `rpt N` would
+# apply only to `rpt`, never to the `bash "$BK"` that actually reads it (the bug that made this test
+# silently pass on the wrong file pre-queue-move). GOVERN_WS_ROOT is already exported above.
+rpt 1 | GOVERN_TICKETS_FILE="$T/tickets.md" bash "$BK" 1 >/dev/null 2>&1 &
+rpt 2 | GOVERN_TICKETS_FILE="$T/tickets.md" bash "$BK" 2 >/dev/null 2>&1 &
 wait
 
 heads="$(grep -oE '^## #[0-9]+' "$T/tickets.md" | tr '\n' ' ')"

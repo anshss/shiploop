@@ -1,6 +1,6 @@
 # meta-repo
 
-A Claude Code skill that scaffolds and operates **multi-subrepo workspaces with an autonomous harness** — a pattern where one npm-rooted parent workspace wraps N independent git repositories as sub-folders. The workspace root provides cross-cutting tooling (dev, status, doctor, branch ops, parallel PR push), **parallel git worktrees**, a **file-based ticket queue**, and a **governor** that drives headless `claude -p` workers to grind that backlog semi-autonomously. Each sub-repo keeps its own remote, PR queue, and CI.
+A Claude Code skill that scaffolds and operates **multi-subrepo workspaces with an autonomous harness** — a pattern where one parent workspace (npm, pnpm, or yarn at the root) wraps N independent git repositories as sub-folders. The workspace root provides cross-cutting tooling (dev, status, doctor, branch ops, parallel PR push), **parallel git worktrees**, a **file-based ticket queue**, and a **governor** that drives headless `claude -p` workers to grind that backlog semi-autonomously. Each sub-repo keeps its own remote, PR queue, and CI.
 
 ## When this pattern fits
 
@@ -30,7 +30,7 @@ In a folder containing your sub-repos as sub-folders (each with its own `.git/`)
 ```
 
 The setup command is **idempotent**:
-- **Fresh folder** → full scaffold: detects sub-repos, ports, and per-sub-repo dev commands; writes `package.json` (npm-run scripts), `.gitignore`, the single config file `scripts/lib/workspace.sh`, the mechanism scripts, hooks, the governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
+- **Fresh folder** → full scaffold: detects sub-repos, ports, and per-sub-repo dev commands; asks which root package manager to use (`ROOT_PM`, default npm); writes `package.json` (thin bash-alias scripts, run via your root PM), `.gitignore`, the single config file `scripts/lib/workspace.sh`, the mechanism scripts, hooks, the governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
 - **Existing meta-repo** → component-by-component **bump**: detects which capabilities are present (core scripts / worktrees / tickets / governor / hooks) vs missing or outdated and offers to add/upgrade each. All customization lives in `scripts/lib/workspace.sh`, so mechanism scripts refresh from latest templates without clobbering your tweaks.
 
 ## What you get
@@ -90,7 +90,7 @@ meta-repo/
 4. **Verify which sub-repo you're in before destructive git.**
 5. **PRs aren't transactional — merge backend-first.**
 6. **`.env.example` is the contract.** Never commit `.env`.
-7. **The root is npm.** No pnpm/yarn/bun at the root.
+7. **One package manager at the root — never two.** Your choice (`ROOT_PM` = npm/pnpm/yarn/bun); just don't mix two (a stray second root lockfile diverges).
 8. **Main checkout stays on `main`; branch work only in worktrees.** Coordination files commit direct to main.
 9. **PR opened → tear the local stack down.**
 10. **Workers never write `tickets.md`** — the governor's bookkeeper does.

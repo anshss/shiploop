@@ -5,6 +5,7 @@ source "$DIR/assert.sh"
 SPAWN="$DIR/../spawn-worker.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+mk_ws_stub "$TMP"  # hermetic workspace stub (independent of the live workspace.sh)
 mkdir -p "$TMP/governor" "$TMP/wt"
 
 cat > "$TMP/tickets.md" <<'EOF'

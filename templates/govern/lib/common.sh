@@ -17,10 +17,14 @@ PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
-TICKETS_FILE="${GOVERN_TICKETS_FILE:-$WS_ROOT/tickets.md}"
+# The live + parked queues live in one folder at the meta-repo root: queue/. Override QUEUE_DIR to
+# relocate the whole folder; the individual GOVERN_*_FILE overrides still win per-file (the tests
+# point them at temp dirs).
+QUEUE_DIR="${GOVERN_QUEUE_DIR:-$WS_ROOT/queue}"
+TICKETS_FILE="${GOVERN_TICKETS_FILE:-$QUEUE_DIR/tickets.md}"
 # Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
 # answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
-TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$WS_ROOT/tickets-parked.md}"
+TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"
 # Driver→relay escalation hand-off (#62) — regenerated every run-end, gitignored runtime state.
 PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
 # Cross-run wait-for-merge / dependency deferrals (#119). Persists supervisor "defer #N until PR #M
@@ -51,6 +55,28 @@ govern::die() { printf '[govern ERROR] %s\n' "$*" >&2; exit 1; }
 
 govern::require() {
   command -v "$1" >/dev/null 2>&1 || govern::die "missing required tool: $1"
+}
+
+# ── queue-folder location helpers ────────────────────────────────────────────
+# The queue files live in queue/ (a subfolder), so dirname "$TICKETS_FILE" is the queue dir, NOT the
+# meta-repo root. Anything that needs the ROOT (preflight reconcile, a root-level lessonPatch, or
+# `git show <ref>:<path>`) must resolve it explicitly. These two helpers are the single source of truth.
+
+# The meta-repo root = the git toplevel that owns the queue folder. Correct whether tickets.md sits in
+# queue/ (production) or directly at the override dir (tests put it at the temp repo root); falls back
+# to the queue dir itself when it isn't a git repo (non-git test fixtures).
+govern::meta_root() { # -> abs path of the meta-repo root
+  local qd; qd="$(dirname "$TICKETS_FILE")"
+  git -C "$qd" rev-parse --show-toplevel 2>/dev/null || ( cd "$qd" && pwd )
+}
+
+# Repo-root-relative path of the tickets file (e.g. "queue/tickets.md", or "tickets.md" when it sits at
+# the root) — for `git show <ref>:<path>` and root-anchored `git add`, where a bare basename would miss
+# the queue/ prefix.
+govern::tickets_relpath() { # -> path relative to the meta-repo root
+  local qd prefix; qd="$(dirname "$TICKETS_FILE")"
+  prefix="$(cd "$qd" 2>/dev/null && git rev-parse --show-prefix 2>/dev/null || true)"
+  printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
 }
 
 # ── escalation lifecycle (#62) ──────────────────────────────────────────────
@@ -526,7 +552,7 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] || return 0
   git -C "$d" remote get-url origin >/dev/null 2>&1 || return 0
   git -C "$d" fetch -q origin main 2>/dev/null || return 0
-  rel="$(basename "$TICKETS_FILE")"
+  rel="$(govern::tickets_relpath)"
   content="$(git -C "$d" show "origin/main:$rel" 2>/dev/null)" || return 0
   printf '%s\n' "$content" | grep -qE "^##[[:space:]]+#$n([^0-9]|\$)" && return 0
   return 1

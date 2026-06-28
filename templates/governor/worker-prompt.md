@@ -12,13 +12,13 @@ operator doctrine below, then write a JSON report and exit.
 3. **Validate locally before any PR** — build + tests + the real loop where the change is
    user-visible. Doctrine requires this; compile-clean is not enough.
 4. Commit per sub-repo (`cd` into it first) and open a PR with `gh pr create` against
-   `<org>/<sub-repo>`. Do NOT merge. Do NOT edit `tickets.md` — the governor does that.
+   `<org>/<sub-repo>`. Do NOT merge. Do NOT edit `queue/tickets.md` — the governor does that.
    - **Branch name MUST be exactly `ticket-<N>`** (this ticket's number) in every repo you touch —
      NOT `fix/...`, NOT a custom slug. The governor finds + merges your PR and resumes a crashed
      run by this branch name; a non-standard name orphans the PR and re-fails the ticket (#55). If
      your worktree is on `main`, create it: `git switch -c ticket-<N>` before committing.
 5. If you discover NEW bugs/gaps en route, record them in the report's `newTickets` array (do not
-   edit `tickets.md` yourself).
+   edit `queue/tickets.md` yourself).
 6. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
    the sub-repo `CLAUDE.md` inside your PR (sub-repo-level).
 
@@ -99,7 +99,7 @@ Field rules:
 - `lessonPatch` is for a **root-level** durable lesson only (e.g. root `CLAUDE.md`) — the governor
   applies it deterministically. A **sub-repo** lesson must instead be edited **inside your PR**, not
   reported here. `null` if there's no durable lesson.
-- `crossRefs`: before finishing, skim the other open tickets (`grep '^## #' tickets.md` in this
+- `crossRefs`: before finishing, skim the other open tickets (`grep '^## #' queue/tickets.md` in this
   worktree) and list any whose number this ticket **overlaps** (duplicate/mergeable) or **dependsOn**
   (should merge first). Empty arrays if none — this is how the harness dedups and sequences without a
   parent in the loop.

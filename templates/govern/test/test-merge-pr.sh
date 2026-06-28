@@ -4,6 +4,10 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 MERGE="$DIR/../merge-pr.sh"
 
+# Hermetic config: alpha is auto-mergeable, web is frontend (PR-only) — independent of the live workspace.
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+mk_ws_stub "$T"
+
 # Frontend repo → refused (exit 2), regardless of CI.
 set +e
 out="$(GOVERN_ECHO=1 "$MERGE" web 9 2>&1)"; code=$?

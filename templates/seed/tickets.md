@@ -7,7 +7,7 @@ writeup (durable lesson → `CLAUDE.md`).
 Each ticket is its own numbered `## #N — Title` block. **Numbers are stable IDs while a ticket is
 open** — never renumber an open ticket (in-flight PRs/commits reference it). Gaps from
 resolved-and-deleted tickets are expected. Numbering is **per-queue**: this file and the parked queue
-(`tickets-parked.md`) are each their own serial `## #N` list; a new ticket takes **this file's own
+(`queue/tickets-parked.md`) are each their own serial `## #N` list; a new ticket takes **this file's own
 highest `## #N` + 1**.
 
 **Resolved = a fix PR is opened** (not merged). DELETE the entry in the same session the PR opens

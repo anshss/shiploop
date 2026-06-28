@@ -11,6 +11,9 @@ RL="$DIR/../run-loop.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
+# Hermetic config: the worker reports repo "alpha" — make it auto-mergeable so run-loop reaches the
+# await-CI/merge branch (where the gh stub fails the merge) and routes to park, not bookkeep.
+mk_ws_stub "$T"
 
 cat > "$T/tickets.md" <<'EOF'
 # Tickets

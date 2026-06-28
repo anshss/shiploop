@@ -32,7 +32,7 @@ not topic:
 
 | Where | Use when |
 |---|---|
-| **`tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. |
+| **`queue/tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. |
 | **`CLAUDE.md`** (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. |
 | **`learnings.md`** (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for `CLAUDE.md` ("X provider flaky this week"). **Never** a work item (→ tickets) and **never** a fixed-bug writeup (→ promote or delete). |
 | **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. The memory dir is fronted by a `MEMORY.md` index — a list of one-line `[title](file.md) — gist` links pointing at per-topic note files; add the link when you add a note so it stays discoverable. |
@@ -77,7 +77,7 @@ Adding/removing a sub-repo is a one-file edit there.
 | `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
 | `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
 
-**npm needs `--` before any arg/flag** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`.
+**Pass args/flags after the script with `--`** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`. (npm and pnpm need the `--`; yarn classic tolerates it. Commands here use `npm run` — substitute your root PM if it differs.)
 
 ## Anti-patterns (load-bearing)
 
@@ -90,10 +90,12 @@ Adding/removing a sub-repo is a one-file edit there.
    capability the frontend consumes (enum, endpoint, response field), the backend PR merges + deploys
    before the frontend PR. State the merge order in each sibling PR.
 6. **`.env.example` is the contract.** Never commit `.env`. `doctor` checks each `.env` exists.
-7. **The root is npm.** No pnpm/yarn/bun at the root — a stray root lockfile diverges. Sub-repos keep
-   their own package manager.
+7. **One package manager at the root — never two.** The root PM is set in `scripts/lib/workspace.sh`
+   (`ROOT_PM` = npm/pnpm/yarn/bun); the root scripts are PM-agnostic bash aliases. Don't mix two PMs at
+   the root — a stray second root lockfile diverges (the `.gitignore` guards against this). Sub-repos
+   keep their own package manager independently.
 8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo
-   coordination files (`CLAUDE.md`, `tickets.md`, `learnings.md`, `scripts/`) commit directly to `main`
+   coordination files (`CLAUDE.md`, `queue/tickets.md`, `learnings.md`, `scripts/`) commit directly to `main`
    in the main checkout — never branched/PR'd.
 9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next
    `dev` serves stale code on `EADDRINUSE`).

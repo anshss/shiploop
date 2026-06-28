@@ -206,9 +206,10 @@ trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in ticke
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
 
-# Meta-repo checkout that holds tickets.md (== origin/main for the harness lane). Defined once
-# here so both the run-start preflight (#71) and the per-ticket cross-driver re-verify (#108) share it.
-META_DIR="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
+# Meta-repo checkout root that owns the queue/ folder (== origin/main for the harness lane). Resolved
+# via the git toplevel (NOT dirname "$TICKETS_FILE", which is now the queue/ subfolder) so the
+# run-start preflight (#71) and the per-ticket cross-driver re-verify (#108) operate on the repo root.
+META_DIR="$(govern::meta_root)"
 
 # #62: close the escalation lifecycle BEFORE selecting tickets — apply any operator answers the
 # relay recorded into escalations.md since the last run. "do-the-work" un-parks (the ticket

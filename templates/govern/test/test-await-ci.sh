@@ -5,6 +5,7 @@ source "$DIR/assert.sh"
 AWAIT="$DIR/../await-ci.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+mk_ws_stub "$TMP"  # hermetic workspace stub (independent of the live workspace.sh)
 
 # Fake gh: emit the JSON in $FAKE_GH_JSON for `gh pr checks ... --json bucket`.
 cat > "$TMP/gh" <<'EOF'
