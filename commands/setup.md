@@ -9,8 +9,8 @@ You are the meta-repo setup command. You convert the current folder into — or 
 cross-cutting tooling, parallel worktrees, a ticket queue, a governor (autonomous ticket loop), and
 the SessionStart/End/Stop hooks.
 
-The full pattern is documented in `~/.claude/skills/meta-repo/SKILL.md` (read it if you need context).
-All templates live under `~/.claude/skills/meta-repo/templates/`. Let `T=~/.claude/skills/meta-repo/templates`.
+The full pattern is documented in `~/.claude/skills/meta-repo-harness/SKILL.md` (read it if you need context).
+All templates live under `~/.claude/skills/meta-repo-harness/templates/`. Let `T=~/.claude/skills/meta-repo-harness/templates`.
 
 ## Architecture you are installing (read once)
 Every mechanism script sources the ONE config file `scripts/lib/workspace.sh`. That file holds all
@@ -77,7 +77,7 @@ Find sub-folders that are their own git repos:
 for d in */; do [ -d "$d/.git" ] && echo "${d%/}"; done
 ```
 If zero, stop: "No sub-folders with their own .git found. Clone your sub-repos into this folder first,
-then re-run `/meta-repo:setup`." Otherwise list them numbered and ask: "Detected N sub-repos: [list].
+then re-run `/meta-repo-harness:setup`." Otherwise list them numbered and ask: "Detected N sub-repos: [list].
 Use these? (yes / pick subset / cancel)".
 
 ## Phase 2 — Detect ports + dev commands (fresh)
@@ -173,7 +173,7 @@ The `$T/.claude/commands/*.md` copy installs the **project-local** `/govern` and
 commands into the workspace's own `.claude/commands/`. This is what makes the autonomous loop usable
 in the scaffolded repo **without depending on the meta-repo skill being globally installed** on that
 machine: a fresh workspace gets a working `/govern` (and `/resolve`) on its own. (Where the meta-repo
-skill IS installed globally, the namespaced `meta-repo:govern` / `meta-repo:resolve` also exist —
+skill IS installed globally, the namespaced `meta-repo-harness:govern` / `meta-repo-harness:resolve` also exist —
 harmless duplication; the project commands are the self-contained ones the Phase Z message points to.)
 Without this step the headline `/govern` in the final "Try" block would be a dead command. The
 `npm run govern` alias (Phase 6 `package.json`) is the equivalent CLI entry point either way.
@@ -318,7 +318,7 @@ Check presence/freshness of each component and build a table `component | status
 - **tickets** — `queue/tickets.md` present? An older workspace keeps `tickets.md` + `tickets-parked.md`
   at the ROOT (pre-`queue/` layout) — mark `outdated` so the bump migrates them into `queue/` (below).
 - **commands** — project-local `.claude/commands/govern.md` + `.claude/commands/resolve.md` present?
-  An older workspace that predates this step has NEITHER — it relied on the global `meta-repo:govern`
+  An older workspace that predates this step has NEITHER — it relied on the global `meta-repo-harness:govern`
   skill, so a bare `/govern` / `/resolve` never worked there (and the Phase Z "Try" message advertised
   a dead command). Mark `missing` so the bump installs them.
 - **governor** — `scripts/govern/` + `governor/` present?

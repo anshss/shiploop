@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Install the /meta-repo:* slash commands by symlinking commands/ into
-# ~/.claude/commands/meta-repo. Idempotent — safe to re-run after updates.
+# Install the /meta-repo-harness:* slash commands by symlinking commands/ into
+# ~/.claude/commands/meta-repo-harness. Idempotent — safe to re-run after updates.
 set -e
 
 COMMANDS_DIR="$HOME/.claude/commands"
 SOURCE="$(cd "$(dirname "$0")" && pwd)"
-TARGET="$COMMANDS_DIR/meta-repo"
+TARGET="$COMMANDS_DIR/meta-repo-harness"
 
 if [ ! -d "$COMMANDS_DIR" ]; then
   echo "Error: $COMMANDS_DIR not found. Is Claude Code installed?"
@@ -31,13 +31,13 @@ if [ -d "$SOURCE/templates" ]; then
 fi
 
 echo ""
-echo "Installed: /meta-repo:* commands now available in all Claude Code sessions."
+echo "Installed: /meta-repo-harness:* commands now available in all Claude Code sessions."
 echo "Source:    $SOURCE"
 echo "Symlink:   $TARGET → $SOURCE/commands"
 echo ""
 echo "Available commands:"
 for f in "$SOURCE/commands"/*.md; do
-  [ -f "$f" ] && echo "  /meta-repo:$(basename "$f" .md)"
+  [ -f "$f" ] && echo "  /meta-repo-harness:$(basename "$f" .md)"
 done
 echo ""
-echo "Try: /meta-repo:setup in a folder containing your sub-repos."
+echo "Try: /meta-repo-harness:setup in a folder containing your sub-repos."

@@ -1,4 +1,4 @@
-# meta-repo
+# meta-repo-harness
 
 A Claude Code skill that scaffolds and operates **multi-subrepo workspaces with an autonomous harness** — a pattern where one parent workspace (npm, pnpm, or yarn at the root) wraps N independent git repositories as sub-folders. The workspace root provides cross-cutting tooling (dev, status, doctor, branch ops, parallel PR push), **parallel git worktrees**, a **file-based ticket queue**, and a **governor** that drives headless `claude -p` workers to grind that backlog semi-autonomously. Each sub-repo keeps its own remote, PR queue, and CI.
 
@@ -64,18 +64,18 @@ You have multiple services that ship on independent cadences (e.g., `backend/`, 
 ## Install
 
 ```bash
-git clone <this-repo> ~/.claude/skills/meta-repo
-bash ~/.claude/skills/meta-repo/install.sh
+git clone <this-repo> ~/.claude/skills/meta-repo-harness
+bash ~/.claude/skills/meta-repo-harness/install.sh
 ```
 
-The install script symlinks `commands/` into `~/.claude/commands/meta-repo/`, making `/meta-repo:setup`, `/meta-repo:resolve`, and `/meta-repo:govern` available in every Claude Code session.
+The install script symlinks `commands/` into `~/.claude/commands/meta-repo-harness/`, making `/meta-repo-harness:setup`, `/meta-repo-harness:resolve`, and `/meta-repo-harness:govern` available in every Claude Code session.
 
 ## Usage
 
 In a folder containing your sub-repos as sub-folders (each with its own `.git/`):
 
 ```
-/meta-repo:setup
+/meta-repo-harness:setup
 ```
 
 The setup command is **idempotent**:
@@ -94,7 +94,7 @@ The setup command is **idempotent**:
 | `npm run health` | HTTP liveness check on each dev server |
 | `npm run worktree:new\|rm\|status\|exec` | Parallel isolated worktrees (slot registry, port-offset, per-slot bootstrap) |
 | `npm run govern` (or `/govern`) | Autonomous ticket loop — headless workers, green-or-none auto-merge, bounded |
-| `/meta-repo:resolve <N>` | Disciplined ticket close-out (confirm PR → promote lesson → delete → sweep) |
+| `/meta-repo-harness:resolve <N>` | Disciplined ticket close-out (confirm PR → promote lesson → delete → sweep) |
 
 ## The harness (what makes this more than a script bundle)
 
@@ -106,7 +106,7 @@ The setup command is **idempotent**:
 
 ## Architecture — one config file
 
-Every mechanism script sources **`scripts/lib/workspace.sh`** — the single generated file holding this workspace's specifics (sub-repo names, dev commands, ports, GitHub org, worktree base, the governor merge allowlist). The mechanism scripts are therefore byte-identical across every install, which is what makes the `/meta-repo:setup` bump safe: it refreshes mechanism scripts from latest templates and only ever (re)writes `workspace.sh` for your customization.
+Every mechanism script sources **`scripts/lib/workspace.sh`** — the single generated file holding this workspace's specifics (sub-repo names, dev commands, ports, GitHub org, worktree base, the governor merge allowlist). The mechanism scripts are therefore byte-identical across every install, which is what makes the `/meta-repo-harness:setup` bump safe: it refreshes mechanism scripts from latest templates and only ever (re)writes `workspace.sh` for your customization.
 
 ## Repo layout
 
@@ -114,9 +114,9 @@ Every mechanism script sources **`scripts/lib/workspace.sh`** — the single gen
 meta-repo/
 ├── SKILL.md                  # Ambient reference doc (loaded by description match)
 ├── commands/
-│   ├── setup.md              # /meta-repo:setup — scaffold + idempotent bump
-│   ├── resolve.md            # /meta-repo:resolve — disciplined ticket close-out
-│   └── govern.md             # /meta-repo:govern — launch the autonomous loop
+│   ├── setup.md              # /meta-repo-harness:setup — scaffold + idempotent bump
+│   ├── resolve.md            # /meta-repo-harness:resolve — disciplined ticket close-out
+│   └── govern.md             # /meta-repo-harness:govern — launch the autonomous loop
 ├── templates/
 │   ├── lib/workspace.sh          # the one config file every script sources
 │   ├── lib/*.sh.example          # optional project hooks (worktree-bootstrap, session-cleanup, doctor-extra)
@@ -128,7 +128,7 @@ meta-repo/
 │   ├── hooks/{check-main-on-main,ticket-sweep-reminder}.sh
 │   ├── seed/{tickets,tickets-parked,learnings}.md
 │   └── gitignore
-└── install.sh                # Symlinks commands/ → ~/.claude/commands/meta-repo/
+└── install.sh                # Symlinks commands/ → ~/.claude/commands/meta-repo-harness/
 ```
 
 ## Anti-patterns (load-bearing rules the skill enforces)
