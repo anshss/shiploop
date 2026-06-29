@@ -3,7 +3,7 @@ description: Become the governor — launch the bash-driven ticket loop (scripts
 allowed-tools: Bash, Read
 ---
 
-# /meta-repo:govern
+# /meta-repo-harness:govern
 
 Launch the governor — a **pure-bash driver** (`scripts/govern/run-loop.sh`) so this session's context
 stays flat (near-zero parent cost). Claude runs only in fresh, bounded sub-sessions: the per-ticket
