@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for the governor harness. Source, don't execute. Generic — all
-# per-workspace values come from scripts/lib/workspace.sh, so /meta-repo:setup
+# per-workspace values come from scripts/lib/workspace.sh, so /meta-repo-harness:setup
 # never edits this file.
 set -euo pipefail
 
