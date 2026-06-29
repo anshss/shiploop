@@ -142,7 +142,7 @@ meta-repo/
 7. **One package manager at the root — never two.** Your choice (`ROOT_PM` = npm/pnpm/yarn/bun); just don't mix two (a stray second root lockfile diverges).
 8. **Main checkout stays on `main`; branch work only in worktrees.** Coordination files commit direct to main.
 9. **PR opened → tear the local stack down.**
-10. **Workers never write `tickets.md`** — the governor's bookkeeper does.
+10. **Workers never write `tickets.md`** — only the driver's *bookkeeper* does. **Bookkeeping** = updating the shared ledger after work lands: delete the resolved ticket, file any newly-discovered ones, bump the number counter, append the outcome to history, then commit + push to `main`. Workers do the code work in throwaway sessions and report back; funnelling every ledger write through one serialized step keeps `tickets.md` consistent even when multiple drivers run at once.
 
 ## Status
 
