@@ -2,6 +2,55 @@
 
 A Claude Code skill that scaffolds and operates **multi-subrepo workspaces with an autonomous harness** — a pattern where one parent workspace (npm, pnpm, or yarn at the root) wraps N independent git repositories as sub-folders. The workspace root provides cross-cutting tooling (dev, status, doctor, branch ops, parallel PR push), **parallel git worktrees**, a **file-based ticket queue**, and a **governor** that drives headless `claude -p` workers to grind that backlog semi-autonomously. Each sub-repo keeps its own remote, PR queue, and CI.
 
+## How it works
+
+The defining trait is **thin-driver orchestration**: whatever sits in the driver's seat holds almost no context, and every real unit of work runs in a *fresh, bounded, throwaway* child session. The governor makes this literal — a pure-bash driver spawns one headless `claude -p` worker per ticket; the worker does the job in its own context window and its own worktree, writes a small JSON report to a file, then dies. The driver reads the **report**, never the worker's transcript — so its footprint is identical whether it grinds 1 ticket or 1,000. (A long *interactive* session that does all the work inline is the opposite: its context only grows, and every turn re-pays for it.)
+
+```
+              ┌──────────────────────────────────────────────────┐
+              │  META-REPO WORKSPACE   (one root PM: npm/pnpm/yarn)│
+              │                                                    │
+              │   sub-repo A/    sub-repo B/    sub-repo C/   …     │
+              │   each: own .git · remote · PR queue · CI          │
+              │                                                    │
+              │   scripts/lib/workspace.sh ── the ONE config file  │
+              │   every mechanism script sources                   │
+              └──────────────────────────────────────────────────┘
+                 │                  │                     │
+       cross-repo tooling    parallel worktrees      session HOOKS
+       dev · status ·        slot registry,          SessionStart ·
+       doctor · branch ·     ports = slot×10,         Stop (ticket
+       switch · pull ·       never collide            sweep) ·
+       push · health                                  SessionEnd (cleanup)
+
+      ══════════════════════════════════════════════════════════════════
+       ORCHESTRATION  ·  thin driver, real work in throwaway children
+      ══════════════════════════════════════════════════════════════════
+
+         tickets.md                 ┌─────────────────────────────────┐
+        (work queue)                │  GOVERNOR — pure-bash driver     │
+             │                      │  ~0 Claude context; flat whether │
+             └─────────────────────►│  it runs 1 ticket or 1,000       │
+                                    └────────────────┬────────────────┘
+                                                     │  per ticket:
+                                                     ▼
+                                    ┌─────────────────────────────────┐
+                                    │  claude -p WORKER                │
+                                    │  fresh · bounded · THROWAWAY     │
+                                    │  own worktree + own context      │
+                                    │  implement → PR → green-or-none  │
+                                    │  auto-merge → write report → die │
+                                    └────────────────┬────────────────┘
+                                                     │  JSON report (a file)
+                                                     ▼
+                                    driver reads the REPORT, never the
+                                    worker's transcript → driver stays thin
+
+       Same principle, interactive: a session delegates heavy work to a
+       child agent and keeps only the verdict — never reading big files or
+       running verbose builds in the driver itself ("router posture").
+```
+
 ## When this pattern fits
 
 You have multiple services that ship on independent cadences (e.g., `backend/`, `console/`, `website/`), but you want to operate them as one product — share product context with AI agents, run parallel work without merge conflicts, and let a session work a backlog for long stretches without stopping for permission.
