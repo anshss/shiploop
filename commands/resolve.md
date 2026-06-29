@@ -3,9 +3,9 @@ description: Close out a ticket the disciplined way — confirm its fix PR is op
 allowed-tools: Bash, Read, Edit, Grep, Glob
 ---
 
-# /meta-repo:resolve
+# /meta-repo-harness:resolve
 
-Resolve one or more tickets in this meta-repo's `tickets.md`: `/meta-repo:resolve <N>` (or
+Resolve one or more tickets in this meta-repo's `tickets.md`: `/meta-repo-harness:resolve <N>` (or
 `17-19`, `17,18,19`). Run from the workspace (main checkout or a worktree).
 
 A ticket is **resolved the moment its fix PR is OPENED — not when it merges** (the user won't report
