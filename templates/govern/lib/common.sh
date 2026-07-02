@@ -9,6 +9,12 @@ GOVERN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="${GOVERN_WS_ROOT:-$(cd "$GOVERN_LIB_DIR/../../.." && pwd)}"
 
 # Pull repo list, org, and the auto-merge allowlist from the one config file.
+# Export META_ROOT=WS_ROOT first so the localdir helper (wsp_repo_localdir) honors a GOVERN_WS_ROOT
+# test override and is NOT polluted by an inherited META_ROOT from the environment (the governor
+# exports META_ROOT for its own run — without this pin, a hermetic test's seeded workspace.sh, which
+# defaults `META_ROOT="${META_ROOT:-$T}"`, would resolve repo localdirs against the outer workspace
+# and the merge-pr.sh #76 branch-cleanup backstop would silently no-op).
+export META_ROOT="$WS_ROOT"
 # shellcheck source=../../lib/workspace.sh
 source "$WS_ROOT/scripts/lib/workspace.sh"
 
