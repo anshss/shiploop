@@ -40,7 +40,7 @@ set -uo pipefail
 META_ROOT="\${META_ROOT:-$root}"
 GITHUB_ORG="acme"
 REPOS=(${merge//,/ } web)
-GOVERN_MERGE_REPOS=(${merge//,/ })
+GOVERN_MERGE_REPOS="${merge//,/ }"
 WORKTREE_BASE="$root/wt"
 wsp_is_merge_repo() { case ",$merge," in *",\$1,"*) return 0;; *) return 1;; esac; }
 wsp_repo_slug() { printf '%s/%s' "\$GITHUB_ORG" "\$1"; }

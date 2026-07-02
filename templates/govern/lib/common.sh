@@ -42,11 +42,14 @@ govern::worker_logdir() { # ticket -> dir
   if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
 }
 
-# Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh. Frontend =
-# everything else (PR-only).
-GOVERN_FRONTEND_REPOS=()
+# Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
+# GOVERN_MERGE_REPOS. Frontend (PR-only) = the sub-repos NOT in that allowlist,
+# derived from REPOS. `harness` / a cross-owner skill-template repo live OUTSIDE
+# $REPOS, so they never land here — they stay merge-universe-only. Space-separated
+# to match the PR-search loops below.
+GOVERN_FRONTEND_REPOS=""
 for _r in "${REPOS[@]}"; do
-  wsp_is_merge_repo "$_r" || GOVERN_FRONTEND_REPOS+=("$_r")
+  wsp_is_merge_repo "$_r" || GOVERN_FRONTEND_REPOS+="${GOVERN_FRONTEND_REPOS:+ }$_r"
 done
 unset _r
 
@@ -432,10 +435,12 @@ govern::repo_localdir() { wsp_repo_localdir "$1"; }
 govern::find_pr() {
   local n="$1" repo j row
   command -v gh >/dev/null 2>&1 || return 1
-  # Search every sub-repo (REPOS is the union of merge + frontend, always
-  # non-empty — avoids expanding a possibly-empty array under set -u on bash 3.2).
-  for repo in "${REPOS[@]}"; do
-    j="$(gh pr list --repo "$GITHUB_ORG/$repo" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
+  # Search the whole merge UNIVERSE (GOVERN_MERGE_REPOS) plus the frontend repos —
+  # NOT just $REPOS — so a PR on a cross-owner repo that is in the allowlist but not
+  # a sub-repo (e.g. the meta-repo itself / a skill-template repo) is still found.
+  # repo_slug resolves each name to its owner/repo (honoring cross-owner overrides).
+  for repo in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do
+    j="$(gh pr list --repo "$(govern::repo_slug "$repo")" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
     row="$(jq -c --arg n "$n" '
       ( [ .[] | select(.headRefName == ("ticket-" + $n)) ][0] )
       // ( [ .[] | select(.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)")) ][0] )
@@ -449,11 +454,11 @@ govern::find_pr() {
 }
 
 # Merge-first repo order (auto-merge repos before frontend), so a multi-repo ticket's live backend
-# always merges before any frontend sibling (anti-pattern #5-safe). Built from workspace.sh's REPOS.
+# always merges before any frontend sibling (anti-pattern #5-safe). Emits the full merge UNIVERSE
+# (GOVERN_MERGE_REPOS — may include cross-owner repos outside $REPOS) then the derived frontend repos.
 govern::_repos_merge_first() {
   local r
-  for r in "${REPOS[@]}"; do wsp_is_merge_repo "$r" && printf '%s\n' "$r"; done
-  for r in "${GOVERN_FRONTEND_REPOS[@]:-}"; do [[ -n "$r" ]] && printf '%s\n' "$r"; done
+  for r in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do printf '%s\n' "$r"; done
 }
 
 # #129: like find_pr, but enumerate EVERY open PR whose head matches ticket-<N> across ALL repos
@@ -466,7 +471,7 @@ govern::find_all_prs() {
   command -v gh >/dev/null 2>&1 || return 0
   while IFS= read -r repo; do
     [[ -n "$repo" ]] || continue
-    j="$(gh pr list --repo "$GITHUB_ORG/$repo" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
+    j="$(gh pr list --repo "$(govern::repo_slug "$repo")" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
     rows="$(jq -r --arg n "$n" --arg repo "$repo" '
       [ .[] | select(.headRefName == ("ticket-" + $n) or (.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)"))) ]
       | .[] | "\($repo)\t\(.number)\t\(.url // "")"' <<<"$j" 2>/dev/null || true)"
