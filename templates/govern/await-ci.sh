@@ -13,7 +13,7 @@ MAX="${GOVERN_CI_MAX_TRIES:-60}"; INTERVAL="${GOVERN_CI_INTERVAL:-30}"
 GRACE="${GOVERN_CI_NONE_GRACE:-6}"   # require 2 consecutive empties before concluding "none",
 tries=0; none_seen=0                  # so we don't read "none" before checks have registered.
 while :; do
-  json="$(gh pr checks "$PR" --repo "$GITHUB_ORG/$REPO" --json bucket 2>/dev/null || echo '[]')"
+  json="$(gh pr checks "$PR" --repo "$(govern::repo_slug "$REPO")" --json bucket 2>/dev/null || echo '[]')"
   total="$(jq 'length' <<<"$json")"
   fails="$(jq '[.[]|select(.bucket=="fail" or .bucket=="cancel")]|length' <<<"$json")"
   pend="$(jq '[.[]|select(.bucket=="pending")]|length' <<<"$json")"

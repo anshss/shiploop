@@ -51,11 +51,16 @@ SLOT_PORT_STEP=10                    # port offset per worktree slot
 WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode.wt
 
 # ── Governor (autonomous ticket loop) ───────────────────────────────────────
-# Sub-repos the governor may AUTO-MERGE once CI is green-or-no-checks. Everything
+# Repos the governor may AUTO-MERGE once CI is green-or-no-checks. Everything
 # else is PR-only (the governor opens the PR and stops). Put repos whose CI runs
 # POST-merge (e.g. Cloud Build / a deploy pipeline, so PRs show no checks) here;
 # keep anything a human must eyeball (frontend behind a billing'd preview) out.
-GOVERN_MERGE_REPOS=(__GOVERN_MERGE_REPOS__)          # e.g. (backend)
+# SPACE-SEPARATED, and it defines the governor's whole PR/merge UNIVERSE: the
+# PR-search + merge loops iterate THIS list (plus the derived frontend repos), NOT
+# $REPOS — so it may include a cross-owner repo that is NOT a sub-repo in $REPOS
+# (e.g. the meta-repo itself, or a skill-template repo on another owner). Give any
+# such repo a wsp_repo_slug / wsp_repo_localdir override below.
+GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
@@ -101,11 +106,11 @@ wsp_repo_cmd() {
 # Comma-joined REPOS (handy for --only defaults and messages).
 wsp_repos_csv() { local IFS=,; echo "${REPOS[*]}"; }
 
-# Is <repo> in the governor auto-merge allowlist? (empty-array safe under set -u)
+# Is <repo> in the governor auto-merge allowlist? (word-split over the space
+# list; a blank GOVERN_MERGE_REPOS just iterates nothing — empty-safe under set -u)
 wsp_is_merge_repo() {
   local r="$1" a
-  [ "${#GOVERN_MERGE_REPOS[@]}" -eq 0 ] && return 1
-  for a in "${GOVERN_MERGE_REPOS[@]}"; do [ "$r" = "$a" ] && return 0; done
+  for a in $GOVERN_MERGE_REPOS; do [ "$r" = "$a" ] && return 0; done
   return 1
 }
 
