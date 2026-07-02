@@ -155,7 +155,7 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
-excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; done_count=0
+excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nintr=0; done_count=0
 # #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
 # merged dependency unblocked one) — drained BEFORE normal severity selection so the advice changes
 # behavior, not just the log. NA_SET = comma-wrapped set of "NOT govern-automatable" tickets (bold
@@ -163,14 +163,60 @@ excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0
 # prioritized pick from ever resurrecting one.
 PRIORITY=""; NA_SET=","
 
+# #272: ROI enrichment for the cross-run history. Reads the just-finished worker's stream-json
+# result event for per-ticket token spend + cost, and classifies churn from the current $report's
+# PR repos (self-referential harness/templates work vs shipped product). Best-effort — every field
+# degrades to null so a missing worker.jsonl or an un-parseable report never blocks the outcome
+# record. Emits a JSON object of the extra fields to merge into the history line.
+history_enrich() { # ticket -> echoes {tokens,costUsd,churn,repos}
+  local n="$1" jsonl toks='null' cost='null' repos='[]' churn='null' res
+  jsonl="$(govern::worker_logdir "$n")/worker.jsonl"
+  if [[ -s "$jsonl" ]]; then
+    res="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 || true)"
+    if [[ -n "$res" ]]; then
+      toks="$(printf '%s' "$res" | jq -c '(.usage // {}) as $u
+        | {input:($u.input_tokens//0), output:($u.output_tokens//0),
+           cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
+        | .total = (.input + .output + .cacheRead + .cacheCreation)' 2>/dev/null || echo null)"
+      cost="$(printf '%s' "$res" | jq -c '.total_cost_usd // null' 2>/dev/null || echo null)"
+    fi
+  fi
+  # PR repos come from the current $report (loop-scope global). churn = has ≥1 PR AND every PR repo
+  # is self-referential; false if it shipped ANY product PR; null when there is no PR to classify.
+  repos="$(printf '%s' "${report:-}" | jq -c '[ (.pr // empty), (.prs // [])[] ]
+    | map(.repo // empty) | map(select(. != "")) | unique' 2>/dev/null || echo '[]')"
+  [[ "$repos" == "null" || -z "$repos" ]] && repos='[]'
+  local nrepos nself _r
+  nrepos="$(printf '%s' "$repos" | jq 'length' 2>/dev/null || echo 0)"
+  if [[ "${nrepos:-0}" -gt 0 ]]; then
+    nself=0
+    while IFS= read -r _r; do [[ -n "$_r" ]] && govern::is_selfref_repo "$_r" && nself=$((nself+1)); done \
+      < <(printf '%s' "$repos" | jq -r '.[]' 2>/dev/null || true)
+    if [[ "$nself" -eq "$nrepos" ]]; then churn=true; else churn=false; fi
+  fi
+  jq -nc --argjson t "$toks" --argjson c "$cost" --argjson ch "$churn" --argjson rp "$repos" \
+    '{tokens:$t, costUsd:$c, churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
+}
+
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
   # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
   # #90: NEVER record an infra/auth outage to the cross-run history — it is not the ticket's fault,
   # so it must not count toward #60 auto-escalation or be read back by govern-improve as a hard
   # ticket. (It still lands in this run's STATE above, for the human-readable session summary.)
-  case "$2" in infra) return 0;; esac
-  printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}\n' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)" >> "$HISTORY" 2>/dev/null || true
+  # #34: same for `interrupted` — a transient mid-stream connection drop (laptop sleep) is an
+  # ENVIRONMENT artifact, not ticket difficulty; recording it would falsely auto-escalate a
+  # perfectly-good ticket as a #60 systemic blocker.
+  case "$2" in infra|interrupted) return 0;; esac
+  # #272: fold in ROI fields (tokens/cost/churn) so govern-health can surface park rate + churn
+  # classes + tokens-per-ticket from ONE durable file, with no worker.jsonl spelunking.
+  local base extra
+  base="$(jq -nc --argjson t "$1" --arg run "$(basename "$RUNDIR")" --arg st "$2" --argjson ts "$(date +%s)" \
+    '{ticket:$t, run:$run, status:$st, ts:$ts}' 2>/dev/null \
+    || printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)")"
+  extra="$(history_enrich "$1" 2>/dev/null || echo '{}')"
+  printf '%s\n' "$(jq -c --argjson e "$extra" '. + $e' <<<"$base" 2>/dev/null || printf '%s' "$base")" \
+    >> "$HISTORY" 2>/dev/null || true
 }
 wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
 
@@ -312,7 +358,18 @@ write_summary() {
     echo "- **Ended:** $reason"
     echo "- **Ran for:** ${m}m ${s}s"
     echo "- **Mode:** $MODE${TARGET:+ (single ticket #$TARGET)}"
-    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0}"; echo
+    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · ↻ interrupted ${nintr:-0}"; echo
+    # #272: governor self-ROI telemetry — surface park rate + churn classes + tokens-per-ticket
+    # automatically at run-end (this run vs the rolling all-time trend) so a waste class like #115
+    # (most tickets self-referential churn) is visible without manual log spelunking. Best-effort.
+    if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
+      echo "## Governor ROI (self-telemetry · #272)"
+      echo '```'
+      GOVERN_HISTORY_FILE="$HISTORY" "$DIR/govern-health.sh" --run "$(basename "$RUNDIR")" 2>/dev/null \
+        || echo "(govern-health unavailable)"
+      echo '```'
+      echo "- Full rolling view: \`${ROOT_PM:-npm} run govern:health\`"; echo
+    fi
     if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
       echo "## ⚠ Action needed — re-authenticate / restore connectivity"
       echo "- The run HALTED because workers could not authenticate or reach the API: \`${INFRA_HALT_ERR:-unknown}\`."
@@ -592,6 +649,21 @@ while :; do
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
 
+  # #34: a worker that died on a TRANSIENT connection drop mid-response (laptop sleep / network
+  # suspend) is tagged status:"interrupted" — NOT a ticket fault. Unlike an infra outage it does NOT
+  # halt the run (the drop is transient: the laptop woke, the network returned). The worktree is
+  # preserved + resumable, so AUTO-RETRY the SAME ticket ONCE — the retry reuses the preserved
+  # worktree and picks up where it left off — instead of burning the ticket as FAILED. Symmetric with
+  # the infra-retry above, but with no pre-pause (the drop is already over). Disable with
+  # GOVERN_INTERRUPT_RETRY=0.
+  if [[ "$status" == "interrupted" && "$MODE" == "live" && -z "$resumed" && "${GOVERN_INTERRUPT_RETRY:-1}" == "1" ]]; then
+    ierr="$(printf '%s' "$report" | jq -r '.interrupted.error // "connection closed mid-response"' 2>/dev/null || echo 'connection closed mid-response')"
+    govern::log "#$N was INTERRUPTED ($ierr) — transient drop (e.g. laptop sleep); auto-retrying once from the preserved worktree before recording interrupted (#34)"
+    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
+    status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
+  fi
+
   crossN="$(printf '%s' "$report" | jq -r '((.crossRefs.overlaps//[])+(.crossRefs.dependsOn//[]))|length' 2>/dev/null || echo 0)"
   anomaly=0
 
@@ -777,8 +849,12 @@ while :; do
       [[ -n "$_vnote" ]] && _rnote="${_rnote:+$_rnote — }validation evidence: $_vnote"
       record "$N" resolved "$_rnote"
       nres=$((nres+1)); since_review=$((since_review+1)); bad_streak=0
-      # only a cleanly-resolved worktree is torn down (live, real worktree only).
-      if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" && -z "$resumed" ]]; then
+      # A cleanly-resolved worktree is torn down (live, real worktree only). This ALSO fires for a
+      # resume-adopted resolution (the "found existing PR — resuming" path): a resumed ticket is
+      # bookkept + recorded resolved identically to a fresh one, and worktree:rm --force is a no-op if
+      # the dir is already gone — so gating this on `-z "$resumed"` only LEAKED the worktree of every
+      # resumed ticket (Leak A). worktree:rm now also kills the slot's orphaned stack (Leak B).
+      if [[ "$MODE" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
         # Direct bash (not `$ROOT_PM run`): pnpm v11's pre-run gate aborts in a non-TTY
         # shell before the script runs; our worktree scripts are PM-agnostic, so call them directly.
         ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "ticket-$N" --force >/dev/null 2>&1 ) \
@@ -852,6 +928,21 @@ while :; do
       govern::log "#$N TIMEOUT — killed before verdict; recorded INCOMPLETE (not failed), worktree PRESERVED at $(wt_path "$N") (re-run resumes) [#241]"
       slim_worktree "$N"
       excludes="$excludes,$N"; ntimeout=$((ntimeout+1)); bad_streak=$((bad_streak+1))
+      ;;
+    interrupted)
+      # #34: the worker died on a TRANSIENT connection drop mid-response (laptop sleep / network
+      # suspend) and the auto-retry above ALSO dropped — NOT a ticket fault and NOT a persistent
+      # infra outage. record() drops `interrupted` from the cross-run history (no #60 pollution — the
+      # ticket isn't hard, the laptop slept), and we do NOT halt the run (the drop is transient,
+      # unlike an infra outage). The worktree is PRESERVED + resumable so any real pre-drop work
+      # survives and a re-run picks it up. DESIGN DECISION (LOCKED): it DOES count toward the in-run
+      # bad-streak so a continuously-sleeping laptop (clamshell-on-battery, which no assertion can
+      # defend) still trips the circuit breaker and stops the run cleanly after MAX_BAD_STREAK — yet
+      # it stays absent from cross-run history and is never labeled `failed`.
+      record "$N" interrupted "connection dropped mid-response (transient, e.g. laptop sleep); NOT failed — re-run resumes. worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
+      govern::log "#$N INTERRUPTED — connection dropped mid-response (transient, e.g. laptop sleep) even after one auto-retry; recorded interrupted (NOT failed), worktree PRESERVED at $(wt_path "$N") (re-run resumes) [#34]"
+      slim_worktree "$N"
+      excludes="$excludes,$N"; nintr=$((nintr+1)); bad_streak=$((bad_streak+1))
       ;;
     *)
       record "$N" failed "see $(govern::worker_logdir "$N")/worker.jsonl; worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
@@ -978,6 +1069,12 @@ fi
 if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
   govern::log "RUN HALTED on infra/auth outage ($INFRA_HALT_ERR) — re-authenticate (\`claude login\`) or restore connectivity, then re-run. No ticket recorded \`failed\`; affected tickets keep clean #60 history (#90)."
 fi
-govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout (processed $done_count) | state=$STATE review=$REVIEW"
+# #272: emit the governor ROI (park rate + churn + tokens/ticket) to the run log at run-end too, so
+# it's visible in a tailed session even without opening summary.md. Best-effort, never fatal.
+if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
+  GOVERN_HISTORY_FILE="$HISTORY" "$DIR/govern-health.sh" --run "$(basename "$RUNDIR")" 2>/dev/null \
+    | while IFS= read -r _hl; do govern::log "health | $_hl"; done || true
+fi
+govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '$ROOT_PM run worktree:rm -- ticket-<N>'"
 exit 0
