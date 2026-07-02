@@ -870,6 +870,16 @@ while :; do
 
   [[ "$bad_streak" -ge "$MAX_BAD_STREAK" ]] && anomaly=1
 
+  # Optional periodic out-of-band orphan-resource reap, on the supervisor cadence. A per-worker
+  # sweep (spawn-worker) only covers a worker the governor observed exit — NOT a session that died
+  # UNCLEANLY (whose SessionEnd never fired). If the workspace ships a scripts/reap-orphan-deploys.sh
+  # (deploy/cloud infra — absent by default), call it here so a long-running governor bounds an
+  # orphan's lifetime. Guarded on existence + always exits 0, so a reaper hiccup never perturbs the loop.
+  if [[ "$MODE" == "live" && ( "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ) \
+        && -f "$DIR/../reap-orphan-deploys.sh" ]]; then
+    bash "$DIR/../reap-orphan-deploys.sh" --quiet 2>/dev/null || true
+  fi
+
   if [[ "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ]]; then
     govern::log "supervisor review (anomaly=$anomaly, since_review=$since_review)"
     verdict="$("$DIR/govern-supervise.sh" "$RUNDIR" 2>/dev/null || echo '{"verdict":"ok"}')"
@@ -948,6 +958,15 @@ if [[ "${GOVERN_IMPROVE:-1}" == "1" && "$MODE" == "live" ]] \
    && { [[ "${nfail:-0}" -gt 0 ]] || [[ "${npark:-0}" -gt 0 ]] || [[ -s "$REVIEW" ]]; }; then
   govern::log "self-improvement review → governor/improvements.md"
   "$DIR/govern-improve.sh" "$RUNDIR" >/dev/null 2>&1 || govern::log "improve step skipped (error)"
+  # CLASSIFIED promotion bridge: auto-file the SAFE/additive proposals govern-improve just appended
+  # as a ticket (via file-ticket.sh) so the governor drains them like any ticket, removing the manual
+  # promote step. Rail-touching / OPERATOR-DECISION proposals (GOVERN_MAX_* bounds, merge allowlist,
+  # permission mode, green-or-none gate) are NEVER auto-queued — they stay human-gated in
+  # improvements.md. Default ON; GOVERN_IMPROVE_TRIAGE=0 to disable. Scoped to THIS run's block by run-id.
+  if [[ "${GOVERN_IMPROVE_TRIAGE:-1}" == "1" ]]; then
+    "$DIR/govern-improve-triage.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
+      || govern::log "improve-triage step skipped (error)"
+  fi
 fi
 
 # Opt-in guarded auto-apply (GOVERN_SELF_APPLY=1): apply ONE proposal under strict guards; the

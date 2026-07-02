@@ -16,9 +16,13 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 root="${1:-$(govern::meta_root)}"
 vdir="$root/.claude/context/validation"
 
-# Files that may cite a validation summary: the founder-os context tree + the root CLAUDE.md.
+# Files that may cite a validation summary: the founder-os context tree + the root CLAUDE.md and its
+# optional on-demand appendix (some workspaces tier the CLAUDE.md forensics — which carry the
+# citations — into a CLAUDE-APPENDIX.md; scan both, guarded on existence, so moving a citation there
+# keeps it linted).
 sources=()
 [[ -f "$root/CLAUDE.md" ]] && sources+=("$root/CLAUDE.md")
+[[ -f "$root/CLAUDE-APPENDIX.md" ]] && sources+=("$root/CLAUDE-APPENDIX.md")
 if [[ -d "$root/.claude/context" ]]; then
   while IFS= read -r f; do sources+=("$f"); done \
     < <(find "$root/.claude/context" -type f -name '*.md' 2>/dev/null)
