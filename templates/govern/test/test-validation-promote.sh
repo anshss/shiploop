@@ -13,8 +13,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 BK="$DIR/../govern-bookkeep.sh"
 VLINT="$DIR/../lint-validation-refs.sh"
-# Stop hook lives at templates/hooks/ (installs to scripts/ at scaffold time).
-SWEEP="$DIR/../../hooks/ticket-sweep-reminder.sh"
+# Stop hook lives at templates/hooks/ (template) or <root>/scripts/ (scaffolded workspace).
+# Use assert.sh's GOVERN_HOOKS_DIR resolver so this test is layout-agnostic.
+SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
