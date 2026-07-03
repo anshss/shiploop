@@ -1,11 +1,14 @@
 name: CI
 
-# Lightweight gate for the templates that scaffold OTHER workspaces.
-# The governor auto-merges this repo's PRs on a "green-or-no-checks" rule, so without
-# a PR-level check every PR merges on "no-checks" = always-mergeable, with the worker's
-# self-reported `bash -n` as the only (unenforced) verification. This workflow turns that
-# into a real green gate: a PR that ports a broken template (syntax error, leftover
-# conflict marker) goes RED here and is NOT auto-merged.
+# Gates for the plugin + the templates that scaffold OTHER workspaces.
+# The governor auto-merges this repo's PRs on a "green-or-no-checks" rule, so
+# without a PR-level check every PR merges on "no-checks" = always-mergeable,
+# with the worker's self-reported `bash -n` as the only (unenforced) verification.
+# This workflow turns that into a real green gate: (1) every shell script must
+# parse; (2) no leftover conflict markers; (3) plugin + marketplace manifests
+# are valid JSON with required fields; (4) scaffold.sh + the full 54-test
+# govern suite run green in a throwaway workspace on every PR.
+
 on:
   pull_request:
   push:
@@ -62,5 +65,106 @@ jobs:
           set -uo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           mapfile -t scripts < <(git ls-files '*.sh')
-          # -S warning keeps the signal high; `|| true` makes it advisory.
           shellcheck -S warning "${scripts[@]}" || true
+
+  validate-manifests:
+    name: Validate plugin + marketplace manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: jq empty on .claude-plugin/*.json
+        run: |
+          set -euo pipefail
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing manifest: $f"; exit 1
+            fi
+            if ! jq empty "$f" >/dev/null; then
+              echo "::error::invalid JSON: $f"; exit 1
+            fi
+            echo "ok - $f"
+          done
+      - name: assert plugin.json required fields
+        run: |
+          set -euo pipefail
+          name=$(jq -r '.name // ""' .claude-plugin/plugin.json)
+          version=$(jq -r '.version // ""' .claude-plugin/plugin.json)
+          [ -n "$name" ] || { echo "::error::plugin.json missing name"; exit 1; }
+          [ -n "$version" ] || { echo "::error::plugin.json missing version"; exit 1; }
+          echo "ok - name=$name version=$version"
+      - name: assert marketplace.json required fields
+        run: |
+          set -euo pipefail
+          m_name=$(jq -r '.name // ""' .claude-plugin/marketplace.json)
+          plugins=$(jq '.plugins | length' .claude-plugin/marketplace.json)
+          [ -n "$m_name" ] || { echo "::error::marketplace.json missing name"; exit 1; }
+          [ "$plugins" -ge 1 ] || { echo "::error::marketplace.json has no plugins"; exit 1; }
+          # Assert every plugin entry has name + source.
+          bad=$(jq -r '.plugins[] | select((.name // "") == "" or (.source // "") == "") | .name // "<unnamed>"' \
+            .claude-plugin/marketplace.json)
+          if [ -n "$bad" ]; then
+            echo "::error::marketplace plugin entries missing name or source: $bad"
+            exit 1
+          fi
+          echo "ok - marketplace=$m_name plugins=$plugins"
+
+  scaffold-and-test:
+    name: Scaffold throwaway workspace + run govern test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install jq (some tests need it)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: create 2 fake sub-repos
+        run: |
+          set -euo pipefail
+          WS="$RUNNER_TEMP/ws"
+          mkdir -p "$WS"
+          cd "$WS"
+          for r in backend console; do
+            mkdir "$r"
+            ( cd "$r"
+              git init -q
+              printf '{"name":"%s","scripts":{"dev":"echo dev"}}\n' "$r" > package.json
+              git -c user.email=ci@test -c user.name=ci add -A
+              git -c user.email=ci@test -c user.name=ci commit -qm init )
+          done
+          echo "WS=$WS" >> "$GITHUB_ENV"
+      - name: scaffold workspace (non-interactive)
+        run: |
+          set -euo pipefail
+          bash scaffold.sh \
+            --workspace-dir "$WS" \
+            --pm npm \
+            --org acme-ci \
+            --repos "backend:3080:npm run dev,console:3000:npm run dev" \
+            --merge-allowlist "backend" \
+            --worktree-base "$WS.wt" \
+            --git-init \
+            --verify \
+            --yes
+      - name: run all govern tests in the scaffolded workspace
+        run: |
+          set -euo pipefail
+          cd "$WS"
+          passed=0; failed=0; total=0
+          fails=()
+          for t in scripts/govern/test/test-*.sh; do
+            total=$((total+1))
+            name="$(basename "$t" .sh)"
+            if bash "$t" >/tmp/testout.log 2>&1; then
+              passed=$((passed+1))
+              echo "ok   - $name"
+            else
+              failed=$((failed+1))
+              fails+=("$name")
+              echo "FAIL - $name"
+              sed 's/^/         /' /tmp/testout.log
+            fi
+          done
+          echo ""
+          echo "passed=$passed  failed=$failed  total=$total"
+          if [ "$failed" -gt 0 ]; then
+            for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
+            exit 1
+          fi
