@@ -15,6 +15,56 @@ review="$(cat "$RUNDIR/review.md" 2>/dev/null || true)"
 open_esc="$(awk '/^## Open/{o=1;next} /^## /{o=0} o' "$ESCALATIONS_FILE" 2>/dev/null | head -60 || true)"
 harness="$(ls "$DIR"/*.sh "$GOVERNOR_DIR"/*.md 2>/dev/null | sed "s#$WS_ROOT/##" || true)"
 
+# #59: the reviewer should know WHY tickets failed, not just THAT they did. For each failed
+# ticket, surface its worker log's final result event (subtype + snippet — often reveals the
+# worker actually succeeded but emitted prose instead of JSON, or hit a concrete error) plus
+# the first couple of events. This turns generic proposals into ones that target the real cause.
+failed_logs=""
+fn_list="$(printf '%s' "$state" | jq -r 'select(.status=="failed") | .ticket' 2>/dev/null | sort -un || true)"
+while IFS= read -r fn; do
+  [[ -n "$fn" ]] || continue
+  # #75: read THIS run's worker log ONLY (run-scoped under $RUNDIR/ticket-N/). The legacy flat
+  # logs/govern/ticket-N/worker.jsonl is NOT consulted — a re-run that wrote no new log (e.g. failed
+  # at worktree-setup) must read "no worker.jsonl", never a PRIOR run's stale log (the #75 bug).
+  jf="$RUNDIR/ticket-$fn/worker.jsonl"
+  [[ -f "$jf" ]] || { failed_logs+="$(printf '\n### #%s — no worker.jsonl (failed before the worker wrote anything, e.g. worktree setup)\n' "$fn")"; continue; }
+  last="$(grep '"type":"result"' "$jf" 2>/dev/null | tail -1 | jq -r '"\(.subtype // "?"): \((.result // "")[0:500])"' 2>/dev/null || true)"
+  failed_logs+="$(printf '\n### #%s worker — final result\n%s\n' "$fn" "${last:-<no result event — worker killed/timed out or crashed mid-run>}")"
+  # #122: the final result alone says WHICH ticket failed, not WHY. Surface the HEAD of the worker
+  # log too — the opening events reveal what the worker set out to do and where it got stuck (a
+  # mid-run crash/timeout leaves no result event at all, so the head is the ONLY signal). Render
+  # compactly (event type + text/tool snippet) and drop the system-hook noise that dominates the
+  # first lines, so the prompt stays bounded; raw stream-json lines are huge.
+  head_excerpt="$(head -200 "$jf" 2>/dev/null | jq -r '
+      if .type=="assistant" then "[assistant] " + (((.message.content // []) | map(if .type=="text" then .text elif .type=="tool_use" then "→"+(.name//"?") else "" end) | join(" "))[0:220])
+      elif .type=="user" then "[tool_result] " + (((.message.content // []) | tostring)[0:140])
+      elif .type=="result" then "[result:"+(.subtype // "?")+"]"
+      else empty end' 2>/dev/null \
+    | grep -vE '^\[assistant\] $|^\[tool_result\] (\[\]|null|"")$' | head -30 || true)"
+  [[ -n "$head_excerpt" ]] && failed_logs+="$(printf '\n#### #%s worker — first events (what it attempted)\n%s\n' "$fn" "$head_excerpt")"
+done <<< "$fn_list"
+
+# #122: the reviewer must also know WHY PARKED tickets stopped, not just THAT they did. state.jsonl
+# carries only ticket/status/note; the worker's escalation (reason/question/options) lives in the
+# per-ticket report.json this run wrote ($RUNDIR/ticket-N/report.json). Without this the "Why
+# parked/failed tickets stopped" section came up empty even when a full worker report existed.
+# Surface each parked ticket's escalation so that section is populated from real worker context.
+parked_ctx=""
+pn_list="$(printf '%s' "$state" | jq -r 'select(.status=="parked") | .ticket' 2>/dev/null | sort -un || true)"
+while IFS= read -r pn; do
+  [[ -n "$pn" ]] || continue
+  rf="$RUNDIR/ticket-$pn/report.json"
+  if [[ -s "$rf" ]]; then
+    esc="$(govern::extract_report < "$rf" 2>/dev/null | jq -r '
+        if .escalation then
+          "- title: \(.escalation.title // "?")\n- reason: \(.escalation.reason // "")\n- question: \(.escalation.question // "")\n- options: \((.escalation.options // []) | if type=="array" then join(" / ") else tostring end)"
+        else "<report carried no escalation>" end' 2>/dev/null || true)"
+    parked_ctx+="$(printf '\n### #%s — parked; worker escalation\n%s\n' "$pn" "${esc:-<report.json unparseable>}")"
+  else
+    parked_ctx+="$(printf '\n### #%s — parked; no report.json (worker died before writing one — see worker.jsonl)\n' "$pn")"
+  fi
+done <<< "$pn_list"
+
 prompt="GOVERN-IMPROVE. You are reviewing one run of the meta-repo 'governor' ticket harness to
 propose improvements to the HARNESS ITSELF (not the tickets). You are read-only — just propose.
 
@@ -35,6 +85,12 @@ $state
 
 ## Supervisor notes
 $review
+
+## Why the failed tickets failed (worker-log final result + head of what it attempted)
+$failed_logs
+
+## Why the parked tickets stopped (worker escalation from this run's report.json)
+$parked_ctx
 
 ## Open escalations
 $open_esc
