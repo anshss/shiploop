@@ -36,6 +36,14 @@ You almost always hold the path — find it and do the real thing.
   slow or unavailable.** A slow provider is not "un-automatable." If a resource is still provisioning
   or a request returns nothing, switch providers — do NOT time out and park "inconclusive /
   human-driven."
+- **Slow provisioning wait → BLOCK-AND-POLL in THIS turn; NEVER `ScheduleWakeup` / offload the wait to
+  a background task and end your turn.** You are a HEADLESS worker — you get NO re-invocation after a
+  wakeup, so a turn that ends on a scheduled/background wait with no terminal RESOLVED/PARKED verdict
+  reads as FAILED and burns the billable resource for nothing. When a resource needs minutes to become
+  ready, wait for it IN-TURN with a bounded poll loop — e.g. an `until` loop polling the project's
+  status endpoint for a ready state (then any ssh/HTTP readiness), sleeping between probes — capped
+  well under your `GOVERN_WORKER_TIMEOUT`. If it genuinely can't come ready inside that budget, PARK
+  with what you observed; never end the turn on a suspended background waiter.
 - **Real UI → drive it headlessly via the project's browser tool** (it clicks the real DOM). That IS
   the real user path; you don't need a human at a screen.
 
