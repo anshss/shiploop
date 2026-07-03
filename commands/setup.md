@@ -245,7 +245,9 @@ worktrees inherit attribution too. The Phase-8 `doctor` run asserts `core.hooksP
     "worktree:rm": "bash scripts/worktree/rm.sh",
     "worktree:status": "bash scripts/worktree/status.sh",
     "worktree:exec": "bash scripts/worktree/exec.sh",
-    "govern": "bash scripts/govern/run-loop.sh"
+    "govern": "bash scripts/govern/run-loop.sh",
+    "govern:health": "bash scripts/govern/govern-health.sh",
+    "govern:dry-run": "bash scripts/govern/dry-run.sh"
   }
 }
 ```
