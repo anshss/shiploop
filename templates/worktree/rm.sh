@@ -61,20 +61,41 @@ if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
     echo "  (session-cleanup failed — continuing; stack may already be down)"
 fi
 
-# Kill any processes still holding this worktree's ports (generic: loop all
-# repos that have a base port and derive the slot port).
-SLOT=$(wt_registry_slot_for "$NAME") || true
-if [ -n "$SLOT" ]; then
-  for repo in "${REPOS[@]}"; do
-    port=$(wsp_repo_port "$repo" "$SLOT")
+# Kill this worktree's orphaned dev stack BEFORE removing the dir (Leak B).
+# `git worktree remove` deletes the tree but leaves any dev process (orchestrator /
+# server / Next.js) that was booted inside it running — a prod-pointed process then
+# outlives its worktree as a zombie squatting the slot's port. The kill is
+# OWNERSHIP-scoped (anti-pattern #10): a process on a slot port is killed ONLY if its
+# cwd is under THIS worktree, so a parallel session on a colliding slot is never
+# cross-killed. Ports come from the worktree's own worktree.env (the WORKTREE_<REPO>_PORT
+# vars written by new.sh: slot × SLOT_PORT_STEP offset). If worktree.env is gone we can't
+# resolve the ports/owner root — skip gracefully, never an unscoped kill.
+kill_worktree_stack() {
+  local wt_root="$1" envf="$1/worktree.env"
+  [ -f "$envf" ] || { echo "  (no worktree.env — skipping stack kill; nothing to scope to)"; return 0; }
+  # shellcheck disable=SC1090
+  source "$envf"
+  local var port pids pid pcwd killed=0
+  # Iterate every WORKTREE_<REPO>_PORT the worktree.env declares (repo-agnostic — no REPOS needed, so
+  # this stays self-contained when extracted for testing). WORKTREE_SLOT/OFFSET are skipped (not _PORT).
+  for var in ${!WORKTREE_*}; do
+    case "$var" in *_PORT) : ;; *) continue ;; esac
+    port="${!var:-}"
     [ -n "$port" ] || continue
     pids=$(lsof -ti tcp:"$port" 2>/dev/null) || true
-    if [ -n "$pids" ]; then
-      echo "→ killing processes on port $port ($repo)"
-      kill -9 $pids 2>/dev/null || true
-    fi
+    for pid in $pids; do
+      pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+      case "$pcwd" in
+        "$wt_root"|"$wt_root"/*) kill -9 "$pid" 2>/dev/null && killed=$((killed + 1)) || true ;;
+        *) : ;;  # a process from another checkout on this port — never ours to kill
+      esac
+    done
   done
-fi
+  [ "$killed" -gt 0 ] && echo "  killed $killed orphaned stack process(es) owned by this worktree"
+  return 0
+}
+echo "→ killing this worktree's dev stack (ownership-scoped)"
+kill_worktree_stack "$WORKTREE_PATH"
 
 # Remove each sub-repo worktree
 for repo in "${REPOS[@]}"; do
