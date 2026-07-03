@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Install the /meta-repo-harness:* slash commands by symlinking commands/ into
-# ~/.claude/commands/meta-repo-harness. Idempotent — safe to re-run after updates.
+# LEGACY installer — clone-into-skills path. Symlinks commands/ into
+# ~/.claude/commands/meta-repo-harness so slash commands work without a marketplace.
+#
+# NEW (preferred) install path is via the Claude Code plugin marketplace:
+#   /plugin marketplace add anshss/meta-repo-harness
+#   /plugin install meta-repo-harness@meta-repo-harness
+#
+# This installer stays supported for users who cloned the repo directly, and for
+# CI / scripted environments that don't want to go through the plugin manager.
+# Idempotent — safe to re-run after updates.
 set -e
 
 COMMANDS_DIR="$HOME/.claude/commands"

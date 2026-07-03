@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
+  "name": "meta-repo-harness",
+  "description": "Single-plugin marketplace for the meta-repo harness (autonomous multi-repo workspace + ticket governor).",
+  "owner": {
+    "name": "anshss",
+    "email": "jougan92@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "meta-repo-harness",
+      "source": "./",
+      "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor.",
+      "version": "1.0.0",
+      "category": "workflow",
+      "tags": ["monorepo", "worktrees", "autonomous", "governor"],
+      "homepage": "https://github.com/anshss/meta-repo-harness",
+      "repository": "https://github.com/anshss/meta-repo-harness",
+      "license": "MIT"
+    }
+  ]
+}
