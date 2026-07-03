@@ -40,6 +40,26 @@ case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exi
 [ -n "$cwd" ] || cwd="$PWD"
 [ -n "$session_id" ] || session_id="nosession"
 
+# --- collision backstop (#73): a duplicate `## #N` heading in tickets.md means two filings reused
+# one number. Surface it the moment a session ends — independent of (and before) the new-ticket
+# reminder below, and NOT gated by the once-per-session marker, so a collision nags until fixed.
+# stop_hook_active (handled above) prevents an in-turn loop. Run as a subprocess so the lint's set
+# flags can't leak into this hook (which deliberately runs without -e).
+lint="$SELF_ROOT/scripts/govern/lint-tickets.sh"
+[ -x "$lint" ] || lint="$SELF_ROOT/govern/lint-tickets.sh"
+if [ -x "$lint" ]; then
+  if ! dups="$("$lint" "$MAIN/queue/tickets.md" 2>/dev/null)" && [ -n "${dups:-}" ]; then
+    dups_flat="$(printf '%s' "$dups" | tr '\n' ' ')"
+    reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number (#73): \
+${dups_flat}. Fix now: renumber the LATER duplicate to the live max + 1 \
+(scripts/govern/file-ticket.sh prints the next safe number), commit, then stop. \
+Do not start other work — this is the only blocker."
+    esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"decision":"block","reason":"%s"}\n' "$esc"
+    exit 0
+  fi
+fi
+
 # --- dangling-validation-ref backstop (#252): a founder-os layout migration can DELETE a
 # `.claude/context/validation/*.md` summary while `features.md`/`direction.md`/`CLAUDE.md` still cite
 # it as proof → an orphaned claim. Surface it at session end: blocking, and UNgated by the

@@ -9,17 +9,23 @@ govern::require jq
 RUNDIR="${1:?run dir required}"
 PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
 
-recent="$(tail -8 "$RUNDIR/state.jsonl" 2>/dev/null || true)"
-headings="$(grep -oE '^## #[0-9]+ .*' "$TICKETS_FILE" 2>/dev/null | head -60 || true)"
+# #56: give the supervisor the FULL run history (not tail -8 — it was blind to most of the run)
+# and the full ticket BLOCKS (bodies, not just headings) so it can spot a same-surface conflict or
+# a subsumption in an UPCOMING ticket BEFORE it's worked, not after. Capped so the prompt stays sane.
+# #122: the window is GOVERN_SUPERVISOR_BLOCKS_LINES-configurable, default 500 (was a hardcoded 260
+# ≈ 25 tickets). A larger backlog silently truncated the conflict-detection window past ~ticket 25,
+# so the supervisor went blind to overlaps (the kind it correctly caught for #98/#109, #104/#105).
+recent="$(cat "$RUNDIR/state.jsonl" 2>/dev/null || true)"
+blocks="$(awk '/^## #[0-9]+ /{p=1} p' "$TICKETS_FILE" 2>/dev/null | head -"${GOVERN_SUPERVISOR_BLOCKS_LINES:-500}" || true)"
 open_esc="$(awk '/^## Open/{o=1;next} /^## /{o=0} o' "$ESCALATIONS_FILE" 2>/dev/null | head -40 || true)"
 
 prompt="$(cat "$PROMPT_FILE")
 
-## Recent ticket outcomes (this run, newest last)
+## All ticket outcomes THIS run (newest last)
 $recent
 
-## Current open ticket headings
-$headings
+## Open tickets — full blocks (bodies included; these are the upcoming candidates)
+$blocks
 
 ## Open escalations
 $open_esc"
