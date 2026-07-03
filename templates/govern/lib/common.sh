@@ -59,6 +59,26 @@ for _r in "${REPOS[@]}"; do
 done
 unset _r
 
+# #272: repos that represent SELF-REFERENTIAL governor/harness work (the #115 churn class — a run
+# where most of the tickets were "port into templates" / harness self-improvement with near-zero
+# PRODUCT value) rather than shipped product value. A resolved ticket whose PR(s) ALL target these
+# repos is scored as "self-referential churn" by the ROI health summary (govern-health.sh). By
+# DEFAULT this is the merge UNIVERSE (GOVERN_MERGE_REPOS) MINUS the product sub-repos ($REPOS) — i.e.
+# exactly the auto-merge repos that live OUTSIDE $REPOS (the meta-repo itself + any skill-template
+# repo on another owner). Everything in $REPOS (backend / frontend / …) is product work. Override
+# GOVERN_SELFREF_REPOS (space-separated) to curate the set explicitly.
+_govern_selfref_default=""
+for _r in ${GOVERN_MERGE_REPOS:-}; do
+  _in_repos=0
+  for _x in "${REPOS[@]}"; do [[ "$_r" == "$_x" ]] && { _in_repos=1; break; }; done
+  [[ "$_in_repos" == "1" ]] || _govern_selfref_default+="${_govern_selfref_default:+ }$_r"
+done
+GOVERN_SELFREF_REPOS="${GOVERN_SELFREF_REPOS:-$_govern_selfref_default}"
+unset _r _x _in_repos _govern_selfref_default
+govern::is_selfref_repo() { # repo -> 0 if self-referential (harness/templates), 1 otherwise
+  local r="$1" x; for x in $GOVERN_SELFREF_REPOS; do [[ "$r" == "$x" ]] && return 0; done; return 1
+}
+
 govern::log() { printf '[govern %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 govern::die() { printf '[govern ERROR] %s\n' "$*" >&2; exit 1; }
 
@@ -733,6 +753,36 @@ govern::infra_error_signature() { # worker-jsonl -> signature|""
   fi
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
   msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
+  [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
+  return 0
+}
+
+# ── interrupted/mid-stream-drop detection (#34) ─────────────────────────────
+# A laptop that sleeps mid-run (e.g. clamshell-on-battery) suspends the worker's process tree and
+# drops the network, so the in-flight `claude -p` API stream dies mid-response with "API Error:
+# Connection closed mid-response" and the worker exits on its OWN (NOT killed by the timeout
+# watchdog). This is NEITHER a ticket fault NOR a persistent infra outage: it is a TRANSIENT drop
+# (the laptop woke; the network returned), and the worktree is preserved + resumable. So it gets its
+# OWN status — `interrupted` — which run-loop auto-retries ONCE (not halt-the-run like infra, not
+# burn-as-failed like a genuine failure). The signature set is deliberately NARROW and DISJOINT from
+# GOVERN_INFRA_ERROR_RE (a clean auth/connection-refused outage stays `infra` → halt): it matches
+# only the mid-stream connection-drop class that a suspend/resume produces.
+GOVERN_INTERRUPTED_ERROR_RE='Connection closed mid-response|Connection closed|Premature close|socket ?hang ?up|stream (disconnected|closed|interrupted)|response closed before|terminated.*mid-response'
+
+# Print a short human signature of a transient mid-stream connection drop if the worker's stream
+# ($1 = worker.jsonl) shows one in its final (error) result event or an explicit "API Error:" line;
+# print nothing otherwise. Mirror of govern::infra_error_signature; always returns 0.
+govern::interrupted_error_signature() { # worker-jsonl -> signature|""
+  local jsonl="${1:-}" msg
+  [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
+  # Authoritative: the LAST result event, only when it ended in an error.
+  msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 \
+        | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
+  if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INTERRUPTED_ERROR_RE"; then
+    printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
+  fi
+  # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
+  msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INTERRUPTED_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
   return 0
 }

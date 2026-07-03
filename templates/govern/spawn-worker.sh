@@ -266,12 +266,27 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
   # #90: a real timeout (worker_killed) is a kill, not infra, so skip the infra signature check in
   # that case (a genuine wall-clock timeout is the dominant cause and the timeout status is
   # recoverable either way).
-  infra_sig=""
-  [[ "$worker_killed" -eq 0 ]] && infra_sig="$(govern::infra_error_signature "$jsonl" || true)"
+  infra_sig=""; intr_sig=""
+  if [[ "$worker_killed" -eq 0 ]]; then
+    infra_sig="$(govern::infra_error_signature "$jsonl" || true)"
+    # #34: only when it's NOT a persistent infra/auth outage, check for a TRANSIENT mid-stream
+    # connection drop (laptop sleep / network suspend) — that gets its own recoverable status.
+    [[ -z "$infra_sig" ]] && intr_sig="$(govern::interrupted_error_signature "$jsonl" || true)"
+  fi
   if [[ -n "$infra_sig" ]]; then
     govern::log "worker for #$N → INFRA/auth outage (not a ticket fault): $infra_sig"
     report="$(jq -nc --arg e "$infra_sig" --arg wt "$wtpath" \
       '{status:"infra",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},infra:{error:$e},escalation:null}')"
+  elif [[ -n "$intr_sig" ]]; then
+    # #34: a TRANSIENT mid-response connection drop (e.g. the laptop slept mid-run and the OS
+    # suspended the process + dropped the network) — the worker exited on its OWN (worker_killed=0),
+    # NOT the timeout watchdog. NOT a ticket fault and NOT a persistent infra outage: the worktree is
+    # preserved + resumable, so emit a DISTINCT status:"interrupted" → run-loop auto-retries the SAME
+    # ticket ONCE instead of burning it as `failed` and mis-attributing a sleep artifact to ticket
+    # difficulty. Order matters: infra (halt-class) is checked FIRST, then interrupted, then timeout.
+    govern::log "worker for #$N → INTERRUPTED — transient connection drop mid-response (e.g. laptop sleep), worktree preserved at $wtpath (auto-retry resumes): $intr_sig"
+    report="$(jq -nc --arg e "$intr_sig" --arg wt "$wtpath" \
+      '{status:"interrupted",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},interrupted:{error:$e},escalation:null}')"
   elif [[ "$worker_killed" -eq 1 ]]; then
     # #241: kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result (#241)."

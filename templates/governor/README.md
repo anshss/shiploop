@@ -86,6 +86,20 @@ Unset → the run summary's "Needs you" section is the signal.
 - A run writes a plain-words summary on **every exit (clean OR crash/kill)** to
   `logs/govern/run-*/summary.md` and `logs/govern/last-session.md`.
 
+## Self-ROI telemetry (#272)
+Every run-end **automatically** surfaces a governor-health summary — no manual log spelunking —
+computed from `governor/ticket-history.jsonl` (the cross-run outcome log): **park rate**
+(resolved vs parked vs failed/timeout), **self-referential churn** (share of resolved tickets whose
+PR(s) only touched the harness / skill-template repos — governor self-work with near-zero product
+value, the #115 waste class), and **tokens-per-ticket** + cost (from the tokenjam-tagged worker
+token usage folded into each history entry). It's printed to the run log (`health | …` lines) and
+into `summary.md`, showing **this run vs the rolling all-time trend** so a waste class is visible
+*before* it dominates a run. Query it anytime: `<pm> run govern:health` (rolling), or
+`scripts/govern/govern-health.sh --json` / `--run <id>` / `--last <N>`. Token/churn columns populate
+going forward (older history rows predate the enrichment and show as "no data in scope"). Which
+repos count as self-referential is `GOVERN_SELFREF_REPOS` (defaults to the merge-universe repos
+outside `$REPOS` — the meta-repo + any skill-template repo).
+
 ## Worker hook isolation (automatic)
 `spawn-worker.sh` runs children with **`--setting-sources user`**, dropping this repo's PROJECT
 `.claude/settings.json` hooks — so a worker does NOT inherit a SessionEnd cleanup (which could be
