@@ -135,13 +135,17 @@ Also copy the example hooks for reference (user renames to enable):
 ## Phase 5 — Copy mechanism scripts (fresh)
 
 ```bash
-mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude/commands
-cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health,sync,tail}.sh scripts/
+mkdir -p scripts/worktree/lib scripts/govern/lib scripts/govern/test governor .worktrees .claude/commands .githooks
+cp $T/{status,doctor,branch,switch,dev,pull-all,push-prs,health,sync,tail,investigate}.sh scripts/
 cp $T/hooks/check-main-on-main.sh scripts/
 cp $T/hooks/ticket-sweep-reminder.sh scripts/
 cp $T/hooks/session-snapshot.sh scripts/
+cp $T/hooks/router-posture-reminder.sh scripts/
+cp $T/hooks/router-posture-guard.sh scripts/
 cp $T/lib/session-state.sh scripts/lib/
 cp $T/lib/preflight.sh scripts/lib/
+cp $T/lib/githooks.sh scripts/lib/
+cp $T/githooks/{pre-push,prepare-commit-msg} .githooks/
 cp $T/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh scripts/worktree/
 cp $T/worktree/lib/registry.sh scripts/worktree/lib/
 cp $T/govern/*.sh scripts/govern/
@@ -150,7 +154,7 @@ cp $T/govern/test/*.sh scripts/govern/test/
 cp $T/governor/*.md governor/
 cp $T/.claude/commands/*.md .claude/commands/
 touch .worktrees/.gitkeep
-chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh scripts/govern/test/*.sh
+chmod +x scripts/*.sh scripts/worktree/*.sh scripts/govern/*.sh scripts/govern/test/*.sh .githooks/*
 ```
 These are copied **verbatim** — they read everything from `workspace.sh`. Run `bash -n` over all of
 them to confirm. (Do NOT edit them.) New in this set: `sync.sh` (session-hygiene multi-repo sync) and
@@ -177,6 +181,44 @@ skill IS installed globally, the namespaced `meta-repo-harness:govern` / `meta-r
 harmless duplication; the project commands are the self-contained ones the Phase Z message points to.)
 Without this step the headline `/govern` in the final "Try" block would be a dead command. The
 `npm run govern` alias (Phase 6 `package.json`) is the equivalent CLI entry point either way.
+
+Also new in this set:
+- **Router-posture hooks** — `scripts/router-posture-reminder.sh` (a UserPromptSubmit hook that primes
+  "the driver delegates heavy work to child Agents/Workflows, keep context thin" once per session) and
+  `scripts/router-posture-guard.sh` (a PreToolUse `Read|Bash` hook that nudges, rate-limited, when the
+  driver itself does a >1000-line Read or a verbose build). Wired in Phase 7.
+- **`scripts/investigate.sh`** + the project-local `/investigate` command — a thin generic bug-triage
+  loop (seed a notes file under `logs/investigations/` → collect evidence → hypothesis → fix). Its
+  evidence-collection guts are workspace-specific: it calls an optional `scripts/logs.sh` if present,
+  else leaves `# workspace-specific` placeholders for the operator to wire in their own log/DB probes.
+- **Git-hooks enforcement** — `.githooks/pre-push` + `.githooks/prepare-commit-msg` and the
+  `scripts/lib/githooks.sh` propagation helper. Wired below.
+
+### Git-hooks enforcement (fresh)
+
+The two `.githooks/` files enforce the harness's git conventions mechanically instead of by prose:
+- **`pre-push`** rejects pushing any non-`main` feature branch to the HARNESS repo unless the push is a
+  sanctioned governor run (`GOVERN_RUN=1`) whose branch is exactly `ticket-<N>` — this makes
+  anti-pattern #9 ("meta-repo files commit directly to `main`; only the governor opens harness PRs")
+  physically enforced. Pushes to `main` always pass.
+- **`prepare-commit-msg`** auto-appends the `Co-Authored-By` attribution trailer on AGENT commits
+  (`CLAUDECODE=1` / `GOVERN_RUN=1`), idempotently, so attribution can't be forgotten on a raw
+  `git commit`.
+
+Activate them in the harness root and propagate ONLY the attribution hook into each cloned sub-repo
+(the `pre-push` guard is harness-only — sub-repos legitimately receive feature-branch PRs):
+```bash
+git config core.hooksPath .githooks   # in the harness root — activates .githooks/pre-push + prepare-commit-msg
+# propagate JUST the attribution hook into each sub-repo (honors husky's core.hooksPath):
+source scripts/lib/workspace.sh
+source scripts/lib/githooks.sh
+for repo in "${REPOS[@]}"; do
+  [ -d "$META_ROOT/$repo/.git" ] || [ -f "$META_ROOT/$repo/.git" ] || continue
+  install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$repo"
+done
+```
+`worktree/new.sh` re-runs `install_subrepo_attribution_hook` for each sub-repo worktree it creates, so
+worktrees inherit attribution too. The Phase-8 `doctor` run asserts `core.hooksPath == .githooks`.
 
 ## Phase 6 — Root files (fresh)
 
@@ -246,6 +288,12 @@ file exists, merge the `hooks` keys rather than overwriting:
       { "type": "command", "command": "if [ -f <ROOT>/learnings.md ]; then echo '── workspace learnings ──'; head -30 <ROOT>/learnings.md; echo '...'; fi", "timeout": 5 },
       { "type": "command", "command": "bash <ROOT>/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
+    "UserPromptSubmit": [{ "matcher": "*", "hooks": [
+      { "type": "command", "command": "bash <ROOT>/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
+    ]}],
+    "PreToolUse": [{ "matcher": "Read|Bash", "hooks": [
+      { "type": "command", "command": "bash <ROOT>/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
+    ]}],
     "Stop": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash <ROOT>/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
     ]}],
@@ -255,6 +303,9 @@ file exists, merge the `hooks` keys rather than overwriting:
   }
 }
 ```
+The `UserPromptSubmit` (router-posture-reminder) + `PreToolUse` matching `Read|Bash`
+(router-posture-guard) entries prime and enforce the delegate-heavy-work posture; both never block
+(exit 0, advisory only) and are rate-limited so they add near-zero per-turn cost.
 `session-snapshot.sh` MUST be the first SessionStart hook — it writes the per-session code-work
 baseline that the `ticket-sweep-reminder.sh` Stop hook reads to fire its reminder only when work
 happened THIS session (without the baseline the Stop hook falls back to a cruder always-fires check).
@@ -278,7 +329,7 @@ provides). Mention the optional next steps:
 files; nothing is versioned until you commit. On the root's default branch (verified in Phase 0.5),
 stage and commit the workspace tooling as ONE commit so the harness actually lives on `main`:
 ```bash
-git add scripts governor package.json .gitignore .worktrees/.gitkeep \
+git add scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
         queue learnings.md CLAUDE.md \
         .claude/settings.json .claude/commands .mcp.json 2>/dev/null
 git commit -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)"
@@ -327,7 +378,13 @@ Check presence/freshness of each component and build a table `component | status
   lacks it, so its Stop reminder falls back to the cruder always-fires check) plus its
   `scripts/lib/session-state.sh` lib, `scripts/lib/preflight.sh` (the deps-drift probe doctor.sh
   calls), `scripts/worktree/session-end-cleanup.sh`, and the `.claude/settings.json` wiring (the
-  SessionStart `session-snapshot.sh` entry is newer — mark `missing` if absent).
+  SessionStart `session-snapshot.sh` entry is newer — mark `missing` if absent). Also NEWER:
+  `scripts/router-posture-reminder.sh` (UserPromptSubmit) + `scripts/router-posture-guard.sh`
+  (PreToolUse `Read|Bash`) — mark `missing` if either the script OR its settings.json entry is absent.
+- **git-hooks enforcement** — `.githooks/pre-push` + `.githooks/prepare-commit-msg`,
+  `scripts/lib/githooks.sh`, and the repo's `core.hooksPath == .githooks` config. Mark `missing` if the
+  `.githooks/` files are absent OR `git config core.hooksPath` is unset.
+- **investigate** — `scripts/investigate.sh` + `.claude/commands/investigate.md`. Mark `missing` if absent.
 
 To judge "outdated" cheaply, `diff` an installed mechanism script against `$T/<same path>` — if they
 differ and the installed one doesn't source workspace.sh, it's outdated.
@@ -375,6 +432,16 @@ each chosen component:
 - **hooks wiring:** merge any missing hook entries into `.claude/settings.json` (don't drop existing
   ones) — in particular add the SessionStart `session-snapshot.sh` entry FIRST (before the
   learnings-skim + check-main-on-main entries) if it's absent, so the Stop reminder gets its baseline.
+  Also add the `UserPromptSubmit` (router-posture-reminder) and `PreToolUse` matching `Read|Bash`
+  (router-posture-guard) entries if absent (copy their scripts to `scripts/` too).
+- **git-hooks enforcement:** copy `$T/githooks/{pre-push,prepare-commit-msg}` → `.githooks/` (chmod +x)
+  and `$T/lib/githooks.sh` → `scripts/lib/`, then run `git config core.hooksPath .githooks` in the
+  harness root (idempotent) and `install_subrepo_attribution_hook` for each sub-repo (see the fresh
+  Git-hooks step). Preserve any existing hooks the user added under `.githooks/`; only refresh the two
+  harness files. If `core.hooksPath` is already a non-`.githooks` value the user set intentionally,
+  ask before changing it.
+- **investigate:** copy `$T/investigate.sh` → `scripts/` (chmod +x) and `$T/.claude/commands/investigate.md`
+  → `.claude/commands/` (`diff` first if present; it carries no workspace-specific values).
 - **example project hooks:** copy any missing `scripts/lib/*.sh.example` for reference.
 
 ### B3 — Verify the bump
