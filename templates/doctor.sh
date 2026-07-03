@@ -87,6 +87,18 @@ section "workspace"
 [ -f "$ROOT/package.json" ] && ok "root package.json present" || warn "root package.json missing"
 [ -f "$ROOT/scripts/lib/workspace.sh" ] && ok "scripts/lib/workspace.sh present" || fail "scripts/lib/workspace.sh missing — run meta-repo setup"
 
+# Git-hooks enforcement: the harness activates .githooks/ via core.hooksPath (pre-push guard +
+# commit-attribution). If it's unset (e.g. a fresh clone that never ran setup's git config step),
+# the enforcement is silently inert — warn with the one-liner to activate it.
+hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
+if [ "$hooks_path" = ".githooks" ]; then
+  ok "core.hooksPath = .githooks (push guard + attribution active)"
+elif [ -z "$hooks_path" ]; then
+  warn "core.hooksPath unset — run 'git config core.hooksPath .githooks' in the harness root to activate .githooks/"
+else
+  warn "core.hooksPath = '$hooks_path' (expected .githooks) — harness push guard/attribution may be inactive"
+fi
+
 # Git drift across the checkout (root + every sub-repo): off-main branch, dirty
 # tree, and ahead/behind vs the tracked upstream. Pure read.
 git_drift() {
@@ -155,8 +167,8 @@ fi
 
 # ── Project-specific doctor hook ──
 # If the project provides scripts/lib/doctor-extra.sh, source it here.
-# That file can add project-specific checks (e.g. Akash chain health,
-# Prisma migration drift, cloud CLI auth, database reachability) using
+# That file can add project-specific checks (e.g. blockchain/RPC health,
+# ORM migration drift, cloud CLI auth, database reachability) using
 # the same ok/warn/fail/section helpers defined above.
 # shellcheck source=/dev/null
 if [ -f "$ROOT/scripts/lib/doctor-extra.sh" ]; then

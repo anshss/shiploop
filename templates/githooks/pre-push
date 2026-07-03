@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Harness-repo push guard (active via `git config core.hooksPath .githooks`, set by scripts/setup.sh).
+#
+# Policy (CLAUDE.md anti-pattern #9): meta-repo/coordination files commit DIRECTLY to `main` in the
+# main checkout — a NORMAL interactive session never opens a harness PR. The governor is the sole
+# exception: a govern worker/loop may deliver a meta-repo-file ticket as a `ticket-<N>` PR on this
+# repo. The governor marks its git ops with GOVERN_RUN=1 (exported by scripts/govern/lib/common.sh
+# and injected into each worker by spawn-worker.sh); a normal session never sources that file, so
+# GOVERN_RUN is unset and a feature-branch push here is rejected.
+#
+# Under GOVERN_RUN=1 the branch name is ALSO enforced (#301): a govern worker's feature branch MUST
+# be exactly `ticket-<N>` (its ticket number) so the governor can find + merge the PR (#55). A wrong
+# name (fix/…, a custom slug, ticket-<N>-suffix) silently orphans the PR and re-fails the ticket, so
+# reject it here — turning a hard-to-diagnose orphaned-PR failure into a loud pre-push error.
+#
+# Pushes to `main` are ALWAYS allowed (that's the operator/governor bookkeeping path).
+# stdin lines: <local ref> <local sha> <remote ref> <remote sha>
+set -euo pipefail
+
+govern="${GOVERN_RUN:-}"
+blocked=0
+
+while read -r _localref _localsha remoteref _remotesha; do
+  [ -z "${remoteref:-}" ] && continue
+  branch="${remoteref#refs/heads/}"
+
+  # Direct push to main — always allowed (operator/governor bookkeeping path).
+  [ "$branch" = "main" ] && continue
+
+  if [ "$govern" = "1" ]; then
+    # Sanctioned governor run: only a strict `ticket-<N>` feature branch is allowed, so the
+    # governor can locate + merge the PR by that exact head (#55). Anything else is rejected.
+    if [[ "$branch" =~ ^ticket-[0-9]+$ ]]; then
+      continue
+    fi
+    blocked=1
+    echo "pre-push BLOCKED under GOVERN_RUN: branch '$branch' is not a 'ticket-<N>' branch." >&2
+    echo "  A govern worker's feature branch MUST be exactly ticket-<N> (its ticket number) so the" >&2
+    echo "  governor can find + merge the PR; a wrong name orphans it and re-fails the ticket (#55)." >&2
+    echo "  Rename it and push again, e.g.:  git branch -m ticket-<N> && git push -u origin ticket-<N>" >&2
+  else
+    # Normal interactive session: meta-repo files commit directly to `main` (anti-pattern #9).
+    blocked=1
+    echo "pre-push BLOCKED: refusing to push '$branch' to the harness repo." >&2
+    echo "  Meta-repo files commit directly to 'main' here (CLAUDE.md anti-pattern #9)." >&2
+    echo "  Only the governor opens harness feature-branch PRs — it sets GOVERN_RUN=1." >&2
+    echo "  If you really mean to (acting AS the governor), prefix: GOVERN_RUN=1 git push ..." >&2
+  fi
+done
+
+if [ "$blocked" = "1" ]; then
+  exit 1
+fi
+exit 0

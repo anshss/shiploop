@@ -12,6 +12,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/lib/workspace.sh"
 # shellcheck source=lib/registry.sh
 source "$ROOT/scripts/worktree/lib/registry.sh"
+# shellcheck source=../lib/githooks.sh
+source "$ROOT/scripts/lib/githooks.sh" 2>/dev/null || true
 
 NAME=""
 ONLY=""
@@ -45,7 +47,7 @@ if [ -z "$ONLY" ]; then ONLY="$(wsp_repos_csv)"; fi
 
 # Disk-space sanity check (< 5 GB free in HOME). MUST be non-interactive-safe: a headless
 # caller (e.g. a govern worker) has no TTY, so a bare `read` hits EOF and `confirm` stays
-# empty → the guard exits silently, read as a phantom worker "failure" (aquanode ticket #48).
+# empty → the guard exits silently, read as a phantom worker "failure".
 # So: honor WORKTREE_ASSUME_YES=1 to proceed unattended, only prompt when stdin IS a TTY, and
 # on no-TTY exit with a DISTINCT code (3) + actionable message instead of a silent abort.
 # Test seams: WORKTREE_FREE_GB_OVERRIDE forces the measured free space; WORKTREE_DISK_CHECK_ONLY
@@ -150,6 +152,13 @@ for repo in "${REPOS[@]}"; do
   }
   copy_env_if_untracked ".env"
   copy_env_if_untracked ".env.local"
+
+  # Propagate the commit-attribution hook into this sub-repo worktree so agent commits made
+  # from inside the worktree carry the Co-Authored-By trailer too (husky repos use a per-worktree
+  # core.hooksPath, so a main-checkout install doesn't always cover the worktree). Best-effort.
+  if command -v install_subrepo_attribution_hook >/dev/null 2>&1; then
+    install_subrepo_attribution_hook "$ROOT" "$dst" || true
+  fi
 done
 
 # Copy workspace-root .env into the worktree. Scripts that resolve $ROOT/.env

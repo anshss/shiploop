@@ -6,6 +6,12 @@ scripts, the ticket queue, the governor, and shared AI context.
 
 > This file is the workspace's **always-on context** — it auto-loads every session, so it is the home
 > for the conventions below. Keep it current; it is the first thing a new session (human or agent) reads.
+>
+> **Keep this file the lean, always-loaded hard-rules core.** Because it is re-sent every turn, every
+> line here has a standing per-turn cost — so it should hold only the load-bearing rules a session must
+> never miss. As durable detail accumulates (deep provider notes, long gotcha writeups, historical
+> context), don't let the core bloat: overflow it into a sibling **`CLAUDE-APPENDIX.md`** and reference
+> that file from here. The core stays scannable; the appendix carries the depth, loaded on demand.
 
 ## How to operate (read first)
 

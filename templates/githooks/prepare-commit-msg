@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Harness-repo commit-attribution guard (active via `git config core.hooksPath .githooks`, set by
+# scripts/setup.sh — same wiring as the pre-push guard).
+#
+# Problem (ticket #271): the `Co-Authored-By: Claude` trailer is a prose-enforced "must remember"
+# rule. `includeCoAuthoredBy:true` only applies when Claude Code makes the commit through its OWN
+# commit path; a raw shell `git commit` (the common case for workers + the governor) relies on the
+# agent typing the trailer, and it was silently omitted on 2 commits (4a8b35d/33a23da), later
+# backfilled via force-push. This hook mechanizes attribution so it is impossible to forget.
+#
+# Behavior:
+#   * Only acts for AGENT commits — CLAUDECODE=1 (interactive Claude Code) or GOVERN_RUN=1 (a
+#     governor worker/loop). A human committing from a plain terminal is left untouched.
+#   * Idempotent — if any `Co-authored-by: … Claude …` trailer is already present (case-insensitive,
+#     any spelling/model suffix), it does nothing. Safe to run repeatedly, on --amend, etc.
+#   * Appends a properly-formatted trailer via `git interpret-trailers` (correct blank-line
+#     separation, grouped with existing trailers, comment/scissors lines preserved).
+#   * Never fails a commit: on any error it exits 0 so attribution is best-effort, not a blocker.
+#
+# prepare-commit-msg args: $1 = path to the commit-message file
+#                          $2 = commit source (message|template|merge|squash|commit|"")
+#                          $3 = commit SHA (only for -c/-C/--amend)
+set -uo pipefail
+
+MSG_FILE="${1:-}"
+SOURCE="${2:-}"
+
+[ -n "$MSG_FILE" ] && [ -f "$MSG_FILE" ] || exit 0
+
+# Only mechanize attribution for agent commits.
+if [ "${CLAUDECODE:-}" != "1" ] && [ "${GOVERN_RUN:-}" != "1" ]; then
+  exit 0
+fi
+
+# Leave merge/squash message templates alone — those aren't authored commits.
+case "$SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+TRAILER="Co-Authored-By: Claude <noreply@anthropic.com>"
+
+# Idempotency: skip if a Claude co-author trailer is already present in the real message body
+# (ignore git's comment lines so a commented-out example never counts as present).
+if grep -vE '^\s*#' "$MSG_FILE" | grep -qiE '^\s*co-authored-by:.*claude'; then
+  exit 0
+fi
+
+# Append the trailer. interpret-trailers handles blank-line separation + trailer grouping and
+# leaves comment/scissors lines in place. Fall back to a plain append if it is unavailable.
+if git interpret-trailers --in-place --trailer "$TRAILER" "$MSG_FILE" 2>/dev/null; then
+  exit 0
+fi
+
+printf '\n%s\n' "$TRAILER" >> "$MSG_FILE"
+exit 0
