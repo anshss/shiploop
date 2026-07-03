@@ -42,14 +42,13 @@ while [ "$dir" != "/" ]; do
     # shellcheck disable=SC1091
     source "$dir/worktree.env"
 
-    # Run project-specific session cleanup (e.g. close billable test deploys)
-    # before killing ports — best-effort; never blocks teardown.
-    if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
-      bash "$ROOT/scripts/lib/session-cleanup.sh" || true
-    fi
-
-    # Kill every port this worktree's slot owns (derived generically from
-    # REPO_PORTS + WORKTREE_SLOT set in worktree.env).
+    # Order matters: kill LOCAL stack ports FIRST (fast, local), THEN run the project-specific
+    # session-cleanup hook (which typically does network work — closing billable test deploys,
+    # sweeping remote orchestrators). This hook runs under a bounded SessionEnd budget (~90s on
+    # Claude Code); if the slow network phase ran first and exhausted it, a prod-pointed local
+    # orchestrator would never be killed — the exact zombie/billing leak this hook exists to
+    # prevent. Kill every port this worktree's slot owns (derived generically from REPO_PORTS
+    # + WORKTREE_SLOT set in worktree.env).
     for repo in "${REPOS[@]}"; do
       # Use the WORKTREE_<UPPER>_PORT vars written by new.sh if present;
       # fall back to computing from REPO_PORTS so the hook works even if
@@ -62,18 +61,24 @@ while [ "$dir" != "/" ]; do
       fi
       kill_port "$port" "$dir"   # only if cwd under this worktree
     done
+
+    # Now the (possibly slow) project-specific session cleanup — best-effort; never blocks teardown.
+    if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
+      bash "$ROOT/scripts/lib/session-cleanup.sh" || true
+    fi
     exit 0
   fi
   dir="$(dirname "$dir")"
 done
 
-# Main checkout (no worktree.env found): run cleanup then kill slot-0 ports.
-if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
-  bash "$ROOT/scripts/lib/session-cleanup.sh" || true
-fi
-
+# Main checkout (no worktree.env found). Same ordering as the worktree path above: local port
+# kills FIRST, network-touching session-cleanup AFTER, so the slow network phase can't eat the
+# hook budget before the local orchestrator/dev-servers are killed.
 for repo in "${REPOS[@]}"; do
   port=$(wsp_repo_port "$repo" 0)
   kill_port "$port" "$ROOT"   # only if cwd under the main checkout
 done
+if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
+  bash "$ROOT/scripts/lib/session-cleanup.sh" || true
+fi
 exit 0

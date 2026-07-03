@@ -19,12 +19,10 @@ report_path="$logdir/report.json"; rm -f "$report_path"
 # data from logs/govern/ticket-N/ (we never read it again, but other tails might).
 if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then rm -f "$LOG_ROOT/$slug/worker.jsonl" "$LOG_ROOT/$slug/report.json"; fi
 
-# 1. Extract the ticket block: from "## #N" up to the next "---".
-block="$(awk -v n="$N" '
-  $0 ~ "^##[[:space:]]+#" n "([^0-9]|$)" {grab=1}
-  grab && /^---[[:space:]]*$/ {exit}
-  grab {print}
-' "$TICKETS_FILE")"
+# 1. Extract the ticket block via the shared parser (govern::ticket_block): boundary is the
+#    next `^##[[:space:]]+#<digits>` heading, NOT the first `^---$` — a bare `---` inside a
+#    markdown body no longer truncates the worker prompt.
+block="$(govern::ticket_block "$N" "$TICKETS_FILE")"
 [[ -n "$block" ]] || govern::die "ticket #$N not found in $TICKETS_FILE"
 
 # 2. Assemble the prompt: template (with {{TICKET_BLOCK}}/{{REPORT_PATH}} filled) + doctrine.
@@ -74,7 +72,7 @@ elif [[ -d "$wtpath" ]]; then
   # Resume: a preserved worktree from a prior failed/parked attempt already exists.
   # worktree:new hard-exits on an existing path → under set -e that aborts spawn-worker and
   # fast-fails the resume before the worker even runs. Reuse it, and re-run the project
-  # bootstrap hook (if any) to restore deps a slim/cleanup may have stripped. (aquanode #53)
+  # bootstrap hook (if any) to restore deps a slim/cleanup may have stripped (#53).
   govern::log "reusing preserved worktree for #$N at $wtpath (resume)"
   if [[ -x "$WS_ROOT/scripts/lib/worktree-bootstrap.sh" ]]; then
     wslot="$(awk -F= '/WORKTREE_SLOT/{gsub(/ /,"",$2);print $2}' "$wtpath/worktree.env" 2>/dev/null)"
@@ -86,7 +84,7 @@ else
   # v11 aborts in a non-TTY shell (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) before the script
   # runs, silently killing every worker at the worktree step. WORKTREE_ASSUME_YES=1: a headless
   # worker has no TTY to answer new.sh's <5GB disk prompt; without it the guard EOF-aborts and
-  # reads as a phantom worker failure (aquanode #48). Direct bash + assume-yes sidestep both.
+  # reads as a phantom worker failure (#48). Direct bash + assume-yes sidestep both.
   #
   # #76: capture worktree:new's output and DON'T let a non-zero exit `set -e`-abort spawn-worker.
   # The driver runs us as `spawn-worker.sh N 2>/dev/null || true`, so a bare abort discards our

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Merge a PR IF its repo is auto-mergeable AND CI is green. Usage: merge-pr.sh <repo> <pr>
-# Refuses frontend repos with exit 2. GOVERN_ECHO=1 prints instead of running.
-# GOVERN_SKIP_CI=1 skips the green check (tests/dry-run only).
+# Merge a PR IF its repo is auto-mergeable AND CI is green (or VERIFIED checkless). Usage:
+# merge-pr.sh <repo> <pr>. Exit codes:
+#   0 — merged (or, under GOVERN_ECHO=1, would-merge printed).
+#   2 — refused: frontend repo (a different account merges).
+#   3 — refused: CI is red/pending (not mergeable).
+#   4 — refused: CI state UNVERIFIABLE ('error' from await-ci — gh could not confirm CI).
+#       Distinct from 3 so the caller can classify it as PARK-worthy (ci-state-unverifiable)
+#       rather than a plain failing-check. FAIL-CLOSED: an unverifiable state never merges.
+# GOVERN_ECHO=1 prints instead of running. GOVERN_SKIP_CI=1 skips the green check — pass it
+# from a caller (run-loop) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -14,11 +21,15 @@ if ! govern::is_merge_repo "$REPO"; then
 fi
 
 if [[ "${GOVERN_SKIP_CI:-0}" != "1" ]]; then
-  state="$("$DIR/await-ci.sh" "$REPO" "$PR")"
-  # "none" = repo has no PR-level checks (CI runs post-merge, e.g. a deploy pipeline) → treat as
-  # mergeable (operator decision). Only red/pending block.
+  # Capture await-ci's token WITHOUT letting its non-zero 'error' exit abort us under set -e;
+  # a crash with no token also degrades to 'error' (fail closed — never assume mergeable).
+  state="$("$DIR/await-ci.sh" "$REPO" "$PR" 2>/dev/null || true)"
+  [[ -n "$state" ]] || state="error"
+  # "none" = VERIFIED checkless (CI runs post-merge, e.g. a deploy pipeline) → mergeable
+  # (operator decision). Only green or verified-none merge; everything else blocks.
   if [[ "$state" != "green" && "$state" != "none" ]]; then
-    govern::log "not merging $REPO#$PR — CI is '$state' (not green/none)."
+    govern::log "not merging $REPO#$PR — CI is '$state' (not green/verified-none)."
+    [[ "$state" == "error" ]] && exit 4   # UNVERIFIABLE → caller parks (ci-state-unverifiable)
     exit 3
   fi
 fi

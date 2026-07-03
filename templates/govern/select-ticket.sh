@@ -37,7 +37,11 @@ flush() { [[ -n "$current" ]] && rows+=("$sev $current"); return 0; }
 while IFS= read -r line; do
   if [[ "$line" =~ ^##[[:space:]]+\#([0-9]+) ]]; then
     flush; current="${BASH_REMATCH[1]}"; sev=4
-  elif [[ -n "$current" && "$line" == '**Severity:**'* ]]; then
+  # Tolerant severity match: accept an optional leading list marker + whitespace
+  # (`- **Severity:** …`) and both colon placements (`**Severity:**` and `**Severity**:`).
+  # The strict `**Severity:***` glob missed the list form and the colon-outside-bold form,
+  # silently deprioritizing those tickets to sev=4.
+  elif [[ -n "$current" && "$line" =~ ^[[:space:]]*(-[[:space:]]+)?\*\*Severity(\*\*:|:\*\*) ]]; then
     lc="$(printf '%s' "$line" | tr 'A-Z' 'a-z')"
     case "$lc" in *high*) sev=1;; *medium*) sev=2;; *low*) sev=3;; esac
   fi

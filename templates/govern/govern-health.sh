@@ -8,6 +8,11 @@
 # self-referential "port into templates" churn with near-zero product value, discovered only by
 # hand. This surfaces that waste class automatically instead of after it has dominated a run.
 #
+# It also flags STALE escalations (#312): any entry under "## Open" in governor/escalations.md that
+# is still blank on BOTH Answer and Disposition more than GOVERN_ESCALATION_STALE_DAYS (default 3)
+# days after its stamped `Opened` date. Motivated by an escalation sitting fully unanswered across
+# multiple runs — the supervisor had to rediscover it by hand each run instead of it aging into view.
+#
 # Usage:
 #   <pm> run govern:health                          # human summary: most-recent run + all-time rolling
 #   scripts/govern/govern-health.sh --json          # machine-readable {run,allTime}
@@ -35,9 +40,61 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# ── stale open escalations (#312) ─────────────────────────────────────────────
+# An open escalation is STALE when it's still blank on BOTH Answer and Disposition and its stamped
+# `Opened` date is older than the threshold. Entries with no parseable `Opened` (they predate the
+# #312 field and are clearly aging) are flagged too, with ageDays=null. Output: JSON array of
+# {ticket,title,opened,ageDays}, ordered oldest-first so the most-neglected surfaces at the top.
+# Computed independently of the outcome history, so it surfaces even before any run is recorded.
+STALE_DAYS="${GOVERN_ESCALATION_STALE_DAYS:-3}"
+compute_stale_escalations() {
+  local now stale="[]" line ans disp opened od oe age age_json
+  now="$(date +%s)"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    ans="$(jq -r '.answer' <<<"$line")"; disp="$(jq -r '.disposition' <<<"$line")"
+    # only entries the operator has NOT engaged (blank on BOTH answer + disposition)
+    govern::is_placeholder "$ans" || continue
+    govern::is_placeholder "$disp" || continue
+    opened="$(jq -r '.opened' <<<"$line")"
+    od="$(printf '%s' "$opened" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 || true)"
+    age_json="null"
+    if [[ -n "$od" ]] && oe="$(govern::date_to_epoch "$od")" && [[ -n "$oe" ]]; then
+      age=$(( (now - oe) / 86400 ))
+      age_json="$age"
+      [[ "$age" -ge "$STALE_DAYS" ]] || continue        # young enough → not stale
+    fi
+    stale="$(jq -c --argjson s "$stale" --argjson row "$line" --argjson age "$age_json" \
+      -n '$s + [{ticket: ($row.ticket|tonumber), title: $row.title, opened: $row.opened, ageDays: $age}]')"
+  done < <(govern::escalations_open_ndjson 2>/dev/null || true)
+  # oldest first: known ages descending, then null-age (unknown/predates the field) after
+  jq -c 'sort_by(.ageDays // -1) | reverse' <<<"$stale"
+}
+stale_esc="$(compute_stale_escalations)"
+
+# Human render of the stale-escalation section — shared by the empty-history and normal paths.
+render_stale() {
+  local nstale age_lbl
+  nstale="$(jq -r 'length' <<<"$stale_esc" 2>/dev/null || echo 0)"
+  [[ "${nstale:-0}" -gt 0 ]] || return 0
+  printf '▸ stale escalations — needs operator attention (unanswered > %s day(s) since Opened)\n' "$STALE_DAYS"
+  local tk age title
+  while IFS=$'\t' read -r tk age title; do
+    [[ -n "$tk" ]] || continue
+    if [[ "$age" == "null" ]]; then age_lbl="opened date unknown"; else age_lbl="${age}d open"; fi
+    printf '  ⚠ #%s (%s) — %s\n' "$tk" "$age_lbl" "$title"
+  done < <(jq -r '.[] | [(.ticket|tostring), (.ageDays // "null"|tostring), .title] | @tsv' <<<"$stale_esc")
+  printf '\n'
+}
+
 if [[ ! -s "$HISTORY" ]]; then
-  if [[ "$JSON" -eq 1 ]]; then echo '{"historyFile":"'"$HISTORY"'","empty":true}'; else
-    echo "Governor health — no history yet ($HISTORY). Run the governor first."; fi
+  if [[ "$JSON" -eq 1 ]]; then
+    jq -nc --arg hf "$HISTORY" --argjson stale "$stale_esc" --argjson staleDays "$STALE_DAYS" \
+      '{historyFile:$hf, empty:true, staleEscalationDays:$staleDays, staleEscalations:$stale}'
+  else
+    echo "Governor health — no history yet ($HISTORY). Run the governor first."
+    render_stale
+  fi
   exit 0
 fi
 
@@ -121,7 +178,8 @@ run_label="$(jq -r '.scopeLabel' <<<"$scoped")"
 
 if [[ "$JSON" -eq 1 ]]; then
   jq -nc --argjson run "$run_m" --argjson all "$all_m" --arg label "$run_label" --arg hf "$HISTORY" \
-    '{historyFile:$hf, scopeLabel:$label, run:$run, allTime:$all}'
+    --argjson stale "$stale_esc" --argjson staleDays "$STALE_DAYS" \
+    '{historyFile:$hf, scopeLabel:$label, run:$run, allTime:$all, staleEscalationDays:$staleDays, staleEscalations:$stale}'
   exit 0
 fi
 
@@ -183,4 +241,5 @@ render() { # metrics-json  header
 echo "════════ Governor health (ROI telemetry · #272) ════════"
 render "$run_m" "▸ $run_label"
 render "$all_m" "▸ all-time rolling"
+render_stale
 echo "history: $HISTORY   ·   detail: scripts/govern/govern-health.sh --json"

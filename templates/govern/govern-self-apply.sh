@@ -29,8 +29,16 @@ if [[ -n "$(git status --porcelain scripts/govern governor .claude 2>/dev/null)"
 fi
 
 escalate() { # message
-  { printf '\n### self-improvement BLOCKED — %s\n- **Reason:** %s\n- **Action:** apply the proposal in governor/improvements.md by hand if wanted.\n' \
-      "$(date +%Y-%m-%d\ %H:%M)" "$1"; } >> "$ESCALATIONS_FILE" 2>/dev/null || true
+  # Route through the numeric escalation writer so the entry is a real `### #N` with an `Opened` stamp:
+  # the lifecycle parser (govern::escalations_open_ndjson) only sees `### #N`, so the old free-form
+  # `### self-improvement BLOCKED — …` heading was INVISIBLE to emit-pending / apply-answers / the
+  # stale-ager — a write-only note. file_open_escalation also commits escalations.md same-step (#14),
+  # so this blocked-self-improvement note can't linger uncommitted and abort the next run's rebase.
+  local N; N="$(govern::next_ticket_number)"
+  govern::file_open_escalation "$N" "self-apply BLOCKED" \
+    "$1" \
+    "apply the proposal in governor/improvements.md by hand if wanted, or discard it" \
+    "apply-by-hand / discard"
 }
 revert() {
   # per-path so a non-matching pathspec (e.g. an empty .claude) can't abort the whole restore

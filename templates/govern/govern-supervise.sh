@@ -40,6 +40,28 @@ out="$(env OTEL_RESOURCE_ATTRIBUTES="$(govern::otel_attrs supervisor)" "$claude_
 if printf '%s' "$out" | jq -e '.verdict' >/dev/null 2>&1; then
   printf '%s\n' "$out"
 else
-  # Supervisor unreachable/garbled → fail safe to "ok" (never block the loop on a flaky review).
-  printf '{"verdict":"ok","concerns":[],"haltReason":"supervisor unparseable — defaulted ok"}\n'
+  # Format-tolerant recovery BEFORE defaulting: the supervisor sometimes wraps its JSON in a
+  # ```json ...``` fence or emits trailing prose around the object. A raw jq parse then misses,
+  # and a genuine `halt` (the systemic-failure brake) would silently downgrade to `ok`. Strip
+  # a ```json / ``` fence pair if present, then walk balanced {...} chunks and keep the LAST
+  # one whose jq parses AND has .verdict. If found, emit it.
+  recovered=""
+  stripped="$(printf '%s' "$out" | sed -E 's/^[[:space:]]*```(json)?[[:space:]]*//; s/[[:space:]]*```[[:space:]]*$//')"
+  if printf '%s' "$stripped" | jq -e '.verdict' >/dev/null 2>&1; then
+    recovered="$stripped"
+  else
+    while IFS= read -r -d $'\x1e' cand; do
+      [[ -n "$cand" ]] || continue
+      if printf '%s' "$cand" | jq -e '.verdict' >/dev/null 2>&1; then recovered="$cand"; fi
+    done < <(printf '%s' "$stripped" | govern::_json_objects 2>/dev/null || true)
+  fi
+  if [[ -n "$recovered" ]]; then
+    printf '%s\n' "$recovered"
+  else
+    # Truly unparseable even after fence-strip + scan → fail-open to "ok" (deliberate: never
+    # block the loop on a flaky review) but LOG the miss loudly + tag the emitted verdict so a
+    # lost halt is visible in the run log rather than silently downgraded to ok.
+    govern::log "supervisor verdict UNPARSEABLE — defaulting ok (any halt in the response was lost)" >&2
+    printf '{"verdict":"ok","concerns":[],"haltReason":"supervisor unparseable — defaulted ok","unparseable":true}\n'
+  fi
 fi

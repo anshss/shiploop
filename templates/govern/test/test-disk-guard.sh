@@ -15,7 +15,7 @@ RL="$DIR/../run-loop.sh"
 # present only in a real workspace; its no-TTY exit-3 message references $ROOT_PM, so under set -u it
 # would crash (exit 1, no message) when they're absent — exactly the template layout. Run a verbatim
 # copy from a stubbed scripts/ tree that mirrors the workspace layout so the guard branches are
-# exercised faithfully with no aquanode workspace present (#255).
+# exercised faithfully with no real workspace present (#255).
 SB="$(mktemp -d)"
 mkdir -p "$SB/scripts/worktree/lib" "$SB/scripts/lib"
 cp "$DIR/../../worktree/new.sh" "$SB/scripts/worktree/new.sh"

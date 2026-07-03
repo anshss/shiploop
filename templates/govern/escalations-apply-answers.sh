@@ -28,7 +28,13 @@ DATE="$(date +%Y-%m-%d)"
 entries="$(govern::escalations_open_ndjson | jq -s '.' 2>/dev/null || echo '[]')"
 [[ -n "$entries" ]] || entries='[]'
 n_entries="$(printf '%s' "$entries" | jq 'length' 2>/dev/null || echo 0)"
-[[ "$n_entries" -gt 0 ]] || { echo "no open escalations — nothing to apply"; exit 0; }
+# #3: regenerate pending-escalations.json even on the no-op paths, so a stale/ghost snapshot is
+# corrected against escalations.md whether or not we act (a manual resolution / crashed prior run can
+# leave pending listing a closed entry or missing a still-open one). Cheap, idempotent.
+if [[ "$n_entries" -le 0 ]]; then
+  "$DIR/escalations-emit-pending.sh" >/dev/null 2>&1 || true
+  echo "no open escalations — nothing to apply"; exit 0
+fi
 
 # If the workspace ships the bookkeep mutex (concurrent-driver builds), serialize the
 # tickets.md / escalations.md read-modify-write against a concurrent driver's bookkeep,
@@ -164,6 +170,9 @@ done < <(printf '%s' "$entries" | jq -c '.[]')
 
 if [[ "$acted" -eq 0 ]]; then
   rm -f "$notes_file"
+  # #3: still regenerate pending-escalations.json (open entries may exist that just aren't yet
+  # actionable) so a stale snapshot is reconciled against escalations.md even on this no-op path.
+  "$DIR/escalations-emit-pending.sh" >/dev/null 2>&1 || true
   echo "no answered escalations with an actionable disposition — nothing to apply"
   exit 0
 fi

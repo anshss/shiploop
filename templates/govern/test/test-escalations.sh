@@ -172,4 +172,26 @@ assert_eq "$(grep -c '^## #9' "$T/tickets.md" || true)" "1" "#9 ticket untouched
 out2="$(env "${env_common[@]}" bash "$APPLY" 2>/dev/null)"
 assert_contains "$out2" "nothing to apply" "second apply is a no-op (idempotent)"
 
+# ── #3: apply on a no-op path STILL reconciles pending.json against escalations.md ────────
+# Stage a GHOST entry into pending.json (a ticket # that no longer sits under ## Open) and confirm
+# apply-answers regenerates a clean count that reflects the current escalations.md truth, not the
+# stale snapshot. This is the "crashed prior run / manual resolution left pending stale" recovery.
+cat > "$T/pending.json" <<'EOF'
+{"generatedAt":0,"run":"ghost","count":3,"escalations":[{"ticket":999,"title":"ghost","reason":"not real","question":"n/a","options":""}],"supervisorConcerns":[]}
+EOF
+env "${env_common[@]}" bash "$APPLY" >/dev/null 2>&1
+recovered_count="$(jq -r '.count' "$T/pending.json")"
+recovered_tickets="$(jq -r '.escalations | map(.ticket|tostring) | join(",")' "$T/pending.json")"
+# Only #8 + #9 remain open at this point (from earlier assertions).
+assert_eq "$recovered_count" "1" "no-op apply reconciled stale pending.json count (ghost #999 dropped)"
+assert_contains "$recovered_tickets" "8" "reconciled pending.json still lists genuinely-open #8"
+assert_eq "$(printf '%s' "$recovered_tickets" | grep -c 999 || true)" "0" "reconciled pending.json no longer lists the ghost #999"
+
+# ── #337: GOVERN_SUPPRESS_EMIT_PENDING=1 makes emit-pending a hard-skip no-op (defense-in-depth
+# against a sync-port sub-run clobbering the parent run's pending snapshot). File is untouched.
+before_sha="$(shasum "$T/pending.json" 2>/dev/null | awk '{print $1}')"
+env "${env_common[@]}" GOVERN_SUPPRESS_EMIT_PENDING=1 bash "$EMIT" some-run >/dev/null 2>&1
+after_sha="$(shasum "$T/pending.json" 2>/dev/null | awk '{print $1}')"
+assert_eq "$before_sha" "$after_sha" "emit-pending under GOVERN_SUPPRESS_EMIT_PENDING=1 leaves pending.json untouched"
+
 assert_done

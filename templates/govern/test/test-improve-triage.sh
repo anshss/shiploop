@@ -45,7 +45,7 @@ Some prose preamble.
 - scripts/govern/run-loop.sh: emit a SENTINEL_SAFE_A consolidated summary block — pure aggregation, ergonomics.
 - scripts/govern/spawn-worker.sh: SENTINEL_SAFE_B inject the timeout ceiling into the prompt — observability.
 - scripts/govern/run-loop.sh: raise GOVERN_MAX_TICKETS to 30 SENTINEL_RAIL_A — throughput but changes a run bound.
-- OPERATOR DECISION — auto-merge stale harness-owned PRs SENTINEL_RAIL_B: closes the ogre#84 class, trade-off noted.
+- OPERATOR DECISION — auto-merge stale harness-owned PRs SENTINEL_RAIL_B: closes a known class, trade-off noted.
 EOF
 
 bash "$TRIAGE" run-AAA >/dev/null 2>&1 || true

@@ -109,7 +109,7 @@ wt_registry_alloc_and_register() {
   # A name collision is only a REAL collision if the registered worktree still exists on disk.
   # A `git worktree remove` (or a manual rm -rf) done OUTSIDE worktree:rm leaves a STALE registry
   # entry whose path is gone — which used to abort worktree:new with "already in registry" and
-  # fast-fail a govern re-run of a resolved/re-opened ticket (aquanode #76). Self-heal: drop the
+  # fast-fail a govern re-run of a resolved/re-opened ticket (#76). Self-heal: drop the
   # stale entry and fall through to re-allocate (freeing its slot for reuse). Keep the hard error
   # only when the path is still present (a genuine live collision).
   existing_path=$(printf '%s' "$reg" | jq -r --arg n "$name" \

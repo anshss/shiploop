@@ -42,8 +42,8 @@ FOREIGN_PORT=$((BASE + 1))
 GONE_PORT=$((BASE + 2))
 cat > "$WT/worktree.env" <<EOF
 export WORKTREE_SLOT=99
-export WORKTREE_BACKEND_PORT=$OWNED_PORT
-export WORKTREE_MJOLNIR_PORT=$FOREIGN_PORT
+export WORKTREE_ALPHA_PORT=$OWNED_PORT
+export WORKTREE_WEB_PORT=$FOREIGN_PORT
 EOF
 
 # Bind a listening TCP port from a chosen cwd, print the pid. python's fds are redirected to

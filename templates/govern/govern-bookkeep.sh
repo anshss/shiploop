@@ -45,21 +45,17 @@ fi
 ticket_title="$(grep -m1 -E "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null \
   | sed -E "s/^##[[:space:]]+#$N[[:space:]]*(—|-)?[[:space:]]*//" || true)"
 
-# 1. Delete the ## #N block (heading through its trailing ---). CAS check (#108): after the origin
-# sync above, verify the block is still present. If a concurrent driver already resolved+deleted it,
-# the awk delete below is a harmless no-op — but log it so a double-processed ticket is VISIBLE here
-# rather than silently re-bookkept.
+# 1. Delete the ## #N block via the shared parser (govern::ticket_block_delete): boundary is
+# the next `^##[[:space:]]+#<digits>` heading (or EOF), consuming the block's trailing `---`
+# separator so a doubled separator is never left behind AND a bare `---` inside the body no
+# longer terminates the delete early (leaving orphaned body lines under the next heading).
+# CAS check (#108): after the origin sync above, verify the block is still present. If a
+# concurrent driver already resolved+deleted it, the delete is a harmless no-op — but log it
+# so a double-processed ticket is VISIBLE here rather than silently re-bookkept.
 if ! grep -qE "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE"; then
   govern::log "bookkeep #$N: block already absent from tickets.md after origin sync (resolved by a concurrent driver?) — delete is a no-op (#108)"
 fi
-tmp="$(mktemp)"
-awk -v n="$N" '
-  $0 ~ "^##[[:space:]]+#" n "([^0-9]|$)" { grab=1 }
-  grab && /^---[[:space:]]*$/ { grab=0; next }
-  grab { next }
-  { print }
-' "$TICKETS_FILE" > "$tmp"
-mv "$tmp" "$TICKETS_FILE"
+govern::ticket_block_delete "$N" "$TICKETS_FILE"
 
 # Collapse the blank-line residue the block-delete leaves behind. The awk above removes the
 # heading-through-`---`, but the blank line that PRECEDED the heading and the one that FOLLOWED

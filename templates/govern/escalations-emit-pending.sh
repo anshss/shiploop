@@ -15,6 +15,18 @@
 #   reaches the relay/operator at run-end instead of dying in review.md.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
+
+# #337: hard skip when a parent context has suppressed emit — its sub-tree (e.g. a nested porter
+# claude session) must NOT rewrite the parent run's pending-escalations.json against a partial /
+# nested view of state. The parent's authoritative emit-at-last reconciles against the FINAL
+# escalations.md ## Open once every run-end writer has fired. No-op silently, non-zero exit avoided
+# so callers that `|| true` still see 0.
+if [[ "${GOVERN_SUPPRESS_EMIT_PENDING:-0}" == "1" ]]; then
+  govern::log "emit-pending: SUPPRESSED (GOVERN_SUPPRESS_EMIT_PENDING=1 — parent will regenerate) [#337]"
+  echo 0
+  exit 0
+fi
+
 govern::require jq
 
 RUN_ID="${1:-}"
@@ -40,9 +52,15 @@ count="$(printf '%s' "$pending" | jq 'length' 2>/dev/null || echo 0)"
 # #92: supervisorConcerns rides alongside the escalations so the relay surfaces the supervisor's
 # run-end advice (e.g. "#N unblocked — attempt now", "#M NOT automatable") even when it produced
 # no formal escalation of its own.
-jq -n --argjson e "$pending" --argjson c "$concerns" --arg run "$RUN_ID" --argjson ts "$(date +%s)" \
-  '{generatedAt: $ts, run: $run, count: ($e|length), escalations: $e, supervisorConcerns: $c}' > "$OUT" 2>/dev/null \
-  || govern::log "could not write $OUT"
+# Atomic write (tmp + mv): a reader (the /govern relay, run-start regen, or a concurrent driver) must
+# never observe a half-written pending-escalations.json. mv is atomic on the same filesystem.
+_out_tmp="$OUT.tmp.$$"
+if jq -n --argjson e "$pending" --argjson c "$concerns" --arg run "$RUN_ID" --argjson ts "$(date +%s)" \
+  '{generatedAt: $ts, run: $run, count: ($e|length), escalations: $e, supervisorConcerns: $c}' > "$_out_tmp" 2>/dev/null; then
+  mv "$_out_tmp" "$OUT" 2>/dev/null || { rm -f "$_out_tmp" 2>/dev/null || true; govern::log "could not write $OUT"; }
+else
+  rm -f "$_out_tmp" 2>/dev/null || true; govern::log "could not write $OUT"
+fi
 
 if [[ "$count" -gt 0 ]]; then
   govern::log "$count open escalation(s) await an operator answer → $OUT (relay presents these via AskUserQuestion)"
