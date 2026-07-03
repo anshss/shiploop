@@ -50,18 +50,34 @@ behind="${behind:-0}"; ahead="${ahead:-0}"
 if [[ "$behind" != "0" ]] && [[ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]]; then
   # Known governor runtime artifacts the harness writes to main. Anything OUTSIDE this allowlist is
   # unexpected — don't silently commit it; halt with the actionable cause instead.
-  other="$(git -C "$d" status --porcelain 2>/dev/null | grep -vE '(^|[[:space:]])governor/improvements\.md$' || true)"
+  # Allowlist of governor runtime artifacts a run legitimately writes to main:
+  #   - governor/improvements.md          — the self-improvement notes writer
+  #   - governor/.ticket-seq              — the monotonic ticket seq high-water mark; a crash
+  #                                         between the bump and its commit leaves it dirty
+  #   - governor/escalations.md           — file_open_escalation / park writers commit same-step
+  #                                         but a crash between write + commit can still leave dirty
+  #   - governor/pending-escalations.json — regenerated at run-start + run-end from escalations.md
+  allow_re='(^|[[:space:]])(governor/improvements\.md|governor/\.ticket-seq|governor/escalations\.md|governor/pending-escalations\.json)$'
+  other="$(git -C "$d" status --porcelain 2>/dev/null | grep -vE "$allow_re" || true)"
   if [[ -n "$other" ]]; then
     govern::log "preflight: meta main is $behind behind origin/main but the working tree has UNCOMMITTED changes that will block the rebase — this is NOT a merge conflict. Commit or stash them, then re-run. Offending paths:"
     git -C "$d" status --porcelain 2>/dev/null | sed 's/^/    /' >&2
     exit 2
   fi
-  # Only a known runtime artifact is dirty → commit it so the rebase below isn't blocked (self-heal,
-  # #111). Commit ONLY (no push) — the existing reconcile paths below replay + publish it. Committing
-  # locally turns a behind-only state into diverged, so recompute ahead/behind afterwards.
-  ( cd "$d"; git add -- governor/improvements.md 2>/dev/null || true
-    git commit -q -m "chore(govern): commit self-improvement notes before reconcile (preflight self-heal #111)" -- governor/improvements.md || true ) || true
-  govern::log "preflight: committed uncommitted governor/improvements.md so the rebase isn't blocked (#111 self-heal)"
+  # Only known runtime artifacts are dirty → commit them so the rebase below isn't blocked
+  # (self-heal, #111). Commit ONLY (no push) — the existing reconcile paths below replay + publish
+  # them. Committing locally turns a behind-only state into diverged, so recompute ahead/behind
+  # afterwards. Each pathspec is best-effort: a path that isn't dirty is a harmless no-op.
+  ( cd "$d"
+    for p in governor/improvements.md governor/.ticket-seq governor/escalations.md governor/pending-escalations.json; do
+      git add -- "$p" 2>/dev/null || true
+    done
+    # Commit whatever the loop just staged; a bare `git commit -m ...` (no `-- <paths>`)
+    # avoids the git-pathspec-does-not-match error that would abort the whole commit if any
+    # allowlist path was clean. At run-start nothing else should be staged, so scope stays tight.
+    git commit -q -m "chore(govern): commit uncommitted runtime artifacts before reconcile (preflight self-heal #111)" 2>/dev/null || true
+  ) || true
+  govern::log "preflight: committed uncommitted governor runtime artifacts so the rebase isn't blocked (#111 self-heal)"
   read -r behind ahead < <(git -C "$d" rev-list --left-right --count origin/main...HEAD 2>/dev/null || echo "0	0")
   behind="${behind:-0}"; ahead="${ahead:-0}"
 fi

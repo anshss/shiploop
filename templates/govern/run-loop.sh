@@ -259,30 +259,36 @@ govern_teardown_worker() {
 #                 after a rebase-onto-origin/main retry (and the #191 conflict re-dispatch)
 # Reads $N, $MODE, $DIR from the loop scope. Factored out of the single-PR resolved path so the
 # SAME merge discipline applies to every sibling PR of a multi-repo ticket, none orphaned.
-merge_pr_for_ticket() { # repo pr -> echoes merged|red|unmergeable
+merge_pr_for_ticket() { # repo pr -> echoes merged|red|unmergeable|error
   local repo="$1" pr="$2" st tries=0 st2
   # CI-cost: each fix re-dispatch pushes a commit that re-runs the repo's full PR CI (potentially
   # a full container build). Default to ONE retry — a second full-CI attempt on a flapping ticket
   # rarely flips it green and doubles the spend. Tune via GOVERN_CI_FIX_TRIES (0 = park on first
   # red, no fix attempt).
   local max_fix="${GOVERN_CI_FIX_TRIES:-1}"
-  st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+  # FAIL-CLOSED (#34b): capture await-ci's token; a non-zero 'error' exit (or a crash with no
+  # token) degrades to 'error', NEVER to 'none'/mergeable (root cause of the pre-fix auto-merge-
+  # without-CI where `… || echo none` conflated a gh error with a genuinely-checkless repo).
+  st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || true)"; [[ -n "$st" ]] || st="error"
   while [[ "$st" == "red" && "$tries" -lt "$max_fix" ]]; do
     govern::log "CI red on $repo#$pr — re-dispatching worker to fix (try $((tries+1))/$max_fix)"
     GOVERN_FIX_CI="$repo#$pr" GOVERN_MODE="$MODE" spawn_worker_tracked "$N" >/dev/null 2>&1 || true
-    st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"; tries=$((tries+1))
+    st="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || true)"; [[ -n "$st" ]] || st="error"; tries=$((tries+1))
   done
+  # CI state could not be VERIFIED (gh network/auth/5xx) → park, don't merge blind (#34b).
+  if [[ "$st" == "error" ]]; then echo error; return; fi
   if [[ "$st" != "green" && "$st" != "none" ]]; then echo red; return; fi
   # NB: merge-pr.sh stdout (its live `gh pr merge` output / GOVERN_ECHO "WOULD RUN" line) is sent to
   # stderr so this function's ONLY stdout is the result token the caller captures via $().
-  if "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+  # GOVERN_SKIP_CI=1: we JUST confirmed green/none above — skip merge-pr.sh's redundant re-poll.
+  if GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
   # #71: a "not mergeable" failure is most often a STALE PR base (origin/main moved under the PR),
   # not a real content conflict. Try ONE 'gh pr update-branch' (rebase onto origin/main) +
   # re-await-CI + re-merge before giving up — auto-clears the common case without an operator.
   if [[ "$MODE" == "live" ]] && gh pr update-branch "$pr" --repo "$(govern::repo_slug "$repo")" >/dev/null 2>&1; then
     govern::log "merge failed $repo#$pr — rebased PR onto origin/main (gh pr update-branch); re-checking CI + retrying merge [#71]"
-    st2="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
-    if [[ "$st2" == "green" || "$st2" == "none" ]] && "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+    st2="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || true)"; [[ -n "$st2" ]] || st2="error"
+    if [[ "$st2" == "green" || "$st2" == "none" ]] && GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
   fi
   # #191: CI is green/none but the merge still failed even after the #71 rebase-onto-origin/main
   # retry — a genuine CONTENT conflict (the PR and origin/main edited the same lines; e.g. two
@@ -298,9 +304,9 @@ merge_pr_for_ticket() { # repo pr -> echoes merged|red|unmergeable
     govern::log "merge still failing $repo#$pr after the #71 rebase retry — content conflict; re-dispatching a worker to merge origin/main + resolve, then retry merge (try $((ctries+1))/$max_conflict) [#191]"
     GOVERN_RESOLVE_CONFLICT="$repo#$pr" GOVERN_MODE="$MODE" spawn_worker_tracked "$N" >/dev/null 2>&1 || true
     ctries=$((ctries+1))
-    st3="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || echo none)"
+    st3="$("$DIR/await-ci.sh" "$repo" "$pr" 2>/dev/null || true)"; [[ -n "$st3" ]] || st3="error"
     [[ "$st3" == "green" || "$st3" == "none" ]] || continue
-    if "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+    if GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
   done
   echo unmergeable
 }
@@ -448,8 +454,15 @@ META_DIR="$(govern::meta_root)"
 # parked decisions never migrate (the gap #62 fixes). Live only; dry-run logs intent.
 if [[ "$MODE" == "live" ]]; then
   "$DIR/escalations-apply-answers.sh" >&2 || govern::log "escalations-apply-answers failed (non-fatal) — continuing"
+  # #3/#337: regenerate governor/pending-escalations.json at run-START (not only run-end) against the
+  # cleaned escalations.md, so a stale/ghost snapshot left by a crashed run or a manual resolution
+  # (a pending entry for an escalation no longer open, or a missing genuinely-open one) is corrected
+  # BEFORE anything reads it. escalations.md ## Open is the source of truth, not this cached JSON.
+  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
+    || govern::log "run-start pending-escalations regen failed (non-fatal)"
 else
   govern::log "[dry] would apply recorded escalation answers (un-park / migrate-to-parked / preferences) from escalations.md"
+  govern::log "[dry] would regenerate governor/pending-escalations.json at run-start from escalations.md ## Open (#3/#337)"
 fi
 
 # #71: run-start preflight — reconcile the meta checkout's main with origin/main BEFORE cutting any
@@ -546,7 +559,7 @@ while :; do
       for p in ${PRIORITY//,/ }; do
         [[ -n "$p" ]] || continue
         if [[ -z "$N" && ",$excludes," != *",$p,"* && "$NA_SET" != *",$p,"* ]] \
-             && grep -qE "^## #$p([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
+             && grep -qE "^##[[:space:]]+#$p([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
           N="$p"; govern::log "supervisor → attempting #$p now (prioritized over severity order) (#92)"
         else
           _newpri="${_newpri:+$_newpri,}$p"
@@ -598,7 +611,7 @@ while :; do
     _unmet=""
     while IFS= read -r _k; do
       [[ "$_k" =~ ^[0-9]+$ ]] || continue
-      grep -qE "^## #$_k([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null && _unmet="${_unmet:+$_unmet, }#$_k"
+      grep -qE "^##[[:space:]]+#$_k([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null && _unmet="${_unmet:+$_unmet, }#$_k"
     done < <(govern::ticket_deps "$N" "$TICKETS_FILE")
     if [[ -n "$_unmet" ]]; then
       govern::log "#$N depends on unresolved $_unmet (still in tickets.md) — deferring this run, no worker burned (#119)"
@@ -631,6 +644,11 @@ while :; do
   else
     GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
+    # Heartbeat the claim lock so its "age" measures time since the last phase completion, not
+    # since acquire — a real ticket can legitimately run > the default stale window (worker +
+    # await-ci + CI-fix re-dispatch + conflict-resolve). The pid-liveness check in lock_try is
+    # the load-bearing anti-steal invariant; this heartbeat is defense-in-depth.
+    [[ -n "$CUR_CLAIM" ]] && govern::lock_heartbeat "$CUR_CLAIM"
   fi
 
   status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
@@ -689,8 +707,12 @@ while :; do
   # properly-equipped re-run) produces real evidence — never silently accept a code-reading verdict.
   # Fires only on validation-type tickets, so ordinary code tickets are unaffected.
   if [[ "$status" == "resolved" && "$MODE" == "live" ]]; then
-    tblock="$(awk -v n="$N" 'index($0,"## #" n " ")==1{f=1} f{print} f&&/^---$/{exit}' "$TICKETS_FILE" 2>/dev/null || true)"
-    if printf '%s' "$tblock" | grep -qE '^## #[0-9]+ —.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
+    # Use the shared tolerant parser so a `##  #N` (double-space) or `## #N—Title` (em-dash
+    # no space) heading doesn't yield an empty tblock — which would silently disable this
+    # gate: the VALIDATION|SPIKE grep would miss and a code-reading verdict would resolve a
+    # validation ticket without live-test evidence, defeating the #67 gate.
+    tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+    if printf '%s' "$tblock" | grep -qE '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
       ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
       eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
       if [[ "$ranlive" != "true" || -z "$eviden" ]]; then
@@ -758,6 +780,13 @@ while :; do
               govern::log "merge failed $prepo#$pnum — PR left open; parking (ticket NOT deleted) [#42]"
               pr_summary="$pr_summary $prepo#$pnum(unmergeable-left-open)"
               report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" could not be merged (conflict or failing required check) — needs a manual rebase onto origin/main + merge"),question:("rebase "+$p+" onto origin/main, resolve conflicts, then merge"),options:[]}')"
+              [[ "$status" == "resolved" ]] && status="parked" ;;
+            error)
+              # CI state UNVERIFIABLE (gh network/auth/rate-limit/5xx) — we could NOT confirm the PR's
+              # checks are green, so we FAIL CLOSED: leave the PR open + park, never merge blind (#34b).
+              govern::log "CI state unverifiable on $prepo#$pnum (gh could not confirm CI) — PR left open; parking (ticket NOT deleted) [ci-state-unverifiable]"
+              pr_summary="$pr_summary $prepo#$pnum(ci-unverifiable-left-open)"
+              report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" was NOT merged because its CI state could not be verified (gh error — network / auth / rate-limit / GitHub 5xx). Failing closed rather than merging without a confirmed-green CI."),question:("confirm "+$p+" CI is green, then merge; or investigate the gh/GitHub API failure"),options:[]}')"
               [[ "$status" == "resolved" ]] && status="parked" ;;
           esac
         else
@@ -873,8 +902,11 @@ while :; do
       # operator answers (do-the-work | defer | mitigated | keep-open); escalations-apply-answers.sh
       # reads it at the next run-start to un-park / migrate-to-parked / close-as-mitigated, closing
       # the lifecycle. #121: `mitigated` closes a ticket as accepted-current-state (harm already zero).
-      printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
+      # #312: stamp `Opened` (date + run id) so govern-health.sh can age unanswered escalations and
+      # flag stale ones ("needs operator attention") instead of the supervisor rediscovering them by hand.
+      printf '\n### #%s — %s\n- **Opened:** %s (run %s)\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
           "$N" "$(printf '%s' "$report" | jq -r '.escalation.title // ((.escalation.reason // "parked")[0:80])')" \
+          "$(date +%F)" "$(basename "$RUNDIR")" \
           "$(printf '%s' "$report" | jq -r '.escalation.reason // ""')" \
           "$(printf '%s' "$report" | jq -r '.escalation.question // ""')" \
           "$(printf '%s' "$report" | jq -r '(.escalation.options // []) | if type=="array" then join(" / ") else tostring end')" > "$_blk"
@@ -895,6 +927,9 @@ while :; do
         cat "$_blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
       fi
       rm -f "$_blk"
+      # #14: commit the park escalation SAME-STEP — a dirty escalations.md left at run-end aborts the
+      # next run's preflight rebase (the recurring-orphan self-block). Scoped + CAS-safe + push-guarded.
+      [[ "$MODE" == "live" ]] && govern::_commit_escalations "park escalation #$N"
       record "$N" parked "escalated; worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
       govern::log "#$N PARKED — escalation filed; worktree PRESERVED at $(wt_path "$N")"
       slim_worktree "$N"
@@ -1029,19 +1064,11 @@ while :; do
   [[ -n "$TARGET" ]] && break
 done
 
-# #62: run-end operator hand-off. The driver is headless, so without this a parked decision is
-# write-only — it lands in escalations.md and nothing ever asks the operator. Emit a
-# machine-readable governor/pending-escalations.json of the still-unanswered "## Open" entries so
-# the launching /govern relay can present them via AskUserQuestion + record answers (which the
-# NEXT run-start applies). Also fires GOVERN_NOTIFY_CMD when pending escalations exist, so a
-# no-session run still surfaces a signal.
-if [[ "$MODE" == "live" ]]; then
-  # #92: pass the run's accumulated supervisor concerns ($REVIEW) so they're surfaced to the
-  # relay/operator at run-end (folded into pending-escalations.json + the notify message), not
-  # buried only in review.md. A concern with no matching escalation would otherwise be invisible.
-  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" "$REVIEW" >/dev/null 2>&1 \
-    || govern::log "escalations-emit-pending failed (non-fatal)"
-fi
+# #337: the AUTHORITATIVE run-end pending-escalations.json emit is DEFERRED to AFTER the run-end
+# escalation writers (self-improve / self-apply). Emitting it here (before self-improve/self-apply
+# could file a fresh escalation) left pending stale. escalations.md ## Open is the source of
+# truth; the single final emit below (search "#337: authoritative run-end emit") writes pending
+# exactly once, last.
 
 # Self-improvement (observe → propose, never auto-apply): when a run hit friction, a fresh
 # read-only reviewer proposes concrete harness improvements into governor/improvements.md.
@@ -1064,6 +1091,17 @@ fi
 # change takes effect next run. Default off — observe→propose is the default posture.
 if [[ "${GOVERN_SELF_APPLY:-0}" == "1" && "$MODE" == "live" ]]; then
   "$DIR/govern-self-apply.sh" "$RUNDIR" 2>&1 | sed 's/^/[self-apply] /' || true
+fi
+
+# #337: authoritative run-end emit — LAST, after every run-end escalation writer (park loop, the
+# self-improve/self-apply block above), so governor/pending-escalations.json reflects the FINAL
+# escalations.md ## Open. This is the #62 operator hand-off: the launching /govern relay reads
+# this JSON and presents the still-unanswered entries via AskUserQuestion; the next run-start
+# applies the recorded answers. Also fires GOVERN_NOTIFY_CMD when pending exist so a no-session
+# run still surfaces a signal. #92: pass $REVIEW so the run's supervisor concerns ride alongside.
+if [[ "$MODE" == "live" ]]; then
+  "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" "$REVIEW" >/dev/null 2>&1 \
+    || govern::log "escalations-emit-pending failed (non-fatal)"
 fi
 
 if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then

@@ -38,17 +38,54 @@ done
 
 WORKTREE_PATH=$(wt_registry_path_for "$NAME") || exit 1
 
-# Dirty-tree check
+# Pre-removal safety check (skipped under --force). Refuse if any sub-repo worktree — or the
+# meta worktree itself — has uncommitted changes OR commits not yet on its remote. Below we
+# `git worktree remove --force` + `git branch -D` each tree, which makes any local-only commit
+# reflog-only: recoverable for a while, but silently lost to a normal `worktree:rm` (HIGH-sev
+# data-loss bug — the old guard only checked `status --porcelain`, so a clean worktree whose
+# branch was N commits ahead of origin passed straight through and got its branch deleted).
+
+# Commits on HEAD not reachable from the repo's remote. Prefer the branch's configured upstream;
+# fall back to origin/main (the meta worktree is a DETACHED origin/main checkout with no upstream);
+# if neither resolves (no remote-tracking ref at all) we can't compare, so report 0 — never block
+# on a case we can't measure.
+unpushed_count() { # <dir>
+  local dir="$1"
+  if git -C "$dir" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+    git -C "$dir" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo 0
+  elif git -C "$dir" rev-parse --verify origin/main >/dev/null 2>&1; then
+    git -C "$dir" rev-list --count 'origin/main..HEAD' 2>/dev/null || echo 0
+  else
+    echo 0
+  fi
+}
+
+# Check one worktree dir; sets the shared `had_problem` flag and prints why. A non-git dir is skipped.
+had_problem=0
+check_worktree_dir() { # <dir> <label>
+  local dir="$1" label="$2" n
+  [ -d "$dir/.git" ] || [ -f "$dir/.git" ] || return 0
+  if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+    echo "✗ '$label' has uncommitted changes in $dir" >&2
+    had_problem=1
+  fi
+  n="$(unpushed_count "$dir")"
+  if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
+    echo "✗ '$label' has $n commit(s) not pushed to its remote in $dir" >&2
+    had_problem=1
+  fi
+}
+
 if [ "$FORCE" -ne 1 ]; then
   for repo in "${REPOS[@]}"; do
-    dir="$WORKTREE_PATH/$repo"
-    [ -d "$dir" ] || continue
-    if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
-      echo "✗ '$repo' has uncommitted changes in $dir" >&2
-      echo "  pass --force to discard, or commit them first" >&2
-      exit 1
-    fi
+    [ -d "$WORKTREE_PATH/$repo" ] || continue
+    check_worktree_dir "$WORKTREE_PATH/$repo" "$repo"
   done
+  check_worktree_dir "$WORKTREE_PATH" "meta"
+  if [ "$had_problem" -ne 0 ]; then
+    echo "  pass --force to discard, or commit/push them first" >&2
+    exit 1
+  fi
 fi
 
 # Run the project-specific session-cleanup hook before tearing down (best-effort).

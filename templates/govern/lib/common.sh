@@ -124,7 +124,7 @@ govern::assert_commit_dir() { # <dir>
 # line) so the emit/apply scripts share ONE deterministic parser instead of each
 # re-implementing markdown parsing. Fields are read line-oriented (each `- **X:**`
 # is a single-line value — exactly how run-loop.sh writes a park block). Emits:
-#   {ticket,title,reason,question,options,answer,disposition,makeRule}
+#   {ticket,title,opened,reason,question,options,answer,disposition,makeRule}
 # Reads $1 (defaults to ESCALATIONS_FILE). Prints nothing if the file/section is empty.
 govern::escalations_open_ndjson() { # [escalations-file]
   local file="${1:-$ESCALATIONS_FILE}"
@@ -133,10 +133,10 @@ govern::escalations_open_ndjson() { # [escalations-file]
     function jesc(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\t/,"\\t",s); gsub(/\r/,"",s); return s }
     function flush(){
       if(have){
-        printf "{\"ticket\":%s,\"title\":\"%s\",\"reason\":\"%s\",\"question\":\"%s\",\"options\":\"%s\",\"answer\":\"%s\",\"disposition\":\"%s\",\"makeRule\":\"%s\"}\n", \
-          t, jesc(title), jesc(reason), jesc(question), jesc(options), jesc(answer), jesc(disp), jesc(rule)
+        printf "{\"ticket\":%s,\"title\":\"%s\",\"opened\":\"%s\",\"reason\":\"%s\",\"question\":\"%s\",\"options\":\"%s\",\"answer\":\"%s\",\"disposition\":\"%s\",\"makeRule\":\"%s\"}\n", \
+          t, jesc(title), jesc(opened), jesc(reason), jesc(question), jesc(options), jesc(answer), jesc(disp), jesc(rule)
       }
-      have=0; title="";reason="";question="";options="";answer="";disp="";rule=""
+      have=0; title="";opened="";reason="";question="";options="";answer="";disp="";rule=""
     }
     BEGIN{ in_open=0; have=0 }
     /^## Open/ { if(in_open) flush(); in_open=1; next }
@@ -149,7 +149,8 @@ govern::escalations_open_ndjson() { # [escalations-file]
     }
     in_open && have {
       line=$0
-      if      (match(line,/^- \*\*Reason:\*\* ?/))            reason=substr(line,RLENGTH+1)
+      if      (match(line,/^- \*\*Opened:\*\* ?/))            opened=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Reason:\*\* ?/))            reason=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Question:\*\* ?/))          question=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Options:\*\* ?/))           options=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Answer:\*\* ?/))            answer=substr(line,RLENGTH+1)
@@ -191,8 +192,9 @@ govern::has_open_escalation() { # ticket -> 0 if an open ### #N entry exists
 govern::file_open_escalation() { # N title reason question options
   local N="$1" title="$2" reason="$3" question="$4" options="$5" blk tmp
   blk="$(mktemp)"
-  printf '\n### #%s — %s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
-    "$N" "$title" "$reason" "$question" "$options" > "$blk"
+  # #312: stamp `Opened` (date; run id if the caller exported one) so govern-health.sh can age it.
+  printf '\n### #%s — %s\n- **Opened:** %s%s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
+    "$N" "$title" "$(date +%F)" "${TJ_RUN_ID:+ (run $TJ_RUN_ID)}" "$reason" "$question" "$options" > "$blk"
   if grep -q '^## Open' "$ESCALATIONS_FILE" 2>/dev/null; then
     tmp="$(mktemp)"
     awk -v bf="$blk" '{print} /^## Open/ && !done {while ((getline l < bf) > 0) print l; close(bf); done=1}' \
@@ -201,6 +203,24 @@ govern::file_open_escalation() { # N title reason question options
     cat "$blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
   fi
   rm -f "$blk"
+  # #14: an escalations.md writer must COMMIT its append SAME-STEP — an uncommitted tracked
+  # escalations.md makes the NEXT run's preflight `git pull --rebase` abort on a dirty tree, which the
+  # governor misreports as a rebase conflict and self-blocks its own start (the recurring-orphan class).
+  # commit_meta_to_main is scoped to escalations.md, CAS/rebase-safe, push-guarded, and a no-op outside
+  # a git repo, so this is the single choke point that keeps every file_open_escalation caller clean.
+  govern::_commit_escalations "file escalation #$N ($title)"
+}
+
+# Commit ONLY escalations.md to main via the CAS-safe path (#14). Derives the repo root + repo-relative
+# path from $ESCALATIONS_FILE so it works whether escalations.md sits at governor/ (production) or an
+# override dir (tests). No-op (returns 0) outside a git repo. Shared by every escalations.md writer.
+govern::_commit_escalations() { # <commit-subject-tail>
+  local subj="$1" edir eroot erel
+  edir="$(dirname "$ESCALATIONS_FILE")"
+  eroot="$(git -C "$edir" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$eroot" ]] || return 0
+  erel="$(git -C "$edir" rev-parse --show-prefix 2>/dev/null)$(basename "$ESCALATIONS_FILE")"
+  govern::commit_meta_to_main "$eroot" "$erel" "docs(governor): $subj"
 }
 
 # Extract ONLY the leading token of a Disposition field — the first whitespace-delimited
@@ -240,31 +260,77 @@ govern::norm_disposition() { # raw -> canonical|""
 }
 
 # ── concurrency primitives (#41: safe parallel govern drivers on disjoint tickets) ──
-# mkdir is atomic on POSIX, so an empty dir is a portable mutex. Both helpers reclaim a
-# STALE lock (holder crashed) so a dead driver can't wedge the queue forever.
+# mkdir is atomic on POSIX, so an empty dir is a portable mutex. The holder pid is recorded
+# INSIDE the lock dir so stale reclaim is PID-liveness-aware: a lock whose holder is still
+# alive is NEVER stolen, even if its mtime clock-ages past the stale window (a genuine ticket
+# can run > default stale window: worker + await-ci + CI-fix re-dispatch + conflict-resolve).
+# Only when the recorded holder pid is DEAD (crashed driver) or the pid file is missing do
+# we fall back to the mtime stale window as a backstop.
 govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
   local m; m="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
   echo $(( $(date +%s) - m ))
 }
+# Read the holder pid recorded inside a claim/bookkeep lock dir. Returns "" when absent
+# (a pre-#pid-liveness lock or a partial write from a killed acquire).
+govern::_lock_holder_read() { # lockdir -> pid|""
+  [[ -f "$1/holder" ]] || return 0
+  tr -dc '0-9' < "$1/holder" 2>/dev/null || true
+}
+# Stamp the current pid into the lock dir. Best-effort — mkdir succeeded so the dir exists;
+# a failed write just leaves the lock pid-less (falls back to the mtime stale window).
+govern::_lock_stamp_pid() { # lockdir
+  printf '%s\n' "$$" > "$1/holder" 2>/dev/null || true
+}
+# Is a lock reclaimable? Yes iff no holder pid is recorded (mtime fallback) OR the recorded
+# pid is dead. Callers gate an mtime-stale reclaim on this so a LIVE holder is never stolen.
+govern::_lock_holder_dead() { # lockdir -> 0 (dead / no holder), 1 (alive)
+  local hpid; hpid="$(govern::_lock_holder_read "$1")"
+  [[ -n "$hpid" ]] || return 0
+  kill -0 "$hpid" 2>/dev/null && return 1 || return 0
+}
+# Refresh the lock's mtime so its "age" measures time since the last heartbeat, NOT time
+# since acquire. Called from the run-loop main loop per iteration so a long-running claim
+# (worker + await-ci + fix re-dispatch) never appears stale.
+govern::lock_heartbeat() { # lockdir
+  [[ -d "$1" ]] && { touch "$1" 2>/dev/null || true; }
+}
+# Parse a YYYY-MM-DD date into epoch seconds, portably across BSD (macOS) and GNU date.
+# Prints the epoch on success; returns 1 (prints nothing) on a malformed/empty date.
+govern::date_to_epoch() { # YYYY-MM-DD -> epoch
+  local d="${1:-}"
+  [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  date -j -f "%Y-%m-%d" "$d" +%s 2>/dev/null || date -d "$d" +%s 2>/dev/null
+}
 # Blocking acquire: spin up to timeout_s. Returns 0 acquired, 1 timed out. Caller releases.
+# Reclaims a stale lock ONLY when the recorded holder pid is dead (or missing) AND mtime is
+# past the stale window — never steals from a still-alive holder.
 govern::lock_acquire() { # lockdir [timeout_s=60] [stale_s=300]
   local lock="$1" timeout="${2:-60}" stale="${3:-300}" waited=0
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
   while ! mkdir "$lock" 2>/dev/null; do
-    [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]] && { rmdir "$lock" 2>/dev/null && continue; }
+    if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
+      rm -rf "$lock" 2>/dev/null && continue
+    fi
     sleep 1; waited=$((waited+1)); [[ "$waited" -ge "$timeout" ]] && return 1
   done
+  govern::_lock_stamp_pid "$lock"
   return 0
 }
 # Non-blocking try: claim once. Returns 0 claimed, 1 held by a live other holder.
-govern::lock_try() { # lockdir [stale_s=4200]
-  local lock="$1" stale="${2:-4200}"
+# Default stale raised to worst-case ticket wall-clock so an unheartbeated long ticket doesn't
+# false-trip; the pid-liveness check above the mtime fallback is the LOAD-BEARING invariant here.
+govern::lock_try() { # lockdir [stale_s=18000]
+  local lock="$1" stale="${2:-18000}"
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
-  mkdir "$lock" 2>/dev/null && return 0
-  [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]] && { rmdir "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null && return 0; }
+  if mkdir "$lock" 2>/dev/null; then govern::_lock_stamp_pid "$lock"; return 0; fi
+  if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
+    rm -rf "$lock" 2>/dev/null
+    if mkdir "$lock" 2>/dev/null; then govern::_lock_stamp_pid "$lock"; return 0; fi
+  fi
   return 1
 }
-govern::lock_release() { rmdir "$1" 2>/dev/null || true; }
+# Release: rm -rf (not rmdir) because the lock now holds a `holder` file.
+govern::lock_release() { rm -rf "$1" 2>/dev/null || true; }
 
 # ── Worker process-tree teardown (#242) ─────────────────────────────────────
 # Killing the governor (Stop / SIGTERM) used to leave its spawn-worker.sh + child worker process
@@ -383,11 +449,57 @@ govern::duplicate_ticket_headings() { # [tickets-file]
 # Bold-ANCHORED on purpose: the marker must appear as `**marker…` so a ticket that merely
 # DISCUSSES automatability in prose is NOT matched — only a real `**marker**` directive whose
 # bold span STARTS with the marker phrase. Reads $1 (defaults to TICKETS_FILE).
+# ── shared ticket-block parser (single source of truth) ─────────────────────
+# Historically each caller re-parsed tickets.md block boundaries differently: spawn-worker /
+# govern-bookkeep bounded at the FIRST `^---$` (which a bare `---` inside a ticket body truncates
+# — worker prompt gets a short block, bookkeep delete leaves orphaned body lines); select-ticket /
+# not_automatable / ticket_deps bounded at the next `## #` heading, but the heading regex requires
+# an exact `## #N ` (single space), so `##  #N` (double-space) or `## #N—Title` (em-dash, no space)
+# breaks recognition. These helpers are the SINGLE source of truth: block boundary = next tolerant
+# `^##[[:space:]]+#<digits>` heading OR EOF; a bare `---` inside the body is treated as content,
+# not a boundary; the block INCLUDES its trailing `---` separator so `_delete` doesn't leave
+# orphaned separators.
+#
+# govern::ticket_block — print the whole block for ticket $1 from its heading through the last
+# line before the next `## #<digits>` heading (or EOF). Includes the trailing `---` separator
+# if one is present. Reads $2 (default TICKETS_FILE). Empty output if the ticket isn't found.
+govern::ticket_block() { # N [tickets-file]
+  local n="$1" f="${2:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  awk -v n="$n" '
+    /^##[[:space:]]+#[0-9]+/ {
+      if ($0 ~ ("^##[[:space:]]+#" n "([^0-9]|$)")) { grab=1; print; next }
+      if (grab) exit
+    }
+    grab { print }
+  ' "$f"
+}
+
+# govern::ticket_block_delete — rewrite $2 (default TICKETS_FILE) with ticket $1's block removed:
+# the heading line, its body, and the trailing `---` separator that belongs to this block. The
+# separator is consumed with the block so we never leave a doubled-separator artifact. A bare
+# `---` inside the body no longer terminates the delete early (the boundary is the next `## #`
+# heading, not the first `---`). Silent no-op if the ticket isn't present. Uses tmp+mv so the
+# original file is never truncated mid-write.
+govern::ticket_block_delete() { # N [tickets-file]
+  local n="$1" f="${2:-$TICKETS_FILE}" tmp
+  [[ -f "$f" ]] || return 0
+  tmp="$(mktemp)"
+  awk -v n="$n" '
+    /^##[[:space:]]+#[0-9]+/ {
+      if ($0 ~ ("^##[[:space:]]+#" n "([^0-9]|$)")) { grab=1; next }
+      grab=0
+    }
+    grab { next }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp" 2>/dev/null
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
   awk '
-    /^## #[0-9]+/ { cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); emitted=0; next }
+    /^##[[:space:]]+#[0-9]+/ { cur=$0; sub(/^##[[:space:]]+#/,"",cur); sub(/[^0-9].*/,"",cur); emitted=0; next }
     cur!="" && !emitted {
       low=tolower($0)
       if      (low ~ /\*\*[ \t]*not[ \t]+govern-automatable/) m="NOT govern-automatable"
@@ -572,8 +684,8 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
   local n="$1" f="${2:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
   awk -v n="$n" '
-    $0 ~ ("^## #" n "([^0-9]|$)") { inblk=1; next }
-    inblk && /^## #[0-9]+/        { inblk=0 }
+    $0 ~ ("^##[[:space:]]+#" n "([^0-9]|$)") { inblk=1; next }
+    inblk && /^##[[:space:]]+#[0-9]+/        { inblk=0 }
     inblk {
       low=tolower($0)
       if (low ~ /depends[ \t]+on/) {
@@ -591,14 +703,22 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
 # `.dependsOn`) into pending-waits.json, de-duped by ticket number (newest wins). Creates the file if
 # absent. No-op without jq / a ticket field. Live-only side effect — callers gate on MODE.
 govern::waits_add() { # entry-json
-  local entry="$1" f="$PENDING_WAITS_FILE" t cur
+  local entry="$1" f="$PENDING_WAITS_FILE" t cur tmp
   command -v jq >/dev/null 2>&1 || return 0
   t="$(jq -r '.ticket // empty' <<<"$entry" 2>/dev/null || true)"
   [[ "$t" =~ ^[0-9]+$ ]] || return 0
   mkdir -p "$(dirname "$f")" 2>/dev/null || true
   cur="$([[ -s "$f" ]] && cat "$f" || echo '{"waits":[]}')"
-  printf '%s' "$cur" | jq -c --argjson e "$entry" --argjson t "$t" \
-    '{waits: (((.waits // []) | map(select(.ticket != $t))) + [$e])}' > "$f" 2>/dev/null || true
+  # tmp+mv (never `> $f` directly): the redirect truncates $f BEFORE jq runs, so a jq failure
+  # (corrupt pre-existing JSON, disk full) would EMPTY pending-waits.json and evaporate every
+  # deferral. Matches the na_skip_bump / waits_remove pattern.
+  tmp="$f.tmp.$$"
+  if printf '%s' "$cur" | jq -c --argjson e "$entry" --argjson t "$t" \
+       '{waits: (((.waits // []) | map(select(.ticket != $t))) + [$e])}' > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
 }
 
 # Drop the wait entry for ticket $1 from pending-waits.json (no-op if absent). Used when a blocker

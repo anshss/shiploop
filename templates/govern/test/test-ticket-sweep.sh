@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guard test for the ticket-sweep Stop hook + SessionStart snapshot (aquanode #61).
+# Guard test for the ticket-sweep Stop hook + SessionStart snapshot (mechanism #61).
 # Builds a sandbox "main checkout" (owns queue/tickets.md) and a "worktree" with one
 # sub-repo, then drives session-snapshot.sh and ticket-sweep-reminder.sh through
 # the #61 "Done when" scenarios — all deterministic, no real Claude, no network.

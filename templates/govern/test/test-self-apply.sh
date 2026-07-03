@@ -48,5 +48,23 @@ run_sa "$T3" 'printf "\nGOVERN_MAX_TICKETS=999\n" >> scripts/govern/run-loop.sh'
 assert_eq "$(commits "$T3")" "0" "safety-rail pattern edit is NOT committed"
 assert_eq "$(grep -c 'GOVERN_MAX_TICKETS=999' "$T3/scripts/govern/run-loop.sh")" "0" "safety-rail edit was reverted"
 
-rm -rf "$T1" "$T2" "$T3"
+# 4. Blocked-self-apply escalation is NUMERIC (### #N + Opened:) so the whole lifecycle sees it
+# (emit-pending / apply-answers / govern-health stale-ager). Regression for the item-1 fix — pre-fix
+# these were `### self-improvement BLOCKED — …` free-form headings the parser ignored entirely.
+T4="$(mk_sandbox)"
+run_sa "$T4" 'printf "x\n" >> governor/preferences.md'
+esc4="$(cat "$T4/governor/escalations.md")"
+assert_contains "$esc4" "### #" "4. self-apply BLOCKED entry is numeric (### #N)"
+assert_contains "$esc4" "**Opened:**" "4. entry carries an Opened: stamp for the stale-ager"
+# committed same-step (#14) — no dirty escalations.md left on disk
+dirty4="$(git -C "$T4" status --porcelain -- governor/escalations.md 2>/dev/null)"
+assert_eq "$dirty4" "" "4. escalations.md committed same-step (no dirty tree)"
+# emit-pending picks it up (numeric → lifecycle wired)
+EMIT="$DIR/../escalations-emit-pending.sh"
+env GOVERN_WS_ROOT="$T4" GOVERN_ESCALATIONS_FILE="$T4/governor/escalations.md" GOVERN_PENDING_FILE="$T4/pending.json" \
+    GOVERN_BOOKKEEP_LOCK="$T4/bk.lock" GOVERN_NO_PUSH=1 bash "$EMIT" test-run >/dev/null 2>&1
+n_pending="$(jq -r '.count' "$T4/pending.json" 2>/dev/null || echo 0)"
+assert_eq "$n_pending" "1" "4. emit-pending picks up the numeric self-apply escalation"
+
+rm -rf "$T1" "$T2" "$T3" "$T4"
 assert_done

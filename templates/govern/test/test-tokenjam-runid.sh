@@ -37,7 +37,7 @@ chmod +x "$TMP/fake-worktree.sh"
 cat > "$TMP/fake-claude.sh" <<'EOF'
 #!/usr/bin/env bash
 [[ -n "${OTEL_SINK:-}" ]] && printf '%s\n' "${OTEL_RESOURCE_ATTRIBUTES:-<unset>}" >> "$OTEL_SINK"
-report='{"status":"resolved","pr":{"repo":"mjolnir","number":99,"url":"u"},"newTickets":[],"escalation":null}'
+report='{"status":"resolved","pr":{"repo":"alpha","number":99,"url":"u"},"newTickets":[],"escalation":null}'
 [[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
 printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
 EOF

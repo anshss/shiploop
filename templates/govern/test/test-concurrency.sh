@@ -34,9 +34,23 @@ govern::lock_try "$L" && rc=0 || rc=1;        assert_eq "$rc" "0" "lock_try clai
 govern::lock_try "$L" && rc=0 || rc=1;        assert_eq "$rc" "1" "lock_try fails when held by a live holder"
 govern::lock_release "$L"
 govern::lock_try "$L" && rc=0 || rc=1;        assert_eq "$rc" "0" "lock_try re-claims after release"
-# stale reclaim: backdate the lock's mtime well past the stale window
+# stale reclaim (crashed holder): dead pid + backdated mtime. Both conditions must hold — pid
+# liveness is the primary check (never steal from a still-alive holder), mtime past the stale
+# window is the backstop that prevents reclaiming a lock whose pid file just hasn't been
+# written yet on a fresh acquire.
+printf '99999999\n' > "$L/holder"           # a pid that isn't running
+touch -t 202001010000 "$L"                  # mtime well past the stale window
+govern::lock_try "$L" 60 && rc=0 || rc=1;     assert_eq "$rc" "0" "lock_try reclaims a STALE lock (crashed holder = dead pid + backdated mtime)"
+govern::lock_release "$L"
+
+# NEW: a lock whose recorded holder pid is STILL ALIVE must NEVER be reclaimed, even if its
+# mtime clock-ages past the stale window (a real ticket can legitimately run > the default
+# stale window: worker + await-ci + fix re-dispatch + conflict-resolve). This is the core of
+# the pid-liveness fix — the guarantee that two drivers never work the same live ticket.
+govern::lock_try "$L" && rc=0 || rc=1;        assert_eq "$rc" "0" "setup: reclaim after prior release"
+# Backdate the mtime, but leave the current-process pid ($$ — always alive) as the holder.
 touch -t 202001010000 "$L"
-govern::lock_try "$L" 60 && rc=0 || rc=1;     assert_eq "$rc" "0" "lock_try reclaims a STALE lock (crashed holder)"
+govern::lock_try "$L" 60 && rc=0 || rc=1;     assert_eq "$rc" "1" "lock_try REFUSES a mtime-stale lock while its holder pid is ALIVE (no steal)"
 govern::lock_release "$L"
 
 # ── 2. concurrent bookkeep integrity ──

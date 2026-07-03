@@ -7,7 +7,7 @@ ASSERT_FAILS=0
 # These tests run in TWO layouts: a live workspace (govern at scripts/govern/, prompt
 # files at <root>/governor/, hooks at <root>/scripts/) and the template repo itself
 # (govern at templates/govern/, prompts at templates/governor/, hooks at templates/hooks/).
-# Probe both so the suite is green out-of-the-box in either — with NO aquanode workspace
+# Probe both so the suite is green out-of-the-box in either — with NO scaffolded workspace
 # present. assert.sh sits in <…>/govern/test/, so resolve relative to its own location.
 ASSERT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Governor prompt dir: templates/governor (template) | <root>/governor (workspace).
