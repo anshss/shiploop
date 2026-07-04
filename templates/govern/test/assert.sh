@@ -27,10 +27,11 @@ export GOVERN_PROMPTS_DIR="${GOVERN_PROMPTS_DIR:-}" GOVERN_HOOKS_DIR="${GOVERN_H
 # right after `mktemp -d`. Pass the auto-merge repos as a comma list (default "alpha"); REPOS = those plus
 # a frontend "web" repo (PR-only). Exports GOVERN_WS_ROOT (+ GOVERN_EXTERNALIZE_LANE=0, harmless where the
 # externalize lane doesn't exist, required where it does so run-loop's lane doesn't fire under the stub).
-#   mk_ws_stub "$T"                 # alpha auto-mergeable, web PR-only
-#   mk_ws_stub "$T" "alpha,api"     # alpha + api auto-mergeable
-mk_ws_stub() { # <root> [merge-csv]
-  local root="$1" merge="${2:-alpha}"
+#   mk_ws_stub "$T"                     # alpha auto-mergeable, web PR-only
+#   mk_ws_stub "$T" "alpha,api"         # alpha + api auto-mergeable
+#   mk_ws_stub "$T" "" "alpha"          # alpha PR-only AND local-first (#72)
+mk_ws_stub() { # <root> [merge-csv] [local-first-csv]
+  local root="$1" merge="${2:-alpha}" localfirst="${3:-}"
   export GOVERN_WS_ROOT="$root"
   export GOVERN_EXTERNALIZE_LANE=0
   mkdir -p "$root/scripts/lib"
@@ -41,8 +42,10 @@ META_ROOT="\${META_ROOT:-$root}"
 GITHUB_ORG="acme"
 REPOS=(${merge//,/ } web)
 GOVERN_MERGE_REPOS="${merge//,/ }"
+GOVERN_LOCAL_FIRST_REPOS="${localfirst//,/ }"
 WORKTREE_BASE="$root/wt"
 wsp_is_merge_repo() { case ",$merge," in *",\$1,"*) return 0;; *) return 1;; esac; }
+wsp_is_local_first_repo() { case ",$localfirst," in *",\$1,"*) return 0;; *) return 1;; esac; }
 wsp_repo_slug() { printf '%s/%s' "\$GITHUB_ORG" "\$1"; }
 wsp_repo_localdir() { printf '%s/%s' "\$META_ROOT" "\$1"; }
 EOF
