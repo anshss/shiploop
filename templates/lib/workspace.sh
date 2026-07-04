@@ -90,6 +90,17 @@ export GOVERN_EXTERNALIZE_REPO="${GOVERN_EXTERNALIZE_REPO:-}"
 export GOVERN_EXTERNALIZE_SUBREPO="${GOVERN_EXTERNALIZE_SUBREPO:-}"
 export GOVERN_EXTERNALIZE_LABELS="${GOVERN_EXTERNALIZE_LABELS:-}"
 
+# ── Optional pre-commit lint-fix hook (OPT-IN, OFF by default) ───────────────
+# When set, the workspace's per-sub-repo pre-commit hook (.githooks/pre-commit, propagated by
+# lib/githooks.sh:install_subrepo_pre_commit_hook) runs this command inside the sub-repo BEFORE
+# every commit, then `git add -u`'s the touched files. Any command that fixes in place idempotently
+# will do — e.g. "pnpm lint --fix", "prettier --write .", "gofmt -w .", "cargo fmt". Empty (default)
+# → the pre-commit hook is a no-op. Failures are SOFT: the commit proceeds either way, because a
+# broken linter must never block the operator (or the governor) mid-commit — CI catches real
+# regressions. Sub-repos that already have a pre-commit hook (husky, lefthook, hand-rolled) are
+# left untouched; the workspace hook is only installed where the slot is empty or previously ours.
+export WSP_LINT_FIX_CMD="${WSP_LINT_FIX_CMD:-}"
+
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
 #     Per-worktree setup AFTER the trees are laid out: install deps, codegen

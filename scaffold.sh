@@ -249,8 +249,8 @@ component_govern() {
 
 component_githooks() {
   log "component: git-hooks enforcement"
-  cp "$T/githooks/pre-push" "$T/githooks/prepare-commit-msg" .githooks/
-  chmod +x .githooks/pre-push .githooks/prepare-commit-msg
+  cp "$T/githooks/pre-push" "$T/githooks/prepare-commit-msg" "$T/githooks/pre-commit" .githooks/
+  chmod +x .githooks/pre-push .githooks/prepare-commit-msg .githooks/pre-commit
   # Activate hooks in the harness root (idempotent).
   if [ -d .git ]; then
     git config core.hooksPath .githooks
