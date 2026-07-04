@@ -1191,4 +1191,18 @@ if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
 fi
 govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
+
+# Auto-trigger sync-port at run-end IFF (a) the mechanism script is present in
+# this workspace AND (b) the workspace opted in via GOVERN_UPSTREAM_HARNESS_REPO.
+# Best-effort — a failure here logs but never overrides the run's exit code.
+# Set GOVERN_SYNC_PORT_ON_END=0 to disable; --dry-run mode of the governor
+# skips it too (nothing was resolved to sync).
+if [[ "${GOVERN_SYNC_PORT_ON_END:-1}" == "1" \
+   && -n "${GOVERN_UPSTREAM_HARNESS_REPO:-}" \
+   && -x "$DIR/sync-port.sh" \
+   && "${DRY_RUN:-0}" -ne 1 ]]; then
+  govern::log "sync-port: auto-triggering at run-end (GOVERN_UPSTREAM_HARNESS_REPO=$GOVERN_UPSTREAM_HARNESS_REPO)"
+  "$DIR/sync-port.sh" 2>&1 | while IFS= read -r _sl; do govern::log "sync-port | $_sl"; done \
+    || govern::log "sync-port: exited non-zero (see escalations.md for details, if any)"
+fi
 exit 0
