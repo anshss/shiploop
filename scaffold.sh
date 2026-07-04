@@ -34,6 +34,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR=""
 
+# ── Hub version (VERSION file at hub root — the update-channel anchor) ──────
+# Read it lazily; not every code path needs it. --version + the stamp file both
+# use hub_version(). If the file is missing (very old hub clone), fall back to
+# "unknown" so the script still runs.
+hub_version() {
+  if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    awk 'NF && $0 !~ /^#/ {print $1; exit}' "$SCRIPT_DIR/VERSION"
+  else
+    echo unknown
+  fi
+}
+
 # ── Defaults ────────────────────────────────────────────────────────────────
 WORKSPACE_DIR=""
 PM="npm"
@@ -47,6 +59,7 @@ DO_VERIFY=0
 RUN_TESTS=0
 YES=0
 VERBOSE=0
+DIFF_ONLY=0
 
 usage() {
   sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
@@ -74,6 +87,8 @@ while [ "$#" -gt 0 ]; do
     --run-tests)         RUN_TESTS=1; shift ;;
     --yes|-y)            YES=1; shift ;;
     --verbose|-v)        VERBOSE=1; shift ;;
+    --diff-only)         DIFF_ONLY=1; shift ;;
+    --version)           hub_version; exit 0 ;;
     -h|--help)           usage ;;
     *)                   die "unknown flag: $1 (see --help)" ;;
   esac
@@ -146,6 +161,33 @@ component_dirs() {
 
 component_workspace_sh() {
   log "component: workspace.sh (config file)"
+
+  # ── Knob-type migration guard (v1.1.0 → v1.2.0): the string knobs
+  # GOVERN_MERGE_REPOS and GOVERN_LOCAL_FIRST_REPOS used to be bash arrays
+  # (VAR=(...)). A stale workspace.sh with the old array shape *coincidentally*
+  # keeps working for the single-element case (`$VAR` yields the first token)
+  # so silent migration is a real footgun. On any legacy shape here, WARN
+  # loudly with the exact mechanical translation and refuse to touch the file
+  # (unless --yes overrides). No --yes = no regen either way, but the guard
+  # runs first so the operator sees the migration before deciding.
+  if [ -f scripts/lib/workspace.sh ]; then
+    local legacy_hit=""
+    if grep -Eq '^[[:space:]]*GOVERN_MERGE_REPOS=\(' scripts/lib/workspace.sh; then
+      legacy_hit+="GOVERN_MERGE_REPOS "
+    fi
+    if grep -Eq '^[[:space:]]*GOVERN_LOCAL_FIRST_REPOS=\(' scripts/lib/workspace.sh; then
+      legacy_hit+="GOVERN_LOCAL_FIRST_REPOS "
+    fi
+    if [ -n "$legacy_hit" ]; then
+      warn "workspace.sh uses LEGACY bash-array form for: $legacy_hit"
+      warn "  v1.1.0 changed these knobs from array to space-separated STRING."
+      warn "  Mechanical migration (single-element arrays keep working by accident, multi-element BREAK):"
+      warn '    GOVERN_MERGE_REPOS=(foo bar)         → GOVERN_MERGE_REPOS="foo bar"'
+      warn '    GOVERN_LOCAL_FIRST_REPOS=(baz)       → GOVERN_LOCAL_FIRST_REPOS="baz"'
+      warn "  Do the rewrite by hand OR re-run with --component workspace-sh --yes to regenerate."
+    fi
+  fi
+
   [ -n "$ORG" ] || die "--org is required for workspace.sh"
   [ "${#REPO_NAMES[@]}" -gt 0 ] || die "--repos required (at least one)"
 
@@ -234,8 +276,8 @@ component_govern() {
   chmod +x scripts/govern/*.sh scripts/govern/test/*.sh
   # governor/*.md — refresh prompt templates only; preserve operator data.
   local mf
-  for mf in worker-prompt.md supervisor-prompt.md README.md; do
-    cp "$T/governor/$mf" "governor/$mf"
+  for mf in worker-prompt.md supervisor-prompt.md README.md sync-porter-prompt.md; do
+    [ -f "$T/governor/$mf" ] && cp "$T/governor/$mf" "governor/$mf"
   done
   # Never clobber the operator's data.
   local pref
@@ -398,14 +440,148 @@ component_settings() {
 EOF
 )
   if [ -f .claude/settings.json ] && [ "$YES" -eq 0 ]; then
-    warn ".claude/settings.json exists — leaving as-is (pass --yes to overwrite)"
+    warn ".claude/settings.json exists — leaving as-is (pass --yes to overwrite, or use --component settings-merge to add just the harness hooks)"
   else
     printf '%s\n' "$content" > .claude/settings.json
     info "wrote .claude/settings.json"
   fi
 }
 
+# component_settings_merge — idempotently insert the harness hook stanzas into
+# an EXISTING .claude/settings.json using jq, without touching anything else in
+# that file. Solves the "merge missing hook entries yourself" hand-edit from
+# setup.md's B2 (adopter-friction #3 from the tokenjam convergence).
+#
+# Insertion rule per event (SessionStart/UserPromptSubmit/PreToolUse/Stop/
+# SessionEnd): if a matcher entry exists that references any of the harness
+# scripts, leave it alone (idempotent — re-run is a no-op). Otherwise APPEND a
+# new matcher block carrying just the harness's own hooks. Never delete or
+# re-order existing entries.
+component_settings_merge() {
+  log "component: settings-merge (idempotent hook stanzas into existing .claude/settings.json)"
+  command -v jq >/dev/null 2>&1 || die "settings-merge needs jq (brew install jq)"
+  mkdir -p .claude
+  local target=".claude/settings.json"
+  if [ ! -f "$target" ]; then
+    warn "$target absent — nothing to merge into; run --component settings to create it fresh"
+    return 0
+  fi
+  local root="$WORKSPACE_DIR"
+  # Reference stanzas — same commands as component_settings. jq --argjson pulls
+  # each in as a value; the pipeline walks .hooks.<event> and appends the
+  # harness stanza IFF no existing matcher entry mentions a harness-script name.
+  local session_start user_prompt pre_tool stop session_end
+  session_start=$(cat <<EOF
+{ "matcher": "*", "hooks": [
+  { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
+  { "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 },
+  { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
+] }
+EOF
+)
+  user_prompt=$(cat <<EOF
+{ "matcher": "*", "hooks": [
+  { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
+] }
+EOF
+)
+  pre_tool=$(cat <<EOF
+{ "matcher": "Read|Bash", "hooks": [
+  { "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
+] }
+EOF
+)
+  stop=$(cat <<EOF
+{ "matcher": "*", "hooks": [
+  { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
+] }
+EOF
+)
+  session_end=$(cat <<EOF
+{ "matcher": "*", "hooks": [
+  { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
+] }
+EOF
+)
+  # Marker substrings — if ANY of these appear in an existing event's hooks[].command,
+  # we treat that event as already-wired for the harness and leave it alone.
+  # (One marker per event; a single match is enough to skip.)
+  local jq_prog
+  jq_prog=$(cat <<'JQ'
+def wire(event; markers; stanza):
+  .hooks[event] as $existing
+  | if ($existing // []) | tostring | test(markers) then . else
+      .hooks[event] = (($existing // []) + [stanza])
+    end;
+.
+| (if .hooks == null then .hooks = {} else . end)
+| wire("SessionStart";     "session-snapshot\\.sh|check-main-on-main\\.sh"; $ss)
+| wire("UserPromptSubmit"; "router-posture-reminder\\.sh";                   $up)
+| wire("PreToolUse";       "router-posture-guard\\.sh";                      $pt)
+| wire("Stop";             "ticket-sweep-reminder\\.sh";                     $sp)
+| wire("SessionEnd";       "session-end-cleanup\\.sh";                       $se)
+JQ
+)
+  local tmp; tmp="$(mktemp)"
+  if jq --argjson ss "$session_start" \
+        --argjson up "$user_prompt" \
+        --argjson pt "$pre_tool" \
+        --argjson sp "$stop" \
+        --argjson se "$session_end" \
+        "$jq_prog" "$target" > "$tmp"; then
+    if ! diff -q "$target" "$tmp" >/dev/null 2>&1; then
+      mv "$tmp" "$target"
+      info "merged harness hook stanzas into $target"
+    else
+      rm -f "$tmp"
+      info "$target already carries harness hooks — no changes needed (idempotent)"
+    fi
+  else
+    rm -f "$tmp"
+    die "jq failed to merge into $target (invalid JSON?)"
+  fi
+}
+
+# component_stamp — write scripts/lib/.harness-version so doctor/govern-health
+# can compare it against the installed hub's VERSION for the update-channel
+# staleness warning. Called at the end of every scaffold run (fresh + bump).
+component_stamp() {
+  local v; v="$(hub_version)"
+  mkdir -p scripts/lib
+  {
+    printf '%s\n' "$v"
+    printf '# Written by scaffold.sh — the hub VERSION this workspace was last synced against.\n'
+    printf '# Compare with $(hub-VERSION) via doctor.sh or govern-health.sh to see if a bump is due.\n'
+  } > scripts/lib/.harness-version
+  [ "$VERBOSE" -eq 1 ] && info "stamped scripts/lib/.harness-version = $v"
+  return 0
+}
+
 # ── Verification ────────────────────────────────────────────────────────────
+
+# verify_relocations — warn about files the hub moved (from-path → to-path) but
+# the workspace still carries at the old path. Reads templates/lib/relocations.txt
+# (from<space>to per non-comment line); each entry that still exists at the OLD
+# path in the installed workspace becomes a warning. Non-fatal: relocated files
+# rarely BREAK anything (govern's test loop only picks up test-*.sh files under
+# the current path), but the old copy is a maintainability hazard.
+verify_relocations() {
+  local manifest="$T/lib/relocations.txt"
+  [ -f "$manifest" ] || return 0
+  log "verify: file relocations (workspace still carries files moved by the hub)"
+  local from to count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+    from="${line%% *}"; to="${line##* }"
+    [ -n "$from" ] && [ -n "$to" ] || continue
+    if [ -e "$from" ]; then
+      warn "stale-relocated: $from → $to (delete $from; the hub moved it)"
+      count=$((count+1))
+    fi
+  done < "$manifest"
+  [ "$count" -eq 0 ] && info "no stale relocated files"
+}
 
 verify_scripts() {
   log "verify: bash -n over installed scripts"
@@ -458,6 +634,87 @@ verify_run_tests() {
   return 0
 }
 
+# ── --diff-only mode ────────────────────────────────────────────────────────
+# Report per-component whether the installed files match the current templates,
+# without writing anything. Useful for a mid-bump adopter to see which
+# components are already in sync (skip re-running them) and which are behind.
+# Output: per component, prints "in-sync" (all installed files == template) or
+# "behind (N file(s) drift)" with a short per-file list. Exit 0 if nothing is
+# behind, exit 3 (drift) if anything is.
+diff_only() {
+  local behind=0
+  probe_files() { # component -> lines "installed-path\ttemplate-path"
+    case "$1" in
+      core-scripts)
+        for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
+          printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
+        done
+        for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard; do
+          printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
+        done
+        for s in session-state preflight githooks; do
+          printf 'scripts/lib/%s.sh\t%s/lib/%s.sh\n' "$s" "$T" "$s"
+        done ;;
+      worktrees)
+        for s in new rm status exec main session-end-cleanup; do
+          printf 'scripts/worktree/%s.sh\t%s/worktree/%s.sh\n' "$s" "$T" "$s"
+        done
+        for s in registry base-ref; do
+          printf 'scripts/worktree/lib/%s.sh\t%s/worktree/lib/%s.sh\n' "$s" "$T" "$s"
+        done ;;
+      govern)
+        local f
+        for f in "$T"/govern/*.sh; do
+          [ -f "$f" ] || continue
+          printf 'scripts/govern/%s\t%s\n' "$(basename "$f")" "$f"
+        done
+        printf 'scripts/govern/lib/common.sh\t%s/govern/lib/common.sh\n' "$T"
+        for f in "$T"/govern/test/*.sh; do
+          [ -f "$f" ] || continue
+          printf 'scripts/govern/test/%s\t%s\n' "$(basename "$f")" "$f"
+        done ;;
+      githooks)
+        for h in pre-push prepare-commit-msg pre-commit; do
+          printf '.githooks/%s\t%s/githooks/%s\n' "$h" "$T" "$h"
+        done ;;
+      commands)
+        local f
+        for f in "$T"/.claude/commands/*.md; do
+          [ -f "$f" ] || continue
+          printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
+        done ;;
+      *) : ;;
+    esac
+  }
+  for c in core-scripts worktrees govern githooks commands; do
+    local drift=0 details=""
+    while IFS=$'\t' read -r installed template; do
+      [ -n "$installed" ] || continue
+      if [ ! -f "$installed" ] || ! diff -q "$installed" "$template" >/dev/null 2>&1; then
+        drift=$((drift+1))
+        details+="$installed "
+      fi
+    done < <(probe_files "$c")
+    if [ "$drift" -eq 0 ]; then
+      log "$c: in-sync"
+    else
+      log "$c: behind ($drift file(s) drift)"
+      [ "$VERBOSE" -eq 1 ] && info "  $details"
+      behind=1
+    fi
+  done
+  local stamp="scripts/lib/.harness-version" workspace_v="unknown"
+  if [ -f "$stamp" ]; then workspace_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp")"; fi
+  local hub_v; hub_v="$(hub_version)"
+  log "hub VERSION=$hub_v  workspace stamp=$workspace_v"
+  if [ "$behind" -eq 1 ]; then exit 3; fi
+  exit 0
+}
+
+if [ "$DIFF_ONLY" -eq 1 ]; then
+  diff_only
+fi
+
 # ── Main dispatch ───────────────────────────────────────────────────────────
 
 component_dirs
@@ -485,12 +742,18 @@ case "$COMPONENT" in
   gitignore)      component_gitignore ;;
   package-json)   component_package_json ;;
   settings)       component_settings ;;
+  settings-merge) component_settings_merge ;;
+  stamp)          : ;;    # component_stamp runs below unconditionally
   hooks)          # convenience: hooks-related bundle
     component_core_scripts
     component_settings
     ;;
   *) die "unknown component: $COMPONENT" ;;
 esac
+
+# Update-channel stamp — written on every scaffold invocation so doctor / govern-
+# health can compare against the hub VERSION.
+component_stamp
 
 # ── Optional git init + initial commit ──────────────────────────────────────
 if [ "$DO_GIT_INIT" -eq 1 ]; then
@@ -511,6 +774,7 @@ fi
 # ── Verify (bash -n + optional test suite) ──────────────────────────────────
 if [ "$DO_VERIFY" -eq 1 ]; then
   verify_scripts
+  verify_relocations
   if [ "$RUN_TESTS" -eq 1 ]; then
     verify_run_tests || die "govern tests failed"
   fi

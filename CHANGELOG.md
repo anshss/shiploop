@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.2.0 — 2026-07-05
+
+Update-channel release. Ships the two-way channel that lets an adopter know a bump is due AND lets them contribute back — plus a batch of upgrade-friction fixes distilled from three real convergence runs (claude-keepalive, splito, tokenjam).
+
+### Added — the update channel core
+- **`VERSION` file at hub root.** Records the hub's current version (`1.2.0`); readable by `scaffold.sh --version`. Existed nowhere before this release — convergence reports depended on a floating string in setup.md.
+- **Workspace stamp.** `scaffold.sh` writes `scripts/lib/.harness-version` on every run and every component bump. The stamp is the version this workspace was last synced against.
+- **Staleness warning in `doctor.sh` + `govern-health.sh`.** Both compare the stamp against the installed hub's `VERSION` (resolved via `CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/…` → the plugin cache). If behind: "harness N releases behind — run the setup upgrade". Graceful when the hub is unresolvable (offline / cache-only install): degrades to a soft "cannot compare" notice, never an error.
+
+### Added — generalized sync channel
+- **`templates/govern/sync-templates.sh`.** Ports the drift reporter into the templates. Detects which live files have drifted from the templates repo (by MIRROR PRESENCE — files with a template counterpart are drift-relevant, workspace-specific files are filtered out). Read the file — it documents the mapping (govern, worktree, lib, .githooks, .claude/commands, hook scripts, CLAUDE.md seed) + the exclusions (workspace.sh config sink, runtime artifacts). Regression-locked by `test-sync-templates.sh` (25 assertions).
+- **`templates/govern/sync-port.sh`.** Auto porter that opens + validates + merges a template-sync PR. Fail-closed at every step: bash -n on changed shell files, forbidden-identity-strings gate on ADDED diff lines (org + repo names + `$META_NAME` + `$GOVERN_FORBIDDEN_EXTRA`, all lowercased/deduped), scaffold suite baseline-diff, empty-diff / strand / uncommitted-work guards, EXIT-trap restore of the templates repo to `main`, escalation dedup by branch fingerprint. `--no-merge` mode for safe first rollout. Regression-locked by `test-sync-port.sh` (44 assertions).
+- **Genericized via workspace.sh knobs.** `GOVERN_UPSTREAM_HARNESS_REPO` (short repo name) and `GOVERN_UPSTREAM_HARNESS_DIR` (local working dir of the fork clone). BOTH empty (default) → the whole mechanism is inert (sync-port exits 0 with "feature off"). Adopters who don't contribute back pay zero cost. Adopters who do point them at their fork.
+- **`run-loop.sh` auto-trigger.** At the end of every governor run, if `GOVERN_UPSTREAM_HARNESS_REPO` is set AND `sync-port.sh` is present in the workspace, sync-port fires. Best-effort; never overrides the run's exit code. `GOVERN_SYNC_PORT_ON_END=0` disables.
+- **`templates/governor/sync-porter-prompt.md`.** Genericized porter prompt (worker instructions).
+
+### Added — upgrade-friction fixes
+- **`scripts/govern/lock-release.sh`** (from tokenjam friction #1). Inspects the run lock, verifies holder pid liveness, reclaims iff dead — the scripted path that was missing when a prior worker crashed. `--status` (holder info), `--force` (bypass — prints holder for the record). Setup.md B-pre calls it out.
+- **Knob-type migration guard** (tokenjam friction #2). `scaffold.sh --component workspace-sh` detects the legacy `GOVERN_MERGE_REPOS=(...)` / `GOVERN_LOCAL_FIRST_REPOS=(...)` array shape and warns with the exact mechanical migration to the v1.1.0+ space-separated string form. Setup.md B2 documents it too.
+- **`--component settings-merge`** (tokenjam friction #3). Idempotent jq-driven insertion of the harness hook stanzas (SessionStart / UserPromptSubmit / PreToolUse / Stop / SessionEnd) into an EXISTING `.claude/settings.json` — one script call replaces the "merge missing hook entries yourself" hand-edit. Re-run is a no-op (each event is skipped if a harness marker script is already referenced there).
+- **`templates/lib/relocations.txt`** (tokenjam friction #4). Machine-readable manifest of file relocations. Seeded with the v1.1.0 test relocation (`scripts/worktree/test/test-base-ref.sh` → `scripts/govern/test/test-base-ref.sh`). `scaffold.sh --verify` reads it and warns about stale copies still living at the old path. When you move a template file, add a line here.
+- **`scripts/govern/config-check.sh`** (tokenjam friction #5). Cheap no-auth smoke — sources workspace.sh + common.sh, resolves every knob, calls every helper (`wsp_repo_slug`, `wsp_repo_localdir`, `wsp_repo_port`, `wsp_is_merge_repo`, `wsp_is_local_first_repo`, `govern::next_ticket_number`, `govern::meta_root`), prints values, exits nonzero on any missing required. `--json` mode. Setup.md B3 points here first; dry-run.sh (which spawns a live worker) is the second step.
+- **`scaffold.sh --diff-only`** (tokenjam friction #7). Per-component sync report without writing — `in-sync` (all installed files match template) or `behind (N file(s) drift)` per component. Also prints the hub VERSION + workspace stamp. Exit 0 if in sync, exit 3 if any component is behind.
+- **Pipe-stall test idiom in setup.md** (tokenjam friction #6). Documents the `timeout … bash test.sh </dev/null > file.log 2>&1 & wait` idiom for headless environments where the piped `... | tail` form stalls.
+- **BUMP-mode caveats in setup.md** (splito frictions #4, #6, #8, #9). Adds: test-suite step (was omitted in the doctrine), `--run-tests` escape hatch mention, dry-run auth caveat in B3 (was only mentioned in fresh mode), `--component all` warn-and-continue behavior for `workspace.sh` / `package.json` / `.claude/settings.json`, structured commit-message body template.
+
+### Changed
+- `scaffold.sh` gains `--version` and `--diff-only` flags.
+- `component_govern` also copies `governor/sync-porter-prompt.md` when present (v1.2.0+).
+- `templates/lib/workspace.sh` gains two new opt-in knobs: `GOVERN_UPSTREAM_HARNESS_REPO`, `GOVERN_UPSTREAM_HARNESS_DIR`.
+- `templates/govern/run-loop.sh` calls `sync-port.sh` at run-end (guarded by knob + script presence).
+
+### Compatibility
+- Existing installs pick up the update channel by re-running `scaffold.sh --component <name>` — the stamp gets written; doctor.sh + govern-health.sh start comparing vs the hub VERSION.
+- The sync channel is OFF by default (both `GOVERN_UPSTREAM_HARNESS_REPO` and `GOVERN_UPSTREAM_HARNESS_DIR` empty). Zero-cost for pure-consumer instances.
+- Adopters carrying the legacy bash-array `GOVERN_MERGE_REPOS=(...)` / `GOVERN_LOCAL_FIRST_REPOS=(...)` are warned at `--component workspace-sh` with the exact rewrite. Multi-element arrays SILENTLY BROKE in v1.1.0; this release makes the migration visible.
+
+### Test suite
+- Grew from 60 → 62 hermetic tests (added `test-sync-templates.sh` + `test-sync-port.sh`).
+
 ## 1.1.0 — 2026-07-04
 
 Fleet-harvest release. Two production instances (a tokenjam-shaped workspace and the splito workspace) fed a batch of hardening fixes and small-but-load-bearing features back into the templates. Every added mechanism is OFF by default; existing installs upgrade cleanly with `scaffold.sh --component <name>`.
