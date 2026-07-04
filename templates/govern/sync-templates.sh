@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Report harness→template drift so ALL accumulated mirrored changes can be
-# ported into the meta-repo-harness templates in ONE batched PR, instead of one
+# ported into the shiploop templates in ONE batched PR, instead of one
 # ticket-per-change (a 1:1 amplification pattern that dominated governor
 # throughput in one measured session with near-zero product value — the "port
 # #N into templates" churn class).
@@ -35,9 +35,9 @@
 # Where the local templates live — TWO sources of truth in priority order:
 #   1. GOVERN_UPSTREAM_HARNESS_DIR (workspace.sh knob) — an explicit local
 #      clone of your fork / the canonical repo. Point this at wherever you
-#      checked out meta-repo-harness for contribution.
+#      checked out shiploop for contribution.
 #   2. GOVERN_TEMPLATE_DIR (env-only, tests) — direct path to templates/govern.
-#   3. $HOME/.claude/skills/meta-repo-harness/templates/govern — legacy install path.
+#   3. $HOME/.claude/skills/shiploop/templates/govern — legacy install path.
 #
 # Marker: scripts/govern/.templates-synced-at holds the harness commit SHA the
 # templates are synced through. Drift = commits in (<marker>..HEAD) that touch
@@ -86,7 +86,7 @@ else
   if [[ -n "$_upstream_dir" && -d "$_upstream_dir/templates/govern" ]]; then
     TEMPLATE_DIR="$_upstream_dir/templates/govern"
   else
-    TEMPLATE_DIR="$HOME/.claude/skills/meta-repo-harness/templates/govern"
+    TEMPLATE_DIR="$HOME/.claude/skills/shiploop/templates/govern"
   fi
 fi
 TEMPLATES_ROOT="$(dirname "$TEMPLATE_DIR")"

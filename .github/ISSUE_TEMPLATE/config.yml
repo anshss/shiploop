@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question about the harness or the trust model
-    url: https://github.com/anshss/meta-repo-harness/blob/main/README.md#the-governor--trust-model
+    url: https://github.com/anshss/shiploop/blob/main/README.md#the-governor--trust-model
     about: How the governor loop works, what auto-merge means here, what the worker's permission model is. Read this section before opening an issue; most "how does this work" questions are answered there.
   - name: Read the pattern doc (SKILL.md)
-    url: https://github.com/anshss/meta-repo-harness/blob/main/SKILL.md
+    url: https://github.com/anshss/shiploop/blob/main/SKILL.md
     about: The full pattern — worktrees, ticket queue, governor, hooks, anti-patterns. Reference material for anyone about to file a feature request.
   - name: Security vulnerability
-    url: https://github.com/anshss/meta-repo-harness/blob/main/SECURITY.md
+    url: https://github.com/anshss/shiploop/blob/main/SECURITY.md
     about: Do not open a public issue for a suspected vulnerability. Follow SECURITY.md.

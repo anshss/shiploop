@@ -17,7 +17,7 @@
 #
 # CONFIGURATION (workspace.sh knobs — EMPTY = whole mechanism no-ops):
 #   GOVERN_UPSTREAM_HARNESS_REPO — short repo name of your fork or the
-#     canonical meta-repo-harness (e.g. "meta-repo-harness"). This name must
+#     canonical shiploop (e.g. "shiploop"). This name must
 #     resolve via wsp_repo_slug + wsp_repo_localdir to (owner/repo, local
 #     working dir); the workspace.sh helpers already carry per-repo overrides.
 #   GOVERN_UPSTREAM_HARNESS_DIR — local working dir override for the templates

@@ -52,12 +52,12 @@ META_NAME="acmeproduct"
 ROOT_PM="npm"
 GITHUB_ORG="AcmeOrg"
 REPOS=(alpha web)
-GOVERN_MERGE_REPOS="alpha meta-repo-harness"
-GOVERN_UPSTREAM_HARNESS_REPO="meta-repo-harness"
+GOVERN_MERGE_REPOS="alpha shiploop"
+GOVERN_UPSTREAM_HARNESS_REPO="shiploop"
 GOVERN_UPSTREAM_HARNESS_DIR="$T"
-GOVERN_META_REPO_SLUG="acme/meta-repo-harness"
-wsp_repo_slug() { case "\$1" in meta-repo-harness) printf '%s' "\$GOVERN_META_REPO_SLUG";; *) printf '%s/%s' "\$GITHUB_ORG" "\$1";; esac; }
-wsp_repo_localdir() { case "\$1" in meta-repo-harness) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
+GOVERN_META_REPO_SLUG="acme/shiploop"
+wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";; *) printf '%s/%s' "\$GITHUB_ORG" "\$1";; esac; }
+wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
   printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"
@@ -122,7 +122,7 @@ EOF
 
 mk_gh_stub() { cat > "$1" <<'EOF'
 #!/usr/bin/env bash
-[ "$1" = "pr" ] && [ "$2" = "create" ] && { echo "https://github.com/acme/meta-repo-harness/pull/42"; exit 0; }
+[ "$1" = "pr" ] && [ "$2" = "create" ] && { echo "https://github.com/acme/shiploop/pull/42"; exit 0; }
 exit 0
 EOF
 chmod +x "$1"; }
@@ -154,7 +154,7 @@ out="$( tool_env "$s"
   export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
   bash "$TOOL" 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "2. ported + gate pass → exit 0"
-assert_contains "$(cat "$mrec" 2>/dev/null)" "meta-repo-harness 42" "2. merge-pr invoked for the PR"
+assert_contains "$(cat "$mrec" 2>/dev/null)" "shiploop 42" "2. merge-pr invoked for the PR"
 assert_contains "$(cat "$s/harness/scripts/govern/.templates-synced-at" 2>/dev/null)" "$drift_sha" "2. marker advanced to live HEAD"
 assert_not_contains "$(cat "$s/harness/governor/escalations.md")" "sync-port —" "2. no escalation on success"
 

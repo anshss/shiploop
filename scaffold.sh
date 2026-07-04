@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scaffold.sh — deterministic scaffolder for meta-repo-harness.
+# scaffold.sh — deterministic scaffolder for shiploop.
 #
 # Extracted from commands/setup.md so the agent no longer performs mechanical
 # file copies. The command still owns the interview + detection; this script
@@ -350,7 +350,7 @@ component_gitignore() {
     local tmp; tmp="$(mktemp)"
     {
       cat .gitignore
-      printf '\n# — meta-repo-harness scaffolded additions —\n'
+      printf '\n# — shiploop scaffolded additions —\n'
       # Append only lines not already present in existing .gitignore.
       while IFS= read -r line; do
         if ! grep -Fxq "$line" .gitignore 2>/dev/null; then
@@ -763,7 +763,7 @@ if [ "$DO_GIT_INIT" -eq 1 ]; then
     git config core.hooksPath .githooks
     git add scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
             queue learnings.md CLAUDE.md .claude/settings.json .claude/commands 2>/dev/null || true
-    git -c user.email=scaffold@meta-repo-harness -c user.name=scaffold \
+    git -c user.email=scaffold@shiploop -c user.name=scaffold \
         commit -q -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)" || true
     info "initial commit created"
   else

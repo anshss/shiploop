@@ -1,15 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "meta-repo-harness",
-  "displayName": "Meta-repo harness",
-  "version": "1.3.0",
+  "name": "shiploop",
+  "displayName": "shiploop",
+  "version": "1.4.0",
   "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor. Wraps N independent git repos as one workspace with parallel worktrees, a ticket queue, and a headless-worker loop that auto-merges allowlisted repos on green CI.",
   "author": {
     "name": "anshss",
     "url": "https://github.com/anshss"
   },
-  "homepage": "https://github.com/anshss/meta-repo-harness",
-  "repository": "https://github.com/anshss/meta-repo-harness",
+  "homepage": "https://github.com/anshss/shiploop",
+  "repository": "https://github.com/anshss/shiploop",
   "license": "MIT",
   "keywords": [
     "monorepo",
