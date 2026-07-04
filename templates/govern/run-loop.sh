@@ -1114,5 +1114,5 @@ if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
     | while IFS= read -r _hl; do govern::log "health | $_hl"; done || true
 fi
 govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
-[[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '$ROOT_PM run worktree:rm -- ticket-<N>'"
+[[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 exit 0

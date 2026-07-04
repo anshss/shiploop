@@ -267,7 +267,14 @@ govern::norm_disposition() { # raw -> canonical|""
 # Only when the recorded holder pid is DEAD (crashed driver) or the pid file is missing do
 # we fall back to the mtime stale window as a backstop.
 govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
-  local m; m="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
+  # GNU stat first (Linux, CI), then BSD stat (macOS). Order matters: on GNU stat,
+  # `stat -f %m file` treats `-f` as --file-system and prints multi-line "File: …"
+  # noise on stdout while exiting non-zero — the subshell would then concatenate that
+  # with the fallback's numeric output, breaking the arithmetic below.
+  local m; m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0)"
+  # Belt-and-suspenders: strip any non-digits that snuck through, so a partial stdout
+  # from a stat variant we don't recognize can never poison the arithmetic.
+  m="${m//[!0-9]/}"; [[ -n "$m" ]] || m=0
   echo $(( $(date +%s) - m ))
 }
 # Read the holder pid recorded inside a claim/bookkeep lock dir. Returns "" when absent

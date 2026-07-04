@@ -54,7 +54,8 @@ wt_registry_with_lock() {
   while ! mkdir "$WT_LOCK" 2>/dev/null; do
     if [ -d "$WT_LOCK" ]; then
       local age
-      age=$(($(date +%s) - $(stat -f %m "$WT_LOCK" 2>/dev/null || stat -c %Y "$WT_LOCK" 2>/dev/null || date +%s)))
+      # GNU stat first (Linux), then BSD (macOS); see govern::_lock_age for the trap this dodges.
+      age=$(($(date +%s) - $(stat -c %Y "$WT_LOCK" 2>/dev/null || stat -f %m "$WT_LOCK" 2>/dev/null || date +%s)))
       if [ "$age" -gt 30 ]; then
         rmdir "$WT_LOCK" 2>/dev/null
         continue
