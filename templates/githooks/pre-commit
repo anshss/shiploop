@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# wsp-lint-fix marker — DO NOT REMOVE (installer detects THIS line to know a prior install is ours,
+#   so a re-install refreshes the hook; without the marker, the installer refuses to clobber the
+#   file it finds — treating it as an operator/framework hook it must leave alone).
+#
+# pre-commit — run the workspace's lint/format FIX command, then re-stage the touched files, before
+# every commit in the sub-repo it's installed into. Opt-in via workspace.sh:
+#
+#   WSP_LINT_FIX_CMD="pnpm lint --fix"   # any idempotent fixer (prettier --write, gofmt -w, etc.)
+#
+# Empty (default) → this hook is a NO-OP. Any WSP_LINT_FIX_CMD failure is treated as a SOFT warning
+# — the commit proceeds — because a broken linter should never block the human operator (or the
+# governor) mid-commit; the CI / health lane catches real quality regressions.
+#
+# CO-EXISTENCE: when a sub-repo already has a pre-commit hook (husky, lefthook, hand-rolled), the
+# installer skips this file entirely and logs "existing pre-commit — leaving in place". Neither
+# side clobbers the other; the operator can chain the workspace fixer in manually if they want it.
+set -uo pipefail
+
+SUBREPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$SUBREPO_ROOT" ] || exit 0
+
+# Walk up from SUBREPO_ROOT to find scripts/lib/workspace.sh (the meta-repo root).
+_find_workspace_sh() {
+  local d="$1"
+  while [ -n "$d" ] && [ "$d" != "/" ]; do
+    [ -f "$d/scripts/lib/workspace.sh" ] && { printf '%s' "$d/scripts/lib/workspace.sh"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+WSP_FILE="$(_find_workspace_sh "$SUBREPO_ROOT" || true)"
+[ -n "$WSP_FILE" ] || exit 0
+
+# shellcheck source=/dev/null
+source "$WSP_FILE" 2>/dev/null || exit 0
+
+CMD="${WSP_LINT_FIX_CMD:-}"
+[ -n "$CMD" ] || exit 0
+
+_name="$(basename "$SUBREPO_ROOT")"
+echo "[pre-commit] $_name: running \$WSP_LINT_FIX_CMD..."
+if ( cd "$SUBREPO_ROOT" && eval "$CMD" >/dev/null 2>&1 ); then
+  # Re-stage only files that were ALREADY tracked-and-modified, so a fix that also created new
+  # files (rare, but e.g. formatter-generated cache) is not sneak-added to the commit.
+  ( cd "$SUBREPO_ROOT" && git add -u )
+  echo "[pre-commit] lint-fix ok — modified files re-staged."
+  exit 0
+fi
+echo "[pre-commit] ⚠  lint-fix reported issues (soft warning — commit proceeds)."
+exit 0

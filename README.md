@@ -81,7 +81,7 @@ Observed on the reference deployment (a working meta-repo running this harness a
 
 - `scaffold.sh` is a **deterministic bash script** that owns every mechanical file operation. `commands/setup.md` interviews the operator, calls `scaffold.sh`, and does only judgment work (detection, disambiguation).
 - Every mechanism script sources ONE file — `scripts/lib/workspace.sh` — so the mechanism scripts are **byte-identical across every install**. Bumps refresh mechanism scripts without ever touching `workspace.sh`.
-- **54 hermetic bash tests** ship under `templates/govern/test/`. They exercise the governor's edge cases: ff-only pushes, claim-lock heartbeats, ticket-block parsing, worktree teardown, escalation flow, merge-CI unverifiable, disk guard, orphan teardown, and dozens more. CI scaffolds a throwaway workspace from `scaffold.sh` on every PR and runs all 54 tests against it — so a broken template goes RED before it can be merged.
+- **60 hermetic bash tests** ship under `templates/govern/test/`. They exercise the governor's edge cases: ff-only pushes, claim-lock heartbeats, ticket-block parsing, worktree teardown, escalation flow, merge-CI unverifiable, disk guard, orphan teardown, and dozens more. CI scaffolds a throwaway workspace from `scaffold.sh` on every PR and runs all 60 tests against it — so a broken template goes RED before it can be merged.
 
 ## Dogfood story
 
@@ -101,12 +101,20 @@ This harness is extracted from a production instance where it grinds a real prod
 | `templates/{status,doctor,dev,pull-all,push-prs,health,sync,tail,investigate}.sh` | Cross-cutting workspace scripts |
 | `templates/worktree/*` | Parallel-worktree machinery (new/rm/status/exec + registry) |
 | `templates/govern/*` | Governor driver, ticket selector, merge-PR, supervisor, escalations |
-| `templates/govern/test/*` | 54 hermetic smoke tests locking governor invariants |
+| `templates/govern/test/*` | 60 hermetic smoke tests locking governor invariants |
+| `templates/githooks/{pre-push,prepare-commit-msg,pre-commit}` | Enforced + optional git hooks (pre-push is harness-only; the other two propagate into sub-repos) |
 | `templates/governor/*.md` | Governor prompts (worker, supervisor) + operator files (preferences, decisions log) |
 | `templates/hooks/*` | SessionStart/UserPromptSubmit/PreToolUse/Stop/SessionEnd hooks |
-| `templates/githooks/{pre-push,prepare-commit-msg}` | Enforced git hooks |
 | `templates/seed/{CLAUDE.md,learnings.md,tickets.md,tickets-parked.md}` | First-run seeds |
-| `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the 54-test suite on every PR |
+| `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the 60-test suite on every PR |
+
+## Opt-in knobs (edit `scripts/lib/workspace.sh`)
+
+The harness ships with every advanced lane OFF by default so a fresh install is inert until the operator opts in. The knobs that matter most:
+
+- **`WSP_LINT_FIX_CMD`** — a workspace-wide lint/format FIX command (e.g. `"pnpm lint --fix"`, `"prettier --write ."`, `"gofmt -w ."`). When set, the per-sub-repo `pre-commit` hook runs it before each commit and `git add -u`'s the fixed files. Failures are soft (commit proceeds — CI catches real regressions). Sub-repos that already have a pre-commit hook (husky, lefthook, hand-rolled) are left untouched. Empty (default) = the hook is a no-op.
+- **`GOVERN_LOCAL_FIRST_REPOS`** — space-separated list of sub-repos that are local-first (no deployed prod DB — a schema change ships as code that self-applies on the user's local DB open). Additive migrations in these repos merge normally instead of parking for a manual prod apply. Empty (default) = feature off.
+- **`GOVERN_EXTERNALIZE_REPO`** + **`GOVERN_EXTERNALIZE_SUBREPO`** — turn on the externalization lane. Every governor run files each OPEN Low-severity ticket whose Where targets `GOVERN_EXTERNALIZE_SUBREPO` as a public GitHub Issue on `GOVERN_EXTERNALIZE_REPO`, then removes it from the local queue. Seeds "good first issue" work for outside contributors. Both empty (default) = lane off.
 
 ## License
 
