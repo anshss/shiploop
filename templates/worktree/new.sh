@@ -12,6 +12,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/lib/workspace.sh"
 # shellcheck source=lib/registry.sh
 source "$ROOT/scripts/worktree/lib/registry.sh"
+# shellcheck source=lib/base-ref.sh
+source "$ROOT/scripts/worktree/lib/base-ref.sh"
 # shellcheck source=../lib/githooks.sh
 source "$ROOT/scripts/lib/githooks.sh" 2>/dev/null || true
 
@@ -97,7 +99,7 @@ mkdir -p "$(dirname "$WORKTREE_PATH")"
 git -C "$ROOT" worktree add --detach "$WORKTREE_PATH" main 2>&1 | sed 's/^/[meta] /'
 
 # For each sub-repo, create a worktree at <meta-worktree>/<repo>/.
-# Sub-repos in ONLY: branch <name>. Others: branch main (read-only convention).
+# Sub-repos in ONLY: branch <name>. Others: detached at the base ref (read-only convention).
 for repo in "${REPOS[@]}"; do
   src="$ROOT/$repo"
   dst="$WORKTREE_PATH/$repo"
@@ -118,8 +120,9 @@ for repo in "${REPOS[@]}"; do
       echo "[$repo] branch '$NAME' exists, checking out"
       git -C "$src" worktree add "$dst" "$NAME" 2>&1 | sed "s/^/[$repo] /"
     else
-      echo "[$repo] creating branch '$NAME' from main"
-      git -C "$src" worktree add -b "$NAME" "$dst" main 2>&1 | sed "s/^/[$repo] /"
+      base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+      echo "[$repo] creating branch '$NAME' from $base"
+      git -C "$src" worktree add -b "$NAME" "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
     fi
   else
     # Not in --only: a DETACHED checkout at main (read-only convention). Must be
@@ -132,8 +135,9 @@ for repo in "${REPOS[@]}"; do
     # UI) whenever --only scopes to a subset of repos: the others end up empty. A
     # detached-at-main checkout is runnable and never collides — the same pattern the
     # meta worktree uses above at the `worktree add --detach` line.
-    echo "[$repo] not in --only, detached worktree at main (read-only)"
-    git -C "$src" worktree add --detach "$dst" main 2>&1 | sed "s/^/[$repo] /"
+    base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+    echo "[$repo] not in --only, detached worktree at $base (read-only)"
+    git -C "$src" worktree add --detach "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
   fi
 
   # Copy sub-repo .env-style files from the main checkout. Only copy when the

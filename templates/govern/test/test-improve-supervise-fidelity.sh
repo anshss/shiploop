@@ -70,6 +70,11 @@ assert_contains "$PROMPT_A" "rotate the secret then re-run" "A: parked #9 escala
 assert_contains "$PROMPT_A" "first events (what it attempted)" "A: failed-ticket head excerpt section present"
 assert_contains "$PROMPT_A" "SENTINEL_ATTEMPT" "A: failed #7 worker-log HEAD is fed in (not just final result)"
 
+# Regression: the harness listing MUST include lib/common.sh. A bare `ls "$DIR"/*.sh` misses lib/
+# and the reviewer never sees the ONE file most improvement proposals need to touch — proposals
+# then reference non-existent paths or duplicate helpers instead of extending common.sh.
+assert_contains "$PROMPT_A" "lib/common.sh" "A: harness listing includes lib/common.sh (self-improve reviewer needs it)"
+
 # A parked ticket whose report.json never got written must degrade gracefully (no crash).
 RUN_B="$ROOT/run-B"; mkdir -p "$RUN_B/ticket-3"
 printf '{"ticket":3,"status":"parked","note":"escalated"}\n' > "$RUN_B/state.jsonl"

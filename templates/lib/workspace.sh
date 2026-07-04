@@ -63,6 +63,33 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
+# Sub-repos that are LOCAL-FIRST — they run on each user's machine, NOT a deployed server, so they
+# have NO central prod DB. A schema change ships AS CODE (a migration that self-applies on the user's
+# local DB open), so an ADDITIVE migration needs NO manual prod apply — the governor must open the PR
+# normally, never park it "apply to prod manually". DESTRUCTIVE migrations still escalate. Empty by
+# default (feature is OFF) — set to a space-separated repo list to opt in (e.g. "cli-tool desktop-app").
+GOVERN_LOCAL_FIRST_REPOS="${GOVERN_LOCAL_FIRST_REPOS:-}"
+
+# ── Externalization lane (OPT-IN, OFF by default) ────────────────────────────
+# Each governor run files every OPEN Low-severity ticket whose Where targets the OSS sub-repo as a
+# public GitHub Issue on GOVERN_EXTERNALIZE_REPO, then removes it from the local queue — seeding
+# "good first issue" work for outside contributors. The whole lane no-ops unless BOTH
+# GOVERN_EXTERNALIZE_REPO and GOVERN_EXTERNALIZE_SUBREPO are set, so this is a pure opt-in.
+#   GOVERN_EXTERNALIZE_LANE     1=on (default when the vars below are set) / 0=off.
+#   GOVERN_EXTERNALIZE_REPO     owner/repo the issues are filed on (the public OSS sub-repo).
+#   GOVERN_EXTERNALIZE_SUBREPO  the sub-repo NAME matched in the **Where:** line. Sibling repos whose
+#                               name merely CONTAINS it (e.g. `myproject-website` ⊃ `myproject`) are excluded.
+#   GOVERN_EXTERNALIZE_LABELS   manual label override applied verbatim ("" = AUTO-DECIDE: the lane
+#                               fetches the repo's existing labels and picks from them per issue).
+# OPERATOR NOTE: for labels to actually APPLY, the gh account the governor is authed as needs
+# ≥ Triage on GOVERN_EXTERNALIZE_REPO. A pull-only account still files the issue (URL is returned) but
+# GitHub rejects the label step (addLabelsToLabelable) — the lane emits a "filed but LABELS REJECTED"
+# WARN instead of a silent success in that case, but the labels won't stick until Triage is granted.
+export GOVERN_EXTERNALIZE_LANE="${GOVERN_EXTERNALIZE_LANE:-1}"
+export GOVERN_EXTERNALIZE_REPO="${GOVERN_EXTERNALIZE_REPO:-}"
+export GOVERN_EXTERNALIZE_SUBREPO="${GOVERN_EXTERNALIZE_SUBREPO:-}"
+export GOVERN_EXTERNALIZE_LABELS="${GOVERN_EXTERNALIZE_LABELS:-}"
+
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
 #     Per-worktree setup AFTER the trees are laid out: install deps, codegen
@@ -111,6 +138,14 @@ wsp_repos_csv() { local IFS=,; echo "${REPOS[*]}"; }
 wsp_is_merge_repo() {
   local r="$1" a
   for a in $GOVERN_MERGE_REPOS; do [ "$r" = "$a" ] && return 0; done
+  return 1
+}
+
+# Is <repo> local-first? (no deployed prod DB → additive migrations self-apply as code.) Empty list =
+# feature off = always returns 1 (nothing is local-first), which the govern helper below defaults to.
+wsp_is_local_first_repo() {
+  local r="$1" a
+  for a in $GOVERN_LOCAL_FIRST_REPOS; do [ "$r" = "$a" ] && return 0; done
   return 1
 }
 
