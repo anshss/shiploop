@@ -54,6 +54,7 @@ REPOS_SPEC=""
 MERGE_ALLOWLIST=""
 WORKTREE_BASE=""
 COMPONENT="all"
+COMPONENT_EXPLICIT=0
 DO_GIT_INIT=0
 DO_VERIFY=0
 RUN_TESTS=0
@@ -81,7 +82,7 @@ while [ "$#" -gt 0 ]; do
     --merge-allowlist)   MERGE_ALLOWLIST="$2"; shift 2 ;;
     --worktree-base)     WORKTREE_BASE="$2"; shift 2 ;;
     --templates)         TEMPLATES_DIR="$2"; shift 2 ;;
-    --component)         COMPONENT="$2"; shift 2 ;;
+    --component)         COMPONENT="$2"; COMPONENT_EXPLICIT=1; shift 2 ;;
     --git-init)          DO_GIT_INIT=1; shift ;;
     --verify)            DO_VERIFY=1; shift ;;
     --run-tests)         RUN_TESTS=1; shift ;;
@@ -107,8 +108,27 @@ fi
 [ -d "$TEMPLATES_DIR" ] || die "templates dir does not exist: $TEMPLATES_DIR"
 T="$TEMPLATES_DIR"
 
+# ── Read-only mode detection ────────────────────────────────────────────────
+# --verify or --diff-only, standalone (no fresh-scaffold flags), against an
+# already-scaffolded workspace: skip the writer phase entirely and only run
+# the verification checks. Fresh-scaffold flags = --org, --repos, or an
+# explicit --component (any of these means "you're writing something").
+VERIFY_ONLY=0
+if { [ "$DO_VERIFY" -eq 1 ] || [ "$DIFF_ONLY" -eq 1 ]; } \
+   && [ -z "$ORG" ] && [ -z "$REPOS_SPEC" ] && [ "$COMPONENT_EXPLICIT" -eq 0 ]; then
+  VERIFY_ONLY=1
+fi
+
 # ── Validate workspace ──────────────────────────────────────────────────────
-[ -n "$WORKSPACE_DIR" ] || die "--workspace-dir is required"
+# In read-only mode, default WORKSPACE_DIR to the current dir so an operator
+# can just run `scaffold.sh --verify` from inside their scaffolded workspace.
+if [ -z "$WORKSPACE_DIR" ]; then
+  if [ "$VERIFY_ONLY" -eq 1 ]; then
+    WORKSPACE_DIR="$(pwd)"
+  else
+    die "--workspace-dir is required"
+  fi
+fi
 mkdir -p "$WORKSPACE_DIR"
 WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 cd "$WORKSPACE_DIR"
@@ -713,6 +733,21 @@ diff_only() {
 
 if [ "$DIFF_ONLY" -eq 1 ]; then
   diff_only
+fi
+
+# ── Standalone --verify (read-only against an already-scaffolded workspace) ─
+# When VERIFY_ONLY was resolved above, run the verification checks without
+# touching a byte on disk (no component_dirs, no writer). Nothing here needs
+# --org or --repos — it's a health probe on the existing install.
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  log "verify-only mode (no writes) — probing existing scaffold at $WORKSPACE_DIR"
+  verify_scripts
+  verify_relocations
+  if [ "$RUN_TESTS" -eq 1 ]; then
+    verify_run_tests || die "govern tests failed"
+  fi
+  log "verify: standalone check complete"
+  exit 0
 fi
 
 # ── Main dispatch ───────────────────────────────────────────────────────────
