@@ -21,7 +21,7 @@ governor/.run-id
 # `npm install` / `pnpm install` in the wrong PM can't commit a divergent root
 # lockfile. (A pnpm root also ignores its OWN lockfile: pnpm v11 rewrites an empty
 # root lockfile on every run; config can't suppress it.) All entries are root-
-# anchored, so a real lockfile inside a sub-repo is unaffected. /meta-repo-harness:setup
+# anchored, so a real lockfile inside a sub-repo is unaffected. /shiploop:setup
 # replaces the line below with the off-PM lockfiles for the chosen ROOT_PM
 # (npm root → /pnpm-lock.yaml /yarn.lock /bun.lockb).
 __ROOT_LOCKFILE_IGNORES__

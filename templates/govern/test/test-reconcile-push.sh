@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for /meta-repo-harness:push — locks the invariants the command
+# Regression for /shiploop:push — locks the invariants the command
 # depends on but doesn't own itself (sync-templates.sh + sync-port.sh do the
 # work; this test verifies those honor the promises /push makes to the operator).
 #
@@ -34,7 +34,7 @@ ROOT="$(mktemp -d)"; trap 'rm -rf "$ROOT"' EXIT
 # Build a sandbox mirroring test-sync-port.sh's shape.
 # Pass "" as arg1 for the inert (no-upstream) case; unset/no-arg → default upstream.
 mk_sandbox() { # <upstream-repo-value>
-  local upstream_val="${1-meta-repo-harness}"
+  local upstream_val="${1-shiploop}"
   local s; s="$(mktemp -d "$ROOT/case.XXXXXX")"
   local H="$s/harness" T="$s/templates" TBARE="$s/templates.git"
   {
@@ -52,9 +52,9 @@ REPOS=(alpha web)
 GOVERN_MERGE_REPOS="alpha"
 GOVERN_UPSTREAM_HARNESS_REPO="$upstream_val"
 GOVERN_UPSTREAM_HARNESS_DIR="$T"
-GOVERN_META_REPO_SLUG="acme/meta-repo-harness"
-wsp_repo_slug() { case "\$1" in meta-repo-harness) printf '%s' "\$GOVERN_META_REPO_SLUG";; *) printf '%s/%s' "\$GITHUB_ORG" "\$1";; esac; }
-wsp_repo_localdir() { case "\$1" in meta-repo-harness) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
+GOVERN_META_REPO_SLUG="acme/shiploop"
+wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";; *) printf '%s/%s' "\$GITHUB_ORG" "\$1";; esac; }
+wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
   printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"

@@ -1,6 +1,6 @@
 ---
-name: meta-repo-harness
-description: Multi-subrepo workspace pattern — a workspace (npm, pnpm, or yarn at the root) that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /meta-repo-harness:setup slash command.
+name: shiploop
+description: Multi-subrepo workspace pattern — a workspace (npm, pnpm, or yarn at the root) that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /shiploop:setup slash command.
 ---
 
 # Meta-repo — multi-subrepo workspace + autonomous harness
@@ -136,7 +136,7 @@ PRs land independently — don't expect atomicity.
 
 ## Setup / upgrade a workspace
 
-Invoke **`/meta-repo-harness:setup`**. It is idempotent:
+Invoke **`/shiploop:setup`**. It is idempotent:
 - **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; asks which package manager you'll use at the root (sets `ROOT_PM`); writes `package.json` (thin bash-alias scripts), `.gitignore` (ignoring the off-PM root lockfiles), `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
 - **Existing meta-repo (bump):** detects which capabilities are present (core scripts / worktrees / tickets / governor / hooks) vs missing or outdated, then offers to add/upgrade each. Because all customization lives in `scripts/lib/workspace.sh`, the mechanism scripts are refreshed from latest templates without clobbering your tweaks.
 
@@ -177,4 +177,4 @@ record of what the baseline deliberately leaves out.
 
 ## Skill location
 
-`~/.claude/skills/meta-repo-harness/`. Templates for everything scaffolded above are under `templates/` — `lib/workspace.sh` (config contract), the core git-ops scripts, `worktree/`, `govern/`, `governor/` (prompt scaffolds), `hooks/`, `seed/`, and example `lib/*.sh.example` project hooks.
+`~/.claude/skills/shiploop/`. Templates for everything scaffolded above are under `templates/` — `lib/workspace.sh` (config contract), the core git-ops scripts, `worktree/`, `govern/`, `governor/` (prompt scaffolds), `hooks/`, `seed/`, and example `lib/*.sh.example` project hooks.

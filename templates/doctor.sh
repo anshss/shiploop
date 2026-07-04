@@ -188,14 +188,14 @@ if [ -f "$stamp" ]; then
   hub_v=""
   # Resolve the hub in priority order (mirrors setup.md's Locate-the-plugin block).
   for _cand in "${CLAUDE_PLUGIN_ROOT:-}" \
-               "$HOME/.claude/skills/meta-repo-harness" \
-               "$HOME/.claude/plugins/cache/claude-plugins-official/meta-repo-harness"; do
+               "$HOME/.claude/skills/shiploop" \
+               "$HOME/.claude/plugins/cache/claude-plugins-official/shiploop"; do
     [ -n "$_cand" ] && [ -f "$_cand/VERSION" ] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$_cand/VERSION")"; break; }
   done
   if [ -z "$hub_v" ]; then
-    # Fallback: any /Users/*/plugins/**/meta-repo-harness/VERSION we can glob.
-    for _cand in "$HOME"/.claude/plugins/*/meta-repo-harness/VERSION \
-                 "$HOME"/.claude/plugins/*/*/meta-repo-harness/VERSION; do
+    # Fallback: any /Users/*/plugins/**/shiploop/VERSION we can glob.
+    for _cand in "$HOME"/.claude/plugins/*/shiploop/VERSION \
+                 "$HOME"/.claude/plugins/*/*/shiploop/VERSION; do
       [ -f "$_cand" ] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$_cand")"; break; }
     done
   fi

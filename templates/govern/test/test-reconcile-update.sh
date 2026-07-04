@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for /meta-repo-harness:update — locks the invariants the command
+# Regression for /shiploop:update — locks the invariants the command
 # depends on but doesn't own itself (scaffold.sh does the work; this test
 # verifies scaffold.sh honors the promises /update makes to the operator).
 #

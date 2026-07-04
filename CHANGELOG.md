@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0 — 2026-07-05
+
+Renamed `meta-repo-harness` → `shiploop` (product / plugin / command namespace / repo slug). No mechanism changes; every prior release's behavior is preserved. Historical CHANGELOG entries below still reference the old name — that is intentional (they record what the release was called at the time).
+
+### Changed
+- Plugin manifest `name` + `displayName` → `shiploop`; homepage / repository URLs → `github.com/anshss/shiploop`.
+- Marketplace manifest name + inner plugin `name` → `shiploop`.
+- Slash-command namespace: `/meta-repo-harness:{setup,update,push,govern,resolve,investigate}` → `/shiploop:{…}`.
+- Install commands in README + `install.sh`: `/plugin marketplace add anshss/shiploop`, `/plugin install shiploop@shiploop`; clone path `~/.claude/skills/shiploop/`.
+- SKILL.md frontmatter `name: shiploop`; description references the new command namespace.
+- Docs, prompts, and error messages that referenced the old product name updated to `shiploop`.
+- Test fixtures that mocked the harness repo as `meta-repo-harness` now mock it as `shiploop`.
+
+### Unchanged (deliberately)
+- Env var NAMES: `GOVERN_UPSTREAM_HARNESS_REPO`, `GOVERN_UPSTREAM_HARNESS_DIR`, and every other `GOVERN_*` name. Their default *values* (empty) also unchanged; example values in comments updated to `shiploop`.
+- Workspace stamp filename `scripts/lib/.harness-version`.
+- Generic-noun prose: "meta-repo workspace", "the meta-repo pattern", "multi-subrepo / meta-repo" — shiploop is still a tool *for meta-repos*.
+
+### Compatibility
+- Existing installs pick up the new name on plugin update. The install command changes to `/plugin install shiploop@shiploop`; the old marketplace add now needs `anshss/shiploop`. GitHub redirects the old repo URL, so links continue to resolve until you re-`marketplace add`.
+
 ## 1.3.0 — 2026-07-05
 
 Reconcile-commands release. The two-way update channel that shipped in v1.2.0 gains its user-facing surface: fleet reconciliation is now a one-command action in each direction, matching the `git pull` / `git push` mental model.

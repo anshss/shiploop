@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Registry read/write/lock helpers for the worktree slot allocator.
 # Source from other scripts; do not invoke directly. Generic — no per-workspace
-# values live here (paths are stored absolute), so /meta-repo-harness:setup never edits it.
+# values live here (paths are stored absolute), so /shiploop:setup never edits it.
 #
 # Exports:
 #   WT_ROOT          — absolute path of the main checkout
