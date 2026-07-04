@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-07-05
+
+Adopter-friction patch surfaced by the reference-instance convergence to v1.2.0.
+
+### Fixed
+- **`assert.sh` back-compat seam.** v1.2.0 moved `_GOVERN_ASSUME_MERGE_ALLOWED=1` from top-level into `mk_ws_stub()`. Any adopter test that sources `assert.sh` WITHOUT calling `mk_ws_stub` lost the merge-allowed seam → `merge-pr.sh` exited 5 with `external-author` → ~14 red tests on the reference instance. v1.2.1 emits the seam at BOTH sites — top-level for adopters, re-set inside `mk_ws_stub` for callers that unset it earlier. Locked in by `test-assert-merge-seam-top-level.sh`.
+- **Exit-77 SKIP handling for naive runners.** `test-update-channel.sh` and `test-sync-port.sh` exit 77 (SKIP) when the enclosing hub / porter-prompt isn't present. A naive `for t in test-*.sh` loop read that as a hard failure. v1.2.1: (a) `commands/setup.md` documents the copy-pasteable idiom with an rc==77 branch that prints `skip`; (b) `templates/govern/govern-self-apply.sh` and `templates/govern/sync-port.sh` — the two suite-runners shipped in templates — now treat rc==77 as skip. (The CI workflow already tallied 77 correctly.)
+
 ## 1.2.0 — 2026-07-05
 
 Update-channel release. Ships the two-way channel that lets an adopter know a bump is due AND lets them contribute back — plus a batch of upgrade-friction fixes distilled from three real convergence runs (claude-keepalive, splito, tokenjam).

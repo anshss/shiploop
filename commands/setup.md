@@ -271,7 +271,10 @@ for t in scripts/govern/test/test-*.sh; do
   name=$(basename "$t" .sh)
   timeout --foreground 45 bash "$t" </dev/null > "/tmp/$name.log" 2>&1 & wait
   rc=$?
-  printf '%s\t%d\n' "$name" "$rc"
+  # Exit 77 = well-known SKIP (test-update-channel.sh from a non-hub checkout,
+  # test-sync-port.sh with the porter prompt absent). Treat it as skip, not fail.
+  if [ "$rc" -eq 77 ]; then printf '%s\tskip\n' "$name"
+  else printf '%s\t%d\n' "$name" "$rc"; fi
 done
 ```
 

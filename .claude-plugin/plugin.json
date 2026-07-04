@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "meta-repo-harness",
   "displayName": "Meta-repo harness",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor. Wraps N independent git repos as one workspace with parallel worktrees, a ticket queue, and a headless-worker loop that auto-merges allowlisted repos on green CI.",
   "author": {
     "name": "anshss",
