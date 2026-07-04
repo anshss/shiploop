@@ -510,6 +510,24 @@ done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 # stale count can never fire a spurious nudge. NA_SET is comma-wrapped (",N,N,") — "," resets all.
 [[ "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
 
+# Pre-run issue de-dup: NEVER let the internal governor work a ticket that is ALREADY a public GitHub
+# issue. Issues on GOVERN_EXTERNALIZE_REPO are seeded for OUTSIDE contributors, not internal members —
+# so a queued ticket that matches an open issue (by normalized title, or recorded in the externalized
+# ledger) is EXCLUDED from selection this run and left in tickets.md (de-listing it is the operator's
+# call). Read-only, non-fatal, gated by GOVERN_SKIP_ISSUE_TICKETS (default 1). No-op unless
+# GOVERN_EXTERNALIZE_REPO is set — so this defaults OFF for a workspace that hasn't opted in.
+if [[ "${GOVERN_SKIP_ISSUE_TICKETS:-1}" == "1" ]]; then
+  if [[ "$MODE" == "live" ]]; then
+    while IFS=$'\t' read -r _iss_n _iss_url; do
+      [[ "$_iss_n" =~ ^[0-9]+$ ]] || continue
+      excludes="${excludes:+$excludes,}$_iss_n"
+      govern::log "skipping #$_iss_n — already a public issue ${_iss_url} — reserved for external contributors, not the internal governor (GOVERN_SKIP_ISSUE_TICKETS)"
+    done < <(govern::tickets_already_issues "$TICKETS_FILE" 2>/dev/null)
+  else
+    govern::log "[dry] would exclude any ticket already filed as a public GitHub issue from selection"
+  fi
+fi
+
 # #119: cross-run wait-for-merge / dependency deferrals. skipThisRun (#57) is in-memory only, so a
 # supervisor "defer #N until PR #M merges" advisory evaporated at run-end and the selector re-picked
 # the blocked ticket next run. We persist such waits to governor/pending-waits.json and, at run-start,
@@ -697,6 +715,26 @@ while :; do
       report="$(jq -nc --arg r "$frepo" --argjson n "$fpr" --arg u "$furl" \
         '{status:"resolved",pr:{repo:$r,number:$n,url:$u},lessonPatch:null,newTickets:[],crossRefs:{},escalation:null}')"
       status="resolved"
+    fi
+  fi
+
+  # PR-HYGIENE BACKSTOP: whenever a PR now exists for this ticket, (a) strip any leaked internal
+  # ticket-id (#N) from its title/body — a local id must not sit on the public repo — and (b) surface
+  # any Claude spec/plan file that leaked into the diff (those belong in the root harness, never a
+  # public PR). Deterministic net under the worker prompt; idempotent (no #N left → no-op). The branch
+  # stays ticket-<N> (the governor tracks by it); only title+body are rewritten.
+  if [[ "$MODE" == "live" ]]; then
+    _pr_num="$(printf '%s' "$report" | jq -r '.pr.number // ""' 2>/dev/null || true)"
+    _pr_url="$(printf '%s' "$report" | jq -r '.pr.url // ""' 2>/dev/null || true)"
+    _pr_repo="$(printf '%s' "$report" | jq -r '.pr.repo // ""' 2>/dev/null || true)"
+    if [[ -n "$_pr_num" ]]; then
+      _pr_slug="$(printf '%s' "$_pr_url" | sed -nE 's#https?://github.com/([^/]+/[^/]+)/pull/.*#\1#p')"
+      [[ -n "$_pr_slug" ]] || _pr_slug="$(govern::repo_slug "$_pr_repo" 2>/dev/null || true)"
+      if [[ -n "$_pr_slug" ]]; then
+        govern::scrub_pr_ticket_ref "$_pr_slug" "$_pr_num" "$N"
+        _specs="$(govern::pr_spec_files "$_pr_slug" "$_pr_num" 2>/dev/null || true)"
+        [[ -n "$_specs" ]] && govern::log "WARN $_pr_slug#$_pr_num includes Claude spec/plan artifact(s) that must NOT be on a public PR — strip before merge: $(printf '%s' "$_specs" | tr '\n' ' ')"
+      fi
     fi
   fi
 
