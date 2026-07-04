@@ -221,7 +221,7 @@ component_worktrees() {
   cp "$T/worktree/new.sh" "$T/worktree/rm.sh" "$T/worktree/status.sh" \
      "$T/worktree/exec.sh" "$T/worktree/main.sh" "$T/worktree/session-end-cleanup.sh" \
      scripts/worktree/
-  cp "$T/worktree/lib/registry.sh" scripts/worktree/lib/
+  cp "$T/worktree/lib/registry.sh" "$T/worktree/lib/base-ref.sh" scripts/worktree/lib/
   chmod +x scripts/worktree/*.sh
   info "installed worktree scripts"
 }
