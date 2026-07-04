@@ -115,6 +115,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: install jq (some tests need it)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: pin git default branch to main
+        # The GitHub Actions runner's git has no init.defaultBranch set, so `git init` (and
+        # `git init --bare`) writes HEAD → master. Tests that push `main` from a seed clone
+        # into that bare then re-clone hit "remote HEAD refers to nonexistent ref, unable to
+        # checkout" and end up with an empty working tree — which then fails to source
+        # scripts/lib/workspace.sh. macOS git already defaults to main (Homebrew + xcode-select
+        # ship with it), which is why this only shows on Linux CI.
+        run: git config --global init.defaultBranch main
       - name: create 2 fake sub-repos
         run: |
           set -euo pipefail
