@@ -479,6 +479,20 @@ else
   govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
 fi
 
+# Externalization lane (OPT-IN): once per run, file each OPEN Low-severity OSS-repo ticket as a public
+# GitHub Issue (GOVERN_EXTERNALIZE_REPO) and remove it from tickets.md — seeding "good first issue"
+# work for outside contributors. Gated by GOVERN_EXTERNALIZE_LANE (default 1); the underlying script
+# self-skips cleanly when GOVERN_EXTERNALIZE_REPO/SUBREPO are unset, so this is a no-op for workspaces
+# that haven't opted in. Runs BEFORE selection so an externalized ticket is never also picked up by a
+# worker the same run. Non-fatal: a failure logs and continues — it must never stall the loop.
+if [[ "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
+  if [[ "$MODE" == "live" ]]; then
+    "$DIR/externalize-low-tickets.sh" >&2 || govern::log "externalization pass failed (non-fatal) — continuing"
+  else
+    "$DIR/externalize-low-tickets.sh" --dry >&2 || govern::log "externalization (dry) failed — continuing"
+  fi
+fi
+
 # #92: announce (once) every ticket auto-skipped because its body carries a "NOT govern-automatable"
 # marker. select-ticket.sh excludes them silently (its stderr is suppressed by the caller), so
 # WITHOUT this log the skip would be invisible — the operator would never learn why a marked ticket
@@ -509,6 +523,24 @@ done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 # #120: reset the consecutive-skip streak for any ticket no longer NA (resolved / un-marked) so a
 # stale count can never fire a spurious nudge. NA_SET is comma-wrapped (",N,N,") — "," resets all.
 [[ "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
+
+# Pre-run issue de-dup: NEVER let the internal governor work a ticket that is ALREADY a public GitHub
+# issue. Issues on GOVERN_EXTERNALIZE_REPO are seeded for OUTSIDE contributors, not internal members —
+# so a queued ticket that matches an open issue (by normalized title, or recorded in the externalized
+# ledger) is EXCLUDED from selection this run and left in tickets.md (de-listing it is the operator's
+# call). Read-only, non-fatal, gated by GOVERN_SKIP_ISSUE_TICKETS (default 1). No-op unless
+# GOVERN_EXTERNALIZE_REPO is set — so this defaults OFF for a workspace that hasn't opted in.
+if [[ "${GOVERN_SKIP_ISSUE_TICKETS:-1}" == "1" ]]; then
+  if [[ "$MODE" == "live" ]]; then
+    while IFS=$'\t' read -r _iss_n _iss_url; do
+      [[ "$_iss_n" =~ ^[0-9]+$ ]] || continue
+      excludes="${excludes:+$excludes,}$_iss_n"
+      govern::log "skipping #$_iss_n — already a public issue ${_iss_url} — reserved for external contributors, not the internal governor (GOVERN_SKIP_ISSUE_TICKETS)"
+    done < <(govern::tickets_already_issues "$TICKETS_FILE" 2>/dev/null)
+  else
+    govern::log "[dry] would exclude any ticket already filed as a public GitHub issue from selection"
+  fi
+fi
 
 # #119: cross-run wait-for-merge / dependency deferrals. skipThisRun (#57) is in-memory only, so a
 # supervisor "defer #N until PR #M merges" advisory evaporated at run-end and the selector re-picked
@@ -700,12 +732,36 @@ while :; do
     fi
   fi
 
-  # #67 VALIDATION-EVIDENCE GATE: a ticket whose deliverable is a LIVE/empirical result (a
-  # "VALIDATION"/"SPIKE" ticket, a "**Type:** Validation spike" line, or "live-verify") must NOT
-  # be auto-resolved on static code analysis. If the worker didn't actually run the test
-  # (validation.ranLiveTest!=true or no evidence), downgrade to parked + escalate so a human (or a
-  # properly-equipped re-run) produces real evidence — never silently accept a code-reading verdict.
-  # Fires only on validation-type tickets, so ordinary code tickets are unaffected.
+  # PR-HYGIENE BACKSTOP: whenever a PR now exists for this ticket, (a) strip any leaked internal
+  # ticket-id (#N) from its title/body — a local id must not sit on the public repo — and (b) surface
+  # any Claude spec/plan file that leaked into the diff (those belong in the root harness, never a
+  # public PR). Deterministic net under the worker prompt; idempotent (no #N left → no-op). The branch
+  # stays ticket-<N> (the governor tracks by it); only title+body are rewritten.
+  if [[ "$MODE" == "live" ]]; then
+    _pr_num="$(printf '%s' "$report" | jq -r '.pr.number // ""' 2>/dev/null || true)"
+    _pr_url="$(printf '%s' "$report" | jq -r '.pr.url // ""' 2>/dev/null || true)"
+    _pr_repo="$(printf '%s' "$report" | jq -r '.pr.repo // ""' 2>/dev/null || true)"
+    if [[ -n "$_pr_num" ]]; then
+      _pr_slug="$(printf '%s' "$_pr_url" | sed -nE 's#https?://github.com/([^/]+/[^/]+)/pull/.*#\1#p')"
+      [[ -n "$_pr_slug" ]] || _pr_slug="$(govern::repo_slug "$_pr_repo" 2>/dev/null || true)"
+      if [[ -n "$_pr_slug" ]]; then
+        govern::scrub_pr_ticket_ref "$_pr_slug" "$_pr_num" "$N"
+        _specs="$(govern::pr_spec_files "$_pr_slug" "$_pr_num" 2>/dev/null || true)"
+        [[ -n "$_specs" ]] && govern::log "WARN $_pr_slug#$_pr_num includes Claude spec/plan artifact(s) that must NOT be on a public PR — strip before merge: $(printf '%s' "$_specs" | tr '\n' ' ')"
+      fi
+    fi
+  fi
+
+  # #67/#73 VALIDATION GATE: a ticket whose deliverable is a LIVE/empirical result (a
+  # "VALIDATION"/"SPIKE" ticket, a "**Type:** Validation spike" line, or "live-verify") must NOT be
+  # auto-resolved. Two failure modes both downgrade to parked+escalate — never a silent worker verdict:
+  #   #67 — the test WASN'T run (validation.ranLiveTest!=true or no evidence): escalate for a real run.
+  #   #73 — the test RAN but its OWN gate FAILED (validation.gatePassed==false, i.e. a measured NEGATIVE):
+  #         shipping/shelving/reworking a negative is a product judgment the worker must not self-decide
+  #         (esp. not auto-ship a default-off opt-in) — escalate the disposition with the result in hand.
+  # Fires only on validation-type tickets, so ordinary code tickets are unaffected. gatePassed defaults
+  # to "unknown" (absent → never force-parks; only an explicit false trips #73), so pre-#73 workers and
+  # non-gated validations are unaffected.
   if [[ "$status" == "resolved" && "$MODE" == "live" ]]; then
     # Use the shared tolerant parser so a `##  #N` (double-space) or `## #N—Title` (em-dash
     # no space) heading doesn't yield an empty tblock — which would silently disable this
@@ -713,13 +769,16 @@ while :; do
     # validation ticket without live-test evidence, defeating the #67 gate.
     tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
     if printf '%s' "$tblock" | grep -qE '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
-      ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
-      eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
-      if [[ "$ranlive" != "true" || -z "$eviden" ]]; then
-        govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence (ranLiveTest=$ranlive) — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
-        report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation ticket needs a real test",reason:"reported resolved without running the live test — a validation/spike ticket requires empirical evidence (deploy/snapshot/restore/UI run with captured output), not static code analysis",question:"run the actual test and attach evidence, OR confirm it cannot be automated and decide disposition",options:[]}' 2>/dev/null || printf '%s' "$report")"
-        status="parked"; anomaly=1
-      fi
+      case "$(govern::validation_gate_action "$report")" in
+        park-no-evidence)
+          govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
+          report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation ticket needs a real test",reason:"reported resolved without running the live test — a validation/spike ticket requires empirical evidence (deploy/snapshot/restore/UI run with captured output), not static code analysis",question:"run the actual test and attach evidence, OR confirm it cannot be automated and decide disposition",options:[]}' 2>/dev/null || printf '%s' "$report")"
+          status="parked"; anomaly=1 ;;
+        park-gate-failed)
+          govern::log "#$N is a VALIDATION ticket whose gate FAILED (gatePassed=false) — refusing to auto-ship a measured-NEGATIVE result; parking so the operator decides ship-off/shelve/rework (#73). Any worker PR is left open for review."
+          report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation gate FAILED — decide ship-off/shelve/rework",reason:("the required validation/A-B gate FAILED (measured negative) — auto-shipping a negative is not a worker decision: " + (.validation.evidence // "see report")),question:"the measured result is negative; choose the disposition — ship default-OFF opt-in, shelve the branch, or rework scope + re-run. Do NOT auto-ship a gate-failed result.",options:["shelve","ship-default-off","rework"]}' 2>/dev/null || printf '%s' "$report")"
+          status="parked"; anomaly=1 ;;
+      esac
     fi
   fi
 
@@ -733,6 +792,23 @@ while :; do
     # deduped + merge-repo-first so the live merge-repo backend ships before any frontend sibling.
     pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
     all_prs_label="$(printf '%s\n' "$pr_lines" | awk -F'\t' 'NF>=2{printf "%s%s#%s",sep,$1,$2; sep=", "}')"
+
+    # #72: on a LOCAL-FIRST repo (opt-in via GOVERN_LOCAL_FIRST_REPOS) there is no deployed prod DB —
+    # an ADDITIVE migration ships as code (a MIGRATIONS entry that self-applies on each user's local
+    # DB open), so there is nothing to "apply to prod manually". If EVERY PR for this ticket targets
+    # a local-first repo, neutralize mneeded so it opens as a normal PR instead of a spurious
+    # "apply migration manually" park. DESTRUCTIVE migrations still escalate (guarded by mdestr).
+    if [[ "$mneeded" == "true" && "$mdestr" != "true" && -n "$pr_lines" ]]; then
+      _all_localfirst=1
+      while IFS=$'\t' read -r _lfr _lfp _lfu; do
+        [[ -n "$_lfr" ]] || continue
+        if ! govern::is_local_first_repo "$_lfr"; then _all_localfirst=0; break; fi
+      done <<< "$pr_lines"
+      if [[ "$_all_localfirst" == "1" ]]; then
+        govern::log "#$N's additive migration ships as auto-applying code on local-first repo(s) ${all_prs_label:-?} — no prod apply needed; proceeding as a normal PR (#72)"
+        mneeded="false"
+      fi
+    fi
 
     if [[ "$mneeded" == "true" && "$mdestr" == "true" ]]; then
       # DESTRUCTIVE prod migration → never auto-merge ANY sibling; escalate (hard-stop stays).

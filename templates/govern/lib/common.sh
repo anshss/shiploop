@@ -28,6 +28,10 @@ SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/superviso
 # point them at temp dirs).
 QUEUE_DIR="${GOVERN_QUEUE_DIR:-$WS_ROOT/queue}"
 TICKETS_FILE="${GOVERN_TICKETS_FILE:-$QUEUE_DIR/tickets.md}"
+# Local ledger for the externalization lane (Low tickets filed as public issues). Only written when the
+# lane runs; read at run-start by tickets_already_issues so a partially-healed filing (issue on GitHub
+# but ledger not yet updated) still de-dups its ticket. Under queue/ alongside tickets.md.
+EXTERNALIZED_FILE="${GOVERN_EXTERNALIZED_FILE:-$QUEUE_DIR/externalized.md}"
 # Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
 # answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"
@@ -502,6 +506,216 @@ govern::ticket_block_delete() { # N [tickets-file]
   ' "$f" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp" 2>/dev/null
 }
 
+# ── PR hygiene: strip the internal ticket-id + surface leaked spec files ─────────────────────────
+# The internal ticket number (#N) is a LOCAL-queue id — meaningless (and noise) on a public repo.
+# The worker doctrine forbids it in the PR title/body, but a headless LLM worker sometimes emits it
+# anyway, so this is the DETERMINISTIC backstop: after a PR is known, PATCH its title+body to drop
+# references to THIS ticket's number. We match ticket-ref SHAPES ("Fix #N:", "fix(#N):", "(#N)", bare
+# "#N") for the exact number N, with a trailing non-digit boundary so #6 never touches #60. `gh pr
+# edit` can be broken repo-wide by the classic-Projects deprecation, so we PATCH via the REST API.
+# Commit SUBJECTS can also carry #N, but rewriting pushed history = force-push = a hard-stop, so those
+# stay prompt-enforced only; title+body is what renders most prominently.
+govern::_strip_ticket_ref() { # text N -> text with #N ticket-refs removed + tidied
+  local t="$1" n="$2"
+  [[ "$n" =~ ^[0-9]+$ ]] || { printf '%s' "$t"; return 0; }
+  # Wrapper forms first, then bare #N (trailing boundary via a captured non-digit char, BSD-sed safe).
+  t="$(printf '%s' "$t" | sed -E \
+    -e "s/[Ff]ix\(#$n\):?[[:space:]]*//g" \
+    -e "s/[Ff]ix #$n:[[:space:]]*//g" \
+    -e "s/[[:space:]]*\(#$n\)//g" \
+    -e "s/#$n([^0-9]|$)/\1/g")"
+  # Tidy: collapse runs of spaces, trim, drop a now-dangling leading ':' / em-dash.
+  printf '%s' "$t" | sed -E 's/[[:space:]]{2,}/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//; s/^[:—-][[:space:]]*//'
+}
+
+govern::scrub_pr_ticket_ref() { # slug pr N   (slug = owner/repo)
+  local slug="$1" pr="$2" n="$3" j cur body newt newb
+  command -v gh >/dev/null 2>&1 || return 0
+  [[ -n "$slug" && -n "$pr" && "$n" =~ ^[0-9]+$ ]] || return 0
+  # Fetch the raw PR object and extract locally with DEFENSIVE jq — a non-object response (an error
+  # payload, a rate-limit body, or a test stub) must no-op the scrub, never spill a jq "cannot index
+  # array" error. (Relying on gh's own `--jq` masked this: a stub/odd gh that ignores --jq returns the
+  # raw shape, and a bare `.t` on a non-object then errors.)
+  j="$(gh api "repos/$slug/pulls/$pr" 2>/dev/null || true)"
+  printf '%s' "$j" | jq -e 'type=="object"' >/dev/null 2>&1 || return 0
+  cur="$(printf '%s' "$j" | jq -r '.title // ""' 2>/dev/null || true)"
+  body="$(printf '%s' "$j" | jq -r '.body // ""' 2>/dev/null || true)"
+  newt="$(govern::_strip_ticket_ref "$cur" "$n")"
+  newb="$(govern::_strip_ticket_ref "$body" "$n")"
+  [[ "$newt" == "$cur" && "$newb" == "$body" ]] && return 0    # nothing leaked — idempotent no-op
+  if gh api -X PATCH "repos/$slug/pulls/$pr" -f title="$newt" -f body="$newb" >/dev/null 2>&1; then
+    govern::log "scrubbed internal ticket-id #$n from $slug#$pr title/body (local id, not for the public repo)"
+  else
+    govern::log "WARN could not scrub #$n from $slug#$pr via REST — operator: edit the PR to drop the #$n reference"
+  fi
+}
+
+# Surface (do NOT auto-rewrite) any Claude spec/plan/design artifact that leaked into a PR's diff.
+# Those belong in the ROOT harness (.specs/ / .plans/ are gitignored per repo); they must never land
+# in a public sub-repo PR. Every non-merge repo is PR-only (a human merges), so a loud WARN + the file
+# list is enough to get them stripped in review — we don't force-push a worker's branch. Prints
+# offending paths, one per line.
+govern::pr_spec_files() { # slug pr -> offending paths
+  local slug="$1" pr="$2"
+  command -v gh >/dev/null 2>&1 || return 0
+  [[ -n "$slug" && -n "$pr" ]] || return 0
+  gh api "repos/$slug/pulls/$pr/files" --paginate --jq '.[].filename' 2>/dev/null \
+    | grep -E '(^|/)\.(specs|plans)/|(^|/)[0-9]{4}-[0-9]{2}-[0-9]{2}-.*-(design|spec|plan)\.md$' || true
+}
+
+# ── externalization lane: Low-severity OSS-repo tickets → public GitHub Issues ───────────────────
+# Print one bare ticket number per OPEN ticket eligible for externalization. Eligibility is PRINCIPLED,
+# not just (Low + Where-mentions-target) — a Low ticket qualifies ONLY when ALL hold (#75):
+#   1. **Severity:** Low, AND
+#   2. its **Where:** references the OSS sub-repo (GOVERN_EXTERNALIZE_SUBREPO), AND
+#   3. its Where does NOT target the HARNESS (scripts/ governor/ queue/ workspace.sh meta-repo harness) —
+#      a governor-internals ticket must never become a public "good first issue", even if its Where also
+#      names the OSS sub-repo (e.g. "meta-repo harness — scripts/govern/…; surfaced on <oss> ticket"), AND
+#   4. it is NOT a VALIDATION / SPIKE / decision ticket (heading contains VALIDATION|SPIKE, a
+#      `**Type:** … validation/spike` line, or `live-verif`) — those are internal product decisions with
+#      empirical-run deliverables, not contributor tasks, and can leak internal strategy.
+# Block-scoped — every field is read ONLY within ticket #N's own block (heading → its trailing `---`).
+#
+# THE load-bearing detail on (2): the Where match EXCLUDES sibling sub-repos whose name merely CONTAINS
+# the OSS name as a substring (e.g. `myproject-website` ⊃ `myproject`). We strip every such sibling
+# (derived from REPOS) out of the Where line FIRST, then test the remainder for the OSS name.
+#
+# No GOVERN_EXTERNALIZE_SUBREPO set → the lane is off → this helper returns nothing (opt-in gate).
+govern::externalize_candidates() { # [tickets-file] -> eligible ticket numbers, one per line
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  local target="${GOVERN_EXTERNALIZE_SUBREPO:-}" r
+  [[ -n "$target" ]] || return 0
+  # Sibling sub-repos whose name CONTAINS the target as a substring — strip these before testing.
+  local siblings=()
+  for r in "${REPOS[@]}"; do
+    [[ "$r" != "$target" && "$r" == *"$target"* ]] && siblings+=("$r")
+  done
+  # Harness markers: if the Where names any of these, the ticket is governor-internal → never externalize.
+  local hmarkers="scripts/ governor/ queue/ workspace.sh meta-repo harness"
+  awk -v target="$target" -v siblings="${siblings[*]:-}" -v hmarkers="$hmarkers" '
+    function flush() { if (cur!="" && sev=="low" && oss==1 && harness==0 && valid==0) print cur }
+    BEGIN { ns=split(siblings, sib, " "); nh=split(hmarkers, HM, " ") }
+    /^## #[0-9]+/ {
+      flush(); cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); sev=""; oss=0; harness=0; valid=0
+      # (4) validation/spike, or a maintainer-DECISION ticket ("… — decide X vs Y"), in the heading
+      if ($0 ~ /VALIDATION|SPIKE/ || tolower($0) ~ /decide /) valid=1
+      next
+    }
+    cur!="" {
+      low=tolower($0)
+      if ($0 ~ /^\*\*Severity:\*\*/) { if (low ~ /low/) sev="low" }
+      else if ($0 ~ /^\*\*Where:\*\*/) {
+        w=$0
+        for (i=1;i<=ns;i++) if (sib[i]!="") gsub(sib[i], "", w)
+        if (index(w, target) > 0) oss=1            # (2) targets the OSS sub-repo
+        wl=tolower(w)
+        for (i=1;i<=nh;i++) if (HM[i]!="" && index(wl, HM[i])>0) harness=1   # (3) harness-scoped → exclude
+      }
+      # (4) body-based validation markers
+      if (low ~ /^\*\*type:\*\*.*(validation|spike)/ || low ~ /live-verif/) valid=1
+    }
+    END { flush() }
+  ' "$f"
+}
+
+# ── externalization: label-apply permission rejection (#26) ──────────────────
+# `gh issue create --label …` is a COMPOSITE op: it creates the issue (URL on stdout, exit 0) and
+# THEN applies the labels in a separate GraphQL `addLabelsToLabelable` mutation. When the authed gh
+# account has only `pull` on the repo (no triage/push), GitHub CREATES the issue but REJECTS the
+# label step — and that rejection lands ONLY on stderr while the URL is still returned. Discarding
+# stderr (`2>/dev/null`) and inferring success from a non-empty URL therefore logs `filed` while
+# every label was silently dropped. This regex matches that label-permission rejection so the lane
+# can distinguish "filed + labeled" from "filed but labels REJECTED — account lacks Triage on repo".
+GOVERN_LABEL_PERM_ERROR_RE='addLabelsToLabelable|could not add label|fail(ed)? to (add|apply) label|labels? (were|was) not (added|applied)|Resource not accessible|Must have (admin|write|triage|push)|requires (admin|write|triage|push)'
+
+# Does gh's create stderr ($1) show the issue was filed but its LABELS were rejected on a permission
+# gap? Returns 0 (label rejection present) / 1 (none). Safe on empty input. Always case-insensitive.
+govern::label_apply_rejected() { # gh-create-stderr -> 0 if a label-permission rejection is present
+  local err="${1:-}"
+  [[ -n "$err" ]] || return 1
+  printf '%s' "$err" | grep -qiE "$GOVERN_LABEL_PERM_ERROR_RE"
+}
+
+# ── pre-run: tickets that already exist as a PUBLIC GitHub issue (reserved for outside contributors) ──
+# Issues on GOVERN_EXTERNALIZE_REPO are seeded for EXTERNAL contributors; the internal governor must
+# not ALSO work a ticket that's already published as one. Matches each open ticket against LIVE open
+# issues by NORMALIZED-title equality (lowercase, non-alnum→space, trim) — conservative on purpose
+# (an exact-normalized match, not fuzzy overlap, so a legit ticket is never wrongly skipped) — and
+# against the externalized ledger by #N (the partial-heal edge where a filed ticket lingers here).
+# Prints "N<TAB>url" per matched ticket. Read-only; one gh call. Empty when gh/jq absent or no match.
+govern::tickets_already_issues() { # [tickets-file] -> "N\turl" lines
+  local f="${1:-$TICKETS_FILE}" repo="${GOVERN_EXTERNALIZE_REPO:-}" issues=""
+  [[ -f "$f" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  if [[ -n "$repo" ]] && command -v gh >/dev/null 2>&1; then
+    issues="$(gh issue list --repo "$repo" --state open --limit 500 --json title,url \
+      --jq '.[] | ((.title|ascii_downcase|gsub("[^a-z0-9]+";" ")|gsub("^ +| +$";"")) + "\t" + .url)' 2>/dev/null || true)"
+  fi
+  # Ledger: a #N still present here despite being recorded externalized (partial-heal edge).
+  local led=""
+  [[ -f "${EXTERNALIZED_FILE:-}" ]] && led="$(grep -oE '^- #[0-9]+ ' "$EXTERNALIZED_FILE" 2>/dev/null | grep -oE '[0-9]+' || true)"
+  # Pass issues/led via the ENVIRONMENT, not `-v`: awk's -v assignment can't carry embedded newlines
+  # (a newline terminates the value), and both are multi-line. ENVIRON handles newlines fine.
+  _GV_ISSUES="$issues" _GV_LED="$led" awk '
+    BEGIN {
+      n=split(ENVIRON["_GV_ISSUES"], L, "\n"); for(i=1;i<=n;i++){ p=index(L[i],"\t"); if(p){ IU[substr(L[i],1,p-1)]=substr(L[i],p+1) } }
+      m=split(ENVIRON["_GV_LED"], LD, "\n"); for(i=1;i<=m;i++) if(LD[i]!="") LED[LD[i]]=1
+    }
+    /^## #[0-9]+ —/ {
+      num=$0; sub(/^## #/,"",num); sub(/ .*/,"",num)
+      title=$0; sub(/^## #[0-9]+ —[[:space:]]*/,"",title)
+      t=tolower(title); gsub(/[^a-z0-9]+/," ",t); gsub(/^ +| +$/,"",t)
+      if (t in IU)      { print num "\t" IU[t]; next }
+      if (num in LED)   { print num "\t(recorded in externalized ledger)" }
+    }
+  ' "$f"
+}
+
+# ── advisory: tickets targeting NEITHER the project NOR the harness (isolation backstop) ─────────
+# The queue admits exactly two scopes: this workspace's own sub-repos (REPOS) and the harness itself
+# (scripts/ governor/ queue/ hooks/ workspace.sh/ CLAUDE.md/ meta-repo). A ticket whose **Where:**
+# line references NONE of those is likely about EXTERNAL tooling that merely shared the terminal.
+# This is a SOFT advisory — allowlist-based (flag only on the ABSENCE of any in-scope marker on the
+# Where line), so a legit ticket that targets a sub-repo but happens to mention an external tool is
+# NOT flagged. No Where line ⇒ never flagged. Prints "N<TAB>Where-text"; the caller decides how to
+# surface it (never a hard fault — deleting the ticket is always the operator's call). Read-only.
+govern::out_of_scope_tickets() { # [tickets-file] -> "N\twhere" lines
+  local f="${1:-$TICKETS_FILE}" r markers="scripts/ governor/ queue/ workspace.sh claude.md meta-repo harness .omc"
+  [[ -f "$f" ]] || return 0
+  for r in "${REPOS[@]}"; do markers="$markers ${r}"; done
+  _GV_MARKERS="$markers" awk '
+    BEGIN{ n=split(tolower(ENVIRON["_GV_MARKERS"]), M, /[ ]+/) }
+    /^## #[0-9]+/ { if(cur!="" && wl!="" && !inscope) print cur "\t" wl; cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); inscope=0; wl=""; next }
+    cur!="" && $0 ~ /^\*\*Where:\*\*/ {
+      wl=$0; sub(/^\*\*Where:\*\*[[:space:]]*/,"",wl); gsub(/`/,"",wl)
+      low=tolower($0)
+      for(i=1;i<=n;i++){ if(M[i]!="" && index(low,M[i])>0){ inscope=1; break } }
+    }
+    END{ if(cur!="" && wl!="" && !inscope) print cur "\t" wl }
+  ' "$f"
+}
+
+# ── validation gate decision (#67 + #73) ─────────────────────────────────────
+# Given a worker's resolved report for a VALIDATION-type ticket, decide the gate action. Pure — no
+# side effects; the caller applies it. Prints exactly one of:
+#   park-no-evidence — the live test was NOT run (ranLiveTest!=true or empty evidence)  [#67]
+#   park-gate-failed — the test RAN but its OWN gate FAILED (gatePassed==false, a measured negative);
+#                      the ship-vs-kill disposition is the operator's, not the worker's              [#73]
+#   resolve          — gate passed, or no explicit gate (gatePassed absent → "unknown" → auto-resolve)
+# NB: jq's `//` treats false as null, so `.gatePassed // "unknown"` would MISREAD a failed gate as
+# "unknown"; we branch on the boolean explicitly. Absent gatePassed ⇒ "unknown" ⇒ resolve, so pre-#73
+# workers and non-gated validations are unaffected.
+govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate-failed | resolve
+  local report="$1" ranlive eviden gatepass
+  ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
+  eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
+  gatepass="$(printf '%s' "$report" | jq -r 'if .validation.gatePassed == false then "false" elif .validation.gatePassed == true then "true" else "unknown" end' 2>/dev/null || echo unknown)"
+  if [[ "$ranlive" != "true" || -z "$eviden" ]]; then echo "park-no-evidence"
+  elif [[ "$gatepass" == "false" ]]; then echo "park-gate-failed"
+  else echo "resolve"; fi
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
@@ -562,6 +776,10 @@ govern::na_skip_prune() { # ",N,N," (current NA set, comma-wrapped)
 
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
+# Local-first repo (no deployed prod DB → additive migrations self-apply as shipped code). Opt-in via
+# GOVERN_LOCAL_FIRST_REPOS in workspace.sh; a workspace.sh that predates the knob (or doesn't define
+# the helper) is treated as "no local-first repos", so the branch is a pure no-op there.
+govern::is_local_first_repo() { command -v wsp_is_local_first_repo >/dev/null 2>&1 && wsp_is_local_first_repo "$1"; }
 
 # owner/repo slug + local checkout dir for a short repo name (both delegate to
 # workspace.sh, where any cross-owner / out-of-tree overrides live). Default slug

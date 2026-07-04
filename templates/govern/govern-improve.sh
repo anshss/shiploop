@@ -13,7 +13,10 @@ OUT="${GOVERN_IMPROVEMENTS_FILE:-$GOVERNOR_DIR/improvements.md}"
 state="$(cat "$RUNDIR/state.jsonl" 2>/dev/null || true)"
 review="$(cat "$RUNDIR/review.md" 2>/dev/null || true)"
 open_esc="$(awk '/^## Open/{o=1;next} /^## /{o=0} o' "$ESCALATIONS_FILE" 2>/dev/null | head -60 || true)"
-harness="$(ls "$DIR"/*.sh "$GOVERNOR_DIR"/*.md 2>/dev/null | sed "s#$WS_ROOT/##" || true)"
+# Include lib/*.sh — common.sh (the shared helper library) lives under $DIR/lib/, not $DIR/, so a
+# bare `ls "$DIR"/*.sh` misses it and the self-improve reviewer never sees the ONE file most
+# improvement proposals need to touch.
+harness="$(ls "$DIR"/*.sh "$DIR"/lib/*.sh "$GOVERNOR_DIR"/*.md 2>/dev/null | sed "s#$WS_ROOT/##" || true)"
 
 # #59: the reviewer should know WHY tickets failed, not just THAT they did. For each failed
 # ticket, surface its worker log's final result event (subtype + snippet — often reveals the
