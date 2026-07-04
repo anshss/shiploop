@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1 — 2026-07-05
+
+README rewrite — reposition as autonomous backlog governor; no code changes.
+
 ## 1.4.0 — 2026-07-05
 
 Renamed `meta-repo-harness` → `shiploop` (product / plugin / command namespace / repo slug). No mechanism changes; every prior release's behavior is preserved. Historical CHANGELOG entries below still reference the old name — that is intentional (they record what the release was called at the time).

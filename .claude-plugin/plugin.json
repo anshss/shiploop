@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shiploop",
   "displayName": "shiploop",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor. Wraps N independent git repos as one workspace with parallel worktrees, a ticket queue, and a headless-worker loop that auto-merges allowlisted repos on green CI.",
   "author": {
     "name": "anshss",
