@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 — 2026-07-04
+
+Fleet-harvest release. Two production instances (a tokenjam-shaped workspace and the splito workspace) fed a batch of hardening fixes and small-but-load-bearing features back into the templates. Every added mechanism is OFF by default; existing installs upgrade cleanly with `scaffold.sh --component <name>`.
+
+### Added (from tokenjam harvest, PR #30)
+- **Validation-gate action ladder.** Worker's `## Validation` block now carries an explicit action (`retry` / `escalate` / `park`) that the governor honors, replacing string-heuristic disposition. Locked by `test-validation-gate-action.sh`.
+- **Opt-in externalization lane.** Every governor run can file each OPEN Low-severity ticket whose Where targets `GOVERN_EXTERNALIZE_SUBREPO` as a public GitHub Issue on `GOVERN_EXTERNALIZE_REPO`. Sibling-repo name containment is excluded. Auto-label mode when `GOVERN_EXTERNALIZE_LABELS` is empty. 42-assertion `test-externalize.sh`.
+- **Local-first migration classification.** `GOVERN_LOCAL_FIRST_REPOS` marks sub-repos that ship schema changes as self-applying code, so additive migrations merge normally instead of parking for a manual prod apply. Destructive migrations still escalate. Regression: `test-local-first-migration.sh`.
+- **PR-hygiene scrubbing.** Worker PR bodies are scrubbed of the harness-internal disposition/validation blocks before opening. `test-pr-hygiene.sh`.
+- **Worktree base-ref fix.** `worktree/new.sh` now resolves the sub-repo's actual default branch instead of assuming `main`, so worktrees created against `master`/`develop`/etc. no longer fail to pick a base. `test-base-ref.sh`.
+- **`govern-improve` lib discovery fix.** The self-improve triage no longer walks past the meta root looking for its lib.
+
+### Added (from splito harvest, this PR)
+- **Workspace pre-commit lint-fix hook.** `templates/githooks/pre-commit` runs `WSP_LINT_FIX_CMD` (any idempotent formatter/linter fixer) in each sub-repo before commit, then `git add -u`'s the touched tracked files. Failures are soft (commit proceeds). Chain-safe: sub-repos that already have a pre-commit hook (husky, lefthook, hand-rolled) are left untouched. Empty CMD (default) = the hook is a no-op. `install_subrepo_pre_commit_hook()` in `templates/lib/githooks.sh` propagates it into sub-repos alongside the attribution hook. 12-assertion `test-pre-commit-hook.sh`.
+- **Cross-repo file-conflict warning in `push-prs.sh`.** Before opening PRs, warn when two sub-repos have touched the same relative path — the operator can review before both PRs go out. Uses `grep -F` for bracket-safe filenames and a trap-cleaned tmpfile. (Feature already ported into templates; this changelog records its provenance.)
+- **`merge-pr.sh` local-branch cleanup guard.** When deleting the post-merge local ticket-`<N>` branch, skip silently if the branch is checked out in any worktree, instead of leaving noise on every merge. Worktree teardown handles that case. Locked by `test-merge-pr-branch-cleanup.sh`. (Feature already ported into templates; this changelog records its provenance.)
+
+### Changed
+- Test suite grew from 54 → 60 hermetic tests.
+- CI scaffold-and-test job now exercises all 60 tests against a freshly-scaffolded workspace on every PR.
+
+### Compatibility
+- Every new mechanism is OFF-by-default. Existing installs pick up the new hook by re-running `scaffold.sh --component githooks` plus `install_subrepo_pre_commit_hook` in the sub-repo loop from `commands/setup.md` Phase 3.
+- No migrations required; `workspace.sh` gains one new opt-in variable (`WSP_LINT_FIX_CMD`).
+
 ## 1.0.0 — 2026-07-04
 
 First Claude Code **plugin** release. Prior to this, the repo installed as a skill via a symlink installer. That path still works; the plugin path is now the recommended install method.
