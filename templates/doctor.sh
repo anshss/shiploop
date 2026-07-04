@@ -175,6 +175,53 @@ if [ -f "$ROOT/scripts/lib/doctor-extra.sh" ]; then
   source "$ROOT/scripts/lib/doctor-extra.sh"
 fi
 
+# ── Update channel — is the harness behind the installed hub? ──
+# scaffold.sh writes scripts/lib/.harness-version (the hub VERSION this workspace
+# was last synced against). If the installed hub is locally resolvable and its
+# VERSION file names a newer version, warn that a bump is due. When the hub
+# can't be resolved (adopter installed via plugin cache / offline / repo
+# elsewhere), degrade to a soft "cannot compare" notice — never an error.
+section "update channel"
+stamp="$ROOT/scripts/lib/.harness-version"
+if [ -f "$stamp" ]; then
+  stamp_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp")"
+  hub_v=""
+  # Resolve the hub in priority order (mirrors setup.md's Locate-the-plugin block).
+  for _cand in "${CLAUDE_PLUGIN_ROOT:-}" \
+               "$HOME/.claude/skills/meta-repo-harness" \
+               "$HOME/.claude/plugins/cache/claude-plugins-official/meta-repo-harness"; do
+    [ -n "$_cand" ] && [ -f "$_cand/VERSION" ] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$_cand/VERSION")"; break; }
+  done
+  if [ -z "$hub_v" ]; then
+    # Fallback: any /Users/*/plugins/**/meta-repo-harness/VERSION we can glob.
+    for _cand in "$HOME"/.claude/plugins/*/meta-repo-harness/VERSION \
+                 "$HOME"/.claude/plugins/*/*/meta-repo-harness/VERSION; do
+      [ -f "$_cand" ] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$_cand")"; break; }
+    done
+  fi
+  if [ -z "$hub_v" ]; then
+    warn "workspace stamped at $stamp_v — cannot locate the installed hub to compare (soft: not an error)"
+  elif [ "$stamp_v" = "$hub_v" ]; then
+    ok "harness stamp = hub VERSION = $hub_v (up to date)"
+  else
+    # Best-effort ordering: if the two are lexicographically or numerically ordered, count releases behind.
+    behind=""
+    if command -v sort >/dev/null 2>&1; then
+      _newer="$(printf '%s\n%s\n' "$stamp_v" "$hub_v" | sort -V | tail -1)"
+      if [ "$_newer" = "$hub_v" ]; then behind="behind"; else behind="ahead"; fi
+    fi
+    if [ "$behind" = "behind" ]; then
+      warn "harness $stamp_v BEHIND hub $hub_v — run the setup upgrade: bash \$HUB/scaffold.sh --workspace-dir . --component <name>"
+    elif [ "$behind" = "ahead" ]; then
+      warn "harness $stamp_v AHEAD of installed hub $hub_v (dev checkout?)"
+    else
+      warn "harness stamp $stamp_v ≠ hub $hub_v — versions differ"
+    fi
+  fi
+else
+  warn "no scripts/lib/.harness-version stamp — re-run scaffold.sh once to write one (harmless if the hub is unresolvable)"
+fi
+
 # ── Summary ──
 echo ""
 echo "── summary ──"
