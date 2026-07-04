@@ -12,6 +12,9 @@ MERGE="$DIR/../merge-pr.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/scripts/lib"
+# Bypass the external-PR auto-merge safety guard: this test targets #91 (branch cleanup), not the
+# guard. The guard has its own dedicated tests (test-automerge-guard.sh).
+export _GOVERN_ASSUME_MERGE_ALLOWED=1
 
 # The merge path runs under GOVERN_WS_ROOT="$T", so common.sh sources $T/scripts/lib/workspace.sh.
 # Seed a minimal one: alpha is auto-mergeable and its local checkout resolves to $T/alpha.

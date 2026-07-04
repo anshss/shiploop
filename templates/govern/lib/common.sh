@@ -789,6 +789,68 @@ govern::is_local_first_repo() { command -v wsp_is_local_first_repo >/dev/null 2>
 govern::repo_slug()     { wsp_repo_slug "$1"; }
 govern::repo_localdir() { wsp_repo_localdir "$1"; }
 
+# ── auto-merge safety guard (external-PR protection) ────────────────────────
+# Three independent, FAIL-CLOSED checks the auto-merge path (merge-pr.sh + every other `gh pr merge`
+# caller) MUST pass before the `gh pr merge` is even attempted. Rationale: once the workspace's sub-
+# repos go public, an external contributor's PR — or a compromised branch push that happens to be
+# green — must NEVER be auto-merged, regardless of CI. Human merges via gh/web are unaffected: this
+# guard sits ONLY in the governor's auto-merge path.
+#   1. **PR author == workspace gh login** — the PR was opened by the authenticated `gh api user`
+#      (the workspace owner / governor bot). Different login → block (`external-author`).
+#   2. **Head repo == base repo** — the PR is NOT from a fork. Same login on a fork clone is not
+#      enough; a fork PR is unconditionally rejected (`fork-pr`).
+#   3. **Head branch matches governor pattern** — the branch was named by the governor's own worker
+#      (`ticket-<N>`) or the sync-port lane (`sync-auto-*`). Extend GOVERN_MERGE_BRANCH_RE if you add
+#      another governor-owned naming scheme. Mismatch → `bad-branch`.
+# Any gh/jq/lookup error is treated as a block (`lookup-failed`) — a transient GitHub outage NEVER
+# degrades into a blind merge.
+GOVERN_MERGE_BRANCH_RE="${GOVERN_MERGE_BRANCH_RE:-^(ticket-[0-9]+|sync-auto-.*)$}"
+
+# Workspace gh-login cache. Resolved lazily on first call and reused for the rest of the run so a
+# 100-PR pass doesn't hit `gh api user` 100 times. A test can pre-seed _GOVERN_OWN_LOGIN=acme to skip
+# the round-trip entirely (kept underscore-prefixed to signal "test seam", NOT a public knob).
+govern::_own_login() { # -> stdout: login (empty on error). rc 0 on success, 1 on lookup failure.
+  if [[ -n "${_GOVERN_OWN_LOGIN:-}" ]]; then printf '%s' "$_GOVERN_OWN_LOGIN"; return 0; fi
+  command -v gh >/dev/null 2>&1 || return 1
+  local u; u="$(gh api user --jq .login 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -n "$u" ]] || return 1
+  _GOVERN_OWN_LOGIN="$u"
+  printf '%s' "$u"
+}
+
+# THE guard. Print block reason to stdout on failure (empty on allow). Return 0 = allow, 1 = block.
+# Called by every auto-merge site (merge-pr.sh today; grep `pr_automerge_allowed` if you add another).
+# Test seam: _GOVERN_ASSUME_MERGE_ALLOWED=1 short-circuits the guard to "allow" — used by tests that
+# aren't exercising the guard itself so their existing gh stubs don't need new api-user / api-pulls
+# handlers. Production code must NEVER set this; it is intentionally an opt-OUT, not opt-in, so a
+# forgetful downstream test can only be MORE strict, not less.
+govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; rc 0 allow, 1 block
+  local repo="$1" pr="$2" slug j own author head base_owner head_owner
+  [[ "${_GOVERN_ASSUME_MERGE_ALLOWED:-0}" == "1" ]] && return 0
+  command -v gh >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
+  command -v jq >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
+  slug="$(govern::repo_slug "$repo" 2>/dev/null || true)"
+  [[ -n "$slug" ]] || { printf 'lookup-failed'; return 1; }
+  own="$(govern::_own_login 2>/dev/null || true)"
+  [[ -n "$own" ]] || { printf 'lookup-failed'; return 1; }
+  # One REST call for author + head-branch + head/base owners. Defensive: a non-object response (gh
+  # error payload, rate-limit body, unstubbed test) MUST fail-closed rather than jq-error under set -e.
+  j="$(gh api "repos/$slug/pulls/$pr" 2>/dev/null || true)"
+  printf '%s' "$j" | jq -e 'type=="object"' >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
+  author="$(printf '%s' "$j" | jq -r '.user.login // ""' 2>/dev/null || true)"
+  head="$(printf '%s' "$j" | jq -r '.head.ref // ""' 2>/dev/null || true)"
+  base_owner="$(printf '%s' "$j" | jq -r '.base.repo.owner.login // ""' 2>/dev/null || true)"
+  head_owner="$(printf '%s' "$j" | jq -r '.head.repo.owner.login // ""' 2>/dev/null || true)"
+  # Any empty field ⇒ the PR object was malformed / partial ⇒ fail-closed. Never merge on ambiguity.
+  [[ -n "$author" && -n "$head" && -n "$base_owner" && -n "$head_owner" ]] || { printf 'lookup-failed'; return 1; }
+  # Order: author (who opened it) FIRST — the primary invariant. Then fork (defense-in-depth for a
+  # spoofed fork owner name). Then branch pattern (final structural check).
+  [[ "$author"     == "$own"        ]] || { printf 'external-author'; return 1; }
+  [[ "$head_owner" == "$base_owner" ]] || { printf 'fork-pr';         return 1; }
+  [[ "$head" =~ $GOVERN_MERGE_BRANCH_RE ]] || { printf 'bad-branch';   return 1; }
+  return 0
+}
+
 # Find an already-open PR for ticket $1. The standard head is "ticket-<N>" (worktree:new), but a
 # worker may have named its branch e.g. "fix/ticket-<N>-..." (#55) — so we match an exact
 # "ticket-<N>" head FIRST, then fall back to ANY open-PR head CONTAINING "ticket-<N>" at a digit
