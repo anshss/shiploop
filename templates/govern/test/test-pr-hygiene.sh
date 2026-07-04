@@ -52,11 +52,11 @@ body
 body
 ---
 ## #3 — external tool ticket that leaked in
-**Where:** `founder-os gtm:setup command`
+**Where:** `external-tool run command`
 body
 ---
 ## #4 — sub-repo ticket that also mentions an external tool (allowlist wins)
-**Where:** `web/pages/index.tsx` — cross-refs founder-os
+**Where:** `web/pages/index.tsx` — cross-refs external-tool
 body
 ---
 ## #5 — no Where line at all
@@ -68,6 +68,6 @@ out="$(govern::out_of_scope_tickets "$T/tickets.md")"
 # Only #3 should be flagged: #1 names a sub-repo, #2 names scripts/, #4 names a sub-repo, #5 has no Where.
 assert_eq "$(printf '%s\n' "$out" | awk -F'\t' '{print $1}' | sort -n | tr '\n' ' ')" \
   "3 " "out_of_scope_tickets flags ONLY the truly external ticket (#3)"
-assert_contains "$out" "founder-os gtm:setup" "flagged row carries the offending Where text for the operator"
+assert_contains "$out" "external-tool run" "flagged row carries the offending Where text for the operator"
 
 assert_done

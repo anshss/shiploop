@@ -479,6 +479,20 @@ else
   govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
 fi
 
+# Externalization lane (OPT-IN): once per run, file each OPEN Low-severity OSS-repo ticket as a public
+# GitHub Issue (GOVERN_EXTERNALIZE_REPO) and remove it from tickets.md — seeding "good first issue"
+# work for outside contributors. Gated by GOVERN_EXTERNALIZE_LANE (default 1); the underlying script
+# self-skips cleanly when GOVERN_EXTERNALIZE_REPO/SUBREPO are unset, so this is a no-op for workspaces
+# that haven't opted in. Runs BEFORE selection so an externalized ticket is never also picked up by a
+# worker the same run. Non-fatal: a failure logs and continues — it must never stall the loop.
+if [[ "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
+  if [[ "$MODE" == "live" ]]; then
+    "$DIR/externalize-low-tickets.sh" >&2 || govern::log "externalization pass failed (non-fatal) — continuing"
+  else
+    "$DIR/externalize-low-tickets.sh" --dry >&2 || govern::log "externalization (dry) failed — continuing"
+  fi
+fi
+
 # #92: announce (once) every ticket auto-skipped because its body carries a "NOT govern-automatable"
 # marker. select-ticket.sh excludes them silently (its stderr is suppressed by the caller), so
 # WITHOUT this log the skip would be invisible — the operator would never learn why a marked ticket

@@ -563,6 +563,80 @@ govern::pr_spec_files() { # slug pr -> offending paths
     | grep -E '(^|/)\.(specs|plans)/|(^|/)[0-9]{4}-[0-9]{2}-[0-9]{2}-.*-(design|spec|plan)\.md$' || true
 }
 
+# ── externalization lane: Low-severity OSS-repo tickets → public GitHub Issues ───────────────────
+# Print one bare ticket number per OPEN ticket eligible for externalization. Eligibility is PRINCIPLED,
+# not just (Low + Where-mentions-target) — a Low ticket qualifies ONLY when ALL hold (#75):
+#   1. **Severity:** Low, AND
+#   2. its **Where:** references the OSS sub-repo (GOVERN_EXTERNALIZE_SUBREPO), AND
+#   3. its Where does NOT target the HARNESS (scripts/ governor/ queue/ workspace.sh meta-repo harness) —
+#      a governor-internals ticket must never become a public "good first issue", even if its Where also
+#      names the OSS sub-repo (e.g. "meta-repo harness — scripts/govern/…; surfaced on <oss> ticket"), AND
+#   4. it is NOT a VALIDATION / SPIKE / decision ticket (heading contains VALIDATION|SPIKE, a
+#      `**Type:** … validation/spike` line, or `live-verif`) — those are internal product decisions with
+#      empirical-run deliverables, not contributor tasks, and can leak internal strategy.
+# Block-scoped — every field is read ONLY within ticket #N's own block (heading → its trailing `---`).
+#
+# THE load-bearing detail on (2): the Where match EXCLUDES sibling sub-repos whose name merely CONTAINS
+# the OSS name as a substring (e.g. `myproject-website` ⊃ `myproject`). We strip every such sibling
+# (derived from REPOS) out of the Where line FIRST, then test the remainder for the OSS name.
+#
+# No GOVERN_EXTERNALIZE_SUBREPO set → the lane is off → this helper returns nothing (opt-in gate).
+govern::externalize_candidates() { # [tickets-file] -> eligible ticket numbers, one per line
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  local target="${GOVERN_EXTERNALIZE_SUBREPO:-}" r
+  [[ -n "$target" ]] || return 0
+  # Sibling sub-repos whose name CONTAINS the target as a substring — strip these before testing.
+  local siblings=()
+  for r in "${REPOS[@]}"; do
+    [[ "$r" != "$target" && "$r" == *"$target"* ]] && siblings+=("$r")
+  done
+  # Harness markers: if the Where names any of these, the ticket is governor-internal → never externalize.
+  local hmarkers="scripts/ governor/ queue/ workspace.sh meta-repo harness"
+  awk -v target="$target" -v siblings="${siblings[*]:-}" -v hmarkers="$hmarkers" '
+    function flush() { if (cur!="" && sev=="low" && oss==1 && harness==0 && valid==0) print cur }
+    BEGIN { ns=split(siblings, sib, " "); nh=split(hmarkers, HM, " ") }
+    /^## #[0-9]+/ {
+      flush(); cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); sev=""; oss=0; harness=0; valid=0
+      # (4) validation/spike, or a maintainer-DECISION ticket ("… — decide X vs Y"), in the heading
+      if ($0 ~ /VALIDATION|SPIKE/ || tolower($0) ~ /decide /) valid=1
+      next
+    }
+    cur!="" {
+      low=tolower($0)
+      if ($0 ~ /^\*\*Severity:\*\*/) { if (low ~ /low/) sev="low" }
+      else if ($0 ~ /^\*\*Where:\*\*/) {
+        w=$0
+        for (i=1;i<=ns;i++) if (sib[i]!="") gsub(sib[i], "", w)
+        if (index(w, target) > 0) oss=1            # (2) targets the OSS sub-repo
+        wl=tolower(w)
+        for (i=1;i<=nh;i++) if (HM[i]!="" && index(wl, HM[i])>0) harness=1   # (3) harness-scoped → exclude
+      }
+      # (4) body-based validation markers
+      if (low ~ /^\*\*type:\*\*.*(validation|spike)/ || low ~ /live-verif/) valid=1
+    }
+    END { flush() }
+  ' "$f"
+}
+
+# ── externalization: label-apply permission rejection (#26) ──────────────────
+# `gh issue create --label …` is a COMPOSITE op: it creates the issue (URL on stdout, exit 0) and
+# THEN applies the labels in a separate GraphQL `addLabelsToLabelable` mutation. When the authed gh
+# account has only `pull` on the repo (no triage/push), GitHub CREATES the issue but REJECTS the
+# label step — and that rejection lands ONLY on stderr while the URL is still returned. Discarding
+# stderr (`2>/dev/null`) and inferring success from a non-empty URL therefore logs `filed` while
+# every label was silently dropped. This regex matches that label-permission rejection so the lane
+# can distinguish "filed + labeled" from "filed but labels REJECTED — account lacks Triage on repo".
+GOVERN_LABEL_PERM_ERROR_RE='addLabelsToLabelable|could not add label|fail(ed)? to (add|apply) label|labels? (were|was) not (added|applied)|Resource not accessible|Must have (admin|write|triage|push)|requires (admin|write|triage|push)'
+
+# Does gh's create stderr ($1) show the issue was filed but its LABELS were rejected on a permission
+# gap? Returns 0 (label rejection present) / 1 (none). Safe on empty input. Always case-insensitive.
+govern::label_apply_rejected() { # gh-create-stderr -> 0 if a label-permission rejection is present
+  local err="${1:-}"
+  [[ -n "$err" ]] || return 1
+  printf '%s' "$err" | grep -qiE "$GOVERN_LABEL_PERM_ERROR_RE"
+}
+
 # ── pre-run: tickets that already exist as a PUBLIC GitHub issue (reserved for outside contributors) ──
 # Issues on GOVERN_EXTERNALIZE_REPO are seeded for EXTERNAL contributors; the internal governor must
 # not ALSO work a ticket that's already published as one. Matches each open ticket against LIVE open
