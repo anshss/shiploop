@@ -163,6 +163,12 @@ for repo in "${REPOS[@]}"; do
   if command -v install_subrepo_attribution_hook >/dev/null 2>&1; then
     install_subrepo_attribution_hook "$ROOT" "$dst" || true
   fi
+  # Propagate the workspace pre-commit lint-fix hook too. It's a no-op unless workspace.sh sets
+  # WSP_LINT_FIX_CMD, and chain-safe with any pre-existing pre-commit (husky, lefthook) — so this
+  # is safe to run unconditionally alongside the attribution hook.
+  if command -v install_subrepo_pre_commit_hook >/dev/null 2>&1; then
+    install_subrepo_pre_commit_hook "$ROOT" "$dst" || true
+  fi
 done
 
 # Copy workspace-root .env into the worktree. Scripts that resolve $ROOT/.env

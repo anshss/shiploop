@@ -57,3 +57,52 @@ install_subrepo_attribution_hook() {
   echo "  ⚠ $name: failed to install attribution hook into $hooksdir" >&2
   return 1
 }
+
+# ── Optional per-sub-repo pre-commit lint-fix hook ──────────────────────────
+# Installs .githooks/pre-commit from the harness root into each sub-repo's hooks dir. The hook itself
+# is a NO-OP unless workspace.sh defines WSP_LINT_FIX_CMD (see templates/lib/workspace.sh) — so this
+# installer is safe to run unconditionally alongside the attribution hook. It is CHAIN-SAFE: if a
+# sub-repo already has a pre-commit that is NOT ours (husky, lefthook, hand-rolled), it is left in
+# place and skipped with a "·" note. Idempotent for our own hook via a marker line the pre-commit
+# template carries; re-installing refreshes it.
+#
+# install_subrepo_pre_commit_hook <harness_root> <subrepo_path>
+install_subrepo_pre_commit_hook() {
+  local root="$1" repo="$2"
+  local name; name="$(basename "$repo")"
+  local src="$root/.githooks/pre-commit"
+
+  [ -f "$src" ] || { echo "  ⚠ $name: shared pre-commit hook missing ($src) — skipped" >&2; return 1; }
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || { echo "  ⚠ $name: not a git repo — skipped pre-commit hook" >&2; return 1; }
+
+  # Same hooks-dir resolver as install_subrepo_attribution_hook — honor an existing core.hooksPath
+  # (husky's .husky/_, lefthook, etc.), else git's default hooks path.
+  local hp toplevel hooksdir
+  hp="$(git -C "$repo" config --get core.hooksPath 2>/dev/null || true)"
+  if [ -n "$hp" ]; then
+    case "$hp" in
+      /*) hooksdir="$hp" ;;
+      *)  toplevel="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)"; hooksdir="$toplevel/$hp" ;;
+    esac
+  else
+    hooksdir="$(git -C "$repo" rev-parse --git-path hooks 2>/dev/null)"
+    case "$hooksdir" in /*) : ;; *) hooksdir="$repo/$hooksdir" ;; esac
+  fi
+  [ -n "$hooksdir" ] || { echo "  ⚠ $name: could not resolve hooks dir — skipped pre-commit hook" >&2; return 1; }
+
+  local target="$hooksdir/pre-commit"
+  local marker='wsp-lint-fix marker'
+  # Skip if a NON-ours pre-commit already exists (framework or operator-authored). Only overwrite
+  # when the file is missing OR was previously installed by us (marker line present).
+  if [ -e "$target" ] && ! grep -qF "$marker" "$target" 2>/dev/null; then
+    echo "  · $name: existing pre-commit hook — leaving in place (workspace pre-commit skipped)"
+    return 0
+  fi
+
+  mkdir -p "$hooksdir" \
+    && cp "$src" "$target" \
+    && chmod +x "$target" \
+    && { echo "  ✓ $name: pre-commit hook → $target"; return 0; }
+  echo "  ⚠ $name: failed to install pre-commit hook into $hooksdir" >&2
+  return 1
+}

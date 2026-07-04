@@ -114,10 +114,10 @@ scripts block, .claude/settings.json wiring, seed files (queue/tickets.md, CLAUD
 absent), .githooks activation (`core.hooksPath = .githooks`), and initial commit. `--verify` runs
 `bash -n` over every installed script + sources workspace.sh.
 
-## Phase 3 (fresh) — Propagate attribution hook into sub-repos
+## Phase 3 (fresh) — Propagate attribution + pre-commit hooks into sub-repos
 
-The `.githooks/prepare-commit-msg` attribution hook needs to be propagated into each sub-repo (only
-the attribution hook — the pre-push guard is harness-only):
+The `.githooks/prepare-commit-msg` attribution hook and the optional `.githooks/pre-commit` lint-fix
+hook need to be propagated into each sub-repo (only these two — the pre-push guard is harness-only):
 
 ```bash
 source scripts/lib/workspace.sh
@@ -125,10 +125,15 @@ source scripts/lib/githooks.sh
 for repo in "${REPOS[@]}"; do
   [ -d "$META_ROOT/$repo/.git" ] || [ -f "$META_ROOT/$repo/.git" ] || continue
   install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$repo"
+  install_subrepo_pre_commit_hook "$META_ROOT" "$META_ROOT/$repo"
 done
 ```
 
-`worktree/new.sh` re-runs this for each sub-repo worktree it creates.
+The pre-commit hook is a no-op until the operator sets `WSP_LINT_FIX_CMD` in `workspace.sh` — see
+the "Optional pre-commit lint-fix hook" block there. Sub-repos that already have a pre-commit hook
+(husky, lefthook, hand-rolled) are left untouched by the pre-commit installer.
+
+`worktree/new.sh` re-runs both installers for each sub-repo worktree it creates.
 
 ## Phase 4 (fresh) — Initialize + report
 
