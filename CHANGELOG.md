@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.0 — 2026-07-05
+
+Reconcile-commands release. The two-way update channel that shipped in v1.2.0 gains its user-facing surface: fleet reconciliation is now a one-command action in each direction, matching the `git pull` / `git push` mental model.
+
+### Added
+- **`/meta-repo-harness:update`** — pull the latest hub templates into THIS workspace. Wraps `scaffold.sh --diff-only` (detect what's behind) → component-by-component bump (mechanism scripts only, PRESERVES `scripts/lib/workspace.sh`) → `config-check.sh` + `bash -n` verify + stale-relocations sweep → concise per-component `in-sync | bumped | skipped` report. Idempotent (up-to-date workspace prints "up to date" and exits). Fail-closed on dirty tree / live governor. Resolves the hub in priority order: `CLAUDE_PLUGIN_ROOT` → `GOVERN_UPSTREAM_HARNESS_DIR` (workspace.sh knob) → `~/.claude/skills/meta-repo-harness/` → plugin-cache glob. Regression-locked by `test-reconcile-update.sh` (12 assertions).
+- **`/meta-repo-harness:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set. Reuses the existing v1.2.0 `sync-templates.sh --check` + `sync-port.sh` pipeline verbatim — same fail-closed gates (bash -n + forbidden-identity-strings on ADDED lines + scaffold-suite baseline diff), same single-owner lock, same EXIT-trap restore, same fingerprint-deduped escalations. Invokes `sync-port.sh` with `--no-merge` unconditionally: this is an INTERACTIVE command, so the PR opens for HUMAN review, never auto-merges. Workspace-specific files (workspace.sh, package.json, repo lists, operator-owned governor files) intentionally NEVER pushed — `sync-templates.sh` filters them at the pathspec level. Dry-run by default; `--run` or `--yes` in `$ARGUMENTS` skips the confirmation. Regression-locked by `test-reconcile-push.sh` (17 assertions).
+
+### Scaffold-reachability decisions
+- **`/update`** needs `scaffold.sh`. It lives at the hub root and is NOT copied into scaffolded workspaces; `/update` resolves it from the plugin/hub root (same resolution as `/setup`).
+- **`/push`** needs `sync-port.sh` + `sync-templates.sh`. Both were already scaffolded into `scripts/govern/` via `component_govern` starting v1.2.0 (no install change needed). Workspaces scaffolded pre-v1.2.0 must run `/update` first to install the sync channel.
+
+### Docs
+- README "Updating" section rewritten to lead with the two commands (the pull/push mental model); deeper scaffold detail moved below.
+- `commands/setup.md` cross-references `/update` (ongoing maintenance) and `/push` (contribute back) so operators know when to reach for which.
+- The Components table gains the two new command files.
+
+### Test suite
+- Grew from 65 → 67 hermetic tests. Full suite green locally + CI.
+
+### Compatibility
+- Fully additive. Existing installs pick up the new commands on plugin update or `/meta-repo-harness:update`. Both commands are opt-in — nothing runs at scaffold time.
+- Pairs with issue #35 (retire the reference instance's bespoke sync-port wrapper) and closes the loop on fleet drift being a monitored problem.
+
 ## 1.2.1 — 2026-07-05
 
 Adopter-friction patch surfaced by the reference-instance convergence to v1.2.0.
