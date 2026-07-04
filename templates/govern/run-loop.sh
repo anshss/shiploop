@@ -700,12 +700,16 @@ while :; do
     fi
   fi
 
-  # #67 VALIDATION-EVIDENCE GATE: a ticket whose deliverable is a LIVE/empirical result (a
-  # "VALIDATION"/"SPIKE" ticket, a "**Type:** Validation spike" line, or "live-verify") must NOT
-  # be auto-resolved on static code analysis. If the worker didn't actually run the test
-  # (validation.ranLiveTest!=true or no evidence), downgrade to parked + escalate so a human (or a
-  # properly-equipped re-run) produces real evidence — never silently accept a code-reading verdict.
-  # Fires only on validation-type tickets, so ordinary code tickets are unaffected.
+  # #67/#73 VALIDATION GATE: a ticket whose deliverable is a LIVE/empirical result (a
+  # "VALIDATION"/"SPIKE" ticket, a "**Type:** Validation spike" line, or "live-verify") must NOT be
+  # auto-resolved. Two failure modes both downgrade to parked+escalate — never a silent worker verdict:
+  #   #67 — the test WASN'T run (validation.ranLiveTest!=true or no evidence): escalate for a real run.
+  #   #73 — the test RAN but its OWN gate FAILED (validation.gatePassed==false, i.e. a measured NEGATIVE):
+  #         shipping/shelving/reworking a negative is a product judgment the worker must not self-decide
+  #         (esp. not auto-ship a default-off opt-in) — escalate the disposition with the result in hand.
+  # Fires only on validation-type tickets, so ordinary code tickets are unaffected. gatePassed defaults
+  # to "unknown" (absent → never force-parks; only an explicit false trips #73), so pre-#73 workers and
+  # non-gated validations are unaffected.
   if [[ "$status" == "resolved" && "$MODE" == "live" ]]; then
     # Use the shared tolerant parser so a `##  #N` (double-space) or `## #N—Title` (em-dash
     # no space) heading doesn't yield an empty tblock — which would silently disable this
@@ -713,13 +717,16 @@ while :; do
     # validation ticket without live-test evidence, defeating the #67 gate.
     tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
     if printf '%s' "$tblock" | grep -qE '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
-      ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
-      eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
-      if [[ "$ranlive" != "true" || -z "$eviden" ]]; then
-        govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence (ranLiveTest=$ranlive) — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
-        report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation ticket needs a real test",reason:"reported resolved without running the live test — a validation/spike ticket requires empirical evidence (deploy/snapshot/restore/UI run with captured output), not static code analysis",question:"run the actual test and attach evidence, OR confirm it cannot be automated and decide disposition",options:[]}' 2>/dev/null || printf '%s' "$report")"
-        status="parked"; anomaly=1
-      fi
+      case "$(govern::validation_gate_action "$report")" in
+        park-no-evidence)
+          govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
+          report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation ticket needs a real test",reason:"reported resolved without running the live test — a validation/spike ticket requires empirical evidence (deploy/snapshot/restore/UI run with captured output), not static code analysis",question:"run the actual test and attach evidence, OR confirm it cannot be automated and decide disposition",options:[]}' 2>/dev/null || printf '%s' "$report")"
+          status="parked"; anomaly=1 ;;
+        park-gate-failed)
+          govern::log "#$N is a VALIDATION ticket whose gate FAILED (gatePassed=false) — refusing to auto-ship a measured-NEGATIVE result; parking so the operator decides ship-off/shelve/rework (#73). Any worker PR is left open for review."
+          report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation gate FAILED — decide ship-off/shelve/rework",reason:("the required validation/A-B gate FAILED (measured negative) — auto-shipping a negative is not a worker decision: " + (.validation.evidence // "see report")),question:"the measured result is negative; choose the disposition — ship default-OFF opt-in, shelve the branch, or rework scope + re-run. Do NOT auto-ship a gate-failed result.",options:["shelve","ship-default-off","rework"]}' 2>/dev/null || printf '%s' "$report")"
+          status="parked"; anomaly=1 ;;
+      esac
     fi
   fi
 

@@ -502,6 +502,26 @@ govern::ticket_block_delete() { # N [tickets-file]
   ' "$f" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp" 2>/dev/null
 }
 
+# ── validation gate decision (#67 + #73) ─────────────────────────────────────
+# Given a worker's resolved report for a VALIDATION-type ticket, decide the gate action. Pure — no
+# side effects; the caller applies it. Prints exactly one of:
+#   park-no-evidence — the live test was NOT run (ranLiveTest!=true or empty evidence)  [#67]
+#   park-gate-failed — the test RAN but its OWN gate FAILED (gatePassed==false, a measured negative);
+#                      the ship-vs-kill disposition is the operator's, not the worker's              [#73]
+#   resolve          — gate passed, or no explicit gate (gatePassed absent → "unknown" → auto-resolve)
+# NB: jq's `//` treats false as null, so `.gatePassed // "unknown"` would MISREAD a failed gate as
+# "unknown"; we branch on the boolean explicitly. Absent gatePassed ⇒ "unknown" ⇒ resolve, so pre-#73
+# workers and non-gated validations are unaffected.
+govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate-failed | resolve
+  local report="$1" ranlive eviden gatepass
+  ranlive="$(printf '%s' "$report" | jq -r '.validation.ranLiveTest // false' 2>/dev/null || echo false)"
+  eviden="$(printf '%s' "$report" | jq -r '.validation.evidence // ""' 2>/dev/null || true)"
+  gatepass="$(printf '%s' "$report" | jq -r 'if .validation.gatePassed == false then "false" elif .validation.gatePassed == true then "true" else "unknown" end' 2>/dev/null || echo unknown)"
+  if [[ "$ranlive" != "true" || -z "$eviden" ]]; then echo "park-no-evidence"
+  elif [[ "$gatepass" == "false" ]]; then echo "park-gate-failed"
+  else echo "resolve"; fi
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
