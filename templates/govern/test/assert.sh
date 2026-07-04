@@ -34,6 +34,10 @@ mk_ws_stub() { # <root> [merge-csv] [local-first-csv]
   local root="$1" merge="${2:-alpha}" localfirst="${3:-}"
   export GOVERN_WS_ROOT="$root"
   export GOVERN_EXTERNALIZE_LANE=0
+  # Test seam: bypass the external-PR auto-merge safety guard (govern::pr_automerge_allowed) so a
+  # test using mk_ws_stub doesn't need to stub `gh api user` + `gh api repos/.../pulls/N`. The guard
+  # itself has DEDICATED tests (test-automerge-guard.sh) that explicitly UNSET this to exercise it.
+  export _GOVERN_ASSUME_MERGE_ALLOWED=1
   mkdir -p "$root/scripts/lib"
   cat > "$root/scripts/lib/workspace.sh" <<EOF
 #!/usr/bin/env bash

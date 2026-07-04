@@ -7,6 +7,10 @@
 #   4 — refused: CI state UNVERIFIABLE ('error' from await-ci — gh could not confirm CI).
 #       Distinct from 3 so the caller can classify it as PARK-worthy (ci-state-unverifiable)
 #       rather than a plain failing-check. FAIL-CLOSED: an unverifiable state never merges.
+#   5 — refused: PR fails the three-factor auto-merge safety guard (external author, fork PR,
+#       or a branch name outside GOVERN_MERGE_BRANCH_RE — or a gh lookup error). FAIL-CLOSED:
+#       the governor's auto-merge lane MUST NEVER land a PR it didn't itself open. A human can
+#       still merge via gh/web — the guard is scoped to THIS auto-merge path only.
 # GOVERN_ECHO=1 prints instead of running. GOVERN_SKIP_CI=1 skips the green check — pass it
 # from a caller (run-loop) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
@@ -33,6 +37,16 @@ if [[ "${GOVERN_SKIP_CI:-0}" != "1" ]]; then
     exit 3
   fi
 fi
+
+# External-PR safety guard: three fail-closed checks (own author, own branch pattern, no forks) that
+# fire BEFORE the `gh pr merge`. Runs in echo mode too so a dry-run smoke test still exercises the
+# invariant. A block prints the reason token (external-author | fork-pr | bad-branch | lookup-failed)
+# so the caller (run-loop) can escalate with a specific cause; exit code 5 is the machine signal.
+if ! _guard_reason="$(govern::pr_automerge_allowed "$REPO" "$PR")"; then
+  govern::log "refusing auto-merge of $REPO#$PR — external-pr-blocked ($_guard_reason). The governor's auto-merge lane only lands PRs it itself opened (own gh login, own branch pattern, non-fork). A human can still merge this PR via gh/web; the governor will not."
+  exit 5
+fi
+unset _guard_reason
 
 # --delete-branch removes the REMOTE ticket-<N> head on merge (a surviving origin/ticket-<N>
 # collides when the ticket is re-opened and re-run).
