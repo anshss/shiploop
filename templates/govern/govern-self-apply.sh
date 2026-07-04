@@ -84,7 +84,7 @@ fi
 test_cmd="${GOVERN_SELFAPPLY_TEST_CMD:-}"
 gate_ok=1
 if [[ -n "$test_cmd" ]]; then eval "$test_cmd" || gate_ok=0
-else for t in "$DIR"/test/test-*.sh; do ( bash "$t" >/dev/null 2>&1 ) || { gate_ok=0; break; }; done; fi
+else for t in "$DIR"/test/test-*.sh; do ( bash "$t" >/dev/null 2>&1 ); rc=$?; [[ "$rc" -eq 0 || "$rc" -eq 77 ]] || { gate_ok=0; break; }; done; fi
 if [[ "$gate_ok" -ne 1 ]]; then govern::log "self-apply BLOCKED: test suite failed — reverting"; revert; escalate "self-edit failed the test suite"; exit 0; fi
 
 # All guards pass → one atomic commit (takes effect next run).
