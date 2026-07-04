@@ -3,10 +3,10 @@ description: Pull the latest hub templates into THIS workspace. Component-by-com
 allowed-tools: Bash, Read
 ---
 
-# /meta-repo-harness:update
+# /shiploop:update
 
 **The pull direction of the harness-code update channel.** Reconciles this workspace against the
-latest installed hub — the ongoing-maintenance path after `/meta-repo-harness:setup` has scaffolded
+latest installed hub — the ongoing-maintenance path after `/shiploop:setup` has scaffolded
 the workspace once. Think of it as `git pull` for harness code: `scaffold.sh` is the machinery, this
 command wraps it into a one-command action with reachability resolution + safety guards +
 verification.
@@ -30,21 +30,21 @@ Templates + `scaffold.sh` live in the same directory. Resolve `HUB` in this prio
 1. `${CLAUDE_PLUGIN_ROOT}` — set when this command runs as a plugin.
 2. `${GOVERN_UPSTREAM_HARNESS_DIR}` sourced from `scripts/lib/workspace.sh` — an operator with a local
    fork clone pointed the workspace at it for the sync channel; the same clone is a valid hub source.
-3. `~/.claude/skills/meta-repo-harness/` — legacy clone-into-skills install.
-4. Glob `~/.claude/plugins/**/meta-repo-harness/VERSION` — plugin-cache install.
+3. `~/.claude/skills/shiploop/` — legacy clone-into-skills install.
+4. Glob `~/.claude/plugins/**/shiploop/VERSION` — plugin-cache install.
 
 If none resolve, STOP and print:
 
 ```
-Cannot locate the meta-repo-harness hub.
+Cannot locate the shiploop hub.
 
 Options:
   - Install as a plugin (recommended):
-      /plugin marketplace add anshss/meta-repo-harness
-      /plugin install meta-repo-harness@meta-repo-harness
+      /plugin marketplace add anshss/shiploop
+      /plugin install shiploop@shiploop
   - Point at a local clone by exporting one of:
-      CLAUDE_PLUGIN_ROOT=/path/to/meta-repo-harness   (env)
-      GOVERN_UPSTREAM_HARNESS_DIR=/path/to/meta-repo-harness   (workspace.sh)
+      CLAUDE_PLUGIN_ROOT=/path/to/shiploop   (env)
+      GOVERN_UPSTREAM_HARNESS_DIR=/path/to/shiploop   (workspace.sh)
 ```
 
 Otherwise let `SCAFFOLD=$HUB/scaffold.sh`. Confirm `bash "$SCAFFOLD" --version` prints a version and
@@ -54,7 +54,7 @@ the same guidance.
 ## Phase 1 — Workspace preconditions
 
 Must be a meta-repo workspace: `scripts/lib/workspace.sh` exists. Else STOP and tell the operator to
-run `/meta-repo-harness:setup` first (fresh scaffold).
+run `/shiploop:setup` first (fresh scaffold).
 
 **Branch guard.** Root must be on its default branch (`main`) — same rationale as setup.md Phase 0.5.
 If not, STOP and offer to `git switch` first.
@@ -138,7 +138,7 @@ a headless env with no worker auth, it will fail. That's the auth caveat, not an
 Print a compact summary:
 
 ```
-── /meta-repo-harness:update ──
+── /shiploop:update ──
 Hub:         $HUB_V   ($HUB)
 Stamp:       $STAMP_V → $HUB_V
 Components:
@@ -153,7 +153,7 @@ Preserved:   scripts/lib/workspace.sh, package.json, .claude/settings.json (exce
 Verifiers:   config-check ok · bash -n ok · relocations ok
 Next:        review the diff, commit tooling paths explicitly:
              git add scripts .githooks governor package.json .claude/settings.json .claude/commands
-             git commit -m "chore(harness): converge to meta-repo-harness v$HUB_V"
+             git commit -m "chore(harness): converge to shiploop v$HUB_V"
 ```
 
 Stop. Do not push, do not commit. The operator reviews the diff and commits themselves — a bump
@@ -170,5 +170,5 @@ touches many files and they may want to split it or write a specific commit mess
 ## Pair with the push direction
 
 Once you've made improvements to a mechanism script inside this workspace and want to contribute
-them back to the hub, run `/meta-repo-harness:push` — the mirror of this command. It reuses the same
+them back to the hub, run `/shiploop:push` — the mirror of this command. It reuses the same
 `GOVERN_UPSTREAM_HARNESS_DIR` knob to find the hub clone and opens a PR against your fork.

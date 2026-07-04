@@ -1,4 +1,4 @@
-# meta-repo-harness
+# shiploop
 
 Autonomous multi-repo harness for Claude Code. One workspace wraps **N independent git repos** as sub-folders, provides parallel git worktrees, a file-based **ticket queue**, and a **governor loop** that spawns a fresh headless `claude -p` worker per ticket and auto-merges allowlisted repos on green CI.
 
@@ -6,12 +6,12 @@ The design tenet: **the workspace is a product; the sub-repos are its services.*
 
 ## What you get
 
-- **`/meta-repo-harness:setup`** — one command scaffolds a workspace on any folder containing sub-repos with their own `.git`. Interviews the operator, invokes a deterministic `scaffold.sh`, and verifies the install.
-- **`/meta-repo-harness:update`** — pull the latest hub templates into THIS workspace (the `git pull` of harness code). Component-by-component bump; preserves `workspace.sh`; idempotent.
-- **`/meta-repo-harness:push`** — push local mechanism-script improvements back to the hub (the `git push` of harness code). Genericizes via the fail-closed sync-port porter, opens a PR against your fork for human review; never auto-merges.
-- **`/meta-repo-harness:govern`** — becomes the governor. Launches the pure-bash driver `scripts/govern/run-loop.sh`: fresh headless worker per ticket, periodic supervisor, auto-merge allowlisted repos on green-or-no-checks CI, escalate hard-stops, deterministic bookkeeping. The interactive session's context stays flat.
-- **`/meta-repo-harness:investigate`** — generic bug-triage command: seed a notes file, pull logs, form a hypothesis, propose a fix.
-- **`/meta-repo-harness:resolve`** — close out a ticket (confirm fix PR is open, delete from `tickets.md`, promote any durable lesson).
+- **`/shiploop:setup`** — one command scaffolds a workspace on any folder containing sub-repos with their own `.git`. Interviews the operator, invokes a deterministic `scaffold.sh`, and verifies the install.
+- **`/shiploop:update`** — pull the latest hub templates into THIS workspace (the `git pull` of harness code). Component-by-component bump; preserves `workspace.sh`; idempotent.
+- **`/shiploop:push`** — push local mechanism-script improvements back to the hub (the `git push` of harness code). Genericizes via the fail-closed sync-port porter, opens a PR against your fork for human review; never auto-merges.
+- **`/shiploop:govern`** — becomes the governor. Launches the pure-bash driver `scripts/govern/run-loop.sh`: fresh headless worker per ticket, periodic supervisor, auto-merge allowlisted repos on green-or-no-checks CI, escalate hard-stops, deterministic bookkeeping. The interactive session's context stays flat.
+- **`/shiploop:investigate`** — generic bug-triage command: seed a notes file, pull logs, form a hypothesis, propose a fix.
+- **`/shiploop:resolve`** — close out a ticket (confirm fix PR is open, delete from `tickets.md`, promote any durable lesson).
 - **Parallel worktrees.** `npm run worktree:new -- feature-x` gives each concurrent session its own tree of every sub-repo, with distinct dev ports and its own Claude session, so the operator (or the governor) can run multiple work streams without collisions.
 - **Git-hook enforcement.** `.githooks/pre-push` rejects harness-repo pushes to any branch other than `main` unless the push is a sanctioned governor run (`GOVERN_RUN=1` + `ticket-<N>` branch). `.githooks/prepare-commit-msg` auto-appends the `Co-Authored-By` attribution trailer on agent commits.
 
@@ -21,17 +21,17 @@ The design tenet: **the workspace is a product; the sub-repos are its services.*
 
 ```bash
 # In Claude Code:
-/plugin marketplace add anshss/meta-repo-harness
-/plugin install meta-repo-harness@meta-repo-harness
+/plugin marketplace add anshss/shiploop
+/plugin install shiploop@shiploop
 ```
 
-Slash commands appear as `/meta-repo-harness:setup`, `/meta-repo-harness:govern`, etc.
+Slash commands appear as `/shiploop:setup`, `/shiploop:govern`, etc.
 
 ### Alternative: clone + symlink
 
 ```bash
-git clone https://github.com/anshss/meta-repo-harness.git ~/.claude/skills/meta-repo-harness
-bash ~/.claude/skills/meta-repo-harness/install.sh
+git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop
+bash ~/.claude/skills/shiploop/install.sh
 ```
 
 Both install modes keep the same commands + templates layout. `scaffold.sh` resolves the templates
@@ -49,7 +49,7 @@ fallback (clone path).
 
 1. Install (either mode above).
 2. `cd` into a folder that already contains **your sub-repos as sibling folders**, each with its own `.git`.
-3. Run **`/meta-repo-harness:setup`**. It will:
+3. Run **`/shiploop:setup`**. It will:
    - Detect your sub-repos, ports, dev commands, GitHub org.
    - Ask for root package manager, worktree base, governor merge-allowlist.
    - Invoke `scaffold.sh` (deterministic, idempotent).
@@ -125,8 +125,8 @@ The harness has a two-way update channel — think `git pull` / `git push`, one 
 
 ### One command each way (v1.3.0+)
 
-- **`/meta-repo-harness:update`** — pull the latest hub templates into THIS workspace. Wraps `scaffold.sh --diff-only` (detect what's behind) → component-by-component bump (refresh mechanism scripts) → `config-check.sh` + `bash -n` verify → report. Idempotent; safe to re-run. Preserves `scripts/lib/workspace.sh` (your per-workspace config sink) — that file is NEVER overwritten by `/update`. Refuses to proceed on a dirty tree or a live governor run.
-- **`/meta-repo-harness:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set in `workspace.sh` (a fork you can PR against). Wraps `sync-templates.sh --check` (drift detection) → `sync-port.sh --no-merge` (headless porter genericizes your changes and opens a PR against your fork for HUMAN review). NEVER auto-merges; workspace-specific files (`workspace.sh`, `package.json`, repo lists) are NEVER pushed.
+- **`/shiploop:update`** — pull the latest hub templates into THIS workspace. Wraps `scaffold.sh --diff-only` (detect what's behind) → component-by-component bump (refresh mechanism scripts) → `config-check.sh` + `bash -n` verify → report. Idempotent; safe to re-run. Preserves `scripts/lib/workspace.sh` (your per-workspace config sink) — that file is NEVER overwritten by `/update`. Refuses to proceed on a dirty tree or a live governor run.
+- **`/shiploop:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set in `workspace.sh` (a fork you can PR against). Wraps `sync-templates.sh --check` (drift detection) → `sync-port.sh --no-merge` (headless porter genericizes your changes and opens a PR against your fork for HUMAN review). NEVER auto-merges; workspace-specific files (`workspace.sh`, `package.json`, repo lists) are NEVER pushed.
 
 ### Under the hood
 

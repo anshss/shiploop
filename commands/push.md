@@ -3,14 +3,14 @@ description: Push your workspace's mechanism-script improvements back to the hub
 allowed-tools: Bash, Read
 ---
 
-# /meta-repo-harness:push
+# /shiploop:push
 
 **The push direction of the harness-code update channel.** Reconciles the hub against improvements
 you've made locally to mechanism scripts inside THIS workspace. Think of it as `git push` for
 harness code: `sync-port.sh` is the machinery (already generalized in v1.2.0), this command wraps
 it into a one-command action for interactive use.
 
-Companion to `/meta-repo-harness:update` (pull). The two commands close the loop on fleet drift.
+Companion to `/shiploop:update` (pull). The two commands close the loop on fleet drift.
 
 ## What it does (procedure)
 
@@ -50,7 +50,7 @@ operator:
 
 ```
 This workspace is missing scripts/govern/sync-{port,templates}.sh — scaffold predates v1.2.0.
-Run /meta-repo-harness:update first to install the sync channel, then re-run /meta-repo-harness:push.
+Run /shiploop:update first to install the sync channel, then re-run /shiploop:push.
 ```
 
 ### `GOVERN_UPSTREAM_HARNESS_REPO` must be set
@@ -60,13 +60,13 @@ Source `scripts/lib/workspace.sh` (in a subshell) and check. If empty, STOP and 
 ```
 GOVERN_UPSTREAM_HARNESS_REPO not set in scripts/lib/workspace.sh — the sync channel is inert.
 
-To enable /meta-repo-harness:push:
-  1. Fork https://github.com/anshss/meta-repo-harness on GitHub.
+To enable /shiploop:push:
+  1. Fork https://github.com/anshss/shiploop on GitHub.
   2. Clone your fork locally (call it $FORK_DIR).
   3. Edit scripts/lib/workspace.sh and set:
-       GOVERN_UPSTREAM_HARNESS_REPO="meta-repo-harness"
+       GOVERN_UPSTREAM_HARNESS_REPO="shiploop"
        GOVERN_UPSTREAM_HARNESS_DIR="$FORK_DIR"
-  4. Re-run /meta-repo-harness:push.
+  4. Re-run /shiploop:push.
 ```
 
 ### Local hub clone must be reachable
@@ -94,7 +94,7 @@ ask the operator to confirm before proceeding.
 If the dry-run reports no drift (`templates in sync — nothing to port.`), stop. Print:
 
 ```
-── /meta-repo-harness:push ──
+── /shiploop:push ──
 No drift to port — every mirrored file in this workspace matches the hub through <marker-sha>.
 Nothing to do.
 ```
@@ -122,7 +122,7 @@ GOVERN_SYNC_PORT_NO_MERGE=1 bash scripts/govern/sync-port.sh
 The porter's stdout carries the PR URL on success. Surface it verbatim, then print a compact summary:
 
 ```
-── /meta-repo-harness:push ──
+── /shiploop:push ──
 Drifted files:  <N>
 Porter:         ported cleanly · gate PASSED
 PR:             <url>   (opened for HUMAN review — NOT merged)
@@ -157,5 +157,5 @@ then STOP. The operator inspects and resolves per the standard escalations flow.
 
 ## Pair with the pull direction
 
-`/meta-repo-harness:update` is the reverse channel — pull the latest hub templates INTO this
+`/shiploop:update` is the reverse channel — pull the latest hub templates INTO this
 workspace. Same reachability resolution (`GOVERN_UPSTREAM_HARNESS_DIR` participates).

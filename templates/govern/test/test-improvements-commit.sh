@@ -19,7 +19,7 @@
 #   B. govern::commit_meta_to_main is a no-op (no empty commit) when nothing changed.
 # Real bare-origin + local-clone pairs; no network, no real harness repo.
 #
-# Run against the SCAFFOLDED scripts (a workspace produced by /meta-repo-harness:setup), not from templates/:
+# Run against the SCAFFOLDED scripts (a workspace produced by /shiploop:setup), not from templates/:
 # it sources lib/common.sh, which sources scripts/lib/workspace.sh — present only in a real workspace.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -26,7 +26,7 @@ cat > "$H" <<'EOF'
 {"ticket":1,"run":"run-A","status":"resolved","ts":1000,"tokens":{"input":100,"output":200,"cacheRead":5000,"cacheCreation":700,"total":6000},"costUsd":1.50,"churn":true,"repos":["harness"]}
 {"ticket":2,"run":"run-A","status":"resolved","ts":1010,"tokens":{"input":100,"output":200,"cacheRead":9000,"cacheCreation":700,"total":10000},"costUsd":3.00,"churn":false,"repos":["backend"]}
 {"ticket":3,"run":"run-A","status":"parked","ts":1020,"tokens":{"input":50,"output":50,"cacheRead":900,"cacheCreation":0,"total":1000},"costUsd":0.25,"churn":null,"repos":[]}
-{"ticket":4,"run":"run-A","status":"resolved","ts":1030,"tokens":{"input":10,"output":10,"cacheRead":1980,"cacheCreation":0,"total":2000},"costUsd":0.50,"churn":true,"repos":["meta-repo-harness"]}
+{"ticket":4,"run":"run-A","status":"resolved","ts":1030,"tokens":{"input":10,"output":10,"cacheRead":1980,"cacheCreation":0,"total":2000},"costUsd":0.50,"churn":true,"repos":["shiploop"]}
 {"ticket":5,"run":"run-B","status":"resolved","ts":2000,"tokens":{"input":100,"output":100,"cacheRead":800,"cacheCreation":0,"total":1000},"costUsd":0.30,"churn":false,"repos":["api","backend"]}
 {"ticket":6,"run":"run-B","status":"failed","ts":2010}
 {"ticket":2,"run":"run-B","status":"resolved","ts":2020,"kind":"validation-evidence","validationDoc":"x.md","prs":[]}
@@ -40,7 +40,7 @@ assert_eq "$(jq -r '.allTime.status.parked' <<<"$j")"   "1"  "1 parked outcome a
 assert_eq "$(jq -r '.allTime.status.failed' <<<"$j")"   "1"  "1 failed outcome all-time"
 # park rate = 1/6 = 16.67%
 assert_eq "$(jq -r '.allTime.parkRatePct|.*100|round' <<<"$j")" "1667" "park rate = 16.67%"
-# churn: harness + meta-repo-harness = self-ref (2); backend + mixed[api,backend] = product (2)
+# churn: harness + shiploop = self-ref (2); backend + mixed[api,backend] = product (2)
 assert_eq "$(jq -r '.allTime.churn.classified' <<<"$j")" "4" "4 PR-shipping tickets classified"
 assert_eq "$(jq -r '.allTime.churn.selfRef' <<<"$j")"    "2" "2 self-referential (harness/templates)"
 assert_eq "$(jq -r '.allTime.churn.product' <<<"$j")"    "2" "2 product (incl. mixed repos → product)"
@@ -122,7 +122,7 @@ chmod +x "$E/bin/claude"
 HIST="$E/governor/ticket-history.jsonl"; : > "$HIST"
 out="$(PATH="$E/bin:$PATH" \
   ROOT_PM=npm \
-  GOVERN_SELFREF_REPOS="harness meta-repo-harness" \
+  GOVERN_SELFREF_REPOS="harness shiploop" \
   GOVERN_TICKETS_FILE="$E/tickets.md" \
   GOVERN_ESCALATIONS_FILE="$E/governor/escalations.md" \
   GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \

@@ -248,13 +248,13 @@ render_update_channel() {
   [[ -f "$stamp" ]] && stamp_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp")"
   local hub_v="" cand
   for cand in "${CLAUDE_PLUGIN_ROOT:-}" \
-              "$HOME/.claude/skills/meta-repo-harness" \
-              "$HOME/.claude/plugins/cache/claude-plugins-official/meta-repo-harness"; do
+              "$HOME/.claude/skills/shiploop" \
+              "$HOME/.claude/plugins/cache/claude-plugins-official/shiploop"; do
     [[ -n "$cand" && -f "$cand/VERSION" ]] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$cand/VERSION")"; break; }
   done
   if [[ -z "$hub_v" ]]; then
-    for cand in "$HOME"/.claude/plugins/*/meta-repo-harness/VERSION \
-                "$HOME"/.claude/plugins/*/*/meta-repo-harness/VERSION; do
+    for cand in "$HOME"/.claude/plugins/*/shiploop/VERSION \
+                "$HOME"/.claude/plugins/*/*/shiploop/VERSION; do
       [[ -f "$cand" ]] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$cand")"; break; }
     done
   fi
