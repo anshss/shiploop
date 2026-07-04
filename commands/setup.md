@@ -152,6 +152,28 @@ Mention optional next steps:
 
 Print "This folder is already a meta-repo workspace — checking what's present vs the latest templates."
 
+### B-pre — Safety: reclaim any stale run lock, cheap version check
+
+Before touching anything, verify the governor isn't holding a lock and the version delta:
+
+```bash
+# If a cron/loop schedules this workspace's governor, take the run lock FIRST so it can't
+# fire mid-bump: mkdir governor/.govern.lock  (a bump that overwrites govern/lib/common.sh
+# while a governor run is live is a real hazard).
+# If a prior worker crashed and left a lock behind, reclaim it — safe: it checks
+# the holder pid liveness and only removes a dead-holder lock:
+bash scripts/govern/lock-release.sh                # inspect + reclaim iff safe
+bash scripts/govern/lock-release.sh --status       # holder info only
+
+# Hub version + workspace stamp (both surface via scaffold --version and doctor.sh):
+bash "$SCAFFOLD" --version                          # prints the hub VERSION (e.g. 1.2.0)
+cat scripts/lib/.harness-version 2>/dev/null       # the version this workspace was stamped at
+
+# Per-component sync report — see which components already match the templates (skip re-run)
+# and which are behind, WITHOUT writing:
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --diff-only     # exit 3 = drift, 0 = clean
+```
+
 ### B0 — Re-detect
 Re-run Phase 1 detection (sub-repos, ports, dev commands, org). Source the existing
 `scripts/lib/workspace.sh` and compare. Note any drift.
@@ -191,6 +213,18 @@ Component notes:
 - **config (workspace.sh):** scaffold.sh refuses to overwrite an existing workspace.sh unless `--yes`.
   For a stale workspace.sh with missing NEWER vars, DIFF first, then either manually edit or (if the
   operator confirms) `--component workspace-sh --yes`.
+  - **v1.1.0 → v1.2.0 knob-type migration.** `GOVERN_MERGE_REPOS` and `GOVERN_LOCAL_FIRST_REPOS`
+    changed from bash arrays to **space-separated strings**. Single-element arrays coincidentally
+    keep working (`$VAR` yields the first token); multi-element arrays BREAK silently. scaffold.sh
+    detects the legacy shape at `--component workspace-sh` and prints the mechanical migration:
+    ```bash
+    # Old (array):
+    GOVERN_MERGE_REPOS=(foo bar)
+    GOVERN_LOCAL_FIRST_REPOS=(baz)
+    # New (string):
+    GOVERN_MERGE_REPOS="foo bar"
+    GOVERN_LOCAL_FIRST_REPOS="baz"
+    ```
 - **govern:** preserves `governor/preferences.md`, `escalations.md`, `improvements.md`,
   `decisions-log.md` if present (operator data). Refreshes prompt templates only.
 - **package.json:** scaffold.sh refuses to overwrite an existing one. For missing script aliases,
@@ -199,23 +233,69 @@ Component notes:
   yourself (scaffold.sh only seeds `queue/tickets.md` when absent).
 - **CLAUDE.md:** scaffold.sh never overwrites — if the file predates the current template, append
   the missing sections yourself.
-- **.claude/settings.json:** if it exists, scaffold.sh leaves it alone — merge missing hook entries
-  yourself.
+- **.claude/settings.json:** if it exists, scaffold.sh leaves it alone. Use
+  `--component settings-merge` to idempotently insert the harness hook stanzas via jq without
+  touching anything else in the file (safer than the old "merge missing hook entries yourself"
+  path). Re-running it is a no-op once the stanzas are present.
+- **stale relocated files:** scaffold.sh's `--verify` reads `templates/lib/relocations.txt` and
+  warns if the workspace still carries a file the hub moved (e.g. a test that lived in
+  `scripts/worktree/test/` but relocated to `scripts/govern/test/`). Delete the old path to clear
+  the warning; nothing else is affected.
+- **`--component all` bump caveat:** `--component all` (invoked as a whole-refresh) does NOT
+  overwrite `workspace.sh`, `package.json`, or `.claude/settings.json` without `--yes` — it warns
+  and continues, so you get everything EXCEPT the config knobs. For a real refresh, run the
+  components explicitly (as shown above) OR pass `--yes` on `all` after saving customizations.
 
 ### B3 — Verify + commit
 
-After applying:
+Cheap no-auth smoke FIRST — resolves every knob + helper, prints them, exits nonzero on any
+missing required. This is what to run in a headless env that has no worker OAuth:
+
+```bash
+bash scripts/govern/config-check.sh              # human summary
+bash scripts/govern/config-check.sh --json       # machine-readable
+```
+
+Then the full `bash -n` verify + stale-relocation check:
 
 ```bash
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verify
 ```
+
+Optionally run the full govern test suite. **Pipe-stall caveat for headless environments**:
+`timeout --foreground T bash test.sh 2>&1 | tail -N` blocks/hangs in some headless shells (the
+same command run with a file redirect completes fine). Use this instead:
+
+```bash
+for t in scripts/govern/test/test-*.sh; do
+  name=$(basename "$t" .sh)
+  timeout --foreground 45 bash "$t" </dev/null > "/tmp/$name.log" 2>&1 & wait
+  rc=$?
+  printf '%s\t%d\n' "$name" "$rc"
+done
+```
+
+Or use scaffold's own runner: `bash "$SCAFFOLD" --workspace-dir . --component core-scripts --yes --verify --run-tests`.
+
+**dry-run.sh spawns a live authenticated Claude worker** — from inside a nested Claude session
+or a headless env with no worker auth, it will fail at "no valid report from worker". That's not
+a bump regression; it's the auth caveat. Use config-check + the test suite for boot verification;
+run dry-run.sh from a plain terminal.
 
 Then commit refreshed tooling to the default branch (verified in Phase 0.5), staging tooling paths
 explicitly (never `git add .`):
 
 ```bash
 git add scripts .githooks governor package.json .gitignore .claude/settings.json .claude/commands
-git commit -m "chore: bump meta-repo workspace tooling"
+git commit -m "$(cat <<'EOF'
+chore(harness): converge to meta-repo-harness v1.2.0
+
+- refreshed <components …>
+- <knob decisions: what was migrated / added>
+- <stale relocations removed>
+- suite: N/N pass
+EOF
+)"
 ```
 
 ---
