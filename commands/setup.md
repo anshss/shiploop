@@ -1,7 +1,7 @@
 ---
 model: opus
 effort: medium
-description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing meta-repo → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only. For ongoing maintenance (routine hub-to-workspace bumps), use /meta-repo-harness:update; for pushing local mechanism improvements back to the hub, use /meta-repo-harness:push.
+description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing meta-repo → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only. For ongoing maintenance (routine hub-to-workspace bumps), use /shiploop:update; for pushing local mechanism improvements back to the hub, use /shiploop:push.
 ---
 
 You are the meta-repo setup command. You convert the current folder into — or upgrade an existing —
@@ -17,7 +17,7 @@ owns the byte-level file writes and is deterministic + idempotent.
 
 Templates and scaffold.sh live in the same directory. Resolve it in this priority order:
 1. `${CLAUDE_PLUGIN_ROOT}` — set when this command runs as a plugin.
-2. `~/.claude/skills/meta-repo-harness/` — legacy clone-into-skills install.
+2. `~/.claude/skills/shiploop/` — legacy clone-into-skills install.
 3. `~/.claude/plugins/**` cache lookup by plugin name — fallback.
 
 Let `PLUGIN_ROOT` = that path and `SCAFFOLD=$PLUGIN_ROOT/scaffold.sh`.
@@ -151,7 +151,7 @@ Mention optional next steps:
 ## Phase B — BUMP an existing meta-repo (component-by-component)
 
 > **Ongoing maintenance:** for routine hub→workspace bumps after the workspace already exists,
-> operators should reach for `/meta-repo-harness:update` — a one-command wrapper around the flow
+> operators should reach for `/shiploop:update` — a one-command wrapper around the flow
 > below. Setup's bump mode remains here for the first-run case (older workspace that predates the
 > `.harness-version` stamp, unusual component surgery) and as the source of doctrine `/update`
 > follows.
@@ -297,7 +297,7 @@ explicitly (never `git add .`):
 ```bash
 git add scripts .githooks governor package.json .gitignore .claude/settings.json .claude/commands
 git commit -m "$(cat <<'EOF'
-chore(harness): converge to meta-repo-harness v1.2.0
+chore(harness): converge to shiploop v1.2.0
 
 - refreshed <components …>
 - <knob decisions: what was migrated / added>

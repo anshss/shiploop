@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # LEGACY installer — clone-into-skills path. Symlinks commands/ into
-# ~/.claude/commands/meta-repo-harness so slash commands work without a marketplace.
+# ~/.claude/commands/shiploop so slash commands work without a marketplace.
 #
 # NEW (preferred) install path is via the Claude Code plugin marketplace:
-#   /plugin marketplace add anshss/meta-repo-harness
-#   /plugin install meta-repo-harness@meta-repo-harness
+#   /plugin marketplace add anshss/shiploop
+#   /plugin install shiploop@shiploop
 #
 # This installer stays supported for users who cloned the repo directly, and for
 # CI / scripted environments that don't want to go through the plugin manager.
@@ -13,7 +13,7 @@ set -e
 
 COMMANDS_DIR="$HOME/.claude/commands"
 SOURCE="$(cd "$(dirname "$0")" && pwd)"
-TARGET="$COMMANDS_DIR/meta-repo-harness"
+TARGET="$COMMANDS_DIR/shiploop"
 
 if [ ! -d "$COMMANDS_DIR" ]; then
   echo "Error: $COMMANDS_DIR not found. Is Claude Code installed?"
@@ -39,13 +39,13 @@ if [ -d "$SOURCE/templates" ]; then
 fi
 
 echo ""
-echo "Installed: /meta-repo-harness:* commands now available in all Claude Code sessions."
+echo "Installed: /shiploop:* commands now available in all Claude Code sessions."
 echo "Source:    $SOURCE"
 echo "Symlink:   $TARGET → $SOURCE/commands"
 echo ""
 echo "Available commands:"
 for f in "$SOURCE/commands"/*.md; do
-  [ -f "$f" ] && echo "  /meta-repo-harness:$(basename "$f" .md)"
+  [ -f "$f" ] && echo "  /shiploop:$(basename "$f" .md)"
 done
 echo ""
-echo "Try: /meta-repo-harness:setup in a folder containing your sub-repos."
+echo "Try: /shiploop:setup in a folder containing your sub-repos."
