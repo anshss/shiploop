@@ -7,6 +7,8 @@ The design tenet: **the workspace is a product; the sub-repos are its services.*
 ## What you get
 
 - **`/meta-repo-harness:setup`** — one command scaffolds a workspace on any folder containing sub-repos with their own `.git`. Interviews the operator, invokes a deterministic `scaffold.sh`, and verifies the install.
+- **`/meta-repo-harness:update`** — pull the latest hub templates into THIS workspace (the `git pull` of harness code). Component-by-component bump; preserves `workspace.sh`; idempotent.
+- **`/meta-repo-harness:push`** — push local mechanism-script improvements back to the hub (the `git push` of harness code). Genericizes via the fail-closed sync-port porter, opens a PR against your fork for human review; never auto-merges.
 - **`/meta-repo-harness:govern`** — becomes the governor. Launches the pure-bash driver `scripts/govern/run-loop.sh`: fresh headless worker per ticket, periodic supervisor, auto-merge allowlisted repos on green-or-no-checks CI, escalate hard-stops, deterministic bookkeeping. The interactive session's context stays flat.
 - **`/meta-repo-harness:investigate`** — generic bug-triage command: seed a notes file, pull logs, form a hypothesis, propose a fix.
 - **`/meta-repo-harness:resolve`** — close out a ticket (confirm fix PR is open, delete from `tickets.md`, promote any durable lesson).
@@ -94,7 +96,7 @@ This harness is extracted from a production instance where it grinds a real prod
 | `.claude-plugin/plugin.json` | Plugin manifest (name, version, description) |
 | `.claude-plugin/marketplace.json` | Single-plugin marketplace manifest |
 | `SKILL.md` | Reference skill loaded by the plugin (the pattern doc) |
-| `commands/{setup,govern,resolve,investigate}.md` | The four slash commands |
+| `commands/{setup,update,push,govern,resolve,investigate}.md` | The six slash commands |
 | `scaffold.sh` | Deterministic scaffolder — copies templates, fills placeholders, verifies |
 | `install.sh` | Legacy clone-into-skills installer (kept working) |
 | `templates/lib/workspace.sh` | The ONE config file; every mechanism script sources it |
@@ -119,43 +121,27 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 
 ## Updating
 
-The harness has a two-way update channel.
+The harness has a two-way update channel — think `git pull` / `git push`, one command each direction.
 
-**One-way: is my workspace behind the hub?** Every scaffold run writes `scripts/lib/.harness-version` — the hub `VERSION` this workspace was last synced against. `bash scripts/doctor.sh` and `<pm> run govern:health` compare the stamp against the installed hub's `VERSION` file and warn "harness N releases behind — run the setup upgrade". Graceful when the hub can't be resolved (offline / plugin-cache-only install): degrades to a soft "cannot compare" notice.
+### One command each way (v1.3.0+)
 
-**The update path.**
+- **`/meta-repo-harness:update`** — pull the latest hub templates into THIS workspace. Wraps `scaffold.sh --diff-only` (detect what's behind) → component-by-component bump (refresh mechanism scripts) → `config-check.sh` + `bash -n` verify → report. Idempotent; safe to re-run. Preserves `scripts/lib/workspace.sh` (your per-workspace config sink) — that file is NEVER overwritten by `/update`. Refuses to proceed on a dirty tree or a live governor run.
+- **`/meta-repo-harness:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set in `workspace.sh` (a fork you can PR against). Wraps `sync-templates.sh --check` (drift detection) → `sync-port.sh --no-merge` (headless porter genericizes your changes and opens a PR against your fork for HUMAN review). NEVER auto-merges; workspace-specific files (`workspace.sh`, `package.json`, repo lists) are NEVER pushed.
 
-```bash
-# Cheap version + drift check first (no writes):
-bash "$HUB/scaffold.sh" --version                             # print hub VERSION
-bash "$HUB/scaffold.sh" --workspace-dir . --diff-only         # per-component in-sync/behind
+### Under the hood
 
-# If a prior worker crashed and left a run lock, reclaim it (safe: dead-holder-only):
-bash scripts/govern/lock-release.sh                            # inspect + reclaim iff safe
+The version stamp + scaffold flags that back the two commands:
 
-# Component-by-component bump — refresh mechanism scripts (they only read workspace.sh):
-bash "$HUB/scaffold.sh" --workspace-dir . --component core-scripts --yes
-bash "$HUB/scaffold.sh" --workspace-dir . --component worktrees    --yes
-bash "$HUB/scaffold.sh" --workspace-dir . --component govern       --yes
-bash "$HUB/scaffold.sh" --workspace-dir . --component githooks     --yes
-bash "$HUB/scaffold.sh" --workspace-dir . --component commands     --yes
-bash "$HUB/scaffold.sh" --workspace-dir . --component seeds        --yes
+- **`scripts/lib/.harness-version`** — written on every scaffold run. `bash scripts/doctor.sh` and `<pm> run govern:health` compare it against the installed hub's `VERSION` and warn "harness N releases behind". Degrades gracefully when the hub can't be resolved.
+- **`bash "$HUB/scaffold.sh" --version`** — print hub VERSION.
+- **`bash "$HUB/scaffold.sh" --workspace-dir . --diff-only`** — per-component `in-sync | behind` report (exit 0 clean, exit 3 drift).
+- **`bash "$HUB/scaffold.sh" --workspace-dir . --component <name> --yes`** — refresh one component from templates (mechanism scripts only — never `workspace.sh`).
+- **`bash scripts/govern/sync-templates.sh --check | --files | --diff | --mark`** — inspect mirrored-file drift.
+- **`bash scripts/govern/sync-port.sh [--dry-run] [--no-merge]`** — the headless porter. Fail-closed at every gate (bash -n + forbidden-identity-strings on ADDED lines + scaffold-suite baseline diff). Any failure files a numbered escalation and does NOT merge.
 
-# Idempotent hook merge into an EXISTING .claude/settings.json:
-bash "$HUB/scaffold.sh" --workspace-dir . --component settings-merge
+The governor calls `sync-port.sh` automatically at run-end (best-effort — never overrides the run's exit code). Set `GOVERN_SYNC_PORT_ON_END=0` to disable that auto-trigger.
 
-# Verify: no-auth smoke, then bash -n + stale-relocation warning, then optional full suite.
-bash scripts/govern/config-check.sh
-bash "$HUB/scaffold.sh" --workspace-dir . --component core-scripts --yes --verify
-```
-
-**Two-way: contributing back.** If you set `GOVERN_UPSTREAM_HARNESS_REPO` + `GOVERN_UPSTREAM_HARNESS_DIR` (a local clone of your fork of the harness) in `workspace.sh`, then:
-
-- `bash scripts/govern/sync-templates.sh --check` reports mirrored files you've changed in your workspace since the last sync — exit 3 = drift, exit 0 = clean. `--files` lists them; `--diff` emits the consolidated diff to port.
-- `bash scripts/govern/sync-port.sh --dry-run` prints what a headless porter WOULD do (which files, forbidden-identity-strings gate, planned PR title). Full run spawns the porter, validates its port (bash -n + forbidden-strings gate on ADDED lines + scaffold test suite baseline-diff), opens a PR against your fork, merges it green-or-no-checks, and advances the local marker. Fail-closed at every step: any failure files an escalation and does NOT merge.
-- The governor calls `sync-port.sh` automatically at run-end (best-effort — never overrides the run's exit code).
-
-For first live use, set `GOVERN_SYNC_PORT_NO_MERGE=1` (or invoke `sync-port.sh --no-merge`) so it opens the PR for review instead of auto-merging.
+If a prior worker crashed and left a run lock, reclaim it before running `/update`: `bash scripts/govern/lock-release.sh` (safe: only clears dead-holder locks).
 
 ## License
 
