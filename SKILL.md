@@ -1,6 +1,6 @@
 ---
 name: shiploop
-description: Multi-subrepo workspace pattern — a workspace (npm, pnpm, or yarn at the root) that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /shiploop:setup slash command.
+description: Multi-subrepo workspace pattern — a workspace (npm, pnpm, or yarn at the root) that wraps N independent git repos as sub-folders and operates them as one product with an autonomous harness. Use as reference when (a) working inside an existing meta-repo workspace (any workspace where sub-folders each have their own .git and the root holds scripts/ + queue/tickets.md + a governor/), or (b) deciding whether the pattern fits a new project. Carries the operating commands, the parallel-worktree model, the ticket queue + /resolve flow, the governor (autonomous ticket loop), the SessionStart/End/Stop hooks, the CLI-vs-MCP autonomy guidance, and the load-bearing anti-patterns. For scaffolding or upgrading a workspace, invoke the /shiploop:setup slash command.
 ---
 
 # Meta-repo — multi-subrepo workspace + autonomous harness
@@ -56,7 +56,7 @@ Examples below use `npm run` (the default `ROOT_PM`); substitute your root PM �
 
 - Worktrees live at `$WORKTREE_BASE/<slug>/` (a sibling of the main checkout, so editors/file-watchers don't index them).
 - A slot **registry** (`.worktrees/registry.json`, mkdir-locked for atomic allocation) assigns each worktree a slot number. **Ports offset by `slot × 10`** — slot 1 adds 10 to every base port, slot 2 adds 20, etc. (set in `worktree.env`, consumed by `dev.sh`/`status.sh`/hooks). So N stacks run at once without port collisions.
-- The **meta-repo worktree is detached at `main`** — workspace-coordination files (CLAUDE.md, tickets.md, learnings.md, scripts/) commit directly to main in the main checkout and are never branched. Only sub-repo code gets a feature branch (in the `--only` set; the rest sit on main read-only).
+- The **meta-repo worktree is detached at `main`** — workspace-coordination files (CLAUDE.md, queue/tickets.md, learnings.md, scripts/) commit directly to main in the main checkout and are never branched. Only sub-repo code gets a feature branch (in the `--only` set; the rest sit on main read-only).
 - A project's per-worktree setup (install deps, codegen, point a DB at prod, per-slot service namespace) lives in the optional `scripts/lib/worktree-bootstrap.sh` hook — `new.sh` calls it; the mechanism stays project-agnostic.
 - Clean up with `npm run worktree:rm -- <slug>` after PRs merge (it runs the project's `session-cleanup.sh` first, then removes trees and frees the slot).
 
@@ -66,8 +66,8 @@ Examples below use `npm run` (the default `ROOT_PM`); substitute your root PM �
 
 A durable, file-based backlog the whole harness reads.
 
-- **`tickets.md`** (root) — work items only: bugs, gaps, missing capabilities, follow-ups. Each is its own numbered `## #N — Title` block (Severity / Where / Observed / Fix direction / Done when / Ref). **Numbers are stable IDs while open** — never renumber an open ticket (in-flight PRs reference it). Gaps from deleted tickets are expected.
-- **The queue is ISOLATED to two scopes: the PROJECT + the HARNESS.** `tickets.md` admits only (1) work on this workspace's own sub-repos and (2) improvements to the meta-repo harness itself (`scripts/`, `governor/`, `queue/`, hooks, config). The harness, the project, and any external tool are three isolated concerns that merely share a terminal. Any tool, skill, or product EXTERNAL to those two scopes (a marketing/GTM skill, a doc generator, any bolt-on) MUST NEVER file a ticket into `tickets.md` — even when invoked from the project's terminal — its follow-ups belong in its own tracker. A ticket that turns out to be about external tooling is deleted from the queue, not worked. State this in the root `CLAUDE.md` (always-on context) so in-workspace skill runs inherit it.
+- **`queue/tickets.md`** — work items only: bugs, gaps, missing capabilities, follow-ups. Each is its own numbered `## #N — Title` block (Severity / Where / Observed / Fix direction / Done when / Ref). **Numbers are stable IDs while open** — never renumber an open ticket (in-flight PRs reference it). Gaps from deleted tickets are expected.
+- **The queue is ISOLATED to two scopes: the PROJECT + the HARNESS.** `queue/tickets.md` admits only (1) work on this workspace's own sub-repos and (2) improvements to the meta-repo harness itself (`scripts/`, `governor/`, `queue/`, hooks, config). The harness, the project, and any external tool are three isolated concerns that merely share a terminal. Any tool, skill, or product EXTERNAL to those two scopes (a marketing/GTM skill, a doc generator, any bolt-on) MUST NEVER file a ticket into `queue/tickets.md` — even when invoked from the project's terminal — its follow-ups belong in its own tracker. A ticket that turns out to be about external tooling is deleted from the queue, not worked. State this in the root `CLAUDE.md` (always-on context) so in-workspace skill runs inherit it.
 - **`tickets-parked.md`** — defer a ticket by moving it here; the governor ignores it. Independent serial numbering (renumber to the destination queue's max+1 when moving).
 - **Resolved = a fix PR is OPENED** (not merged). DELETE the entry the same session the PR opens; reference the PR# in the deletion commit. Promote any durable lesson to `CLAUDE.md` first.
 - **`/resolve <N>`** does this disciplined close-out: confirm the PR, promote the lesson, delete the entry, then sweep the session diff for newly-discovered tickets and file them.
@@ -77,7 +77,7 @@ A durable, file-based backlog the whole harness reads.
 
 | Where | Use when |
 |---|---|
-| `tickets.md` | Work items — anything to fix/build later |
+| `queue/tickets.md` | Work items — anything to fix/build later |
 | `CLAUDE.md` (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. **Sub-repo `CLAUDE.md` wins in its scope**; the root file is cross-repo orchestration only |
 | `learnings.md` (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for CLAUDE.md. Never a work item; never a fixed-bug writeup |
 | Project memory (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences |
@@ -88,7 +88,7 @@ Bar: would knowing this save a future session 5+ min? If yes, propose the edit a
 
 `npm run govern` / `/govern` launches a **pure-bash driver** (`scripts/govern/run-loop.sh`) that spends ~zero Claude context itself and dispatches a fresh **headless `claude -p` worker** per ticket. This is what lets the workspace grind a backlog unattended.
 
-- **Per ticket:** select (severity-ordered from `tickets.md`) → spawn a worker in a fresh `ticket-<N>` worktree → worker implements + validates + opens a PR and returns a JSON report → for an auto-merge repo, await CI and merge on **green-or-no-checks** → deterministic `tickets.md` bookkeeping (worker never writes it). Frontend/PR-only repos stop at the open PR.
+- **Per ticket:** select (severity-ordered from `queue/tickets.md`) → spawn a worker in a fresh `ticket-<N>` worktree → worker implements + validates + opens a PR and returns a JSON report → for an auto-merge repo, await CI and merge on **green-or-no-checks** → deterministic `queue/tickets.md` bookkeeping (worker never writes it). Frontend/PR-only repos stop at the open PR.
 - **Worker autonomy:** workers run `--permission-mode bypassPermissions` (a headless worker can't answer prompts) scoped to throwaway worktrees, with `--setting-sources user` to drop the project's own hooks (so they don't inherit a fleet-wide SessionEnd cleanup or a stdout-clobbering Stop hook). The doctrine in `governor/preferences.md` defines the **hard-stops** (destructive git; prod data / destructive schema / secrets) that make a worker **park + escalate** instead of acting.
 - **Always ends:** hard bounds — `GOVERN_MAX_TICKETS` (20), `GOVERN_MAX_BAD_STREAK` (4 consecutive parked/failed), `GOVERN_MAX_RUNTIME` (~4h), `GOVERN_WORKER_TIMEOUT` (1h, a stuck worker is killed not stalled).
 - **Progress-preserving:** only a cleanly-resolved worktree is torn down; failed/parked/timed-out worktrees are kept (work survives) and an existing `ticket-<N>` PR is reused on re-run (no duplicate). A clean interrupt leaves the in-flight ticket; re-running resumes. Every exit writes a plain-words `summary.md`.
@@ -120,9 +120,9 @@ The harness is configured so a session runs **long without stopping to ask permi
 5. **PRs aren't transactional across sub-repos — merge backend-first.** When the backend adds a capability the frontend consumes (enum, endpoint, response field), the backend PR merges + deploys before the frontend PR — else the frontend ships UI the live backend rejects. State the merge order in each sibling PR.
 6. **`.env.example` is the contract.** Never commit `.env`. `doctor` checks each `.env` exists.
 7. **One package manager at the root — never two.** The root PM is your choice (`ROOT_PM` = npm/pnpm/yarn/bun in `workspace.sh`); the root scripts are PM-agnostic bash aliases, so any of them works. What breaks is *mixing*: a stray second root lockfile (e.g. a `package-lock.json` left by an accidental `npm install` in a pnpm root) diverges from the real one. The root `.gitignore` ignores the off-PM lockfiles to prevent this. Sub-repos keep their own PM independently.
-8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo coordination files (CLAUDE.md, tickets.md, learnings.md, scripts/) commit directly to main in the main checkout — never branched/PR'd.
+8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo coordination files (CLAUDE.md, queue/tickets.md, learnings.md, scripts/) commit directly to main in the main checkout — never branched/PR'd.
 9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next `dev` serves stale code on `EADDRINUSE`). Worktree: `npm run worktree:rm`. Backstops: SessionEnd hook + `dev.sh` frees each port before binding.
-10. **Workers never write `tickets.md`** — the governor's bookkeeper does, in the main checkout (avoids two writers racing the file).
+10. **Workers never write `queue/tickets.md`** — the governor's bookkeeper does, in the main checkout (avoids two writers racing the file).
 
 ## Cross-stack discipline
 
@@ -137,7 +137,7 @@ PRs land independently — don't expect atomicity.
 ## Setup / upgrade a workspace
 
 Invoke **`/shiploop:setup`**. It is idempotent:
-- **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; asks which package manager you'll use at the root (sets `ROOT_PM`); writes `package.json` (thin bash-alias scripts), `.gitignore` (ignoring the off-PM root lockfiles), `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
+- **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; asks which package manager you'll use at the root (sets `ROOT_PM`); writes `package.json` (thin bash-alias scripts), `.gitignore` (ignoring the off-PM root lockfiles), `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `queue/tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
 - **Existing meta-repo (bump):** detects which capabilities are present (core scripts / worktrees / tickets / governor / hooks) vs missing or outdated, then offers to add/upgrade each. Because all customization lives in `scripts/lib/workspace.sh`, the mechanism scripts are refreshed from latest templates without clobbering your tweaks.
 
 ## Tradeoffs (state honestly)

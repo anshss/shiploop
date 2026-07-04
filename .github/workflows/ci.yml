@@ -6,8 +6,8 @@ name: CI
 # with the worker's self-reported `bash -n` as the only (unenforced) verification.
 # This workflow turns that into a real green gate: (1) every shell script must
 # parse; (2) no leftover conflict markers; (3) plugin + marketplace manifests
-# are valid JSON with required fields; (4) scaffold.sh + the full 65-test
-# govern suite run green in a throwaway workspace on every PR.
+# are valid JSON with required fields; (4) scaffold.sh + the full govern
+# test suite run green in a throwaway workspace on every PR.
 
 on:
   pull_request:

@@ -1,5 +1,5 @@
 ---
-description: Become the governor — launch the bash-driven ticket loop (scripts/govern/run-loop.sh): a fresh headless worker per ticket, auto-merge allowlisted repos on green-or-no-checks CI, periodic supervisor, escalate hard-stops, deterministic tickets.md bookkeeping. Keeps THIS session's context flat.
+description: Become the governor — launch the bash-driven ticket loop (scripts/govern/run-loop.sh): a fresh headless worker per ticket, auto-merge allowlisted repos on green-or-no-checks CI, periodic supervisor, escalate hard-stops, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
 allowed-tools: Bash, Read
 ---
 
@@ -80,7 +80,7 @@ Relay its log lines to the operator as they appear. The driver does everything �
   apply); destructive migrations always park.
 - Supervisor every `GOVERN_SUPERVISOR_EVERY` (default 5) resolved tickets + on anomaly.
 - Single-run lock (`governor/.govern.lock`); resumable — resolved tickets are deleted from
-  `tickets.md`, parked ones are skipped via `escalations.md`, an existing `ticket-<N>` PR is reused,
+  `queue/tickets.md`, parked ones are skipped via `escalations.md`, an existing `ticket-<N>` PR is reused,
   so a re-run continues cleanly.
 - Hard bounds so a run always ends: `GOVERN_MAX_TICKETS` (20), `GOVERN_MAX_BAD_STREAK` (4),
   `GOVERN_MAX_RUNTIME` (~4h), `GOVERN_WORKER_TIMEOUT` (1h, a stuck worker is killed not stalled).
