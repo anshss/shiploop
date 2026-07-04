@@ -446,7 +446,10 @@ run_scaffold_suite() {  # templates_tree label -> prints failing test names
   for t in "$ws/scripts/govern/test/"test-*.sh; do
     [[ -f "$t" ]] || continue
     name="$(basename "$t")"
-    bash "$t" >"$LOG_DIR/scaffold-$label-$name.log" 2>&1 || fails+="$name "
+    bash "$t" >"$LOG_DIR/scaffold-$label-$name.log" 2>&1; rc=$?
+    # rc=77 is a well-known SKIP (test-update-channel from a non-hub checkout, test-sync-port
+    # when the porter prompt isn't present) — treat as skip, not fail.
+    [[ "$rc" -eq 0 || "$rc" -eq 77 ]] || fails+="$name "
   done
   rm -rf "$ws"
   echo "$fails"

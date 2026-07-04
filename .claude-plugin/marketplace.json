@@ -11,7 +11,7 @@
       "name": "meta-repo-harness",
       "source": "./",
       "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor.",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "category": "workflow",
       "tags": ["monorepo", "worktrees", "autonomous", "governor"],
       "homepage": "https://github.com/anshss/meta-repo-harness",
