@@ -741,6 +741,23 @@ while :; do
     pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
     all_prs_label="$(printf '%s\n' "$pr_lines" | awk -F'\t' 'NF>=2{printf "%s%s#%s",sep,$1,$2; sep=", "}')"
 
+    # #72: on a LOCAL-FIRST repo (opt-in via GOVERN_LOCAL_FIRST_REPOS) there is no deployed prod DB —
+    # an ADDITIVE migration ships as code (a MIGRATIONS entry that self-applies on each user's local
+    # DB open), so there is nothing to "apply to prod manually". If EVERY PR for this ticket targets
+    # a local-first repo, neutralize mneeded so it opens as a normal PR instead of a spurious
+    # "apply migration manually" park. DESTRUCTIVE migrations still escalate (guarded by mdestr).
+    if [[ "$mneeded" == "true" && "$mdestr" != "true" && -n "$pr_lines" ]]; then
+      _all_localfirst=1
+      while IFS=$'\t' read -r _lfr _lfp _lfu; do
+        [[ -n "$_lfr" ]] || continue
+        if ! govern::is_local_first_repo "$_lfr"; then _all_localfirst=0; break; fi
+      done <<< "$pr_lines"
+      if [[ "$_all_localfirst" == "1" ]]; then
+        govern::log "#$N's additive migration ships as auto-applying code on local-first repo(s) ${all_prs_label:-?} — no prod apply needed; proceeding as a normal PR (#72)"
+        mneeded="false"
+      fi
+    fi
+
     if [[ "$mneeded" == "true" && "$mdestr" == "true" ]]; then
       # DESTRUCTIVE prod migration → never auto-merge ANY sibling; escalate (hard-stop stays).
       govern::log "#$N needs a DESTRUCTIVE prod migration ($(printf '%s' "$report" | jq -r '.migration.name // "?"')) — NOT auto-merging ${all_prs_label:-its PR(s)}; escalating"

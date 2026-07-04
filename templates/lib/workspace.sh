@@ -63,6 +63,13 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
+# Sub-repos that are LOCAL-FIRST — they run on each user's machine, NOT a deployed server, so they
+# have NO central prod DB. A schema change ships AS CODE (a migration that self-applies on the user's
+# local DB open), so an ADDITIVE migration needs NO manual prod apply — the governor must open the PR
+# normally, never park it "apply to prod manually". DESTRUCTIVE migrations still escalate. Empty by
+# default (feature is OFF) — set to a space-separated repo list to opt in (e.g. "cli-tool desktop-app").
+GOVERN_LOCAL_FIRST_REPOS="${GOVERN_LOCAL_FIRST_REPOS:-}"
+
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
 #     Per-worktree setup AFTER the trees are laid out: install deps, codegen
@@ -111,6 +118,14 @@ wsp_repos_csv() { local IFS=,; echo "${REPOS[*]}"; }
 wsp_is_merge_repo() {
   local r="$1" a
   for a in $GOVERN_MERGE_REPOS; do [ "$r" = "$a" ] && return 0; done
+  return 1
+}
+
+# Is <repo> local-first? (no deployed prod DB → additive migrations self-apply as code.) Empty list =
+# feature off = always returns 1 (nothing is local-first), which the govern helper below defaults to.
+wsp_is_local_first_repo() {
+  local r="$1" a
+  for a in $GOVERN_LOCAL_FIRST_REPOS; do [ "$r" = "$a" ] && return 0; done
   return 1
 }
 

@@ -582,6 +582,10 @@ govern::na_skip_prune() { # ",N,N," (current NA set, comma-wrapped)
 
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
+# Local-first repo (no deployed prod DB → additive migrations self-apply as shipped code). Opt-in via
+# GOVERN_LOCAL_FIRST_REPOS in workspace.sh; a workspace.sh that predates the knob (or doesn't define
+# the helper) is treated as "no local-first repos", so the branch is a pure no-op there.
+govern::is_local_first_repo() { command -v wsp_is_local_first_repo >/dev/null 2>&1 && wsp_is_local_first_repo "$1"; }
 
 # owner/repo slug + local checkout dir for a short repo name (both delegate to
 # workspace.sh, where any cross-owner / out-of-tree overrides live). Default slug
