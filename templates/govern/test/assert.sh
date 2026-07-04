@@ -21,6 +21,12 @@ for _cand in "$ASSERT_DIR/../../hooks" "$ASSERT_DIR/../.."; do
 done
 export GOVERN_PROMPTS_DIR="${GOVERN_PROMPTS_DIR:-}" GOVERN_HOOKS_DIR="${GOVERN_HOOKS_DIR:-}"
 
+# Merge-guard test seam (top-level, back-compat): pre-v1.2.0 this lived at the top of assert.sh,
+# so adopter tests that source assert.sh WITHOUT calling mk_ws_stub still get the seam. mk_ws_stub
+# re-sets it (below) so callers that unset it earlier still land on 1 after the stub runs. Tests
+# that need to EXERCISE the guard (test-automerge-guard.sh) explicitly `unset` this after sourcing.
+export _GOVERN_ASSUME_MERGE_ALLOWED=1
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it
