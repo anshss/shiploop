@@ -281,7 +281,15 @@ merge_pr_for_ticket() { # repo pr -> echoes merged|red|unmergeable|error
   # NB: merge-pr.sh stdout (its live `gh pr merge` output / GOVERN_ECHO "WOULD RUN" line) is sent to
   # stderr so this function's ONLY stdout is the result token the caller captures via $().
   # GOVERN_SKIP_CI=1: we JUST confirmed green/none above — skip merge-pr.sh's redundant re-poll.
-  if GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" >&2; then echo merged; return; fi
+  # Capture merge-pr.sh's exit CODE explicitly so exit 5 (external-pr-blocked) short-circuits the
+  # rebase/conflict-re-dispatch retries — a PR the governor is structurally forbidden to auto-merge
+  # cannot be "fixed" by a rebase or a resolve-conflict worker; it's a terminal outcome for this lane.
+  set +e
+  GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$repo" "$pr" >&2
+  local _mrc=$?
+  set -e
+  if [[ "$_mrc" == "0" ]]; then echo merged; return; fi
+  if [[ "$_mrc" == "5" ]]; then echo external-blocked; return; fi
   # #71: a "not mergeable" failure is most often a STALE PR base (origin/main moved under the PR),
   # not a real content conflict. Try ONE 'gh pr update-branch' (rebase onto origin/main) +
   # re-await-CI + re-merge before giving up — auto-clears the common case without an operator.
@@ -863,6 +871,15 @@ while :; do
               govern::log "CI state unverifiable on $prepo#$pnum (gh could not confirm CI) — PR left open; parking (ticket NOT deleted) [ci-state-unverifiable]"
               pr_summary="$pr_summary $prepo#$pnum(ci-unverifiable-left-open)"
               report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" was NOT merged because its CI state could not be verified (gh error — network / auth / rate-limit / GitHub 5xx). Failing closed rather than merging without a confirmed-green CI."),question:("confirm "+$p+" CI is green, then merge; or investigate the gh/GitHub API failure"),options:[]}')"
+              [[ "$status" == "resolved" ]] && status="parked" ;;
+            external-blocked)
+              # The auto-merge safety guard (govern::pr_automerge_allowed) refused this PR — the head
+              # is from an external author, a fork, or a branch name outside GOVERN_MERGE_BRANCH_RE. A
+              # human must merge it via gh/web; the governor structurally will NOT. Park + escalate so
+              # the operator sees it and either merges by hand or rejects the PR.
+              govern::log "auto-merge blocked on $prepo#$pnum — PR is external / fork / non-governor branch; parking (ticket NOT deleted) [external-pr-blocked]"
+              pr_summary="$pr_summary $prepo#$pnum(external-pr-blocked)"
+              report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" was NOT auto-merged: the three-factor safety guard (own gh author + governor branch pattern + non-fork) refused it. This is INTENDED for external contributors — the governor never auto-merges a PR it did not itself open."),question:("review "+$p+" as a human and merge it via gh/web if trusted, or close it"),options:[]}')"
               [[ "$status" == "resolved" ]] && status="parked" ;;
           esac
         else
