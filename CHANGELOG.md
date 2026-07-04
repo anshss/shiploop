@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.2 — 2026-07-05
+
+Fix cold-install doc bugs — correct ticket path (`queue/tickets.md`), honest `--dry-run` cost framing + `config-check.sh` as the free smoke, standalone `scaffold.sh --verify`, test-count consistency.
+
+### Fixed
+- **Quickstart pointed at the wrong ticket path.** README + SKILL.md + `commands/govern.md` + `commands/resolve.md` said tickets live in a root-level `tickets.md`, but the scaffolder installs them at `queue/tickets.md` (and every runtime script — `select-ticket.sh`, `file-ticket.sh`, `dry-run.sh` — reads that path). Every reference to the queue location is now `queue/tickets.md`. Only the setup-md legacy-migration line (`git mv tickets.md queue/`) is left as-is, since it deliberately references the pre-scaffold path.
+- **`--dry-run` was framed as free but spawns a real billable worker.** README Quickstart §5 read as "prove the loop, ship nothing" — technically true (nothing lands in git) but misleading (the plan-mode worker is still a live `claude -p --model opus` process consuming tokens). Quickstart now leads with `bash scripts/govern/config-check.sh` as the genuinely-free ($0, no auth, no worker) smoke, and reframes `--dry-run` as an end-to-end rehearsal that spends worker tokens. The "Trust and cost" section carries the same distinction so the two sections agree.
+- **`scaffold.sh --verify` failed standalone.** Running `scaffold.sh --verify` (or `--diff-only`) alone died with `ERROR: --org is required for workspace.sh` because the default `COMPONENT=all` re-ran the `workspace.sh` writer even though the caller was only asking for a read-only check. `scaffold.sh` now detects verify-only invocations (any of `--verify` / `--diff-only`, with no `--org`, `--repos`, or explicit `--component`) and skips the entire writer phase — running just `verify_scripts` + `verify_relocations` against the existing install. `--workspace-dir` defaults to the current directory in that mode, so `scaffold.sh --verify` works from inside the workspace. Explicit `--component X --verify` still runs its normal writer path. Locked in by `test-scaffold-verify-standalone.sh`.
+- **CI header comment claimed a 65-test suite.** The real count is 70 after this release. The CI comment now references "the full govern test suite" without a brittle count; the README follows suit ("the hermetic test suite") so the number doesn't rot every time a new regression lands.
+
+### Test suite
+- Grew from 69 → 70 hermetic tests (`test-scaffold-verify-standalone.sh`). Full suite green locally + CI.
+
 ## 1.4.1 — 2026-07-05
 
 README rewrite — reposition as autonomous backlog governor; no code changes.
