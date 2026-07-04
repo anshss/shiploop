@@ -1,7 +1,7 @@
 ---
 model: opus
 effort: medium
-description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing meta-repo → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only.
+description: Scaffold OR upgrade a meta-repo workspace in the current folder. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing meta-repo → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only. For ongoing maintenance (routine hub-to-workspace bumps), use /meta-repo-harness:update; for pushing local mechanism improvements back to the hub, use /meta-repo-harness:push.
 ---
 
 You are the meta-repo setup command. You convert the current folder into — or upgrade an existing —
@@ -149,6 +149,12 @@ Mention optional next steps:
 ---
 
 ## Phase B — BUMP an existing meta-repo (component-by-component)
+
+> **Ongoing maintenance:** for routine hub→workspace bumps after the workspace already exists,
+> operators should reach for `/meta-repo-harness:update` — a one-command wrapper around the flow
+> below. Setup's bump mode remains here for the first-run case (older workspace that predates the
+> `.harness-version` stamp, unusual component surgery) and as the source of doctrine `/update`
+> follows.
 
 Print "This folder is already a meta-repo workspace — checking what's present vs the latest templates."
 
