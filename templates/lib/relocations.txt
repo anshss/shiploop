@@ -1,0 +1,16 @@
+# File relocations manifest — consulted by scaffold.sh --verify to warn about
+# stale copies still living at the old path in an installed workspace.
+#
+# Format: one entry per non-comment line, "<from-path> <to-path>" (both repo-relative,
+# space-separated). If the workspace still carries the file at <from-path>, scaffold's
+# --verify prints a stale-relocated warning. Delete the stale file to clear the warning;
+# nothing else uses it (govern's test loop only reads test-*.sh at the current path).
+#
+# When you MOVE a template file, ADD a line here. This file is workspace-agnostic (paths
+# are template-mirror-relative) so it ships to every install.
+
+# v1.1.0 relocation — test moved from worktree/ to govern/ (test-base-ref covers the
+# worktree-base-ref helper but its harness is govern's assert.sh, so it lives with the
+# govern suite now). Adopters bumping through v1.1.0 saw a stale copy at the old path
+# because scaffold's govern component only copies IN, it doesn't remove old files.
+scripts/worktree/test/test-base-ref.sh scripts/govern/test/test-base-ref.sh

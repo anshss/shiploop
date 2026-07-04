@@ -238,8 +238,49 @@ render() { # metrics-json  header
   printf '\n'
 }
 
+# Update-channel — compare workspace stamp (scripts/lib/.harness-version) to the
+# installed hub's VERSION. Warns when the workspace is N releases behind so the
+# operator knows a `scaffold.sh --component <name>` bump is due. Graceful when
+# the hub can't be resolved locally (offline / plugin-only install).
+render_update_channel() {
+  local stamp="$WS_ROOT/scripts/lib/.harness-version"
+  local stamp_v=""
+  [[ -f "$stamp" ]] && stamp_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp")"
+  local hub_v="" cand
+  for cand in "${CLAUDE_PLUGIN_ROOT:-}" \
+              "$HOME/.claude/skills/meta-repo-harness" \
+              "$HOME/.claude/plugins/cache/claude-plugins-official/meta-repo-harness"; do
+    [[ -n "$cand" && -f "$cand/VERSION" ]] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$cand/VERSION")"; break; }
+  done
+  if [[ -z "$hub_v" ]]; then
+    for cand in "$HOME"/.claude/plugins/*/meta-repo-harness/VERSION \
+                "$HOME"/.claude/plugins/*/*/meta-repo-harness/VERSION; do
+      [[ -f "$cand" ]] && { hub_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$cand")"; break; }
+    done
+  fi
+  printf '▸ update channel\n'
+  if [[ -z "$stamp_v" ]]; then
+    printf '  stamp    : (absent — re-run scaffold.sh once to write scripts/lib/.harness-version)\n'
+  elif [[ -z "$hub_v" ]]; then
+    printf '  stamp    : %s   ·   hub: unresolvable (soft: not an error)\n' "$stamp_v"
+  elif [[ "$stamp_v" == "$hub_v" ]]; then
+    printf '  stamp    : %s = hub %s (up to date)\n' "$stamp_v" "$hub_v"
+  else
+    local order newer
+    newer="$(printf '%s\n%s\n' "$stamp_v" "$hub_v" | sort -V | tail -1)"
+    if [[ "$newer" == "$hub_v" ]]; then order="BEHIND"; else order="ahead"; fi
+    if [[ "$order" == "BEHIND" ]]; then
+      printf '  stamp    : %s %s hub %s — harness N releases behind — run the setup upgrade\n' "$stamp_v" "$order" "$hub_v"
+    else
+      printf '  stamp    : %s %s installed hub %s (dev checkout?)\n' "$stamp_v" "$order" "$hub_v"
+    fi
+  fi
+  printf '\n'
+}
+
 echo "════════ Governor health (ROI telemetry · #272) ════════"
 render "$run_m" "▸ $run_label"
 render "$all_m" "▸ all-time rolling"
 render_stale
+render_update_channel
 echo "history: $HISTORY   ·   detail: scripts/govern/govern-health.sh --json"

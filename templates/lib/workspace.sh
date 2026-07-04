@@ -90,6 +90,36 @@ export GOVERN_EXTERNALIZE_REPO="${GOVERN_EXTERNALIZE_REPO:-}"
 export GOVERN_EXTERNALIZE_SUBREPO="${GOVERN_EXTERNALIZE_SUBREPO:-}"
 export GOVERN_EXTERNALIZE_LABELS="${GOVERN_EXTERNALIZE_LABELS:-}"
 
+# ── Optional harness → template sync channel (OPT-IN, OFF by default) ────────
+# When set, `sync-templates.sh` + `sync-port.sh` become live: they detect drift
+# between the mirrored files in this workspace and the meta-repo-harness
+# templates and — for sync-port — spawn a headless porter, validate the port,
+# open a PR against the upstream repo, merge it green-or-no-checks, and advance
+# the local marker. This is the *contribution* channel that lets a live
+# workspace push its own hardening back into the templates for other adopters.
+# BOTH knobs empty (default) → the whole mechanism is inert.
+#
+#   GOVERN_UPSTREAM_HARNESS_REPO — short repo name of your fork OR the canonical
+#     "meta-repo-harness" repo. sync-port passes it to merge-pr.sh + resolves it
+#     to owner/repo via wsp_repo_slug. If your fork lives under a different
+#     GitHub owner than $GITHUB_ORG, add a wsp_repo_slug case arm below
+#     mapping the short name to the cross-owner slug.
+#     Example: GOVERN_UPSTREAM_HARNESS_REPO="meta-repo-harness"
+#              wsp_repo_slug() { case "$1" in meta-repo-harness) printf 'anshss/meta-repo-harness';; ...
+#
+#   GOVERN_UPSTREAM_HARNESS_DIR — local working dir where you keep a clone of
+#     your fork of meta-repo-harness. sync-templates uses it as the templates
+#     tree to diff against; sync-port cuts its port branch there. Point this at
+#     wherever you keep the checkout — the default wsp_repo_localdir places
+#     every repo under $META_ROOT which almost never matches for a skill fork.
+#     Example: GOVERN_UPSTREAM_HARNESS_DIR="$HOME/code/meta-repo-harness"
+#
+# Also useful:
+#   Add "$GOVERN_UPSTREAM_HARNESS_REPO" to GOVERN_MERGE_REPOS above so
+#   sync-port can auto-merge the PR it opens against the upstream repo.
+export GOVERN_UPSTREAM_HARNESS_REPO="${GOVERN_UPSTREAM_HARNESS_REPO:-}"
+export GOVERN_UPSTREAM_HARNESS_DIR="${GOVERN_UPSTREAM_HARNESS_DIR:-}"
+
 # ── Optional pre-commit lint-fix hook (OPT-IN, OFF by default) ───────────────
 # When set, the workspace's per-sub-repo pre-commit hook (.githooks/pre-commit, propagated by
 # lib/githooks.sh:install_subrepo_pre_commit_hook) runs this command inside the sub-repo BEFORE

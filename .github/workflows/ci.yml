@@ -6,7 +6,7 @@ name: CI
 # with the worker's self-reported `bash -n` as the only (unenforced) verification.
 # This workflow turns that into a real green gate: (1) every shell script must
 # parse; (2) no leftover conflict markers; (3) plugin + marketplace manifests
-# are valid JSON with required fields; (4) scaffold.sh + the full 54-test
+# are valid JSON with required fields; (4) scaffold.sh + the full 65-test
 # govern suite run green in a throwaway workspace on every PR.
 
 on:
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$WS"
-          passed=0; failed=0; total=0
+          passed=0; failed=0; skipped=0; total=0
           fails=()
           for t in scripts/govern/test/test-*.sh; do
             total=$((total+1))
@@ -164,14 +164,20 @@ jobs:
               passed=$((passed+1))
               echo "ok   - $name"
             else
-              failed=$((failed+1))
-              fails+=("$name")
-              echo "FAIL - $name"
-              sed 's/^/         /' /tmp/testout.log
+              rc=$?
+              if [ "$rc" -eq 77 ]; then
+                skipped=$((skipped+1))
+                echo "skip - $name (env not applicable)"
+              else
+                failed=$((failed+1))
+                fails+=("$name")
+                echo "FAIL - $name"
+                sed 's/^/         /' /tmp/testout.log
+              fi
             fi
           done
           echo ""
-          echo "passed=$passed  failed=$failed  total=$total"
+          echo "passed=$passed  failed=$failed  skipped=$skipped  total=$total"
           if [ "$failed" -gt 0 ]; then
             for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
             exit 1

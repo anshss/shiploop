@@ -81,7 +81,7 @@ Observed on the reference deployment (a working meta-repo running this harness a
 
 - `scaffold.sh` is a **deterministic bash script** that owns every mechanical file operation. `commands/setup.md` interviews the operator, calls `scaffold.sh`, and does only judgment work (detection, disambiguation).
 - Every mechanism script sources ONE file — `scripts/lib/workspace.sh` — so the mechanism scripts are **byte-identical across every install**. Bumps refresh mechanism scripts without ever touching `workspace.sh`.
-- **60 hermetic bash tests** ship under `templates/govern/test/`. They exercise the governor's edge cases: ff-only pushes, claim-lock heartbeats, ticket-block parsing, worktree teardown, escalation flow, merge-CI unverifiable, disk guard, orphan teardown, and dozens more. CI scaffolds a throwaway workspace from `scaffold.sh` on every PR and runs all 60 tests against it — so a broken template goes RED before it can be merged.
+- **62 hermetic bash tests** ship under `templates/govern/test/`. They exercise the governor's edge cases: ff-only pushes, claim-lock heartbeats, ticket-block parsing, worktree teardown, escalation flow, merge-CI unverifiable, disk guard, orphan teardown, and dozens more. CI scaffolds a throwaway workspace from `scaffold.sh` on every PR and runs all 62 tests against it — so a broken template goes RED before it can be merged.
 
 ## Dogfood story
 
@@ -101,12 +101,12 @@ This harness is extracted from a production instance where it grinds a real prod
 | `templates/{status,doctor,dev,pull-all,push-prs,health,sync,tail,investigate}.sh` | Cross-cutting workspace scripts |
 | `templates/worktree/*` | Parallel-worktree machinery (new/rm/status/exec + registry) |
 | `templates/govern/*` | Governor driver, ticket selector, merge-PR, supervisor, escalations |
-| `templates/govern/test/*` | 60 hermetic smoke tests locking governor invariants |
+| `templates/govern/test/*` | 62 hermetic smoke tests locking governor invariants |
 | `templates/githooks/{pre-push,prepare-commit-msg,pre-commit}` | Enforced + optional git hooks (pre-push is harness-only; the other two propagate into sub-repos) |
 | `templates/governor/*.md` | Governor prompts (worker, supervisor) + operator files (preferences, decisions log) |
 | `templates/hooks/*` | SessionStart/UserPromptSubmit/PreToolUse/Stop/SessionEnd hooks |
 | `templates/seed/{CLAUDE.md,learnings.md,tickets.md,tickets-parked.md}` | First-run seeds |
-| `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the 60-test suite on every PR |
+| `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the 62-test suite on every PR |
 
 ## Opt-in knobs (edit `scripts/lib/workspace.sh`)
 
@@ -115,6 +115,47 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 - **`WSP_LINT_FIX_CMD`** — a workspace-wide lint/format FIX command (e.g. `"pnpm lint --fix"`, `"prettier --write ."`, `"gofmt -w ."`). When set, the per-sub-repo `pre-commit` hook runs it before each commit and `git add -u`'s the fixed files. Failures are soft (commit proceeds — CI catches real regressions). Sub-repos that already have a pre-commit hook (husky, lefthook, hand-rolled) are left untouched. Empty (default) = the hook is a no-op.
 - **`GOVERN_LOCAL_FIRST_REPOS`** — space-separated list of sub-repos that are local-first (no deployed prod DB — a schema change ships as code that self-applies on the user's local DB open). Additive migrations in these repos merge normally instead of parking for a manual prod apply. Empty (default) = feature off.
 - **`GOVERN_EXTERNALIZE_REPO`** + **`GOVERN_EXTERNALIZE_SUBREPO`** — turn on the externalization lane. Every governor run files each OPEN Low-severity ticket whose Where targets `GOVERN_EXTERNALIZE_SUBREPO` as a public GitHub Issue on `GOVERN_EXTERNALIZE_REPO`, then removes it from the local queue. Seeds "good first issue" work for outside contributors. Both empty (default) = lane off.
+- **`GOVERN_UPSTREAM_HARNESS_REPO`** + **`GOVERN_UPSTREAM_HARNESS_DIR`** — turn on the sync channel (v1.2.0). When set, `sync-templates.sh` detects harness-→-template drift and `sync-port.sh` auto-ports it into a PR against your fork of the harness, validated fail-closed. Both empty (default) = channel inert.
+
+## Updating
+
+The harness has a two-way update channel.
+
+**One-way: is my workspace behind the hub?** Every scaffold run writes `scripts/lib/.harness-version` — the hub `VERSION` this workspace was last synced against. `bash scripts/doctor.sh` and `<pm> run govern:health` compare the stamp against the installed hub's `VERSION` file and warn "harness N releases behind — run the setup upgrade". Graceful when the hub can't be resolved (offline / plugin-cache-only install): degrades to a soft "cannot compare" notice.
+
+**The update path.**
+
+```bash
+# Cheap version + drift check first (no writes):
+bash "$HUB/scaffold.sh" --version                             # print hub VERSION
+bash "$HUB/scaffold.sh" --workspace-dir . --diff-only         # per-component in-sync/behind
+
+# If a prior worker crashed and left a run lock, reclaim it (safe: dead-holder-only):
+bash scripts/govern/lock-release.sh                            # inspect + reclaim iff safe
+
+# Component-by-component bump — refresh mechanism scripts (they only read workspace.sh):
+bash "$HUB/scaffold.sh" --workspace-dir . --component core-scripts --yes
+bash "$HUB/scaffold.sh" --workspace-dir . --component worktrees    --yes
+bash "$HUB/scaffold.sh" --workspace-dir . --component govern       --yes
+bash "$HUB/scaffold.sh" --workspace-dir . --component githooks     --yes
+bash "$HUB/scaffold.sh" --workspace-dir . --component commands     --yes
+bash "$HUB/scaffold.sh" --workspace-dir . --component seeds        --yes
+
+# Idempotent hook merge into an EXISTING .claude/settings.json:
+bash "$HUB/scaffold.sh" --workspace-dir . --component settings-merge
+
+# Verify: no-auth smoke, then bash -n + stale-relocation warning, then optional full suite.
+bash scripts/govern/config-check.sh
+bash "$HUB/scaffold.sh" --workspace-dir . --component core-scripts --yes --verify
+```
+
+**Two-way: contributing back.** If you set `GOVERN_UPSTREAM_HARNESS_REPO` + `GOVERN_UPSTREAM_HARNESS_DIR` (a local clone of your fork of the harness) in `workspace.sh`, then:
+
+- `bash scripts/govern/sync-templates.sh --check` reports mirrored files you've changed in your workspace since the last sync — exit 3 = drift, exit 0 = clean. `--files` lists them; `--diff` emits the consolidated diff to port.
+- `bash scripts/govern/sync-port.sh --dry-run` prints what a headless porter WOULD do (which files, forbidden-identity-strings gate, planned PR title). Full run spawns the porter, validates its port (bash -n + forbidden-strings gate on ADDED lines + scaffold test suite baseline-diff), opens a PR against your fork, merges it green-or-no-checks, and advances the local marker. Fail-closed at every step: any failure files an escalation and does NOT merge.
+- The governor calls `sync-port.sh` automatically at run-end (best-effort — never overrides the run's exit code).
+
+For first live use, set `GOVERN_SYNC_PORT_NO_MERGE=1` (or invoke `sync-port.sh --no-merge`) so it opens the PR for review instead of auto-merging.
 
 ## License
 
