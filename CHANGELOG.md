@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.1 — 2026-07-05
+
+Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
+
+### Changed
+- **README** reframed around the operator's job split: humans do specs and systems engineering, shiploop ships the code. New tagline block; new section order (how it ships without burning your quota → how it ships without shipping slop → why it gets better and cheaper over time → proof → contrast, demoted). Every operational fact preserved (install commands, requirements, opt-in knobs including the v1.5.0 `Model:` field, component table, ~$0.54 cost figure with methodology, three-factor guard, hooks). The v1.4.1 Devin/Cursor/Copilot contrast paragraph survives, demoted to a "How it compares" section.
+- **`.claude-plugin/plugin.json`** description + keywords aligned to the job-first frame; added `self-improving`, `multi-agent`, `orchestration`, `model-routing`, `backlog` keywords.
+- **`.claude-plugin/marketplace.json`** outer + inner descriptions and tags aligned.
+- **`SKILL.md`** frontmatter description + "What it is" opening reframed; trigger phrases and mechanism prose intact.
+- **`commands/{govern,setup,update,push,resolve,investigate}.md`** frontmatter descriptions aligned to the frame (`govern` = "ships your backlog"; `update` / `push` = "the self-improvement channel, pull/push direction"; `resolve` = the lesson-promotion step where the harness gets smarter). Trigger semantics preserved verbatim.
+
+Claims discipline: every "self-improving" carries its mechanism clause in the same breath (lesson → git-tracked CLAUDE.md). Every number is checkable (~$0.54 methodology in Trust and cost; the 400+ tickets figure is attested by the maintainer, with a public evidence artifact tracked as follow-up work).
+
 ## 1.5.0 — 2026-07-05
 
 Brain-decided model routing — the interactive session (the "brain") decides which cheap tier
