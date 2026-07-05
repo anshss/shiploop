@@ -1,5 +1,5 @@
 ---
-description: Become the governor — launch the bash-driven ticket loop (scripts/govern/run-loop.sh): a fresh headless worker per ticket, auto-merge allowlisted repos on green-or-no-checks CI, periodic supervisor, escalate hard-stops, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
+description: Ships your backlog. Launches the bash-driven ticket loop (scripts/govern/run-loop.sh) that grinds queue/tickets.md across every repo in your product — a fresh right-sized headless worker per ticket (brain-decided haiku/sonnet/opus), guarded auto-merge on green-or-no-checks CI for allowlisted repos, periodic supervisor, hard-stops escalated, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
 allowed-tools: Bash, Read
 ---
 
