@@ -16,8 +16,13 @@
 # and can never be clobbered.
 #
 # Usage:
-#   scripts/govern/file-ticket.sh "Short title" [Severity] < body.md
+#   scripts/govern/file-ticket.sh [--model haiku|sonnet|opus] "Short title" [Severity] < body.md
 #   printf 'Where: ...\nObserved: ...\nDone when: ...\n' | scripts/govern/file-ticket.sh "Title" Low
+#
+# --model pins the model the governor uses for THIS ticket's FIRST-attempt worker (any retry
+# escalates to GOVERN_WORKER_MODEL unconditionally). The brain filing the ticket decides —
+# haiku for mechanical/single-file work, sonnet for standard search+edit, opus for
+# judgment-heavy tickets. Unknown values are dropped with a warning (fail-safe).
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -28,10 +33,28 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
+model_field=""
+if [[ "${1:-}" == "--model" ]]; then
+  case "${2:-}" in
+    haiku|sonnet|opus) model_field="$2" ;;
+    "") govern::die "--model requires a value (haiku|sonnet|opus)" ;;
+    *) govern::log "file-ticket: unknown model tier '$2' — ignoring (allowlist: haiku|sonnet|opus)" ;;
+  esac
+  shift 2
+fi
+
 title="${1:?ticket title required (arg 1)}"
 sev="${2:-Medium}"
 body="$(cat)"
 [[ -n "${body//[[:space:]]/}" ]] || govern::die "ticket body required on stdin"
+# Prepend the Model: field to the body so the block parser (which reads the ticket verbatim into
+# the worker prompt AND is also parsed by spawn-worker.sh for the routing) sees it as a
+# well-formed leading field. Position parallels **Severity:** — same shape, same style.
+if [[ -n "$model_field" ]]; then
+  body="**Model:** $model_field
+
+$body"
+fi
 
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"

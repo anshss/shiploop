@@ -21,7 +21,7 @@
 #   scaffold.sh --workspace-dir . --component govern
 #
 # Components: core-scripts, worktrees, govern, hooks, githooks, seeds,
-#             gitignore, package-json, settings, all
+#             gitignore, package-json, settings, commands, workflows, all
 #
 # The script is IDEMPOTENT: re-running it refreshes mechanism scripts from the
 # bundled templates without clobbering scripts/lib/workspace.sh (the ONE file
@@ -175,7 +175,7 @@ write_if_changed() {
 
 component_dirs() {
   mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib scripts/govern/test
-  mkdir -p governor .worktrees .claude/commands .githooks queue
+  mkdir -p governor .worktrees .claude/commands .claude/workflows .githooks queue
   touch .worktrees/.gitkeep
 }
 
@@ -326,6 +326,23 @@ component_project_commands() {
   log "component: project-local /govern + /resolve + /investigate"
   cp "$T"/.claude/commands/*.md .claude/commands/ 2>/dev/null || true
   info "installed .claude/commands/"
+}
+
+# Workspace-shadowing workflows. The tiered `deep-research.js` lives here so that a bare
+# Workflow({name: 'deep-research'}) call inside a scaffolded workspace resolves to the
+# model-sized copy instead of the built-in all-inherit fleet. Whether the workspace file
+# actually WINS over the built-in by name is undocumented in the Workflow tool spec — a
+# PENDING PROBE in the shipping PR describes the empirical check the driver session will
+# run. If the built-in wins, the fallback documented in the workflow file (invoke by
+# `Workflow({name: 'deep-research-tiered'})`) still routes to this copy.
+component_workflows() {
+  log "component: workflows (model-tiered .claude/workflows/)"
+  if [ -d "$T/workflows" ]; then
+    cp "$T"/workflows/*.js .claude/workflows/ 2>/dev/null || true
+    info "installed .claude/workflows/"
+  else
+    info "no workflow templates present — skipping"
+  fi
 }
 
 component_seeds() {
@@ -703,10 +720,16 @@ diff_only() {
           [ -f "$f" ] || continue
           printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
         done ;;
+      workflows)
+        local f
+        for f in "$T"/workflows/*.js; do
+          [ -f "$f" ] || continue
+          printf '.claude/workflows/%s\t%s\n' "$(basename "$f")" "$f"
+        done ;;
       *) : ;;
     esac
   }
-  for c in core-scripts worktrees govern githooks commands; do
+  for c in core-scripts worktrees govern githooks commands workflows; do
     local drift=0 details=""
     while IFS=$'\t' read -r installed template; do
       [ -n "$installed" ] || continue
@@ -762,6 +785,7 @@ case "$COMPONENT" in
     component_govern
     component_githooks
     component_project_commands
+    component_workflows
     component_seeds
     component_gitignore
     component_package_json
@@ -773,6 +797,7 @@ case "$COMPONENT" in
   govern)         component_govern ;;
   githooks)       component_githooks ;;
   commands)       component_project_commands ;;
+  workflows)      component_workflows ;;
   seeds)          component_seeds ;;
   gitignore)      component_gitignore ;;
   package-json)   component_package_json ;;

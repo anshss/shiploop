@@ -25,6 +25,52 @@ if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then rm -f "$LOG_ROOT/$slug/worker.jsonl" "$L
 block="$(govern::ticket_block "$N" "$TICKETS_FILE")"
 [[ -n "$block" ]] || govern::die "ticket #$N not found in $TICKETS_FILE"
 
+# LATCH the per-ticket Model: field (if any) AND the first-attempt-vs-retry signal NOW — before
+# worktree creation, so `[[ -d "$WORKTREE_BASE/$slug" ]]` still reflects the STATE BEFORE the
+# current spawn, not a worktree we just created ourselves. The check is applied lower down where
+# --model is assembled; see the block near `GOVERN_WORKER_MODEL`. sed pattern strips optional
+# markdown emphasis (`**Model:**`) around the label. `GOVERN_SPAWN_FORCE_RETRY=1` is a test seam.
+TICKET_MODEL="$(printf '%s' "$block" | sed -n 's/^[[:space:]]*\*\{0,2\}[Mm]odel:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' | head -1)"
+MODEL_IS_RETRY=0
+[[ -d "$WORKTREE_BASE/$slug" ]] && MODEL_IS_RETRY=1
+[[ -f "$LOG_ROOT/$slug/worker.jsonl" ]] && MODEL_IS_RETRY=1
+[[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
+export TICKET_MODEL MODEL_IS_RETRY
+
+# GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
+# `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
+# worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
+# evidence harness and any operator who wants to probe what would be run — no auth, no cost,
+# no side effects. Not part of the normal run path.
+if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
+  dr_model="${GOVERN_WORKER_MODEL:-opus}"
+  dr_source="GOVERN_WORKER_MODEL"
+  if [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 0 ]]; then
+    case "$TICKET_MODEL" in
+      haiku|sonnet|opus) dr_model="$TICKET_MODEL"; dr_source="ticket-Model-field" ;;
+      *) dr_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
+    esac
+  elif [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 1 ]]; then
+    dr_source="GOVERN_WORKER_MODEL (retry — ticket Model: '$TICKET_MODEL' skipped)"
+  fi
+  dr_mode="${GOVERN_MODE:-live}"
+  dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
+  [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
+  dr_strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && dr_strict_mcp=""
+  jq -nc \
+    --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
+    --arg model "$dr_model" \
+    --arg source "$dr_source" \
+    --arg perm "$dr_perm" \
+    --arg mcp "$dr_strict_mcp" \
+    --arg wtpath "$WORKTREE_BASE/$slug" \
+    --arg tm "$TICKET_MODEL" \
+    --argjson retry "$MODEL_IS_RETRY" \
+    --arg n "$N" \
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, is_retry:$retry, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
+  exit 0
+fi
+
 # 2. Assemble the prompt: template (with {{TICKET_BLOCK}}/{{REPORT_PATH}} filled) + doctrine.
 template="$(cat "$WORKER_PROMPT_FILE")"
 prompt="${template//\{\{TICKET_BLOCK\}\}/$block}"
@@ -117,6 +163,28 @@ mode="${GOVERN_MODE:-live}"
 permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] && permflag="plan"
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_WORKER_MODEL:-opus}"
+
+# Per-ticket brain-decided model routing. Honor a `Model:` line inside the ticket block ONLY when
+# THIS is the ticket's FIRST attempt — any retry unconditionally escalates to GOVERN_WORKER_MODEL,
+# because a cheap-tier bet that didn't land the first time shouldn't be re-bet on retry. The brain
+# that filed/triaged the ticket recorded the model; the harness carries no severity/task-type
+# heuristic of its own. Unknown / absent value → keep GOVERN_WORKER_MODEL (fail safe, current
+# behavior preserved for the entire existing backlog). Extend the allowlist below if a new tier
+# ships. `MODEL_IS_RETRY` (below) latched BEFORE worktree/new.sh created a fresh worktree, so this
+# always reflects the STATE-BEFORE-spawn.
+if [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
+  case "$TICKET_MODEL" in
+    haiku|sonnet|opus)
+      govern::log "worker #$N model=$TICKET_MODEL per ticket Model: field (first attempt; brain-decided)"
+      model="$TICKET_MODEL"
+      ;;
+    *)
+      govern::log "worker #$N: ignoring unknown Model: '$TICKET_MODEL' from ticket — using GOVERN_WORKER_MODEL=$model (fail-safe)"
+      ;;
+  esac
+elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
+  govern::log "worker #$N: retry detected (preserved worktree or prior worker.jsonl) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
+fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and

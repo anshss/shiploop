@@ -27,6 +27,13 @@ scripts, the ticket queue, the governor, and shared AI context.
 3. **Offload context-heavy sub-tasks to subagents** (a diagnosis, a codebase sweep, a multi-file
    investigation) so this session's context stays flat — the subagent's logs stay in its context; only
    the conclusion returns to yours. Reserve the main session for orchestration + decisions.
+   **When you delegate, also SIZE THE MODEL** — children do NOT need this session's model. Rough
+   guide: `haiku` = mechanical/extract/lookup/URL-fetch · `sonnet` = search/investigation/multi-file
+   reads/standard edits/verify votes · inherit (the session model / `GOVERN_WORKER_MODEL`) only for
+   judgment-heavy synthesis / architecture / final review / hard tickets. A fan-out (N similar
+   children) is almost never inherit-tier. Escalation valve: on a cheap-tier failure, retry once on
+   the stronger tier — never the reverse. Same guide applies when filing a ticket that carries a
+   `Model:` field (see `queue/tickets.md`).
 
 4. **When an issue is reported conversationally, default to investigate → file → ask, not
    file-and-drop.** Confirm it's real and locate the root cause first (delegate if context-heavy), THEN
