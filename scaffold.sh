@@ -21,7 +21,7 @@
 #   scaffold.sh --workspace-dir . --component govern
 #
 # Components: core-scripts, worktrees, govern, hooks, githooks, seeds,
-#             gitignore, package-json, settings, all
+#             gitignore, package-json, settings, commands, workflows, all
 #
 # The script is IDEMPOTENT: re-running it refreshes mechanism scripts from the
 # bundled templates without clobbering scripts/lib/workspace.sh (the ONE file
@@ -175,7 +175,7 @@ write_if_changed() {
 
 component_dirs() {
   mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib scripts/govern/test
-  mkdir -p governor .worktrees .claude/commands .githooks queue
+  mkdir -p governor .worktrees .claude/commands .claude/workflows .claude/skills .githooks queue
   touch .worktrees/.gitkeep
 }
 
@@ -326,6 +326,33 @@ component_project_commands() {
   log "component: project-local /govern + /resolve + /investigate"
   cp "$T"/.claude/commands/*.md .claude/commands/ 2>/dev/null || true
   info "installed .claude/commands/"
+}
+
+# Workspace-shadowing workflows + skill. The tiered `deep-research.js` file ships with
+# `meta.name: 'deep-research-tiered'` so it does NOT collide with the built-in `deep-research`
+# by name (an in-session probe on 2026-07-05 confirmed a workspace copy with the same name did
+# NOT shadow the built-in — the fallback is the safe route regardless of fresh-session
+# precedence). The paired `.claude/skills/deep-research-tiered/SKILL.md` carries the built-in
+# deep-research skill's trigger language plus a preference note so the router picks the
+# workspace override in this workspace.
+component_workflows() {
+  log "component: workflows + skill (model-tiered .claude/workflows/ + .claude/skills/deep-research-tiered/)"
+  if [ -d "$T/workflows" ]; then
+    cp "$T"/workflows/*.js .claude/workflows/ 2>/dev/null || true
+    info "installed .claude/workflows/"
+  else
+    info "no workflow templates present — skipping"
+  fi
+  if [ -d "$T/skills" ]; then
+    local skdir
+    for skdir in "$T"/skills/*/; do
+      [ -d "$skdir" ] || continue
+      local skname; skname="$(basename "$skdir")"
+      mkdir -p ".claude/skills/$skname"
+      cp "$skdir"/SKILL.md ".claude/skills/$skname/SKILL.md" 2>/dev/null || true
+    done
+    info "installed .claude/skills/"
+  fi
 }
 
 component_seeds() {
@@ -703,10 +730,22 @@ diff_only() {
           [ -f "$f" ] || continue
           printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
         done ;;
+      workflows)
+        local f skdir
+        for f in "$T"/workflows/*.js; do
+          [ -f "$f" ] || continue
+          printf '.claude/workflows/%s\t%s\n' "$(basename "$f")" "$f"
+        done
+        for skdir in "$T"/skills/*/; do
+          [ -d "$skdir" ] || continue
+          local skname; skname="$(basename "$skdir")"
+          [ -f "$skdir/SKILL.md" ] && \
+            printf '.claude/skills/%s/SKILL.md\t%s/SKILL.md\n' "$skname" "$skdir"
+        done ;;
       *) : ;;
     esac
   }
-  for c in core-scripts worktrees govern githooks commands; do
+  for c in core-scripts worktrees govern githooks commands workflows; do
     local drift=0 details=""
     while IFS=$'\t' read -r installed template; do
       [ -n "$installed" ] || continue
@@ -762,6 +801,7 @@ case "$COMPONENT" in
     component_govern
     component_githooks
     component_project_commands
+    component_workflows
     component_seeds
     component_gitignore
     component_package_json
@@ -773,6 +813,7 @@ case "$COMPONENT" in
   govern)         component_govern ;;
   githooks)       component_githooks ;;
   commands)       component_project_commands ;;
+  workflows)      component_workflows ;;
   seeds)          component_seeds ;;
   gitignore)      component_gitignore ;;
   package-json)   component_package_json ;;
