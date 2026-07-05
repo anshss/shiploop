@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.5.0 — 2026-07-05
+
+Brain-decided model routing — the interactive session (the "brain") decides which cheap tier
+handles each delegated worker, and the harness executes the decision. Three components:
+
+### Added
+
+- **Per-ticket `Model:` field, honored by the governor.** `templates/govern/spawn-worker.sh`
+  now reads an optional `**Model:** haiku|sonnet|opus` line inside the ticket block and passes
+  it to `claude -p --model <tier>` — but **only on the ticket's first attempt**. Any retry
+  (preserved worktree at `$WORKTREE_BASE/ticket-N/` OR a prior `worker.jsonl` at
+  `$LOG_ROOT/ticket-N/`) escalates to `GOVERN_WORKER_MODEL` unconditionally, because a
+  cheap-tier bet that didn't land the first time shouldn't be re-bet on retry. Unknown /
+  absent values are dropped fail-safe → the entire existing backlog behaves exactly as
+  before. `scripts/govern/file-ticket.sh` gains a `--model <tier>` flag that prepends the
+  field to the ticket body.
+- **`templates/workflows/deep-research.js`** — model-tiered override of the built-in
+  `deep-research` workflow (adapted from Claude Code's session-persisted script). Ships
+  `.claude/workflows/deep-research.js` into scaffolded workspaces, registered under the
+  distinct `meta.name: 'deep-research-tiered'` so it never collides with the built-in by
+  name (an in-session probe on 2026-07-05 confirmed a same-named workspace copy did NOT
+  shadow the built-in — the distinct name is robust regardless of fresh-session precedence).
+  The 5 `agent()` sites now accept a brain-decided plan via `args.models = {scope, search,
+  verify, synthesize}` with a clear null-semantics contract: absent OR explicit `null` →
+  the tiered default (`scope=sonnet`, `search=sonnet`, `fetch=haiku effort:low`,
+  `verify=sonnet`, `synthesize=inherit`); the literal string `"inherit"` → no model pinned
+  (session model); any other string pins that stage. `args.models` non-object → ignored,
+  defaults used. A brainless invocation never repeats the all-inherit token burn. New
+  `component_workflows` in `scaffold.sh` also installs a paired
+  `.claude/skills/deep-research-tiered/SKILL.md` whose description carries the built-in
+  deep-research trigger language plus a preference note, so `deep-research`-shaped
+  requests in a scaffolded workspace route to the tiered workflow. Both are covered by
+  `--diff-only`.
+- **Router-posture hooks gain the model rule.** `templates/hooks/router-posture-reminder.sh`,
+  `router-posture-guard.sh`, and `templates/seed/CLAUDE.md`'s delegation section each carry
+  the same 3-4 line guide: haiku = mechanical/extract/lookup · sonnet =
+  search/investigation/standard edits · inherit only for judgment-heavy synthesis. So the
+  posture the driver adopts on turn 1 already includes sizing children, not just delegating.
+
+### Test suite
+
+- Grew 70 → 71 hermetic tests (`test-spawn-model-routing.sh`) — first-attempt honor,
+  retry-escalation, no-`Model:` unchanged, unknown-tier fail-safe, PLUS a fenced-`Model:`-in-
+  body case that locks in the leading-field-block anchor (a `Model:` line in prose or a code
+  fence later in the body cannot spoof the routing field). Auth-free; drives a new
+  `GOVERN_SPAWN_DRY_RUN=1` observation seam in `spawn-worker.sh` (no worker cost, no auth).
+
+### Compatibility
+
+- Fully additive. Backlogs with no `Model:` line keep running under `GOVERN_WORKER_MODEL`
+  unchanged (same route path). Workspaces scaffolded pre-v1.5.0 pick up the tiered workflow
+  file on the next `/shiploop:update`.
+
 ## 1.4.2 — 2026-07-05
 
 Fix cold-install doc bugs — correct ticket path (`queue/tickets.md`), honest `--dry-run` cost framing + `config-check.sh` as the free smoke, standalone `scaffold.sh --verify`, test-count consistency.
