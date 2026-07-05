@@ -1,5 +1,5 @@
 ---
-description: Push your workspace's mechanism-script improvements back to the hub. Detects drift (harness→template) with sync-templates.sh, then invokes sync-port.sh to genericize the changes via a headless porter and open a PR against your fork for HUMAN review. Reuses the existing fail-closed sync-port pipeline — never auto-merges.
+description: The self-improvement channel, push direction. Ports your workspace's mechanism-script improvements back to the hub so every other fleet inherits them. Detects drift (harness→template) with sync-templates.sh, then invokes sync-port.sh to genericize the changes via a headless porter and open a PR against your fork for HUMAN review. Reuses the fail-closed sync-port pipeline (bash -n + forbidden-identity-strings gate + scaffold-test-suite baseline diff) — never auto-merges.
 allowed-tools: Bash, Read
 ---
 
