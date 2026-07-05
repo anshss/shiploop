@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
   "name": "shiploop",
-  "description": "Single-plugin marketplace for shiploop (autonomous multi-repo workspace + ticket governor).",
+  "description": "Single-plugin marketplace for shiploop — a self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md) that grinds your ticket backlog across every repo in your product.",
   "owner": {
     "name": "anshss",
     "email": "jougan92@gmail.com"
@@ -10,10 +10,10 @@
     {
       "name": "shiploop",
       "source": "./",
-      "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor.",
-      "version": "1.4.2",
+      "description": "You do the specs and systems engineering. shiploop ships the code — a self-improving multi-agent harness that grinds your ticket backlog across every repo in your product with a fresh right-sized agent per ticket and guarded auto-merge, and every resolved ticket writes a lesson into your git-tracked CLAUDE.md so the next run is smarter.",
+      "version": "1.5.1",
       "category": "workflow",
-      "tags": ["monorepo", "worktrees", "autonomous", "governor"],
+      "tags": ["self-improving", "multi-agent", "orchestration", "model-routing", "backlog", "monorepo", "worktrees", "autonomous", "governor"],
       "homepage": "https://github.com/anshss/shiploop",
       "repository": "https://github.com/anshss/shiploop",
       "license": "MIT"

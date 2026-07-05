@@ -1,20 +1,60 @@
 # shiploop
 
-An autonomous engineering governor that grinds a ticket backlog across every repo in your product — from files, to PRs, to merged, unattended.
+> **shiploop**
+>
+> You do the specs and systems engineering. shiploop ships the code.
+>
+> A self-improving multi-agent harness that grinds your ticket backlog across every repo in your product — a fresh right-sized agent per ticket, guarded auto-merge, ~$0.54 a resolved ticket.
 
-## What it does
+```bash
+# In Claude Code:
+/plugin marketplace add anshss/shiploop
+/plugin install shiploop@shiploop
+```
 
-Point shiploop at a folder containing your repositories, drop tickets into `queue/tickets.md`, and run `/shiploop:govern`. The governor picks tickets one at a time, spawns a fresh headless Claude worker per ticket, and drives each to a green PR. On repos you've opted into the merge allowlist it auto-merges once CI is green; on everything else it opens the PR and stops. Anything it cannot safely decide lands on an escalation queue, so you come back to a short list of judgment calls instead of a mess.
+Slash commands appear as `/shiploop:govern`, `/shiploop:setup`, etc. Point shiploop at a folder that contains your repos as sub-folders, drop tickets into `queue/tickets.md`, and run `/shiploop:govern`.
 
-- Works across many repos at once — each ticket runs in its own git worktree, so multiple workers ship in parallel without stepping on each other.
-- Auto-merge is guarded by three factors (own author, own branch, no forks) and defaults OFF — you opt each repo in explicitly.
-- Fresh worker per ticket. Context stays flat, cost stays bounded, no run inherits the last one's bad state.
+## How it ships without burning your quota
 
-This is the tier above single-task AI coding tools. Devin, Cursor, Claude Code all do one task you hand them well; shiploop is the layer that runs a *backlog* across a *fleet* — a manager, not another IC.
+The interactive session doesn't ship the code — it dispatches. The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`) that owns state and control flow deterministically: it can drive the loop all day and spends near-zero Claude context doing it. Model tokens burn only inside the fresh headless workers it spawns.
+
+- **One ticket = one fresh headless session.** Each ticket runs its own `claude -p` process in its own git worktree. Context stays flat, no run inherits the last one's bad state, and two unrelated tasks never share a quota.
+- **Brain-decided right-sized models.** The interactive session — the "brain" — assigns each agent the cheapest capable tier at file time: haiku for mechanical single-file work, sonnet for standard search-and-edit, opus for judgment-heavy tickets. The governor honors an optional per-ticket `**Model:** haiku|sonnet|opus` field on a ticket's first attempt; any retry escalates to `GOVERN_WORKER_MODEL` (opus by default) unconditionally, because a cheap-tier bet that didn't land the first time shouldn't be re-bet. Router-posture hooks and tiered workflows carry the same sizing rule so delegation is right-sized end-to-end (v1.5.0).
+- **Measured cost.** On the reference deployment — a working meta-repo running this harness against real product tickets — each resolved ticket costs about **623.9k output tokens (~$0.54)** on `claude-opus-4-7` workers, scaling roughly linearly with ticket complexity. Cheaper tiers scale down from there. Methodology is spelled out in **Trust and cost** below.
+
+## How it ships without shipping slop
+
+The reviewer's question — "who reads all these PRs?" — is answered by mechanism, not trust.
+
+- **Guarded auto-merge, off by default.** A PR only auto-merges when the target repo is on the `GOVERN_MERGE_REPOS` allowlist (which starts empty — you opt each repo in explicitly), its author is the governor's own worker identity, its branch matches the `ticket-<N>` naming, its head is not from a fork, and CI is **green-or-no-checks**. Any factor missing → the PR stays open for a human. Frontends stay human-merged where a bad deploy is user-visible; backends with post-merge CI safety nets are safer to opt in.
+- **Evidence gates on the ports that matter.** The self-improvement ports and the harness-sync ports run under a fail-closed pipeline: `bash -n` on every changed shell file, a forbidden-identity-strings gate on added lines, and a scaffold-test-suite baseline diff. Any gate failure files an escalation instead of merging.
+- **Escalation queue for hard-stops.** Destructive git, prod data, destructive schema, secrets — the doctrine in `governor/preferences.md` lists the hard-stops that make a worker **park + escalate** instead of acting. Anything the governor can't safely decide lands on `governor/escalations.md` for the operator; you come back to a short list of judgment calls instead of a mess.
+
+The net: the layer decides which decisions it's allowed to make on its own, and every other decision waits for you.
+
+## Why it gets better — and cheaper — over time
+
+Self-improving, spelled out as mechanism: every resolved ticket writes a lesson into your git-tracked `CLAUDE.md` — memory you can read, diff, and edit. Nothing is buried in an opaque model state.
+
+- **`/shiploop:resolve` promotes the durable lesson first, then deletes the ticket.** If fixing a ticket taught something stable and reusable — an env var, a convention, an architecture gotcha, a load-bearing rule — it lands in the right `CLAUDE.md` (root for cross-repo, sub-repo for scoped) **before** the ticket is deleted. Git history + the PR are the only record once the ticket is gone, so the lesson must land somewhere durable.
+- **observe → propose → triage → guarded-self-apply.** The supervisor and workers propose harness improvements into `governor/improvements.md`; a triage step decides which graduate to preferences and which stay as one-off observations. A decision graduates to `governor/preferences.md` only after it recurs — a single incident doesn't rewrite the doctrine.
+- **Two-way hub channel.** `/shiploop:update` pulls the latest hub templates into this workspace (the `git pull` of harness code, preserving your `workspace.sh`). `/shiploop:push` sends local mechanism-script improvements back to your fork of the hub through the fail-closed porter (see the slop section above) and opens a PR for human review — never auto-merges.
+
+So the loop gets better: lessons harden CLAUDE.md, improvements harden the templates, and the model bill for each ticket drops as the router learns which tier suffices.
+
+## Proof
+
+The maintainer has run **400+ tickets auto-found and resolved on their own production multi-repo product** through this harness. The harness also audits, fixes, and releases *itself* through the same loop — every governor edge case discovered in the field ports back into these templates with a regression test locking it. If a hardening batch broke the templates you're installing, the hermetic test suite would go RED in CI before it merged.
+
+A sanitized public evidence artifact (auto-merge acceptance / revert rate, per-tier cost breakdown) is on the roadmap.
+
+## How it compares
+
+Devin, Cursor, Copilot, Claude Code all do one task you hand them well. shiploop is the layer above: it runs a **backlog** across a **fleet**. A manager, not another IC. If your bottleneck is "I have one hard task and I want an AI pair-programmer," use those. If your bottleneck is "I have a growing queue of small-to-medium changes across N repos and I'd rather do the spec work than the shipping," use this.
 
 ## How it works
 
-The governor is a pure-bash driver (`scripts/govern/run-loop.sh`) that owns state and control flow deterministically. The model owns the judgment inside each ticket. A fresh headless `claude -p` process per ticket keeps context flat and cost bounded.
+The governor is a pure-bash driver (`scripts/govern/run-loop.sh`) that owns state and control flow deterministically. The model owns the judgment inside each ticket.
 
 ```
 queue/tickets.md ──► pick next ticket
@@ -22,6 +62,7 @@ queue/tickets.md ──► pick next ticket
                     ▼
         spawn fresh `claude -p` worker
         in its own git worktree
+        (right-sized: haiku/sonnet/opus)
                     │
                     ▼
         worker: edit → commit → open PR
@@ -49,23 +90,18 @@ queue/tickets.md ──► pick next ticket
 
 Between tickets a periodic supervisor (another fresh sub-session) audits the run. Hard-stops go to `governor/escalations.md`. The interactive session that started the governor stays idle — bash owns everything from there.
 
-## Features
-
-- **Autonomous backlog execution** — tickets → PRs → merged, without a human in the loop, for as long as you let it run.
-- **Multi-repo, parallel workers** — each ticket runs in its own git worktree of every sub-repo; concurrent workers get distinct dev ports and their own Claude session.
-- **Auto-merge on green CI, guarded** — three-factor guard (own author, own branch, no forks) plus a green-or-no-checks rule, plus a per-repo allowlist that starts empty.
-- **Escalation lane** — anything the governor can't safely decide is filed for you, not glossed over.
-- **Self-maintaining** — `/shiploop:update` pulls new hub templates in; `/shiploop:push` sends local mechanism improvements back to your fork of the hub.
-- **Deterministic bash core** — the driver is pure bash, locked by a hermetic test suite (70+ tests and growing) that CI runs against a fresh scaffold on every PR.
+- Each ticket runs in its own git worktree, so multiple workers ship in parallel without stepping on each other.
+- Fresh worker per ticket. Context stays flat, cost stays bounded, no run inherits the last one's bad state.
+- The `--setting-sources user` flag drops the workspace's own hooks inside the worker, so a fleet-wide SessionEnd cleanup or a stdout-clobbering Stop hook never bleeds into a ticket run.
 
 ## Commands
 
-- **`/shiploop:govern`** — become the governor. Runs the ticket loop end-to-end.
+- **`/shiploop:govern`** — ships your backlog. Runs the bash-driven ticket loop end-to-end.
 - **`/shiploop:setup`** — scaffold a workspace on any folder that already contains repos as sub-folders.
 - **`/shiploop:investigate`** — triage a bug: seed a notes file, pull logs, form a hypothesis, propose a fix.
-- **`/shiploop:resolve`** — close out a ticket: confirm the fix PR is open, delete from `queue/tickets.md`, promote any durable lesson.
-- **`/shiploop:update`** — pull the latest hub templates into this workspace (the `git pull` of harness code).
-- **`/shiploop:push`** — push local mechanism-script improvements back to the hub (the `git push` of harness code).
+- **`/shiploop:resolve`** — close out a ticket: confirm the fix PR is open, promote the durable lesson into `CLAUDE.md`, delete the ticket, sweep for newly-discovered tickets.
+- **`/shiploop:update`** — the self-improvement channel, pull direction. Refresh mechanism scripts from the hub, preserve `scripts/lib/workspace.sh`.
+- **`/shiploop:push`** — the self-improvement channel, push direction. Send local mechanism-script improvements back to your fork of the hub through a fail-closed porter; never auto-merges.
 
 ## Install
 
@@ -124,7 +160,7 @@ Read this before pointing the governor at anything you care about.
 - **Auto-merge is OFF by default.** The default `GOVERN_MERGE_REPOS=""` means every repo is PR-only. You opt each repo in explicitly, one at a time. Recommended defaults: opt in backends with post-merge CI safety nets; keep frontends PR-only where a bad deploy is user-visible.
 - **Three-factor merge guard.** A PR only auto-merges when its author is the governor's own worker identity, its branch matches the governor's `ticket-<N>` naming, and the head is not from a fork. Any factor missing → PR stays open for a human.
 - **Workers run with `bypassPermissions` by design.** Each ticket runs in an isolated worktree with a fresh Claude Code invocation running `claude -p --permission-mode bypassPermissions`. The blast radius is that worktree plus the branch it pushes. The harness enforces this: `.githooks/pre-push` rejects harness-repo pushes to anything but `main` unless the push is a sanctioned governor run (`GOVERN_RUN=1` + `ticket-<N>` branch).
-- **Cost, observed.** On the reference deployment — a working meta-repo running this harness against real product tickets — each resolved ticket costs about **623.9k output tokens (~$0.54)** on `claude-opus-4-7` workers, scaling roughly linearly with ticket complexity. The driver itself is pure bash and near-zero.
+- **Cost, observed.** On the reference deployment — a working meta-repo running this harness against real product tickets — each resolved ticket costs about **623.9k output tokens (~$0.54)** on `claude-opus-4-7` workers, scaling roughly linearly with ticket complexity. The driver itself is pure bash and near-zero. Brain-decided right-sizing (haiku/sonnet on tickets that don't need opus) pushes that number down further; the observed figure is the opus-only baseline.
 - **The only truly-free smoke is `config-check.sh`.** `scripts/govern/config-check.sh` sources your workspace config, calls every helper with fake args, prints resolved values, and exits nonzero on any missing required knob. No Claude auth, no worker, no tokens. It is the "does my install work" check.
 - **`--dry-run` is a real worker in plan mode, not a free smoke.** `/shiploop:govern --dry-run` spawns an actual `claude -p --permission-mode plan --model opus` worker against the selected ticket. Plan mode blocks file edits and PR creation — so nothing lands in git and the merge + bookkeep steps are skipped — but the worker still consumes tokens like any other run. Use it to observe the whole loop end-to-end; use `config-check.sh` when you just want to know the install is wired sanely.
 - **Start safe.** For your first run: keep the allowlist empty, watch a single ticket end-to-end, set a spend cap in your Anthropic dashboard before you leave it unattended.
@@ -137,10 +173,6 @@ Two-way update channel — think `git pull` / `git push`, one command each direc
 - **`/shiploop:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set in `workspace.sh` (a fork you can PR against). Wraps `sync-templates.sh --check` (drift detection) → `sync-port.sh --no-merge` (headless porter genericizes your changes and opens a PR against your fork for HUMAN review). NEVER auto-merges. Workspace-specific files (`workspace.sh`, `package.json`, repo lists) are NEVER pushed.
 
 A version stamp lives in `scripts/lib/.harness-version`; `bash scripts/doctor.sh` and `<pm> run govern:health` warn "harness N releases behind" when your workspace lags the hub. Degrades gracefully when the hub can't be resolved.
-
-## Proof
-
-This isn't aspirational documentation. This harness runs a production meta-repo — where it audits, fixes, and releases *itself*, and maintains a fleet of four sub-repos in production. Every governor edge case discovered in the field ports back into these templates with a regression test locking it. If a hardening batch broke the templates you're installing, the hermetic test suite would go RED in CI before it merged.
 
 ## Requirements
 

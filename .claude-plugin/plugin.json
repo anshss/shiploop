@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shiploop",
   "displayName": "shiploop",
-  "version": "1.4.2",
-  "description": "Multi-subrepo workspace pattern + autonomous ticket-driven governor. Wraps N independent git repos as one workspace with parallel worktrees, a ticket queue, and a headless-worker loop that auto-merges allowlisted repos on green CI.",
+  "version": "1.5.1",
+  "description": "Self-improving multi-agent harness that grinds your ticket backlog across every repo in your product — brain-decided right-sized agent per ticket (haiku/sonnet/opus), guarded auto-merge on green CI, every resolved ticket writes a lesson into your git-tracked CLAUDE.md, ~$0.54 a resolved ticket.",
   "author": {
     "name": "anshss",
     "url": "https://github.com/anshss"
@@ -12,6 +12,11 @@
   "repository": "https://github.com/anshss/shiploop",
   "license": "MIT",
   "keywords": [
+    "self-improving",
+    "multi-agent",
+    "orchestration",
+    "model-routing",
+    "backlog",
     "monorepo",
     "multi-repo",
     "worktrees",
