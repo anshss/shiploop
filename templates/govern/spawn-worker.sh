@@ -28,12 +28,21 @@ block="$(govern::ticket_block "$N" "$TICKETS_FILE")"
 # LATCH the per-ticket Model: field (if any) AND the first-attempt-vs-retry signal NOW — before
 # worktree creation, so `[[ -d "$WORKTREE_BASE/$slug" ]]` still reflects the STATE BEFORE the
 # current spawn, not a worktree we just created ourselves. The check is applied lower down where
-# --model is assembled; see the block near `GOVERN_WORKER_MODEL`. sed pattern strips optional
-# markdown emphasis (`**Model:**`) around the label. `GOVERN_SPAWN_FORCE_RETRY=1` is a test seam.
-TICKET_MODEL="$(printf '%s' "$block" | sed -n 's/^[[:space:]]*\*\{0,2\}[Mm]odel:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' | head -1)"
+# --model is assembled; see the block near `GOVERN_WORKER_MODEL`. `GOVERN_SPAWN_FORCE_RETRY=1` is
+# a test seam. Extraction is ANCHORED to the ticket's LEADING FIELD BLOCK — the contiguous field
+# lines between the `## #N` heading and the first blank line — so a `Model:` mention later in
+# prose or inside a code fence in the body can never be parsed as the field. The awk strips the
+# heading, skips leading blank lines, then reads until the first blank line and stops. The sed
+# pattern (case-insensitive; strips optional `**Model:**` markdown emphasis) then extracts the
+# tier value; allowlist gate below applies unchanged.
+TICKET_MODEL="$(printf '%s' "$block" \
+  | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
+  | sed -n 's/^[[:space:]]*\*\{0,2\}[Mm]odel:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' \
+  | head -1)"
 MODEL_IS_RETRY=0
+# Preserved-worktree is the primary retry signal; a flat-log check was removed as inert (run-loop
+# nukes the flat log at line ~20; run-scoped `worker.jsonl` is truncated at spawn anyway).
 [[ -d "$WORKTREE_BASE/$slug" ]] && MODEL_IS_RETRY=1
-[[ -f "$LOG_ROOT/$slug/worker.jsonl" ]] && MODEL_IS_RETRY=1
 [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
 export TICKET_MODEL MODEL_IS_RETRY
 
@@ -183,7 +192,7 @@ if [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
       ;;
   esac
 elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-  govern::log "worker #$N: retry detected (preserved worktree or prior worker.jsonl) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
+  govern::log "worker #$N: retry detected (preserved worktree) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
 fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's

@@ -47,13 +47,13 @@ title="${1:?ticket title required (arg 1)}"
 sev="${2:-Medium}"
 body="$(cat)"
 [[ -n "${body//[[:space:]]/}" ]] || govern::die "ticket body required on stdin"
-# Prepend the Model: field to the body so the block parser (which reads the ticket verbatim into
-# the worker prompt AND is also parsed by spawn-worker.sh for the routing) sees it as a
-# well-formed leading field. Position parallels **Severity:** — same shape, same style.
+# Emit the Model: field DIRECTLY UNDER **Severity:** so ordering matches the seed tickets.md
+# example (Severity → Model → body fields) — same leading-field-block shape spawn-worker.sh
+# extracts from. `model_block` is spliced into the printf below.
+model_block=""
 if [[ -n "$model_field" ]]; then
-  body="**Model:** $model_field
-
-$body"
+  model_block="**Model:** $model_field
+"
 fi
 
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
@@ -65,7 +65,7 @@ if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
   # (which takes the bookkeep lock itself) so the number stays collision-safe; just leaves the
   # append uncommitted for the caller to stage. Prefer the default atomic path while a run is active.
   n="$(govern::next_ticket_number "$TICKETS_FILE")"
-  printf '\n## #%s — %s\n\n**Severity:** %s\n\n%s\n\n---\n' "$n" "$title" "$sev" "$body" >> "$TICKETS_FILE"
+  printf '\n## #%s — %s\n\n**Severity:** %s\n%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$body" >> "$TICKETS_FILE"
   echo "$n"
   exit 0
 fi
@@ -99,7 +99,7 @@ fi
 # Allocate the next number under the already-held lock (the mkdir mutex is NOT reentrant, so tell the
 # allocator to skip re-acquiring it), then append the block.
 n="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE")"
-printf '\n## #%s — %s\n\n**Severity:** %s\n\n%s\n\n---\n' "$n" "$title" "$sev" "$body" >> "$TICKETS_FILE"
+printf '\n## #%s — %s\n\n**Severity:** %s\n%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$body" >> "$TICKETS_FILE"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
 # can never be left uncommitted (and thus clobbered by a concurrent bookkeep). Mirrors bookkeep's

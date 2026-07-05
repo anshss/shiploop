@@ -4,6 +4,8 @@
 #   2. Same ticket on retry (preserved worktree) → escalate to GOVERN_WORKER_MODEL
 #   3. No `Model:` field → unchanged (GOVERN_WORKER_MODEL default)
 #   4. Unknown `Model:` value → fail-safe to GOVERN_WORKER_MODEL, run continues
+#   5. NO leading `Model:` field but a fenced `Model: haiku` in the body → NOT parsed as the
+#      field; routes to GOVERN_WORKER_MODEL (extraction anchored to leading field block)
 #
 # Uses GOVERN_SPAWN_DRY_RUN=1 to short-circuit BEFORE worktree creation / worker
 # launch — pure observation of the assembled invocation params. No auth, no
@@ -39,6 +41,20 @@ Done when: PR opens.
 **Severity:** Medium
 **Model:** gpt-nano
 Observed: unknown tier — must be dropped.
+Done when: PR opens.
+
+---
+
+## #104 — fenced-Model-in-body ticket
+**Severity:** Medium
+Observed: ticket has NO leading Model: field, but the body includes a code fence
+that mentions Model: haiku in prose. That MUST NOT be parsed as the routing field.
+
+Example log the operator pasted:
+```
+Model: haiku
+```
+
 Done when: PR opens.
 
 ---
@@ -92,5 +108,16 @@ assert_eq "$(printf '%s' "$out4" | jq -r '.model')" "opus" \
   "unknown Model: value → fail-safe to GOVERN_WORKER_MODEL"
 assert_eq "$(printf '%s' "$out4" | jq -r '.ticket_model')" "gpt-nano" \
   "unknown ticket_model still reported in the dry-run output"
+
+# 5. Fenced `Model: haiku` in the body (no leading field) → NOT parsed; routes to
+#    GOVERN_WORKER_MODEL. Extraction is anchored to the LEADING field block only, so a
+#    Model: line inside a code fence / prose later in the body cannot spoof the routing.
+out5="$(run 104 0)"
+assert_eq "$(printf '%s' "$out5" | jq -r '.ticket_model')" "" \
+  "fenced Model: line in body is NOT parsed as the leading field"
+assert_eq "$(printf '%s' "$out5" | jq -r '.model')" "opus" \
+  "fenced-Model-only ticket → uses GOVERN_WORKER_MODEL (leading field block empty)"
+assert_eq "$(printf '%s' "$out5" | jq -r '.model_source')" "GOVERN_WORKER_MODEL" \
+  "model source = GOVERN_WORKER_MODEL when only a fenced Model: appears in body"
 
 assert_done

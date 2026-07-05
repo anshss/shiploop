@@ -175,7 +175,7 @@ write_if_changed() {
 
 component_dirs() {
   mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib scripts/govern/test
-  mkdir -p governor .worktrees .claude/commands .claude/workflows .githooks queue
+  mkdir -p governor .worktrees .claude/commands .claude/workflows .claude/skills .githooks queue
   touch .worktrees/.gitkeep
 }
 
@@ -328,20 +328,30 @@ component_project_commands() {
   info "installed .claude/commands/"
 }
 
-# Workspace-shadowing workflows. The tiered `deep-research.js` lives here so that a bare
-# Workflow({name: 'deep-research'}) call inside a scaffolded workspace resolves to the
-# model-sized copy instead of the built-in all-inherit fleet. Whether the workspace file
-# actually WINS over the built-in by name is undocumented in the Workflow tool spec — a
-# PENDING PROBE in the shipping PR describes the empirical check the driver session will
-# run. If the built-in wins, the fallback documented in the workflow file (invoke by
-# `Workflow({name: 'deep-research-tiered'})`) still routes to this copy.
+# Workspace-shadowing workflows + skill. The tiered `deep-research.js` file ships with
+# `meta.name: 'deep-research-tiered'` so it does NOT collide with the built-in `deep-research`
+# by name (an in-session probe on 2026-07-05 confirmed a workspace copy with the same name did
+# NOT shadow the built-in — the fallback is the safe route regardless of fresh-session
+# precedence). The paired `.claude/skills/deep-research-tiered/SKILL.md` carries the built-in
+# deep-research skill's trigger language plus a preference note so the router picks the
+# workspace override in this workspace.
 component_workflows() {
-  log "component: workflows (model-tiered .claude/workflows/)"
+  log "component: workflows + skill (model-tiered .claude/workflows/ + .claude/skills/deep-research-tiered/)"
   if [ -d "$T/workflows" ]; then
     cp "$T"/workflows/*.js .claude/workflows/ 2>/dev/null || true
     info "installed .claude/workflows/"
   else
     info "no workflow templates present — skipping"
+  fi
+  if [ -d "$T/skills" ]; then
+    local skdir
+    for skdir in "$T"/skills/*/; do
+      [ -d "$skdir" ] || continue
+      local skname; skname="$(basename "$skdir")"
+      mkdir -p ".claude/skills/$skname"
+      cp "$skdir"/SKILL.md ".claude/skills/$skname/SKILL.md" 2>/dev/null || true
+    done
+    info "installed .claude/skills/"
   fi
 }
 
@@ -721,10 +731,16 @@ diff_only() {
           printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
         done ;;
       workflows)
-        local f
+        local f skdir
         for f in "$T"/workflows/*.js; do
           [ -f "$f" ] || continue
           printf '.claude/workflows/%s\t%s\n' "$(basename "$f")" "$f"
+        done
+        for skdir in "$T"/skills/*/; do
+          [ -d "$skdir" ] || continue
+          local skname; skname="$(basename "$skdir")"
+          [ -f "$skdir/SKILL.md" ] && \
+            printf '.claude/skills/%s/SKILL.md\t%s/SKILL.md\n' "$skname" "$skdir"
         done ;;
       *) : ;;
     esac

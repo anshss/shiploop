@@ -1,18 +1,21 @@
 export const meta = {
-  name: 'deep-research',
-  description: 'Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. Model-tiered: mechanical stages default to haiku/sonnet; synthesis inherits the session model unless the caller overrides.',
-  whenToUse: 'When the user wants a deep, multi-source, fact-checked research report on any topic. BEFORE invoking, check if the question is specific enough to research directly — if underspecified (e.g., "what car to buy" without budget/use-case/region), ask 2-3 clarifying questions to narrow scope. Pass the refined question as `args.question` (or as a bare string arg for back-compat), and OPTIONALLY size each stage via `args.models = {scope, search, fetch, verify, synthesize}` — a string pins that stage; null/absent falls to the tiered default (scope=sonnet · search=sonnet · fetch=haiku · verify=sonnet · synthesize=inherit). Cheap defaults keep a brainless invocation from repeating the all-inherit token burn.',
+  name: 'deep-research-tiered',
+  description: 'Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. Model-tiered: mechanical stages default to haiku/sonnet; synthesis inherits the session model unless the caller overrides. Prefer this over the built-in `deep-research` in shiploop workspaces (same output shape; brain-decided model plan; cheap defaults).',
+  whenToUse: 'When the user wants a deep, multi-source, fact-checked research report on any topic. BEFORE invoking, check if the question is specific enough to research directly — if underspecified (e.g., "what car to buy" without budget/use-case/region), ask 2-3 clarifying questions to narrow scope. Pass the refined question as `args.question` (or as a bare string arg for back-compat), and OPTIONALLY size each stage via `args.models = {scope, search, fetch, verify, synthesize}`. Null-semantics contract: absent OR explicit `null` → the tiered default (scope=sonnet · search=sonnet · fetch=haiku · verify=sonnet · synthesize=inherit); the literal string `"inherit"` → no model pinned (session model); any other string pins that model. Cheap defaults keep a brainless invocation from repeating the all-inherit token burn.',
   phases: [{"title":"Scope","detail":"Decompose question (from args) into 5 search angles"},{"title":"Search","detail":"5 parallel WebSearch agents, one per angle"},{"title":"Fetch","detail":"URL-dedup, fetch top 15 sources, extract falsifiable claims"},{"title":"Verify","detail":"3-vote adversarial verification per claim (need 2/3 refutes to kill)"},{"title":"Synthesize","detail":"Merge semantic dupes, rank by confidence, cite sources"}],
 }
 
-// deep-research: Scope → pipeline(Search → URL-dedup → Fetch+Extract) → 3-vote Verify → Synthesize
-// Ported from bughunter architecture. WebSearch/WebFetch instead of git/grep.
+// deep-research-tiered: Scope → pipeline(Search → URL-dedup → Fetch+Extract) → 3-vote Verify → Synthesize
+// Model-tiered override of Claude Code's built-in `deep-research`. WebSearch/WebFetch instead of
+// git/grep.
 //
 // Invocation (brain-decided model plan):
-//   Workflow({name: 'deep-research', args: '<question>'})                    // cheap-tier defaults
-//   Workflow({name: 'deep-research', args: {question: '<q>', models: {       // brain overrides
+//   Workflow({name: 'deep-research-tiered', args: '<question>'})                            // cheap-tier defaults
+//   Workflow({name: 'deep-research-tiered', args: {question: '<q>', models: {               // brain overrides
 //     scope: 'sonnet', search: 'sonnet', fetch: 'haiku',
-//     verify: 'sonnet', synthesize: null,                                    // null = inherit
+//     verify: 'sonnet',
+//     synthesize: 'inherit',                                                                // string "inherit" = no pin (session model)
+//     // per-stage:  absent OR null → tiered default · "inherit" → no pin · other string → pin that model
 //   }}})
 //
 // Provenance: adapted from the built-in Claude Code `deep-research` workflow (session-persisted
@@ -99,23 +102,36 @@ const REPORT_SCHEMA = {
 }
 
 // ─── Model plan — cheap tiers by default; brain overrides via args.models ───
+// Null-semantics contract (mirrored in meta.whenToUse and the top comment):
+//   absent OR explicit null   → the tiered default (scope=sonnet · search=sonnet · fetch=haiku ·
+//                                 verify=sonnet · synthesize=inherit)
+//   literal string "inherit"  → no model pinned (session model handles the stage)
+//   any other string          → pin that model for the stage
 // Safe defaults are sized so a brainless invocation NEVER repeats the all-inherit token burn:
 //   scope       — decomposition, few tokens, sonnet is plenty
 //   search      — WebSearch dispatch, sonnet
 //   fetch       — WebFetch + extract, mechanical → haiku (with effort:'low')
 //   verify      — 3-vote adversarial, sonnet (skepticism doesn't need frontier)
-//   synthesize  — omit → inherit session model; the ONE stage that benefits from the brain
-// Passing `models: null` for a stage keeps the default; passing a string pins that stage.
-const DEFAULT_MODELS = { scope: 'sonnet', search: 'sonnet', fetch: 'haiku', verify: 'sonnet', synthesize: null }
+//   synthesize  — "inherit" → session model; the ONE stage that benefits from the brain
+const DEFAULT_MODELS = { scope: 'sonnet', search: 'sonnet', fetch: 'haiku', verify: 'sonnet', synthesize: 'inherit' }
 const argsIsObject = args && typeof args === 'object' && !Array.isArray(args)
-const modelPlan = { ...DEFAULT_MODELS, ...(argsIsObject && args.models ? args.models : {}) }
-// Build opts helpers per stage: only pass `model` when the plan pins one; add effort:'low' to
-// mechanical fetch by default (extract-a-paragraph doesn't need reasoning tokens). Brain
-// overrides via args.effort = {fetch: 'medium', ...} are honored.
-const effortPlan = (argsIsObject && args.effort && typeof args.effort === 'object') ? args.effort : {}
+const isPlainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v)
+// Object-type guard on args.models: non-object (array, string, number, etc.) → ignore, use defaults.
+const userModels = (argsIsObject && isPlainObject(args.models)) ? args.models : {}
+const modelPlan = { ...DEFAULT_MODELS }
+for (const k of Object.keys(DEFAULT_MODELS)) {
+  // Absent OR explicit null → keep the tiered default. Any other value (string) → user override.
+  if (userModels[k] != null) modelPlan[k] = userModels[k]
+}
+// Build opts helpers per stage: only pass `model` when the plan pins one — the literal string
+// "inherit" means "no pin (session model)" per the contract, so it maps to no `model` on the
+// agent call. Add effort:'low' to mechanical fetch by default (extract-a-paragraph doesn't need
+// reasoning tokens). Brain overrides via args.effort = {fetch: 'medium', ...} are honored.
+const effortPlan = (argsIsObject && isPlainObject(args.effort)) ? args.effort : {}
 const stageOpts = (stage, base) => {
   const out = { ...base }
-  if (modelPlan[stage]) out.model = modelPlan[stage]
+  const m = modelPlan[stage]
+  if (m && m !== 'inherit') out.model = m
   const eff = effortPlan[stage] ?? (stage === 'fetch' ? 'low' : undefined)
   if (eff) out.effort = eff
   return out
@@ -127,9 +143,9 @@ const QUESTION = argsIsObject
   ? (typeof args.question === 'string' ? args.question.trim() : '')
   : (typeof args === 'string' ? args.trim() : '')
 if (!QUESTION) {
-  return { error: "No research question provided. Pass it as args: Workflow({name: 'deep-research', args: '<question>'}) or args: {question: '<q>', models: {...}}." }
+  return { error: "No research question provided. Pass it as args: Workflow({name: 'deep-research-tiered', args: '<question>'}) or args: {question: '<q>', models: {...}}." }
 }
-log("Model plan: " + JSON.stringify(modelPlan) + " (null = inherit session model)")
+log("Model plan: " + JSON.stringify(modelPlan) + " (\"inherit\" = no pin, session model handles the stage)")
 const scope = await agent(
   "Decompose this research question into complementary search angles.\n\n" +
   "## Question\n" + QUESTION + "\n\n" +

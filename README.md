@@ -178,7 +178,8 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 | `templates/governor/*.md` | Governor prompts (worker, supervisor) + operator files |
 | `templates/hooks/*` | SessionStart/UserPromptSubmit/PreToolUse/Stop/SessionEnd hooks |
 | `templates/seed/{CLAUDE.md,learnings.md,tickets.md,tickets-parked.md}` | First-run seeds (installed under `queue/`) |
-| `templates/workflows/deep-research.js` | Model-tiered `deep-research` Workflow (installed under `.claude/workflows/`) |
+| `templates/workflows/deep-research.js` | Model-tiered `deep-research-tiered` Workflow (installed under `.claude/workflows/`) |
+| `templates/skills/deep-research-tiered/SKILL.md` | Skill entry that routes `deep-research`-shaped requests to the tiered workflow (installed under `.claude/skills/`) |
 | `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the full suite on every PR |
 
 ## License
