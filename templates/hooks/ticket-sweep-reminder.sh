@@ -137,7 +137,32 @@ fi
 # Fire once: drop the marker, then block with the reconcile reason.
 : > "$marker" 2>/dev/null || true
 
-reason="Before ending: reconcile tickets.md (root meta-repo). \
+# --- flow-registry staleness advisory (validations Phase 3): a SOFT, never-blocking note folded into
+# the reconcile reason. Report-only dry scan (no writes, no network — rides the origin/main refs the
+# session already has) of which currently-validated flows this session's landed code moved past their
+# validated SHA. Run in a subshell so common.sh's `set -e` / any error can't leak into this hook
+# (which deliberately runs without -e); empty on any failure, so the advisory simply degrades to
+# silence. The governor's persisting sweep records the actual STALE degrade later.
+flows_note=""
+if [ -f "$MAIN/validation/flows.md" ]; then
+  staled_ids="$(
+    GOVERN_WS_ROOT="$MAIN" GOVERN_TICKETS_FILE="$MAIN/queue/tickets.md"
+    export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::flows_sweep_scan >/dev/null 2>&1 || exit 0
+    govern::flows_sweep_scan "$MAIN" 2>/dev/null | tr '\n' ' '
+  )"
+  staled_ids="$(printf '%s' "${staled_ids:-}" | sed -E 's/ +$//; s/^ +//')"
+  if [ -n "$staled_ids" ]; then
+    n_staled="$(printf '%s' "$staled_ids" | wc -w | tr -d ' ')"
+    flows_note="FLOW STALENESS (advisory, non-blocking): this session's landed code appears to STALE \
+${n_staled} validated flow(s) — ${staled_ids}. No action needed now; the governor's staleness sweep \
+records the STALE degrade on its next pass (or run /shiploop:flows). "
+  fi
+fi
+
+reason="${flows_note}Before ending: reconcile tickets.md (root meta-repo). \
 (1) NEW TICKETS — review what you touched/discovered this session. Any bug, gap, \
 missing capability, or follow-up that is NOT already a ticket gets its own numbered \
 ## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / Done when / Ref). \
