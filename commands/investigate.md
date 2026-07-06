@@ -5,6 +5,10 @@ allowed-tools: Bash, Read, Edit, Grep, Glob
 
 # /investigate
 
+> **Workspace-local override:** if `.claude/commands/investigate.md` exists in this workspace, follow
+> THAT file instead — it is the live, locally-improved copy; this global copy is the fallback for
+> un-scaffolded workspaces.
+
 Investigate a bug described in natural language: `/investigate <description>`
 
 This is a GENERIC harness command. The mechanism (seed a notes file → collect evidence →

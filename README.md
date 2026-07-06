@@ -179,7 +179,7 @@ A version stamp lives in `scripts/lib/.harness-version`; `bash scripts/doctor.sh
 - **Claude Code CLI** — the plugin uses `/plugin` and slash-command mechanics; governor workers use `claude -p`.
 - **`gh` CLI**, authenticated (`gh auth status`) — the governor opens PRs and reads CI check states.
 - **git** ≥ 2.20 (worktree support), **bash** ≥ 4 (macOS ships 3.2 — the templates are guarded to run on both).
-- **`jq`** — a handful of govern tests use it; also useful for CI.
+- **`jq`** — hard-required, not optional: `run-loop.sh` fails closed at startup (`govern::require jq`) and it's pervasive across the governor (spawn-worker, bookkeep, supervise, health, sync-port, scaffold settings-merge). Install it before your first `/shiploop:govern`.
 
 ## Opt-in knobs (edit `scripts/lib/workspace.sh`)
 
