@@ -154,6 +154,28 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge
 The knob-type migration guard (v1.1.0 → v1.2.0 array→string) inside `component_workspace_sh` prints
 the mechanical migration when it detects the legacy shape. If it fires, surface it in the report.
 
+## Phase 3b — Re-assert sub-repo commit hooks
+
+The `githooks` component above refreshes the harness root's `.githooks/` — but each sub-repo is an
+INDEPENDENT git repo that does NOT inherit the root's `core.hooksPath`. A framework reinstall in a
+sub-repo (husky's `prepare` on `npm install`) silently regenerates its hooks dir and WIPES the
+attribution/pre-commit hooks the harness installed there. `/update` therefore RE-RUNS the installers
+across every sub-repo (not fresh-setup-only) so a wiped hook is restored on each converge:
+
+```bash
+source scripts/lib/workspace.sh
+source scripts/lib/githooks.sh
+for repo in "${REPOS[@]}"; do
+  [ -d "$repo/.git" ] || [ -f "$repo/.git" ] || continue
+  install_subrepo_attribution_hook "$(pwd)" "$(pwd)/$repo"
+  install_subrepo_pre_commit_hook "$(pwd)" "$(pwd)/$repo"
+done
+```
+
+The pre-commit installer is chain-safe (a non-ours pre-commit is left in place) and a no-op unless
+`WSP_LINT_FIX_CMD` is set. `doctor.sh`'s "sub-repo commit hooks" section flags any sub-repo whose
+resolved hook still differs from `.githooks/` — run this step when it warns.
+
 ## Phase 3.5 — Advance the sync marker (converge bookkeeping)
 
 A hub→workspace bump REWRITES mirrored mechanism scripts, so the converge commit you're about to
