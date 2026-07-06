@@ -28,7 +28,7 @@ if command -v gh >/dev/null; then
   if gh auth status >/dev/null 2>&1; then ok "gh authenticated"; else warn "gh installed but not authenticated (run 'gh auth login')"; fi
 else fail "gh missing (brew install gh / https://cli.github.com)"; fi
 command -v curl >/dev/null && ok "curl" || fail "curl missing"
-command -v jq   >/dev/null && ok "jq"   || warn "jq missing (needed for worktree registry)"
+command -v jq   >/dev/null && ok "jq"   || warn "jq missing — hard-required by the governor (run-loop.sh fails closed at startup); also used by the worktree registry"
 
 # Root package manager
 case "$ROOT_PM" in

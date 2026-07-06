@@ -101,6 +101,8 @@ Before a live run, from a **plain terminal** (not nested in a Claude session), c
 
 Wired into the workspace `.claude/settings.json` by setup:
 - **SessionStart:** print the top of `learnings.md` (skim before diving in) · `check-main-on-main.sh` (warn if the main checkout drifted off main) · optional project drift check (e.g. prod-behind-main).
+- **UserPromptSubmit:** `router-posture-reminder.sh` (prime the delegate-heavy-work-to-a-child-Agent router posture once per session — a driver's per-turn cost is proportional to its own context, re-sent in full every turn).
+- **PreToolUse (Read|Bash):** `router-posture-guard.sh` (catch a router-posture violation in the moment — a large inline Read or a verbose build/`npm run dev` the driver should have delegated instead).
 - **Stop:** `ticket-sweep-reminder.sh` (reconcile tickets once per code-touching session).
 - **SessionEnd:** `worktree/session-end-cleanup.sh` (run the project cleanup hook, then kill this worktree's stack ports) so dev stacks don't accumulate.
 

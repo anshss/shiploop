@@ -5,6 +5,10 @@ allowed-tools: Bash, Read, Edit, Grep, Glob
 
 # /shiploop:resolve
 
+> **Workspace-local override:** if `.claude/commands/resolve.md` exists in this workspace, follow
+> THAT file instead — it is the live, locally-improved copy; this global copy is the fallback for
+> un-scaffolded workspaces.
+
 Resolve one or more tickets in this meta-repo's `queue/tickets.md`: `/shiploop:resolve <N>` (or
 `17-19`, `17,18,19`). Run from the workspace (main checkout or a worktree).
 
