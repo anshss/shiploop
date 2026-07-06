@@ -154,6 +154,36 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge
 The knob-type migration guard (v1.1.0 → v1.2.0 array→string) inside `component_workspace_sh` prints
 the mechanical migration when it detects the legacy shape. If it fires, surface it in the report.
 
+## Phase 3.5 — Advance the sync marker (converge bookkeeping)
+
+A hub→workspace bump REWRITES mirrored mechanism scripts, so the converge commit you're about to
+make touches mirrored files. `sync-templates.sh` is marker-based, so it would otherwise count that
+pull as harness→hub "drift" — a `/shiploop:push` run would then try to port the hub's own code back
+to the hub (`drift_commits`' content-aware skip catches most of this, but the marker is the durable
+fix). Advance the marker THROUGH the converge so a pull doesn't masquerade as unported local work.
+
+**Guard — only auto-advance when there was NO pre-existing local drift.** Record the drift state
+BEFORE the Phase-3 bump:
+
+```bash
+bash scripts/govern/sync-templates.sh --check >/dev/null 2>&1; PRE_DRIFT=$?   # 3 = had local drift, 0 = clean
+```
+
+Then, AFTER the operator commits the converge (Phase 5), advance the marker to that commit **only if
+`PRE_DRIFT` was 0**:
+
+```bash
+if [ "${PRE_DRIFT:-0}" -eq 0 ]; then
+  bash scripts/govern/sync-templates.sh --mark HEAD    # marks THROUGH the converge commit
+else
+  echo "⚠ pre-existing unported local drift — NOT auto-advancing the sync marker."
+  echo "  Run /shiploop:push to port your local mechanism improvements first, then --mark by hand."
+fi
+```
+
+If `PRE_DRIFT` was 3 there were genuine local mechanism improvements not yet pushed to the hub;
+auto-advancing would silently bury them. Warn and leave the marker for `/shiploop:push`.
+
 ## Phase 4 — Verify (no auth needed)
 
 Cheap no-auth smoke — resolves every knob + helper, prints them, exits nonzero on any missing
