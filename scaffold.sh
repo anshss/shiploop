@@ -589,10 +589,100 @@ JQ
   fi
 }
 
+# The mechanism components whose installed files are byte-comparable against
+# templates. Shared by --diff-only AND the stamp gate so the two can never drift
+# apart (N5: a component tracked by one but not the other loops "behind" forever).
+MECH_COMPONENTS="core-scripts worktrees govern githooks commands workflows"
+
+# probe_files — component -> lines "installed-path<TAB>template-path".
+# Top-level so both diff_only and workspace_converged share one source of truth.
+probe_files() {
+  case "$1" in
+    core-scripts)
+      for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
+        printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
+      done
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard; do
+        printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
+      done
+      for s in session-state preflight githooks; do
+        printf 'scripts/lib/%s.sh\t%s/lib/%s.sh\n' "$s" "$T" "$s"
+      done ;;
+    worktrees)
+      for s in new rm status exec main session-end-cleanup; do
+        printf 'scripts/worktree/%s.sh\t%s/worktree/%s.sh\n' "$s" "$T" "$s"
+      done
+      for s in registry base-ref; do
+        printf 'scripts/worktree/lib/%s.sh\t%s/worktree/lib/%s.sh\n' "$s" "$T" "$s"
+      done ;;
+    govern)
+      local f
+      for f in "$T"/govern/*.sh; do
+        [ -f "$f" ] || continue
+        printf 'scripts/govern/%s\t%s\n' "$(basename "$f")" "$f"
+      done
+      printf 'scripts/govern/lib/common.sh\t%s/govern/lib/common.sh\n' "$T"
+      for f in "$T"/govern/test/*.sh; do
+        [ -f "$f" ] || continue
+        printf 'scripts/govern/test/%s\t%s\n' "$(basename "$f")" "$f"
+      done ;;
+    githooks)
+      for h in pre-push prepare-commit-msg pre-commit; do
+        printf '.githooks/%s\t%s/githooks/%s\n' "$h" "$T" "$h"
+      done ;;
+    commands)
+      local f
+      for f in "$T"/.claude/commands/*.md; do
+        [ -f "$f" ] || continue
+        printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
+      done ;;
+    workflows)
+      local f skdir
+      for f in "$T"/workflows/*.js; do
+        [ -f "$f" ] || continue
+        printf '.claude/workflows/%s\t%s\n' "$(basename "$f")" "$f"
+      done
+      for skdir in "$T"/skills/*/; do
+        [ -d "$skdir" ] || continue
+        local skname; skname="$(basename "$skdir")"
+        [ -f "$skdir/SKILL.md" ] && \
+          printf '.claude/skills/%s/SKILL.md\t%s/SKILL.md\n' "$skname" "$skdir"
+      done ;;
+    *) : ;;
+  esac
+}
+
+# workspace_converged — return 0 iff every mechanism component's installed files
+# match the current templates byte-for-byte (i.e. --diff-only would exit 0).
+# Read-only; no logging. Used to gate the version stamp.
+workspace_converged() {
+  local c installed template
+  for c in $MECH_COMPONENTS; do
+    while IFS=$'\t' read -r installed template; do
+      [ -n "$installed" ] || continue
+      if [ ! -f "$installed" ] || ! diff -q "$installed" "$template" >/dev/null 2>&1; then
+        return 1
+      fi
+    done < <(probe_files "$c")
+  done
+  return 0
+}
+
 # component_stamp — write scripts/lib/.harness-version so doctor/govern-health
 # can compare it against the installed hub's VERSION for the update-channel
 # staleness warning. Called at the end of every scaffold run (fresh + bump).
+#
+# N7: only stamp when the workspace is FULLY converged against the templates. A
+# partial --component run that leaves another mechanism component behind must NOT
+# advance the stamp — otherwise doctor/govern-health (which compare stamp==VERSION)
+# false-report "up to date" while a component is still stale. A full --component all
+# run, a fresh scaffold, or the converging final bump of an /update loop all leave
+# zero drift and DO stamp.
 component_stamp() {
+  if ! workspace_converged; then
+    [ "$VERBOSE" -eq 1 ] && info "not stamping .harness-version — mechanism drift remains (partial/non-converged run)"
+    return 0
+  fi
   local v; v="$(hub_version)"
   mkdir -p scripts/lib
   {
@@ -639,7 +729,7 @@ verify_scripts() {
       sed 's/^/         /' /tmp/scaffold_bashn.err >&2
       fail=1
     fi
-  done < <(find scripts .githooks -name '*.sh' -o -name 'pre-push' -o -name 'prepare-commit-msg' 2>/dev/null)
+  done < <(find scripts .githooks -name '*.sh' -o -name 'pre-push' -o -name 'prepare-commit-msg' -o -name 'pre-commit' 2>/dev/null)
   if [ "$fail" -ne 0 ]; then die "verification failed (see errors above)"; fi
   info "all scripts parse OK"
 
@@ -690,62 +780,9 @@ verify_run_tests() {
 # behind, exit 3 (drift) if anything is.
 diff_only() {
   local behind=0
-  probe_files() { # component -> lines "installed-path\ttemplate-path"
-    case "$1" in
-      core-scripts)
-        for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
-          printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
-        done
-        for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard; do
-          printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
-        done
-        for s in session-state preflight githooks; do
-          printf 'scripts/lib/%s.sh\t%s/lib/%s.sh\n' "$s" "$T" "$s"
-        done ;;
-      worktrees)
-        for s in new rm status exec main session-end-cleanup; do
-          printf 'scripts/worktree/%s.sh\t%s/worktree/%s.sh\n' "$s" "$T" "$s"
-        done
-        for s in registry base-ref; do
-          printf 'scripts/worktree/lib/%s.sh\t%s/worktree/lib/%s.sh\n' "$s" "$T" "$s"
-        done ;;
-      govern)
-        local f
-        for f in "$T"/govern/*.sh; do
-          [ -f "$f" ] || continue
-          printf 'scripts/govern/%s\t%s\n' "$(basename "$f")" "$f"
-        done
-        printf 'scripts/govern/lib/common.sh\t%s/govern/lib/common.sh\n' "$T"
-        for f in "$T"/govern/test/*.sh; do
-          [ -f "$f" ] || continue
-          printf 'scripts/govern/test/%s\t%s\n' "$(basename "$f")" "$f"
-        done ;;
-      githooks)
-        for h in pre-push prepare-commit-msg pre-commit; do
-          printf '.githooks/%s\t%s/githooks/%s\n' "$h" "$T" "$h"
-        done ;;
-      commands)
-        local f
-        for f in "$T"/.claude/commands/*.md; do
-          [ -f "$f" ] || continue
-          printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
-        done ;;
-      workflows)
-        local f skdir
-        for f in "$T"/workflows/*.js; do
-          [ -f "$f" ] || continue
-          printf '.claude/workflows/%s\t%s\n' "$(basename "$f")" "$f"
-        done
-        for skdir in "$T"/skills/*/; do
-          [ -d "$skdir" ] || continue
-          local skname; skname="$(basename "$skdir")"
-          [ -f "$skdir/SKILL.md" ] && \
-            printf '.claude/skills/%s/SKILL.md\t%s/SKILL.md\n' "$skname" "$skdir"
-        done ;;
-      *) : ;;
-    esac
-  }
-  for c in core-scripts worktrees govern githooks commands workflows; do
+  # probe_files + the mechanism-component list are defined at top level so this
+  # report and the stamp gate (workspace_converged) share one source of truth.
+  for c in $MECH_COMPONENTS; do
     local drift=0 details=""
     while IFS=$'\t' read -r installed template; do
       [ -n "$installed" ] || continue
