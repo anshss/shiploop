@@ -53,11 +53,20 @@
 # Env overrides (tests): GOVERN_DIR (govern script dir), GOVERN_SYNC_MARKER
 # (marker file), GOVERN_PROMPTS_DIR (governor prompts dir; skipped if missing),
 # GOVERN_TEMPLATE_DIR / GOVERN_PROMPTS_TEMPLATE_DIR (local templates dirs;
-# GOVERN_TEMPLATE_DIR's PARENT is the templates root).
+# GOVERN_TEMPLATE_DIR's PARENT is the templates root), GOVERN_SYNC_UPPER_BOUND
+# (enumeration upper bound for --check/--files/--diff; default HEAD — sync-port
+# pins it to one HEAD capture to close a mid-run TOCTOU race).
 set -uo pipefail
 
 GOVERN_DIR="${GOVERN_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 MARKER="${GOVERN_SYNC_MARKER:-$GOVERN_DIR/.templates-synced-at}"
+
+# N4: optional enumeration UPPER BOUND. Every drift walk below is "marker..UPPER";
+# UPPER defaults to HEAD (unchanged behavior). sync-port pins it to a single
+# HEAD capture (GOVERN_SYNC_UPPER_BOUND=<sha>) so a mirrored-file commit landing
+# on live main mid-run can't be excluded from the port yet swept into the marker
+# advance (silent drift loss via race).
+UPPER="${GOVERN_SYNC_UPPER_BOUND:-HEAD}"
 
 # Resolve the repo + the govern dir's path relative to the repo root.
 REPO_ROOT="$(git -C "$GOVERN_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
@@ -157,7 +166,16 @@ has_template_counterpart() { # <repo-relative-path>
   return 1
 }
 
-candidate_files() { git_g diff --name-only "$1..HEAD" -- "${TRACKED[@]}" "${EXCLUDES[@]}"; }
+# Echo the FIRST existing template counterpart path for a live file (or nothing).
+template_counterpart_path() { # <repo-relative-path> -> template-path | ""
+  local c
+  while IFS= read -r c; do
+    [[ -n "$c" && -f "$c" ]] && { printf '%s\n' "$c"; return 0; }
+  done < <(template_candidates "$1")
+  return 1
+}
+
+candidate_files() { git_g diff --name-only "$1..$UPPER" -- "${TRACKED[@]}" "${EXCLUDES[@]}"; }
 
 mirrored_files() { # <base>
   local f
@@ -168,17 +186,23 @@ mirrored_files() { # <base>
 }
 
 drift_commits() { # <base>
-  local sha f
+  local sha f tpl
   while IFS= read -r sha; do
     [[ -z "$sha" ]] && continue
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
-      if has_template_counterpart "$f"; then
+      tpl="$(template_counterpart_path "$f")" || continue
+      # K6 — content-aware: a commit whose post-state for a mirrored file already
+      # MATCHES the template is a hub→workspace convergence (a /shiploop:update
+      # pull), NOT a local improvement to port back. Skip it so pulls don't
+      # masquerade as harness→hub drift. A file that DIFFERS from the template is
+      # genuine unported local work → count the commit.
+      if ! cmp -s <(git_g show "$sha:$f" 2>/dev/null) "$tpl"; then
         git_g log -1 --format='%h %s' "$sha"
         break
       fi
     done < <(git_g diff-tree --no-commit-id --name-only -r "$sha" -- "${TRACKED[@]}" "${EXCLUDES[@]}")
-  done < <(git_g log --no-merges --format='%H' "$1..HEAD" -- "${TRACKED[@]}" "${EXCLUDES[@]}")
+  done < <(git_g log --no-merges --format='%H' "$1..$UPPER" -- "${TRACKED[@]}" "${EXCLUDES[@]}")
 }
 
 MODE="${1:---check}"
@@ -204,7 +228,7 @@ case "$MODE" in
     files=()
     while IFS= read -r f; do [[ -n "$f" ]] && files+=("$f"); done < <(mirrored_files "$base")
     [[ ${#files[@]} -eq 0 ]] && { echo "(none — mirrored templates in sync through $base)"; exit 0; }
-    git_g diff "$base..HEAD" -- "${files[@]}"
+    git_g diff "$base..$UPPER" -- "${files[@]}"
     ;;
 
   --files)
