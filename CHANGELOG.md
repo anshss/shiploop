@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Sub-repo, sync-channel, sync-port, and update-channel correctness (remediation batches — N1/N2/N3/N4/N5/N6/N7/N8/N9/K5/K6). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6). VERSION bump at release.
+
+### Added
+- **`templates/govern/test/test-spawn-worker-sweep.sh`** (N11) — regression test for the #239 orphan-resource sweep: asserts `spawn-worker.sh` fires `GOVERN_DEPLOY_SWEEP_CMD` on BOTH the clean-resolve and the hard-KILLED (timeout, exit >128, no report) exit paths — the #3001 leak class where a killed worker never runs its own cleanup — and that the sweep is handed the worker's start epoch + ticket number. Fails if the trap wiring is removed.
+- **`templates/govern/test/test-pr-hygiene-api.sh`** (N12) — stub-`gh` coverage for the two PR-hygiene wrappers that talk to the GitHub API (previously only their pure sub-helper `_strip_ticket_ref` was tested): `govern::scrub_pr_ticket_ref` (asserts the `-X PATCH repos/<slug>/pulls/<pr>` endpoint + scrubbed `.title`/`.body`, the idempotent no-op, and the non-object defensive no-op) and `govern::pr_spec_files` (asserts the `pulls/<pr>/files --jq '.[].filename'` leak grep). Red on endpoint/jq-path regressions.
 
 ### Fixed
 - **N3 — sync-port forbidden-identity gate no longer treats dictionary words as identity strings.** `templates/govern/sync-port.sh` derived its forbidden-token list from raw `$GITHUB_ORG` + `$META_NAME` + `${REPOS[@]}` with no filter, so a reference workspace with repos named `docs`, `console`, `website` (or a 2-letter `aq`) would block a correctly-genericized ported line like "see the docs" as a fake leak. The repo-derived tokens are now filtered (minimum length, default 4, via `GOVERN_FORBIDDEN_MIN_LEN`, plus an embedded common-word stop list); `$GITHUB_ORG` and `$META_NAME` remain **always** forbidden and unfiltered (real org/name leaks still caught even when short). Added a curated `GOVERN_FORBIDDEN_TOKENS` override that **replaces** the derived org/meta/repo list; `GOVERN_FORBIDDEN_EXTRA` keeps its extend semantics. New regression `templates/govern/test/test-forbidden-tokens.sh` proves: "see the docs" passes with a repo named `docs`, org/meta names still fail, a distinctive repo name (`mjolnir`) still fails, and the override replaces the derived list.
@@ -40,6 +44,11 @@ Sub-repo, sync-channel, sync-port, and update-channel correctness (remediation b
   - Regression: **`templates/govern/test/test-subrepo-hook-resilience.sh`** proves the audit flags a
     husky-stubbed sub-repo and that a re-assert after a simulated husky regeneration restores the
     hook byte-identical to `.githooks/`.
+
+- **`templates/govern/spawn-worker.sh`** (N11) — the post-worker orphan sweep's test seam was dead: the genericization refactor moved the explicit `GOVERN_DEPLOY_SWEEP_CMD` fire BELOW a `-z "${GOVERN_WORKTREE_CMD:-}"` guard, so the sweep could never fire under a test worktree override (i.e. in any test). Dropped that clause from the guard (kept the DRY-mode skip); a live governor run never sets `GOVERN_WORKTREE_CMD`, so real behavior is unchanged while the #239 trap is now regression-testable.
+
+### Removed
+- **`govern::retarget_pr_base`** (N10) — a fully-implemented REST-PATCH workaround for the `gh pr edit --base` GraphQL-deprecation bug (#116) with ZERO callers anywhere (hub + live workspace verified). Deleted as dead code; the #116 workaround knowledge is preserved as a concise NOTE comment in `templates/govern/lib/common.sh` where a future base-retargeting caller (select-ticket dependency-reorder / preflight-main base reconciliation) would look.
 
 ### Tests
 - `templates/govern/test/test-update-channel.sh`: rewrote assertion 2 (partial run on a non-converged workspace writes no stamp), added the convergence-stamp assertion to 3, and added assertion 9 — N7's done-when end-to-end (a partial `--component` run does not flip doctor to "up to date" while a component is behind; the converging bump then advances the stamp).
