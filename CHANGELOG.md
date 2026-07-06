@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **sync-port forbidden-identity gate no longer treats dictionary words as identity strings (N3).** `templates/govern/sync-port.sh` derived its forbidden-token list from raw `$GITHUB_ORG` + `$META_NAME` + `${REPOS[@]}` with no filter, so a reference workspace with repos named `docs`, `console`, `website` (or a 2-letter `aq`) would block a correctly-genericized ported line like "see the docs" as a fake leak. The repo-derived tokens are now filtered (minimum length, default 4, via `GOVERN_FORBIDDEN_MIN_LEN`, plus an embedded common-word stop list); `$GITHUB_ORG` and `$META_NAME` remain **always** forbidden and unfiltered (real org/name leaks still caught even when short). Added a curated `GOVERN_FORBIDDEN_TOKENS` override that **replaces** the derived org/meta/repo list; `GOVERN_FORBIDDEN_EXTRA` keeps its extend semantics. New regression `templates/govern/test/test-forbidden-tokens.sh` proves: "see the docs" passes with a repo named `docs`, org/meta names still fail, a distinctive repo name (`mjolnir`) still fails, and the override replaces the derived list. VERSION bump at release.
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.

@@ -49,7 +49,10 @@
 #   GOVERN_MERGE_CMD, GOVERN_GH_BIN, GOVERN_SCAFFOLD_TEST_CMD (replaces the
 #   real scaffold+test step), GOVERN_TEMPLATE_REPO_DIR (templates repo working
 #   dir), GOVERN_SYNC_PORT_LOCK, GOVERN_SYNC_PORTER_TIMEOUT,
-#   GOVERN_FORBIDDEN_EXTRA (extra distinctive identity tokens), GOVERN_NO_PUSH
+#   GOVERN_FORBIDDEN_EXTRA (extra distinctive identity tokens; extends),
+#   GOVERN_FORBIDDEN_TOKENS (curated set that REPLACES the derived org/meta/repo
+#   list), GOVERN_FORBIDDEN_MIN_LEN (repo-token length filter, default 4),
+#   GOVERN_NO_PUSH
 #   (marker commit stays local) — plus every sync-templates.sh override
 #   (GOVERN_DIR / GOVERN_TEMPLATE_DIR / GOVERN_SYNC_MARKER / GOVERN_PROMPTS_DIR
 #   / …) passes through.
@@ -113,15 +116,48 @@ case "${1:-}" in
   *) govern::die "unknown arg '$1' (use --dry-run, --no-merge, or no arg)" ;;
 esac
 
+# >>> forbidden-token-gate (N3) >>> — keep edits inside this fenced region
 # ── forbidden identity strings ──────────────────────────────────────────────
 # The gate is generic across workspaces because the list is DERIVED from
-# config, not hardcoded: $GITHUB_ORG + the ${REPOS[@]} names + a base
-# product-token list ($META_NAME + optional $GOVERN_FORBIDDEN_EXTRA).
-# Lowercased + deduped. A genericized template must contain NONE of these on
-# the lines the porter ADDED.
+# config, not hardcoded. Composition + filter rule (N3):
+#   * $GITHUB_ORG and $META_NAME are the highest-signal identity tokens and are
+#     ALWAYS forbidden, UNFILTERED — kept even when short (e.g. a 2-letter org),
+#     because a real leak of the product's org/name must never slip through.
+#   * ${REPOS[@]} names are FILTERED before joining: dropped when shorter than
+#     $FORBIDDEN_MIN_LEN OR present in the embedded common-word stop list. Repo
+#     names are where dictionary-word collisions happen — reference workspaces
+#     have repos literally named `docs`, `console`, `website`, `site`, and a
+#     2-letter `aq`. Without the filter, a correctly-genericized line ("see the
+#     docs", "print to console") trips the -iwE gate as a FAKE leak.
+#   * $GOVERN_FORBIDDEN_EXTRA EXTENDS the list (operator-curated, UNFILTERED).
+#   * $GOVERN_FORBIDDEN_TOKENS, when non-empty, REPLACES the whole derived
+#     (org+meta+repos) list with an explicit curated set — the escape hatch when
+#     the auto-derivation is wrong in either direction. EXTRA still extends it.
+# Everything is lowercased + deduped. A genericized template must contain NONE
+# of these (whole-word, case-insensitive) on the lines the porter ADDED.
+FORBIDDEN_MIN_LEN="${GOVERN_FORBIDDEN_MIN_LEN:-4}"
+# Common English words that legitimately appear in genericized templates AND
+# also happen to be reference-workspace repo names — never treat as identity.
+# (Space-padded so a `*" $lc "*` membership test needs no exact-match loop.)
+FORBIDDEN_STOPWORDS=" docs doc console website web site sites app apps api core main mono repo repos test tests node run job jobs log logs lib bin src util utils admin panel client server shared common public static assets asset build dist temp cache queue store data page pages user users team teams "
 forbidden_tokens() { # -> one lowercased token per line, deduped
-  { printf '%s\n' "$GITHUB_ORG" "$META_NAME"
-    printf '%s\n' "${REPOS[@]}"
+  { if [[ -n "${GOVERN_FORBIDDEN_TOKENS:-}" ]]; then
+      # explicit curated override REPLACES the derived org/meta/repos list
+      for t in $GOVERN_FORBIDDEN_TOKENS; do printf '%s\n' "$t"; done
+    else
+      # high-signal identity — ALWAYS forbidden, no length/stop-word filter
+      printf '%s\n' "$GITHUB_ORG" "$META_NAME"
+      # repo names — filtered (len >= MIN and not a common dictionary word)
+      local r lc
+      for r in "${REPOS[@]}"; do
+        lc="$(printf '%s' "$r" | tr 'A-Z' 'a-z')"
+        [[ -z "$lc" ]] && continue
+        (( ${#lc} < FORBIDDEN_MIN_LEN )) && continue
+        [[ "$FORBIDDEN_STOPWORDS" == *" $lc "* ]] && continue
+        printf '%s\n' "$lc"
+      done
+    fi
+    # EXTRA always extends (operator-curated), UNFILTERED
     for t in ${GOVERN_FORBIDDEN_EXTRA:-}; do printf '%s\n' "$t"; done
   } | tr 'A-Z' 'a-z' | awk 'NF' | sort -u
 }
@@ -133,6 +169,7 @@ forbidden_regex() {
   done < <(forbidden_tokens)
   printf '(%s)' "$re"
 }
+# <<< forbidden-token-gate (N3) <<<
 
 # ── escalation (fail-closed sink) ───────────────────────────────────────────
 find_open_sync_escalation_n() { # branch -> N | ""
