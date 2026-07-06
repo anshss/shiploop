@@ -99,6 +99,34 @@ else
   warn "core.hooksPath = '$hooks_path' (expected .githooks) — harness push guard/attribution may be inactive"
 fi
 
+# ── Sub-repo commit hooks (attribution + optional pre-commit) ──
+# The root core.hooksPath above says NOTHING about sub-repo hook state: each sub-repo is an
+# independent git repo, and a framework reinstall (husky's `prepare` on `npm install`) silently
+# regenerates its hooks dir, wiping the attribution/pre-commit hooks the harness installs there.
+# Audit each sub-repo's RESOLVED hooks dir against .githooks/ so a stubbed repo is visible. The
+# fix is to re-run the installers — `/shiploop:update` (or `worktree:new`) does that.
+section "sub-repo commit hooks"
+if [ -f "$ROOT/scripts/lib/githooks.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$ROOT/scripts/lib/githooks.sh"
+  for sub in "${REPOS[@]}"; do
+    subdir="$ROOT/$sub"
+    { [ -d "$subdir/.git" ] || [ -f "$subdir/.git" ]; } || continue
+    while read -r _hook _state; do
+      case "$_hook:$_state" in
+        prepare-commit-msg:match)    ok   "$sub: attribution hook installed" ;;
+        prepare-commit-msg:mismatch) warn "$sub: attribution hook STUBBED/stale (a husky/framework reinstall wiped it?) — re-run installers ('$ROOT_PM run doctor' won't fix; run /shiploop:update or recreate the worktree)" ;;
+        prepare-commit-msg:absent)   warn "$sub: attribution hook missing — re-run installers (/shiploop:update or worktree:new)" ;;
+        prepare-commit-msg:skip)     : ;;   # not a git repo / no canonical source — nothing to assert
+        pre-commit:stale-ours)       warn "$sub: workspace pre-commit hook stale (drifted from .githooks/pre-commit) — re-run installers (/shiploop:update)" ;;
+        pre-commit:*)                : ;;   # match/foreign/absent/skip are all acceptable (pre-commit is optional + chain-safe)
+      esac
+    done < <(audit_subrepo_hooks "$ROOT" "$subdir")
+  done
+else
+  warn "scripts/lib/githooks.sh missing — cannot audit sub-repo commit hooks"
+fi
+
 # Git drift across the checkout (root + every sub-repo): off-main branch, dirty
 # tree, and ahead/behind vs the tracked upstream. Pure read.
 git_drift() {
