@@ -453,3 +453,199 @@ govern::ticket_flow_ids() { # N [tickets-file] -> "id id …"
     | sed -n -E 's/^[[:space:]]*\*{0,2}[Ff]low:\*{0,2}[[:space:]]*//p' | head -1)"
   printf '%s' "${raw//,/ }"
 }
+
+# ── Phase 3: staleness sweep ────────────────────────────────────────────────
+# "Validated" is only meaningful relative to code state: a flow is STALE the moment any mapped path
+# moves past the SHA it was validated at. Only these SETTLED, SHA-pinned verdicts can go stale — a
+# positive (PASS/EFFECTIVE) or a negative (FAIL/INEFFECTIVE); a negative must ALSO stale so a kill
+# disposition never acts on a stale negative (design). UNTESTED/BLOCKED/MEASURING/STALE/TOMBSTONED are
+# excluded: they carry no settled at-a-SHA claim to invalidate.
+GOVERN_FLOW_STALEABLE_STATUSES='PASS FAIL INEFFECTIVE EFFECTIVE'
+
+# The prefix of a `Paths:` glob up to its first wildcard, with any trailing slash trimmed — the
+# directory a git pathspec would match. `mjolnir/providers/vastai/**` → `mjolnir/providers/vastai`;
+# `backend/**` → `backend`; `console/app/x.ts` → `console/app/x.ts`. Shared by the sweep + the
+# spawn-worker path-match heads-up.
+govern::flow_glob_prefix() { # glob -> dir-prefix
+  local g="$1"; g="${g%%\**}"; printf '%s' "${g%/}"
+}
+
+# Sweep the registry IN PLACE against origin/main: degrade every staleable flow whose mapped paths
+# changed past its validated SHA to STALE, and auto-withdraw a pending kill Disposition on a flow that
+# newly went STALE (a stale negative must not be acted on). PURE local mutation + git-log reads — NO
+# commit, NO push, NO network unless GOVERN_FLOWS_SWEEP_FETCH=1 (then each mapped repo is fetched first;
+# default off so a per-session Stop-hook sweep stays cheap and rides the refs the session already has).
+# GOVERN_FLOWS_SWEEP_DRY=1 → compute only, mutate NOTHING (the report-only path). Appends each newly-
+# stale id to the global GOVERN_FLOWS_SWEEP_STALED (space-separated) so a cas_edit wrapper — whose
+# edit-fn runs in the caller's shell — can report them after the write. Freshness is MONOTONIC: a
+# change in ANY present mapped repo stales the flow even if another mapped repo is missing; only when NO
+# present repo shows a change AND some repo is missing/unpinned is the verdict "cannot compute → left
+# as-is + warning" (never silently fresh). meta = GOVERN_FLOWS_SWEEP_META or two dirs above the file.
+govern::flows_sweep_file() { # <flows-file>
+  local flows="$1"
+  [[ -f "$flows" ]] || return 0
+  local meta="${GOVERN_FLOWS_SWEEP_META:-}"
+  if [[ -z "$meta" ]]; then meta="$(cd "$(dirname "$flows")/.." 2>/dev/null && pwd || true)"; fi
+  local dry="${GOVERN_FLOWS_SWEEP_DRY:-0}" fetch="${GOVERN_FLOWS_SWEEP_FETCH:-0}"
+  local id status disp
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    status="$(govern::flow_field "$id" Status "$flows")"
+    case " $GOVERN_FLOW_STALEABLE_STATUSES " in *" $status "*) ;; *) continue;; esac
+
+    local -a _globs; read -r -a _globs <<< "$(govern::flow_field "$id" Paths "$flows")"
+    local staled=0 uncomputable=0 glob pair repodir pathspec repokey sha target changed
+    for glob in ${_globs[@]+"${_globs[@]}"}; do
+      pair="$(govern::flow_glob_resolve "$glob" "$meta")"
+      if [[ -z "$pair" ]]; then
+        govern::log "flows_sweep: $id glob $glob — sub-repo not present/cloned; cannot compute freshness for it"
+        uncomputable=1; continue
+      fi
+      repodir="${pair%%$'\t'*}"; pathspec="${pair#*$'\t'}"
+      [[ -n "$pathspec" ]] || pathspec="."   # `repo/**` → empty prefix → whole repo
+      repokey="$(basename "$repodir")"
+      sha="$(govern::flow_recorded_sha "$id" "$repokey" "$flows")"
+      if [[ -z "$sha" ]]; then uncomputable=1; continue; fi   # no pin for this repo → can't compute its slice
+      [[ "$fetch" == "1" ]] && git -C "$repodir" fetch --quiet origin main >/dev/null 2>&1 || true
+      target="origin/main"; git -C "$repodir" rev-parse --verify -q "$target" >/dev/null 2>&1 || target="HEAD"
+      if ! git -C "$repodir" rev-parse --verify -q "${sha}^{commit}" >/dev/null 2>&1; then
+        govern::log "flows_sweep: $id — recorded $repokey@$sha not resolvable in $repodir; cannot compute"
+        uncomputable=1; continue
+      fi
+      changed="$(git -C "$repodir" log --oneline "${sha}..${target}" -- "$pathspec" 2>/dev/null | head -1 || true)"
+      [[ -n "$changed" ]] && { staled=1; break; }
+    done
+
+    if [[ "$staled" == "1" ]]; then
+      GOVERN_FLOWS_SWEEP_STALED="${GOVERN_FLOWS_SWEEP_STALED:+$GOVERN_FLOWS_SWEEP_STALED }$id"
+      [[ "$dry" == "1" ]] && continue
+      govern::flow_set_field "$id" Status STALE "$flows" || true
+      # Auto-withdraw a pending kill disposition on a freshly-stale flow (stale-negative rule).
+      disp="$(govern::flow_field "$id" Disposition "$flows")"
+      case "$disp" in
+        *[Kk]ill*)
+          case "$disp" in
+            *[Ww]ithdrawn*) : ;;   # already withdrawn — leave it
+            *) govern::flow_set_field "$id" Disposition \
+                 "withdrawn — flow went STALE before removal (stale negative; re-validate before re-deciding)" "$flows" || true ;;
+          esac ;;
+      esac
+    elif [[ "$uncomputable" == "1" ]]; then
+      govern::log "flows_sweep: $id — cannot compute freshness (missing/unpinned mapped repo, no present repo changed) — left as $status"
+    fi
+  done < <(govern::flow_ids "$flows")
+  return 0
+}
+
+# Persisting sweep: run govern::flows_sweep_file under cas_edit (bookkeep-lock serialized, pre-sync to
+# origin/main, commit + CAS-push ONLY the registry) and print each newly-stale id to stdout. cas_edit's
+# edit-fn runs in THIS shell, so the global the sweep appends survives the call. No-op (rc 0) with no
+# registry. For the governor / an operator `/shiploop:flows` refresh — NOT the Stop hook (that scans
+# dry). Honors GOVERN_NO_PUSH / GOVERN_BOOKKEEP_LOCK_HELD like every other cas_edit write.
+govern::flows_sweep() { # [meta-root]
+  local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  GOVERN_FLOWS_SWEEP_STALED=""
+  GOVERN_FLOWS_SWEEP_META="$meta" govern::cas_edit "$flows" govern::flows_sweep_file \
+    "docs(flows): staleness sweep — degrade flows past their validated SHA"
+  local staled="$GOVERN_FLOWS_SWEEP_STALED"; unset GOVERN_FLOWS_SWEEP_STALED
+  [[ -n "$staled" ]] && printf '%s\n' $staled
+  return 0
+}
+
+# Report-only sweep: which staleable flows WOULD go STALE right now, no mutation. One id per line.
+# The Stop hook's cheap advisory path.
+govern::flows_sweep_scan() { # [meta-root]
+  local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  GOVERN_FLOWS_SWEEP_STALED=""
+  GOVERN_FLOWS_SWEEP_META="$meta" GOVERN_FLOWS_SWEEP_DRY=1 govern::flows_sweep_file "$flows"
+  local staled="$GOVERN_FLOWS_SWEEP_STALED"; unset GOVERN_FLOWS_SWEEP_STALED
+  [[ -n "$staled" ]] && printf '%s\n' $staled
+  return 0
+}
+
+# ── Status-count summary (doctor / govern-health) ───────────────────────────
+# One compact line — "flows: <total> total · 34 PASS-fresh · 6 STALE · … · 1 pending-disposition" —
+# listing only the non-zero status buckets plus a pending-disposition count (flows carrying a non-empty
+# Disposition, i.e. an operator ship/kill call in flight). PASS renders as "PASS-fresh" (post-sweep, a
+# PASS is fresh by definition). Empty (rc 0, no output) when there is no registry.
+govern::flows_status_summary() { # [meta-root] -> one line | empty
+  local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  local id status disp total=0 pend=0 st
+  local counts_UNTESTED=0 counts_PASS=0 counts_FAIL=0 counts_STALE=0 counts_MEASURING=0
+  local counts_INEFFECTIVE=0 counts_EFFECTIVE=0 counts_BLOCKED=0 counts_TOMBSTONED=0 counts_OTHER=0
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    total=$((total+1))
+    status="$(govern::flow_field "$id" Status "$flows")"
+    case "$status" in
+      UNTESTED) counts_UNTESTED=$((counts_UNTESTED+1)) ;;
+      PASS) counts_PASS=$((counts_PASS+1)) ;;
+      FAIL) counts_FAIL=$((counts_FAIL+1)) ;;
+      STALE) counts_STALE=$((counts_STALE+1)) ;;
+      MEASURING) counts_MEASURING=$((counts_MEASURING+1)) ;;
+      INEFFECTIVE) counts_INEFFECTIVE=$((counts_INEFFECTIVE+1)) ;;
+      EFFECTIVE) counts_EFFECTIVE=$((counts_EFFECTIVE+1)) ;;
+      BLOCKED) counts_BLOCKED=$((counts_BLOCKED+1)) ;;
+      TOMBSTONED) counts_TOMBSTONED=$((counts_TOMBSTONED+1)) ;;
+      *) counts_OTHER=$((counts_OTHER+1)) ;;
+    esac
+    disp="$(govern::flow_field "$id" Disposition "$flows")"
+    [[ -n "$disp" ]] && pend=$((pend+1))
+  done < <(govern::flow_ids "$flows")
+
+  local out=""
+  _add() { [[ "$2" -gt 0 ]] && out="${out:+$out · }$2 $1"; }   # label count
+  _add "PASS-fresh"   "$counts_PASS"
+  _add "STALE"        "$counts_STALE"
+  _add "UNTESTED"     "$counts_UNTESTED"
+  _add "MEASURING"    "$counts_MEASURING"
+  _add "FAIL"         "$counts_FAIL"
+  _add "EFFECTIVE"    "$counts_EFFECTIVE"
+  _add "INEFFECTIVE"  "$counts_INEFFECTIVE"
+  _add "BLOCKED"      "$counts_BLOCKED"
+  _add "TOMBSTONED"   "$counts_TOMBSTONED"
+  _add "other"        "$counts_OTHER"
+  _add "pending-disposition" "$pend"
+  unset -f _add
+  printf 'flows: %s total%s' "$total" "${out:+ · $out}"
+}
+
+# ── Path-match heads-up (spawn-worker, NON-validation tickets) ──────────────
+# Given one or more changed/target paths, print the ids of currently-VALIDATED flows (a settled PASS/
+# FAIL/EFFECTIVE/INEFFECTIVE/MEASURING — not UNTESTED/BLOCKED/TOMBSTONED/already-STALE) whose mapped
+# globs overlap those paths, MOST-SPECIFIC first (longer matching glob prefix ranks higher), capped at
+# <max>. This is the context-flat heads-up injected as a ONE-LINE summary for a non-flow ticket — never
+# full blocks. Match is dir-boundary prefix in EITHER direction (the change is under the glob, or the
+# glob is under the change), so a coarse ticket path still flags the finer flow.
+govern::flows_matching_paths() { # <meta-root> <max> <path> [path…] -> ranked flow ids
+  local meta="$1" max="$2"; shift 2
+  local -a paths=("$@")
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" && ${#paths[@]} -gt 0 ]] || return 0
+  local id status
+  { while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      status="$(govern::flow_field "$id" Status "$flows")"
+      case "$status" in PASS|FAIL|EFFECTIVE|INEFFECTIVE|MEASURING) ;; *) continue;; esac
+      local -a _globs; read -r -a _globs <<< "$(govern::flow_field "$id" Paths "$flows")"
+      local best=-1 matched=0 glob gp cand
+      for glob in ${_globs[@]+"${_globs[@]}"}; do
+        gp="$(govern::flow_glob_prefix "$glob")"
+        [[ -n "$gp" ]] || continue
+        for cand in "${paths[@]}"; do
+          cand="${cand%/}"
+          if [[ "$cand" == "$gp" || "$cand" == "$gp/"* || "$gp" == "$cand/"* ]]; then
+            matched=1; [[ "${#gp}" -gt "$best" ]] && best="${#gp}"
+          fi
+        done
+      done
+      [[ "$matched" == "1" ]] && printf '%s\t%s\n' "$best" "$id"
+    done < <(govern::flow_ids "$flows"); } | sort -rn -k1,1 | head -n "$max" | cut -f2-
+  return 0
+}

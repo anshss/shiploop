@@ -203,6 +203,22 @@ if [ -f "$ROOT/scripts/lib/doctor-extra.sh" ]; then
   source "$ROOT/scripts/lib/doctor-extra.sh"
 fi
 
+# ── Flow registry — validation-flow status counts (validations feature) ──
+# One line per the design's doctor row: PASS-fresh / STALE / UNTESTED / … / pending-disposition. A
+# read-only count of validation/flows.md (no sweep, no network). Silent when the workspace carries no
+# registry (adopter scaffolded before the feature, or nothing registered yet).
+if [ -f "$ROOT/validation/flows.md" ] && [ -f "$ROOT/scripts/govern/lib/flows.sh" ]; then
+  section "flows"
+  # flows.sh references WS_ROOT at source time; the summary itself takes an explicit meta arg and uses
+  # only the pure awk/grep parser (no govern:: deps), so a bare flows.sh source is enough here.
+  WS_ROOT="$ROOT"
+  # shellcheck source=/dev/null
+  if source "$ROOT/scripts/govern/lib/flows.sh" 2>/dev/null && command -v govern::flows_status_summary >/dev/null 2>&1; then
+    _fsum="$(govern::flows_status_summary "$ROOT" 2>/dev/null || true)"
+    if [ -n "$_fsum" ]; then ok "$_fsum"; else warn "flows registry present but no parseable entries"; fi
+  fi
+fi
+
 # ── Update channel — is the harness behind the installed hub? ──
 # scaffold.sh writes scripts/lib/.harness-version (the hub VERSION this workspace
 # was last synced against). If the installed hub is locally resolvable and its
