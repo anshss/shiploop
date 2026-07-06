@@ -93,6 +93,25 @@ Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test
 
 - **`templates/govern/spawn-worker.sh`** (N11) — the post-worker orphan sweep's test seam was dead: the genericization refactor moved the explicit `GOVERN_DEPLOY_SWEEP_CMD` fire BELOW a `-z "${GOVERN_WORKTREE_CMD:-}"` guard, so the sweep could never fire under a test worktree override (i.e. in any test). Dropped that clause from the guard (kept the DRY-mode skip); a live governor run never sets `GOVERN_WORKTREE_CMD`, so real behavior is unchanged while the #239 trap is now regression-testable.
 
+- **Docs/commands truth (Batch G — K4, N13, N14, N15, N17).**
+  - **K4** — `commands/govern.md`, `commands/investigate.md`, `commands/resolve.md` now open with a
+    defer-to-local preamble: if `.claude/commands/<name>.md` exists in the workspace, follow that
+    live, locally-improved copy instead; the global copy is the fallback for un-scaffolded workspaces.
+  - **N13** — `commands/govern.md` no longer claims a `GOVERN_MAX_RUNTIME (~4h)` default; corrected to
+    match `run-loop.sh` and `templates/governor/README.md` (`0` = no cap by default).
+  - **N14** — `jq` promoted from "handful of tests use it" to an explicit hard prerequisite in
+    `README.md` (`run-loop.sh` fails closed at startup without it, and it's pervasive across the
+    governor); `templates/doctor.sh`'s warning text corrected to match.
+  - **N15** — `commands/govern.md`'s escalation-answer step now shells out to a new
+    **`templates/govern/record-escalation-answer.sh <N> --answer "…" --disposition <token> [--rule
+    "…"]`** instead of hand-editing `governor/escalations.md` — the command's `allowed-tools` stays
+    `Bash, Read` (no Edit-tool ask). Rewrites only an OPEN `### #N` entry's Answer/Disposition/Make-a-
+    rule fields, idempotent, commits via the shared CAS-safe escalations path. New regression
+    `templates/govern/test/test-record-escalation-answer.sh`.
+  - **N17** — `SKILL.md`'s Hooks section now lists all five wired hooks (was 3 of 5), adding
+    `UserPromptSubmit → router-posture-reminder.sh` and `PreToolUse → router-posture-guard.sh` to
+    match `README.md`'s table.
+
 ### Removed
 - **`govern::retarget_pr_base`** (N10) — a fully-implemented REST-PATCH workaround for the `gh pr edit --base` GraphQL-deprecation bug (#116) with ZERO callers anywhere (hub + live workspace verified). Deleted as dead code; the #116 workaround knowledge is preserved as a concise NOTE comment in `templates/govern/lib/common.sh` where a future base-retargeting caller (select-ticket dependency-reorder / preflight-main base reconciliation) would look.
 
