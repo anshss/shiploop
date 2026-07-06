@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Sync-channel marker correctness (remediation batch B — N1/N2/N4/K6). VERSION bump at release.
+
+### Fixed
+- **N1 — escalation boilerplate pinned the SHA, not `HEAD`.** `sync-port.sh`'s generic escalation body and the merge-failure message told the human to run `sync-templates.sh --mark HEAD`; a human resolving it days later would advance the marker over never-examined commits (silent drift-tracking loss). Both sites now interpolate the captured `$MARK_TO`, matching the other messages. No literal `--mark HEAD` remains.
+- **N2 — `/shiploop:push` now advances the marker after a human merges the PR.** The `NO_MERGE` review path exited before the marker advance, so after a merge the next run re-cut the same branch and re-spawned a full porter against an already-ported tree (fails the "committed nothing" gate → escalates forever). `sync-port.sh` now checks for a MERGED PR on the drift branch BEFORE spawning the porter; if found it advances the marker (`--mark $MARK_TO` + CAS-commit) and exits 0. Regression test with a `gh` stub (`test-sync-port-merged-marker.sh`).
+- **N4 — TOCTOU on the enumeration upper bound.** `sync-port.sh` resolved `HEAD` three independent times (`--check`, `--files`, `rev-parse`), so a mirrored-file commit landing on live main mid-run could be excluded from the port yet swept into the marker advance. `MARK_TO` is now captured ONCE, first, and threaded as a new `GOVERN_SYNC_UPPER_BOUND` env into `sync-templates.sh` (bounds `--check`/`--files`/`--diff` to `base..$MARK_TO` instead of `base..HEAD`; defaults to `HEAD`, unchanged behavior). Regression test (`test-sync-templates-upper-bound.sh`).
+- **K6 — hub→workspace pulls no longer conflate with local improvements.** `sync-templates.sh` `drift_commits()` was purely commit-based, so a `/shiploop:update` converge counted as harness→hub drift (verified live: 3 of 5 "unported" commits were pulls). `drift_commits()` is now content-aware — a commit whose post-state for a mirrored file already matches the template is a convergence and is skipped. Complemented by a converge-time marker-advance instruction (Phase 3.5) in `commands/update.md`, guarded to only auto-advance when there was no pre-existing local drift. Regression test (`test-sync-templates-converge.sh`).
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
