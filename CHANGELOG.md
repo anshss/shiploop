@@ -2,10 +2,29 @@
 
 ## Unreleased
 
-Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate, verdict pipeline, and staleness sweep (Phases 1-3). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate, verdict pipeline, staleness sweep, and `/shiploop:flows` command (Phases 1-4). VERSION bump at release.
 
 ### Added
 
+- **`/shiploop:flows` command UX (validations feature, Phase 4).** The operator surface over the flow
+  registry — the model orchestrates + inventories, but every registry write goes through a script (bash
+  owns bookkeeping under the governor lock):
+  - **`commands/flows.md`** (hub global, defer-to-local preamble) + **`templates/.claude/commands/flows.md`**
+    (workspace-local copy); frontmatter `allowed-tools: Bash, Read, Agent`.
+  - **`flows-extract-merge.sh`** — merges a STAGED extraction diff (an Agent fan-out inventory) into the
+    registry: ADDs new flows + REFRESHes Paths/Surface on existing ones, but never touches verdict state
+    (Status/Validated/Disposition) and FLAGS a Kind/Gate change on an existing id for a manual decision,
+    never auto-applying it. DRY without `--approve` — a hallucinated flow can't silently become a
+    fileable, later-billable row.
+  - **`flows-list.sh`** — the registry grouped by status (BLOCKED shows its blocker, MEASURING its
+    window); read-only by default with a dry "would go STALE" annotation, `--sweep` to record the degrades.
+  - **`flows-file.sh`** — the spend gate: DRY by default (files nothing without `--yes`), Resource-group
+    batching (N flows → one ticket, one deploy), BLOCKED exclusion + in-flight-ticket guard, `--all-*`
+    refusal without `GOVERN_DEPLOY_SWEEP_CMD`, cheapest/fastest-first ordering + `--max-deploys N`,
+    slow-provision flagging near `GOVERN_WORKER_TIMEOUT`.
+  - Tests: `test-flows-command.sh` (extract ADD/REFRESH/FLAG incl. Kind-change-not-applied + verdict
+    state untouched, list grouping/blocker/window, file precondition-refusal/grouping/in-flight-guard/
+    BLOCKED-exclusion/dry-vs-yes/max-deploys).
 - **Flow-registry staleness sweep (validations feature, Phase 3).** Makes "validated" mean "validated
   at the current code state" — a flow degrades to STALE the moment any mapped path moves past the SHA it
   was validated at:
