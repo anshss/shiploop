@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Sync-channel, sync-port, and update-channel correctness (remediation batches — N1/N2/N3/N4/N5/N7/N8/N9/K5/K6). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, and update-channel correctness (remediation batches — N1/N2/N3/N4/N5/N6/N7/N8/N9/K5/K6). VERSION bump at release.
 
 ### Fixed
 - **N3 — sync-port forbidden-identity gate no longer treats dictionary words as identity strings.** `templates/govern/sync-port.sh` derived its forbidden-token list from raw `$GITHUB_ORG` + `$META_NAME` + `${REPOS[@]}` with no filter, so a reference workspace with repos named `docs`, `console`, `website` (or a 2-letter `aq`) would block a correctly-genericized ported line like "see the docs" as a fake leak. The repo-derived tokens are now filtered (minimum length, default 4, via `GOVERN_FORBIDDEN_MIN_LEN`, plus an embedded common-word stop list); `$GITHUB_ORG` and `$META_NAME` remain **always** forbidden and unfiltered (real org/name leaks still caught even when short). Added a curated `GOVERN_FORBIDDEN_TOKENS` override that **replaces** the derived org/meta/repo list; `GOVERN_FORBIDDEN_EXTRA` keeps its extend semantics. New regression `templates/govern/test/test-forbidden-tokens.sh` proves: "see the docs" passes with a repo named `docs`, org/meta names still fail, a distinctive repo name (`mjolnir`) still fails, and the override replaces the derived list.
@@ -15,6 +15,31 @@ Sync-channel, sync-port, and update-channel correctness (remediation batches —
 - **N8 — `commands/update.md` documented the wrong governor lock path.** The Phase 1 guard referenced `governor/.govern.lock/` (or `scripts/govern/.locks/*`); corrected to the real paths — single-run lock `governor/.govern.lock`, per-ticket claim locks `governor/.locks/ticket-<N>` (both under `governor/`, never `scripts/govern/`).
 - **N9 — `scaffold.sh --verify` skipped `.githooks/pre-commit`.** The `bash -n` find-sweep covered `*.sh`, `pre-push`, `prepare-commit-msg` but not `pre-commit` (a bash hook activated via `core.hooksPath`); a syntax-broken `pre-commit` would ship green. Added `-o -name 'pre-commit'`.
 - **K5 — `/shiploop:update` trusted a stale device clone.** Added a Phase-0.5 best-effort hub-freshness probe: when `$HUB` is a git clone, `git fetch -q origin` + `git rev-list --count HEAD..origin/main` warns with the behind-count and offers to `pull --ff-only` before any bump; degrades gracefully offline / non-git.
+
+- **husky (and any framework that regenerates its hooks dir on `npm install`) silently wiping
+  sub-repo attribution/pre-commit hooks — now audited AND re-asserted.** Each sub-repo is an
+  independent git repo that does not inherit the harness root's `core.hooksPath`; the harness
+  installs `prepare-commit-msg` (attribution) + `pre-commit` (optional lint-fix) into each
+  sub-repo's *resolved* hooks dir (husky's `.husky/_/` when applicable). Previously that install
+  happened only at fresh setup and at worktree creation — and in `worktree/new.sh` it ran BEFORE
+  the bootstrap step, so a bootstrap `npm install` triggering husky's `prepare` regenerated
+  `.husky/_/*` and wiped the hook. `doctor.sh` audited only the root's `core.hooksPath`, so a
+  stubbed sub-repo was invisible. Empirically confirmed with a real `npm install`: husky
+  regenerates `.husky/_/prepare-commit-msg`, replacing the attribution hook with its stub.
+  - **`templates/doctor.sh`** gains a "sub-repo commit hooks" section that diffs each sub-repo's
+    resolved `prepare-commit-msg`/`pre-commit` against `.githooks/` and flags a stubbed/stale/absent
+    hook (warn, never fail), pointing at the re-install path.
+  - **`templates/worktree/new.sh`** re-asserts both hook installers AFTER the bootstrap step, so a
+    bootstrap `npm install`/husky reinstall can no longer leave the worktree's sub-repos stubbed.
+  - **`commands/update.md` (Phase 3b)** and **`commands/setup.md` (Phase B2b)** now re-run the hook
+    installers across every sub-repo on update/bump — not fresh-setup-only — restoring a wiped hook
+    on each converge.
+  - **`templates/lib/githooks.sh`** extracts the shared `resolve_subrepo_hooksdir` resolver (both
+    installers now share it, byte-consistent) and adds the read-only `audit_subrepo_hooks` seam the
+    doctor check uses.
+  - Regression: **`templates/govern/test/test-subrepo-hook-resilience.sh`** proves the audit flags a
+    husky-stubbed sub-repo and that a re-assert after a simulated husky regeneration restores the
+    hook byte-identical to `.githooks/`.
 
 ### Tests
 - `templates/govern/test/test-update-channel.sh`: rewrote assertion 2 (partial run on a non-converged workspace writes no stamp), added the convergence-stamp assertion to 3, and added assertion 9 — N7's done-when end-to-end (a partial `--component` run does not flip doctor to "up to date" while a component is behind; the converging bump then advances the stamp).

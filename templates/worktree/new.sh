@@ -216,6 +216,22 @@ if [ "$SKIP_BOOTSTRAP" -eq 0 ]; then
     echo "[worktree] no scripts/lib/worktree-bootstrap.sh found — skipping bootstrap"
     echo "  (create it to install deps, run codegen, wire the per-slot DB, etc.)"
   fi
+
+  # RE-ASSERT the commit hooks AFTER bootstrap. The bootstrap step commonly runs `npm install`,
+  # which triggers husky's `prepare` and regenerates `.husky/_/*` UNCONDITIONALLY — wiping the
+  # attribution/pre-commit hooks installed in the per-repo loop above (which ran BEFORE bootstrap).
+  # Re-installing here is idempotent and makes the hooks survive the reinstall. Best-effort. (N6)
+  if command -v install_subrepo_attribution_hook >/dev/null 2>&1; then
+    echo "[worktree] re-asserting sub-repo commit hooks post-bootstrap ..."
+    for repo in "${REPOS[@]}"; do
+      dst="$WORKTREE_PATH/$repo"
+      { [ -d "$dst/.git" ] || [ -f "$dst/.git" ]; } || continue
+      install_subrepo_attribution_hook "$ROOT" "$dst" || true
+      if command -v install_subrepo_pre_commit_hook >/dev/null 2>&1; then
+        install_subrepo_pre_commit_hook "$ROOT" "$dst" || true
+      fi
+    done
+  fi
 fi
 
 # Build a human-readable summary of the ports this worktree will use.
