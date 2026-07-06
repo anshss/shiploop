@@ -27,7 +27,10 @@ if [[ -d "$root/.claude/context" ]]; then
   while IFS= read -r f; do sources+=("$f"); done \
     < <(find "$root/.claude/context" -type f -name '*.md' 2>/dev/null)
 fi
-[[ ${#sources[@]} -eq 0 ]] && exit 0
+# No founder-os context sources to scan — still run the flow-registry lint matrix (below) and exit
+# on its verdict. The two lints are independent: this legacy pass guards `.claude/context/validation`
+# refs; govern::flows_lint guards the `validation/` flow registry + evidence sinks.
+[[ ${#sources[@]} -eq 0 ]] && { govern::flows_lint "$root"; exit $?; }
 
 # A reference is the literal path `.claude/context/validation/<name>.md`. The charset deliberately
 # EXCLUDES `<`, `*`, `(`, `)` so doc placeholders/globs (`ticket-<N>-*.md`, `.../*.md`) never match.
@@ -45,9 +48,18 @@ while IFS= read -r hit; do
   done < <(printf '%s\n' "$rest" | grep -oE "$ref_re" || true)
 done < <(grep -nE "$ref_re" "${sources[@]}" 2>/dev/null || true)
 
-if [[ -z "$dangling" ]]; then exit 0; fi
-printf 'DANGLING .claude/context/validation/*.md reference(s) — a cited evidence summary is missing (#252):\n' >&2
-printf '%s' "$dangling" >&2
-printf 'A migration likely deleted the summary while a live ref still points at it. Restore the file\n' >&2
-printf '(e.g. from the pre-migration commit, `git show <migration>^:<path>`) or fix the reference.\n' >&2
+context_rc=0
+if [[ -n "$dangling" ]]; then
+  printf 'DANGLING .claude/context/validation/*.md reference(s) — a cited evidence summary is missing (#252):\n' >&2
+  printf '%s' "$dangling" >&2
+  printf 'A migration likely deleted the summary while a live ref still points at it. Restore the file\n' >&2
+  printf '(e.g. from the pre-migration commit, `git show <migration>^:<path>`) or fix the reference.\n' >&2
+  context_rc=1
+fi
+
+# Flow-registry lint matrix (validations feature): logs/-ref, dangling Evidence ref, zero-match glob
+# (fail + auto-degrade STALE), asset-size warns, PII scrub. Additive + independent of the context scan
+# above; a missing validation/flows.md is a silent no-op. Fail if EITHER lint tripped.
+govern::flows_lint "$root"; flows_rc=$?
+[[ "$context_rc" -eq 0 && "$flows_rc" -eq 0 ]] && exit 0
 exit 1

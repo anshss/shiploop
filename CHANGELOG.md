@@ -2,9 +2,31 @@
 
 ## Unreleased
 
-Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate (Phase 1). VERSION bump at release.
 
 ### Added
+
+- **Flow-registry substrate (validations feature, Phase 1).** A net-new `validation/flows.md` registry
+  keyed by stable dot-kebab flow ids pinned to code SHAs — the durable inventory of which user-facing
+  paths are proven at HEAD, stale, failed, or measured-ineffective. Ships as pure mechanism (no LLM):
+  - **`templates/govern/lib/flows.sh`** — a net-new block parser (flow blocks anchor on `^## <id>`,
+    disjoint from the ticket parser's `^## #<digits>`): `govern::flow_ids/flow_block/flow_field`
+    (inline-HTML-comment stripping), `govern::flow_set_field` (field upsert that preserves unknown
+    fields + comments verbatim), `govern::flow_validate` (grammar conformance), `govern::cas_edit`
+    (a compare-and-swap registry write — sync → edit-fn → commit → CAS-push with rebase-retry, factored
+    from bookkeep's step-0 sync + step-4/5 push, serialized under the bookkeep lock), glob-resolution
+    helpers, and `govern::flows_lint` (the lint matrix). Sourced by `common.sh` (guarded on existence).
+  - **`templates/govern/lint-validation-refs.sh`** extended additively with the flow-registry lint
+    matrix: a `logs/` evidence reference fails; a dangling `Evidence:` ref fails; a `Paths:` glob that
+    resolves to 0 tracked files fails **and auto-degrades the flow to `STALE`** (an empty git-log must
+    never read as "no changes"); oversized assets warn (>300 KB/file, >2 MB/dir); a PII/secret shape in
+    tracked evidence fails, suppressible with a `<!-- lint:allow <pattern> -->` marker.
+  - **`templates/seed/validation/flows.md`** — a seed registry documenting the block grammar; scaffold
+    installs it (+ `validation/evidence/assets/`) via `component_seeds` (never overwritten).
+  - Tests: `test-flows-parser.sh` (parser round-trip + unknown-field preservation + grammar validation),
+    `test-flows-cas-edit.sh` (CAS retry under an injected concurrent push), `test-flows-lint.sh` (every
+    lint row). Scaffold now copies all of `govern/lib/*.sh` (not just `common.sh`).
+
 - **`templates/govern/test/test-spawn-worker-sweep.sh`** (N11) — regression test for the #239 orphan-resource sweep: asserts `spawn-worker.sh` fires `GOVERN_DEPLOY_SWEEP_CMD` on BOTH the clean-resolve and the hard-KILLED (timeout, exit >128, no report) exit paths — the #3001 leak class where a killed worker never runs its own cleanup — and that the sweep is handed the worker's start epoch + ticket number. Fails if the trap wiring is removed.
 - **`templates/govern/test/test-pr-hygiene-api.sh`** (N12) — stub-`gh` coverage for the two PR-hygiene wrappers that talk to the GitHub API (previously only their pure sub-helper `_strip_ticket_ref` was tested): `govern::scrub_pr_ticket_ref` (asserts the `-X PATCH repos/<slug>/pulls/<pr>` endpoint + scrubbed `.title`/`.body`, the idempotent no-op, and the non-object defensive no-op) and `govern::pr_spec_files` (asserts the `pulls/<pr>/files --jq '.[].filename'` leak grep). Red on endpoint/jq-path regressions.
 

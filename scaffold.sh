@@ -291,7 +291,7 @@ component_worktrees() {
 component_govern() {
   log "component: govern"
   cp "$T"/govern/*.sh scripts/govern/
-  cp "$T"/govern/lib/common.sh scripts/govern/lib/
+  cp "$T"/govern/lib/*.sh scripts/govern/lib/   # common.sh + flows.sh (validations substrate)
   cp "$T"/govern/test/*.sh scripts/govern/test/
   chmod +x scripts/govern/*.sh scripts/govern/test/*.sh
   # governor/*.md — refresh prompt templates only; preserve operator data.
@@ -361,6 +361,11 @@ component_seeds() {
   [ -f queue/tickets-parked.md ] || cp "$T/seed/tickets-parked.md" queue/
   [ -f learnings.md ]            || cp "$T/seed/learnings.md" .
   [ -f CLAUDE.md ]               || cp "$T/seed/CLAUDE.md" .
+  # Flow registry (validations feature): validation/flows.md + the evidence sink dir. Never overwrite.
+  if [ ! -f validation/flows.md ] && [ -f "$T/seed/validation/flows.md" ]; then
+    mkdir -p validation/evidence/assets
+    cp "$T/seed/validation/flows.md" validation/flows.md
+  fi
   info "seeds present"
 }
 
@@ -621,7 +626,10 @@ probe_files() {
         [ -f "$f" ] || continue
         printf 'scripts/govern/%s\t%s\n' "$(basename "$f")" "$f"
       done
-      printf 'scripts/govern/lib/common.sh\t%s/govern/lib/common.sh\n' "$T"
+      for f in "$T"/govern/lib/*.sh; do
+        [ -f "$f" ] || continue
+        printf 'scripts/govern/lib/%s\t%s\n' "$(basename "$f")" "$f"
+      done
       for f in "$T"/govern/test/*.sh; do
         [ -f "$f" ] || continue
         printf 'scripts/govern/test/%s\t%s\n' "$(basename "$f")" "$f"
