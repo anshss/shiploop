@@ -46,6 +46,15 @@ MODEL_IS_RETRY=0
 [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
 export TICKET_MODEL MODEL_IS_RETRY
 
+# LATCH the per-ticket `Flow:` field (flow-registry validation ids) the SAME anchored way as Model —
+# the contiguous leading field block only, so a `Flow:` mention in prose/code can't be mis-parsed.
+# Space/comma list; whitespace normalized to single spaces. Injected as full flow blocks below.
+TICKET_FLOW="$(printf '%s' "$block" \
+  | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
+  | sed -n -E 's/^[[:space:]]*\*{0,2}[Ff]low:\*{0,2}[[:space:]]*//p' | head -1 \
+  | tr ',' ' ' | tr -s ' ' | sed -E 's/^ +//; s/ +$//')"
+export TICKET_FLOW
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -88,6 +97,31 @@ prompt="$prompt
 
 ## Operator doctrine
 $(cat "$PREFERENCES_FILE")"
+
+# Flow-registry injection: a ticket carrying a `Flow:` field validates one or more registered flows.
+# Inject the FULL flow block(s) so the worker knows each flow's Kind/Gate/Surface/Paths, and remind it
+# to fill the report's flow fields. (The one-line "your change stales flows X,Y" summary for
+# NON-validation tickets is Phase 3 — not emitted here.) Guarded on the parser existing (flows.sh).
+if [[ -n "${TICKET_FLOW:-}" ]] && command -v govern::flow_block >/dev/null 2>&1; then
+  flow_blocks=""
+  for _fid in $TICKET_FLOW; do
+    _fb="$(govern::flow_block "$_fid" 2>/dev/null || true)"
+    [[ -n "$_fb" ]] && flow_blocks="$flow_blocks
+$_fb
+"
+  done
+  if [[ -n "$flow_blocks" ]]; then
+    prompt="$prompt
+
+## Flow(s) this ticket validates (from validation/flows.md)
+This is a flow-registry validation. Drive the REAL path for each flow below (rule #12), then in your
+report's \`validation\` object record: \`validatedShas\` (map each mapped sub-repo folder → its
+\`git rev-parse HEAD\` at validation time), \`environment\` (\"local\"|\"prod\"), \`gatePassed\`
+(effectiveness flows), \`measured\`, and \`flowIds\` (echo: $TICKET_FLOW). The governor stamps the
+registry from these on resolve/gate-park.
+$flow_blocks"
+  fi
+fi
 
 # #191: conflict-resolution re-dispatch. When the governor's merge of an EXISTING ticket-N PR hit a
 # real content conflict (CI was green; the merge + rebase retry both failed), the merge path re-spawns
