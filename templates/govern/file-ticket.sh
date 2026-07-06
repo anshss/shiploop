@@ -34,14 +34,26 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
 model_field=""
-if [[ "${1:-}" == "--model" ]]; then
-  case "${2:-}" in
-    haiku|sonnet|opus) model_field="$2" ;;
-    "") govern::die "--model requires a value (haiku|sonnet|opus)" ;;
-    *) govern::log "file-ticket: unknown model tier '$2' — ignoring (allowlist: haiku|sonnet|opus)" ;;
+flow_field=""
+# --model and --flow may appear in any order before the title. --flow <id[,id…]> tags this ticket as
+# a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the registry.
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --model)
+      case "${2:-}" in
+        haiku|sonnet|opus) model_field="$2" ;;
+        "") govern::die "--model requires a value (haiku|sonnet|opus)" ;;
+        *) govern::log "file-ticket: unknown model tier '$2' — ignoring (allowlist: haiku|sonnet|opus)" ;;
+      esac
+      shift 2 ;;
+    --flow)
+      [[ -n "${2:-}" ]] || govern::die "--flow requires a value (flow-id[,flow-id…])"
+      # Normalize whitespace around commas → a clean comma-list; reject spaces inside the value.
+      flow_field="$(printf '%s' "$2" | tr -s ' ' | sed -E 's/ *, */,/g; s/^ +//; s/ +$//')"
+      shift 2 ;;
+    *) break ;;
   esac
-  shift 2
-fi
+done
 
 title="${1:?ticket title required (arg 1)}"
 sev="${2:-Medium}"
@@ -55,6 +67,13 @@ if [[ -n "$model_field" ]]; then
   model_block="**Model:** $model_field
 "
 fi
+# Flow: field (parallel to Model: — NOT a reuse of the model plumbing). Emitted in the same leading
+# field block so spawn-worker's anchored latch can read it.
+flow_block=""
+if [[ -n "$flow_field" ]]; then
+  flow_block="**Flow:** $flow_field
+"
+fi
 
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
@@ -65,7 +84,7 @@ if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
   # (which takes the bookkeep lock itself) so the number stays collision-safe; just leaves the
   # append uncommitted for the caller to stage. Prefer the default atomic path while a run is active.
   n="$(govern::next_ticket_number "$TICKETS_FILE")"
-  printf '\n## #%s — %s\n\n**Severity:** %s\n%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$body" >> "$TICKETS_FILE"
+  printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
   echo "$n"
   exit 0
 fi
@@ -99,7 +118,7 @@ fi
 # Allocate the next number under the already-held lock (the mkdir mutex is NOT reentrant, so tell the
 # allocator to skip re-acquiring it), then append the block.
 n="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE")"
-printf '\n## #%s — %s\n\n**Severity:** %s\n%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$body" >> "$TICKETS_FILE"
+printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
 # can never be left uncommitted (and thus clobbered by a concurrent bookkeep). Mirrors bookkeep's

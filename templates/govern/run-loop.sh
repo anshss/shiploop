@@ -784,6 +784,14 @@ while :; do
           status="parked"; anomaly=1 ;;
         park-gate-failed)
           govern::log "#$N is a VALIDATION ticket whose gate FAILED (gatePassed=false) — refusing to auto-ship a measured-NEGATIVE result; parking so the operator decides ship-off/shelve/rework (#73). Any worker PR is left open for review."
+          # Stamp the flow registry as a measured NEGATIVE (validations Phase 2): correctness→FAIL,
+          # effectiveness→INEFFECTIVE. Stamp from the ORIGINAL report (before we null its PR for the
+          # park) so the registry keeps the SHA pins + PR-URL linkage. No-op for a non-flow ticket.
+          if command -v govern::flows_stamp_from_report >/dev/null 2>&1; then
+            _flow_ids="$(govern::ticket_flow_ids "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+            [[ -n "$_flow_ids" ]] && govern::flows_stamp_from_report "$report" gate-park "$_flow_ids" "$(govern::meta_root)" \
+              || true
+          fi
           report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation gate FAILED — decide ship-off/shelve/rework",reason:("the required validation/A-B gate FAILED (measured negative) — auto-shipping a negative is not a worker decision: " + (.validation.evidence // "see report")),question:"the measured result is negative; choose the disposition — ship default-OFF opt-in, shelve the branch, or rework scope + re-run. Do NOT auto-ship a gate-failed result.",options:["shelve","ship-default-off","rework"]}' 2>/dev/null || printf '%s' "$report")"
           status="parked"; anomaly=1 ;;
       esac

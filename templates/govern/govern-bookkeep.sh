@@ -45,6 +45,14 @@ fi
 ticket_title="$(grep -m1 -E "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null \
   | sed -E "s/^##[[:space:]]+#$N[[:space:]]*(—|-)?[[:space:]]*//" || true)"
 
+# 0c. Capture the ticket's `Flow:` field BEFORE the block is deleted (mirrors the title pre-capture) —
+# a flow-registry validation stamps validation/flows.md on resolve, and the flow ids live in the block
+# that step 1 deletes. Empty for a non-flow ticket (the stamp step then no-ops). Guarded on the parser.
+ticket_flow=""
+if command -v govern::ticket_flow_ids >/dev/null 2>&1; then
+  ticket_flow="$(govern::ticket_flow_ids "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+fi
+
 # 1. Delete the ## #N block via the shared parser (govern::ticket_block_delete): boundary is
 # the next `^##[[:space:]]+#<digits>` heading (or EOF), consuming the block's trailing `---`
 # separator so a doubled separator is never left behind AND a bare `---` inside the body no
@@ -192,6 +200,18 @@ pr="$(printf '%s' "$report" | jq -r '
     fi
   fi
 )
+
+# 5b. STAMP THE FLOW REGISTRY on resolve (validations Phase 2). A flow-registry validation ticket
+# (carried a `Flow:` field, pre-captured in step 0c) records its verdict into validation/flows.md:
+# Status per Kind (correctness→PASS, effectiveness→EFFECTIVE/MEASURING), reachable SHA pins, Env,
+# measured, PR-URL linkage, and a promoted evidence summary — all via govern::cas_edit under the
+# bookkeep lock we already hold (GOVERN_BOOKKEEP_LOCK_HELD=1, since the mkdir mutex is not reentrant).
+# No-op for a non-flow ticket. A PII hit in the promoted summary returns 2 (logged; the resolve
+# itself already committed — the operator scrubs + re-stamps). Guarded on the parser + a jq report.
+if [[ -n "$ticket_flow" ]] && command -v govern::flows_stamp_from_report >/dev/null 2>&1; then
+  GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_stamp_from_report "$report" resolve "$ticket_flow" "$(govern::meta_root)" \
+    || govern::log "bookkeep #$N: flow-registry stamp returned non-zero (flows: $ticket_flow) — check for a PII-park or unreachable-SHA warning above"
+fi
 
 # 6. POINTER ON RESOLVE (#252). The ticket block is now gone; reconstructing the evidence path from
 # the slug later is fragile. Persist an explicit, greppable pointer to the cross-run history file

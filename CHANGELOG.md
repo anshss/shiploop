@@ -2,10 +2,34 @@
 
 ## Unreleased
 
-Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate (Phase 1). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate and verdict pipeline (Phases 1-2). VERSION bump at release.
 
 ### Added
 
+- **Flow-registry verdict pipeline (validations feature, Phase 2).** Wires validation outcomes into
+  the Phase-1 registry — a validation ticket tagged with a `Flow:` field now stamps `validation/flows.md`
+  deterministically on resolve/gate-park:
+  - **`governor/worker-prompt.md`** report schema: the `validation` object gains `gatePassed`,
+    `measured`, `validatedShas` (map sub-repo folder → validated-at SHA), `environment`, `flowIds`.
+  - **`file-ticket.sh`** — a `--flow <id[,id…]>` flag (parallel to `--model`, any order) emitting a
+    `Flow:` ticket field.
+  - **`spawn-worker.sh`** — latches the ticket's `Flow:` field (same anchored parse as the Model latch)
+    and injects the full registry block(s) for a flow-validation ticket, reminding the worker to fill
+    the new report fields. (The one-line "your change stales flows X, Y" summary for non-validation
+    tickets is Phase 3.)
+  - **`govern-bookkeep.sh`** — pre-captures the `Flow:` field before deleting the ticket block, then
+    stamps the registry on resolve (Status per Kind: correctness→PASS, effectiveness→EFFECTIVE/MEASURING).
+  - **`run-loop.sh`** — the `park-gate-failed` branch stamps a measured NEGATIVE (correctness→FAIL,
+    effectiveness→INEFFECTIVE) from the original report before the PR is nulled for the park.
+  - **`flows.sh`** — `govern::flows_stamp_from_report` (SHA ancestor-verify against origin/main,
+    squash-merge merge-commit substitution, never-overwrite-fresher guard, PR-URL linkage, grouped
+    multi-flow stamping, evidence-summary promotion committed atomically with the stamp; a PII hit in
+    the summary returns 2 → the caller PARKs rather than aborting mid-resolve), plus
+    `govern::flow_reachable_sha`, `govern::flow_recorded_sha`, `govern::ticket_flow_ids`; `cas_edit`
+    gained an optional extra-path arg so the evidence summary lands in the registry-stamp commit.
+  - Tests: `test-flows-stamp.sh` (every Status transition, ancestor-verify + substitution,
+    never-overwrite-fresher, grouped multi-stamp, PII-park), `test-flow-pipeline.sh` (file-ticket →
+    ticket_flow_ids → spawn-worker injection → bookkeep stamp on resolve).
 - **Flow-registry substrate (validations feature, Phase 1).** A net-new `validation/flows.md` registry
   keyed by stable dot-kebab flow ids pinned to code SHAs — the durable inventory of which user-facing
   paths are proven at HEAD, stale, failed, or measured-ineffective. Ships as pure mechanism (no LLM):

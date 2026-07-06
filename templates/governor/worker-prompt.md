@@ -145,7 +145,7 @@ Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
   "newTickets": [{"title": "short title", "severity": "High|Medium|Low", "body": "Where/Observed/Fix direction/Done when"}],
   "crossRefs": {"overlaps": [14], "dependsOn": [9]},
   "migration": {"needed": true, "destructive": false, "name": "20260610_add_x", "note": "ADD COLUMN x nullable"},
-  "validation": {"required": true, "ranLiveTest": true, "evidence": "set up X → drove the real UI → diffed; PASS/FAIL table in PR"},
+  "validation": {"required": true, "ranLiveTest": true, "evidence": "set up X → drove the real UI → diffed; PASS/FAIL table in PR", "gatePassed": true, "measured": "+2.1%, n=140", "validatedShas": {"backend": "e4f5a6b", "console": "9c8d7e6"}, "environment": "prod", "flowIds": ["deploy-gpu.vastai"]},
   "escalation": {"title": "≤10-word slug", "reason": "string", "question": "string", "options": ["A","B"]}
 }
 
@@ -172,7 +172,19 @@ Field rules:
 - `validation`: set for a **validation / test / spike** ticket (see the section above). `required:true`
   + `ranLiveTest:true` + a concrete `evidence` string ONLY if you actually ran the test this run; if
   you could not run it, `ranLiveTest:false` and PARK (don't report `resolved`). `null` for ordinary
-  code/docs tickets where no empirical run is the deliverable.
+  code/docs tickets where no empirical run is the deliverable. Additional fields when the ticket
+  carries a **`Flow:`** field (a flow-registry validation — the governor stamps `validation/flows.md`
+  from these):
+  - `gatePassed` (bool) — did the flow's declared gate pass? `false` = a measured NEGATIVE (the governor
+    parks it as gate-failed and records the flow FAIL/INEFFECTIVE for the operator's ship-vs-kill call).
+    Omit if the flow has no gate (correctness flows that simply work → treated as pass).
+  - `measured` (string) — the measured value for an effectiveness gate, e.g. `"+2.1%, n=140"`.
+  - `validatedShas` (object) — **map of sub-repo folder name → the `git rev-parse HEAD` you validated
+    against**, captured per mapped repo AT validation time. The governor verifies each is reachable from
+    `origin/main` (substituting the PR merge-commit for a squash-merged branch) before pinning it.
+  - `environment` (`"local"` | `"prod"`) — where the run happened. A local pass is NOT a prod-liveness
+    claim; a flow marked `Env-required: prod` only stamps PASS on a prod run.
+  - `flowIds` (array) — echo of the ticket's `Flow:` ids you validated (cross-check for the stamp).
 - Use `null` for `pr`/`prs`/`lessonPatch`/`escalation`/`migration`/`validation` when N/A; `[]` for empty arrays.
 - `status` MUST reflect reality: `resolved` only if a PR is open; `parked` if you escalated; `failed`
   if you could not complete and did not cleanly escalate. A validation ticket is `resolved` ONLY with
