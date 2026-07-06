@@ -278,9 +278,20 @@ render_update_channel() {
   printf '\n'
 }
 
+# Flow-registry status counts (validations feature). One advisory line — how many validated flows are
+# proven-fresh vs stale vs untested vs disposition-pending — so the operator sees registry health beside
+# governor-run health. Silent when the workspace carries no registry. common.sh already sourced flows.sh.
+render_flows() {
+  command -v govern::flows_status_summary >/dev/null 2>&1 || return 0
+  local sum; sum="$(govern::flows_status_summary "$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")" 2>/dev/null || true)"
+  [[ -n "$sum" ]] || return 0
+  printf '▸ flow registry\n  %s\n\n' "$sum"
+}
+
 echo "════════ Governor health (ROI telemetry · #272) ════════"
 render "$run_m" "▸ $run_label"
 render "$all_m" "▸ all-time rolling"
 render_stale
+render_flows
 render_update_channel
 echo "history: $HISTORY   ·   detail: scripts/govern/govern-health.sh --json"

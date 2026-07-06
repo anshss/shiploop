@@ -2,10 +2,31 @@
 
 ## Unreleased
 
-Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate and verdict pipeline (Phases 1-2). VERSION bump at release.
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate, verdict pipeline, and staleness sweep (Phases 1-3). VERSION bump at release.
 
 ### Added
 
+- **Flow-registry staleness sweep (validations feature, Phase 3).** Makes "validated" mean "validated
+  at the current code state" — a flow degrades to STALE the moment any mapped path moves past the SHA it
+  was validated at:
+  - **`flows.sh`** — `govern::flows_sweep_file` (per-sub-repo `git log <pinned-sha>..origin/main -- <globs>`
+    degrade of the staleable statuses PASS/FAIL/EFFECTIVE/INEFFECTIVE; MONOTONIC missing-repo semantics —
+    a change in any present mapped repo stales even if another is missing, only "no present change + a
+    missing/unpinned repo" leaves the status untouched with a warning, never silently fresh; negatives
+    stale too; a pending `kill` Disposition on a freshly-stale flow is auto-withdrawn — a stale negative
+    must not be acted on), `govern::flows_sweep` (persisting sweep via `cas_edit`), `govern::flows_sweep_scan`
+    (report-only dry scan), `govern::flows_status_summary` (the doctor/health count line),
+    `govern::flows_matching_paths` + `govern::flow_glob_prefix` (path→flow overlap ranked most-specific-first).
+  - **`spawn-worker.sh`** — a NON-validation ticket touching paths mapped by a validated flow now gets a
+    context-flat ONE-LINE "flows your change may STALE" heads-up (never full blocks; silent when nothing
+    overlaps), complementing the Phase-2 full-block injection for validation tickets.
+  - **`hooks/ticket-sweep-reminder.sh`** — a soft, never-blocking session-end advisory ("this session
+    staled N flows"), folded into the reconcile reason; a cheap report-only dry scan (no writes, no network).
+  - **`doctor.sh` / `govern-health.sh`** — a flow-registry status-count line
+    (`flows: N total · … PASS-fresh · … STALE · … pending-disposition`).
+  - Tests: `test-flows-sweep.sh` (degrade, no-false-STALE, negatives, non-staleable exclusion, missing-repo
+    monotonicity, kill-withdrawal, dry scan, status summary, path-match ranking), `test-flows-spawn-stale-note.sh`
+    (one-line heads-up on overlap, silence on no overlap, full-block path for a validation ticket).
 - **Flow-registry verdict pipeline (validations feature, Phase 2).** Wires validation outcomes into
   the Phase-1 registry — a validation ticket tagged with a `Flow:` field now stamps `validation/flows.md`
   deterministically on resolve/gate-park:

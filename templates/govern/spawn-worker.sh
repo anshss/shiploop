@@ -121,6 +121,33 @@ report's \`validation\` object record: \`validatedShas\` (map each mapped sub-re
 registry from these on resolve/gate-park.
 $flow_blocks"
   fi
+elif command -v govern::flows_matching_paths >/dev/null 2>&1; then
+  # NON-validation ticket (no Flow: field): a context-flat ONE-LINE heads-up naming the validated flows
+  # this ticket's change is likely to STALE — never full blocks (the context-flat posture; full blocks
+  # are only for a ticket that actually validates a flow, above). Candidate paths are the `<sub-repo>/…`
+  # tokens in the ticket block (its "Where:" area); flows whose mapped globs overlap them are surfaced
+  # most-specific first, capped. Silent when nothing overlaps (the common case) — zero context cost then.
+  _flow_meta="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
+  if [[ -f "$_flow_meta/validation/flows.md" && ${#REPOS[@]} -gt 0 ]]; then
+    _repo_alt="$(printf '%s|' "${REPOS[@]}")"; _repo_alt="${_repo_alt%|}"
+    # Extract distinct `<repo>/<path>` tokens the ticket names (dedup, order-stable).
+    _cand_paths="$(printf '%s' "$block" \
+      | grep -oE "(^|[^A-Za-z0-9_/.-])(${_repo_alt})/[A-Za-z0-9._*/-]+" 2>/dev/null \
+      | sed -E 's/^[^A-Za-z0-9]//' | awk '!seen[$0]++' || true)"
+    if [[ -n "$_cand_paths" ]]; then
+      # shellcheck disable=SC2086
+      _stale_flows="$(govern::flows_matching_paths "$_flow_meta" "${GOVERN_FLOWS_MATCH_MAX:-5}" $_cand_paths 2>/dev/null | tr '\n' ' ' | sed -E 's/ +$//' || true)"
+      if [[ -n "$_stale_flows" ]]; then
+        prompt="$prompt
+
+## Heads-up — flows your change may STALE (validation/flows.md)
+This is NOT a validation ticket, but your change touches paths mapped by these currently-validated
+flow(s): ${_stale_flows}. That's expected — the governor's staleness sweep will mark them STALE
+automatically once your PR lands; you do NOT need to re-validate them here. Noted only so a later
+reader knows these proven paths were disturbed by this ticket."
+      fi
+    fi
+  fi
 fi
 
 # #191: conflict-resolution re-dispatch. When the governor's merge of an EXISTING ticket-N PR hit a
