@@ -946,23 +946,15 @@ govern::pr_state() { # repo pr -> STATE|""
   gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
 }
 
-# Retarget an open PR's base branch. Usage: govern::retarget_pr_base <repo> <pr> <base>.
-# Uses the REST PATCH form, NOT `gh pr edit --base` (#116): on these repos `gh pr edit --base`
-# resolves the PR through gh's GraphQL `projectCards` query, which now hard-fails with
-# `GraphQL: Projects (classic) is being deprecated ... (repository.pullRequest.projectCards)` and
-# leaves the base UNCHANGED — silently, since the rest of the edit can still succeed. The REST
-# endpoint takes no projectCards and applies the change reliably. Honors GOVERN_ECHO=1 (dry-run).
-govern::retarget_pr_base() { # repo pr base -> 0 on success
-  local repo="$1" pr="$2" base="$3"
-  command -v gh >/dev/null 2>&1 || { govern::log "gh missing — cannot retarget $repo#$pr base"; return 1; }
-  local slug; slug="$(govern::repo_slug "$repo")"
-  if [[ "${GOVERN_ECHO:-0}" == "1" ]]; then
-    printf 'WOULD RUN: gh api -X PATCH repos/%s/pulls/%s -f base=%s\n' "$slug" "$pr" "$base"
-    return 0
-  fi
-  govern::log "retargeting $repo#$pr base -> $base (REST)"
-  gh api -X PATCH "repos/$slug/pulls/$pr" -f "base=$base" >/dev/null
-}
+# NOTE (#116) — if you ever need to RETARGET an open PR's base branch here (e.g. a dependency-reorder
+# in select-ticket.sh, or a base reconciliation after preflight-main.sh moves origin/main under an
+# in-flight PR), do NOT use `gh pr edit --base`. On these repos it resolves the PR through gh's GraphQL
+# `projectCards` query, which now hard-fails with `GraphQL: Projects (classic) is being deprecated …
+# (repository.pullRequest.projectCards)` and leaves the base UNCHANGED — silently, since the rest of
+# the edit still succeeds. Use the REST endpoint, which takes no projectCards and applies reliably:
+#     gh api -X PATCH "repos/$(govern::repo_slug "$repo")/pulls/$pr" -f "base=$new_base"
+# (A `govern::retarget_pr_base` helper implementing exactly this was removed 2026-07-06 as unused dead
+# code — no caller ever needed it; re-add it with a stub test the day a real caller does.)
 
 # Dependency numbers a ticket DECLARES via a body line like `**Depends on:** #K` (or `Depends on: #K,
 # #J`). Prints one bare number per declared dep (deduped order-preserving). Reads #N's block only —
