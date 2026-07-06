@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Batch C — update-channel correctness (VERSION bump at release). Fixes N5, N7, N8, N9, K5.
+
+### Fixed
+- **N5 — `workflows` orphaned from the update channel (permanent "behind" loop).** `scaffold.sh --diff-only` tracks `core-scripts worktrees govern githooks commands workflows`, but the bump loops in `commands/update.md` (Phase 3) and `commands/setup.md` (B1/B2) iterated only the first five — a pre-v1.5.0 workspace reported `workflows` drift forever. Added `workflows` to both loops (and a `workflows` row to setup.md's B1 inventory). Documented `.gitignore`'s deliberate exclusion from the drift set (it is placeholder-filled + merge-only, never overwritten, so not byte-comparable).
+- **N7 — `.harness-version` stamp conflated "any scaffold run" with "fully in sync".** `scaffold.sh` wrote the hub VERSION stamp unconditionally at the end of ANY invocation, incl single `--component` runs — so a partial run left doctor/govern-health false-reporting "up to date" while another component was behind. `component_stamp` now stamps ONLY when the workspace is fully converged against the templates (new `workspace_converged` gate, sharing one `probe_files` + `MECH_COMPONENTS` source of truth with `--diff-only`). Fresh `--component all` runs and the converging final bump of an `/update` loop still stamp; partial/non-converged runs do not.
+- **N8 — `commands/update.md` documented the wrong governor lock path.** The Phase 1 guard referenced `governor/.govern.lock/` (or `scripts/govern/.locks/*`); corrected to the real paths — single-run lock `governor/.govern.lock`, per-ticket claim locks `governor/.locks/ticket-<N>` (both under `governor/`, never `scripts/govern/`).
+- **N9 — `scaffold.sh --verify` skipped `.githooks/pre-commit`.** The `bash -n` find-sweep covered `*.sh`, `pre-push`, `prepare-commit-msg` but not `pre-commit` (a bash hook activated via `core.hooksPath`); a syntax-broken `pre-commit` would ship green. Added `-o -name 'pre-commit'`.
+- **K5 — `/shiploop:update` trusted a stale device clone.** Added a Phase-0.5 best-effort hub-freshness probe: when `$HUB` is a git clone, `git fetch -q origin` + `git rev-list --count HEAD..origin/main` warns with the behind-count and offers to `pull --ff-only` before any bump; degrades gracefully offline / non-git.
+
+### Tests
+- `templates/govern/test/test-update-channel.sh`: rewrote assertion 2 (partial run on a non-converged workspace writes no stamp), added the convergence-stamp assertion to 3, and added assertion 9 — N7's done-when end-to-end (a partial `--component` run does not flip doctor to "up to date" while a component is behind; the converging bump then advances the stamp).
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
