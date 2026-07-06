@@ -194,6 +194,7 @@ Build a `component | status` table (`present (current)` / `present (outdated)` /
 | worktrees | `scripts/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh` + `lib/registry.sh` |
 | tickets | `queue/tickets.md` present (old workspaces have `tickets.md` at ROOT — migrate) |
 | commands | `.claude/commands/{govern,resolve,investigate}.md` present |
+| workflows | `.claude/workflows/*.js` + bundled `.claude/skills/*/SKILL.md` present (tracked by `--diff-only`) |
 | govern | `scripts/govern/` + `governor/` present |
 | hooks | `scripts/{check-main-on-main,ticket-sweep-reminder,session-snapshot,router-posture-*}.sh` + `.claude/settings.json` wiring |
 | githooks | `.githooks/{pre-push,prepare-commit-msg}` + `git config core.hooksPath == .githooks` |
@@ -212,8 +213,14 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component worktrees    --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component govern       --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component githooks     --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component commands     --yes
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component workflows    --yes   # workflows + bundled skills
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds        --yes   # only fills absent seeds
 ```
+
+The refresh loop MUST cover every component `--diff-only` tracks (`core-scripts worktrees govern
+githooks commands workflows`), or an untracked component loops "behind" forever (N5). `.gitignore` is
+deliberately excluded — it is placeholder-filled + merge-only (never overwritten), so it is not a
+byte-comparable bump target.
 
 Component notes:
 - **config (workspace.sh):** scaffold.sh refuses to overwrite an existing workspace.sh unless `--yes`.
@@ -251,6 +258,27 @@ Component notes:
   overwrite `workspace.sh`, `package.json`, or `.claude/settings.json` without `--yes` — it warns
   and continues, so you get everything EXCEPT the config knobs. For a real refresh, run the
   components explicitly (as shown above) OR pass `--yes` on `all` after saving customizations.
+
+### B2b — Re-assert sub-repo commit hooks
+
+The `githooks` bump above only refreshes the harness root's `.githooks/`. Each sub-repo is an
+INDEPENDENT git repo that does NOT inherit the root's `core.hooksPath`, and a framework reinstall in
+a sub-repo (husky's `prepare` on `npm install`) silently regenerates its hooks dir, WIPING the
+attribution/pre-commit hooks the harness dropped there. So re-run the installers across every
+sub-repo on a bump too — not just at fresh setup (Phase 3):
+
+```bash
+source scripts/lib/workspace.sh
+source scripts/lib/githooks.sh
+for repo in "${REPOS[@]}"; do
+  [ -d "$META_ROOT/$repo/.git" ] || [ -f "$META_ROOT/$repo/.git" ] || continue
+  install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$repo"
+  install_subrepo_pre_commit_hook "$META_ROOT" "$META_ROOT/$repo"
+done
+```
+
+`doctor.sh`'s "sub-repo commit hooks" section flags any sub-repo whose resolved hook still differs
+from `.githooks/`; run this step whenever it warns.
 
 ### B3 — Verify + commit
 

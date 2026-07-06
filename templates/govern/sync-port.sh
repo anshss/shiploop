@@ -49,7 +49,10 @@
 #   GOVERN_MERGE_CMD, GOVERN_GH_BIN, GOVERN_SCAFFOLD_TEST_CMD (replaces the
 #   real scaffold+test step), GOVERN_TEMPLATE_REPO_DIR (templates repo working
 #   dir), GOVERN_SYNC_PORT_LOCK, GOVERN_SYNC_PORTER_TIMEOUT,
-#   GOVERN_FORBIDDEN_EXTRA (extra distinctive identity tokens), GOVERN_NO_PUSH
+#   GOVERN_FORBIDDEN_EXTRA (extra distinctive identity tokens; extends),
+#   GOVERN_FORBIDDEN_TOKENS (curated set that REPLACES the derived org/meta/repo
+#   list), GOVERN_FORBIDDEN_MIN_LEN (repo-token length filter, default 4),
+#   GOVERN_NO_PUSH
 #   (marker commit stays local) — plus every sync-templates.sh override
 #   (GOVERN_DIR / GOVERN_TEMPLATE_DIR / GOVERN_SYNC_MARKER / GOVERN_PROMPTS_DIR
 #   / …) passes through.
@@ -113,15 +116,48 @@ case "${1:-}" in
   *) govern::die "unknown arg '$1' (use --dry-run, --no-merge, or no arg)" ;;
 esac
 
+# >>> forbidden-token-gate (N3) >>> — keep edits inside this fenced region
 # ── forbidden identity strings ──────────────────────────────────────────────
 # The gate is generic across workspaces because the list is DERIVED from
-# config, not hardcoded: $GITHUB_ORG + the ${REPOS[@]} names + a base
-# product-token list ($META_NAME + optional $GOVERN_FORBIDDEN_EXTRA).
-# Lowercased + deduped. A genericized template must contain NONE of these on
-# the lines the porter ADDED.
+# config, not hardcoded. Composition + filter rule (N3):
+#   * $GITHUB_ORG and $META_NAME are the highest-signal identity tokens and are
+#     ALWAYS forbidden, UNFILTERED — kept even when short (e.g. a 2-letter org),
+#     because a real leak of the product's org/name must never slip through.
+#   * ${REPOS[@]} names are FILTERED before joining: dropped when shorter than
+#     $FORBIDDEN_MIN_LEN OR present in the embedded common-word stop list. Repo
+#     names are where dictionary-word collisions happen — reference workspaces
+#     have repos literally named `docs`, `console`, `website`, `site`, and a
+#     2-letter `aq`. Without the filter, a correctly-genericized line ("see the
+#     docs", "print to console") trips the -iwE gate as a FAKE leak.
+#   * $GOVERN_FORBIDDEN_EXTRA EXTENDS the list (operator-curated, UNFILTERED).
+#   * $GOVERN_FORBIDDEN_TOKENS, when non-empty, REPLACES the whole derived
+#     (org+meta+repos) list with an explicit curated set — the escape hatch when
+#     the auto-derivation is wrong in either direction. EXTRA still extends it.
+# Everything is lowercased + deduped. A genericized template must contain NONE
+# of these (whole-word, case-insensitive) on the lines the porter ADDED.
+FORBIDDEN_MIN_LEN="${GOVERN_FORBIDDEN_MIN_LEN:-4}"
+# Common English words that legitimately appear in genericized templates AND
+# also happen to be reference-workspace repo names — never treat as identity.
+# (Space-padded so a `*" $lc "*` membership test needs no exact-match loop.)
+FORBIDDEN_STOPWORDS=" docs doc console website web site sites app apps api core main mono repo repos test tests node run job jobs log logs lib bin src util utils admin panel client server shared common public static assets asset build dist temp cache queue store data page pages user users team teams "
 forbidden_tokens() { # -> one lowercased token per line, deduped
-  { printf '%s\n' "$GITHUB_ORG" "$META_NAME"
-    printf '%s\n' "${REPOS[@]}"
+  { if [[ -n "${GOVERN_FORBIDDEN_TOKENS:-}" ]]; then
+      # explicit curated override REPLACES the derived org/meta/repos list
+      for t in $GOVERN_FORBIDDEN_TOKENS; do printf '%s\n' "$t"; done
+    else
+      # high-signal identity — ALWAYS forbidden, no length/stop-word filter
+      printf '%s\n' "$GITHUB_ORG" "$META_NAME"
+      # repo names — filtered (len >= MIN and not a common dictionary word)
+      local r lc
+      for r in "${REPOS[@]}"; do
+        lc="$(printf '%s' "$r" | tr 'A-Z' 'a-z')"
+        [[ -z "$lc" ]] && continue
+        (( ${#lc} < FORBIDDEN_MIN_LEN )) && continue
+        [[ "$FORBIDDEN_STOPWORDS" == *" $lc "* ]] && continue
+        printf '%s\n' "$lc"
+      done
+    fi
+    # EXTRA always extends (operator-curated), UNFILTERED
     for t in ${GOVERN_FORBIDDEN_EXTRA:-}; do printf '%s\n' "$t"; done
   } | tr 'A-Z' 'a-z' | awk 'NF' | sort -u
 }
@@ -133,6 +169,7 @@ forbidden_regex() {
   done < <(forbidden_tokens)
   printf '(%s)' "$re"
 }
+# <<< forbidden-token-gate (N3) <<<
 
 # ── escalation (fail-closed sink) ───────────────────────────────────────────
 find_open_sync_escalation_n() { # branch -> N | ""
@@ -198,7 +235,7 @@ file_sync_escalation() { # reason  branch  files-multiline
     printf -- '- **Files:**'
     if [[ -n "$files" ]]; then printf ' %s' "$(printf '%s' "$files" | tr '\n' ' ')"; fi
     printf '\n'
-    printf -- '- **Question:** Port these into the templates by hand (additive + genericized), merge the branch, then run `sync-templates.sh --mark HEAD`.\n'
+    printf -- '- **Question:** Port these into the templates by hand (additive + genericized), merge the branch, then run `sync-templates.sh --mark %s`.\n' "$MARK_TO"
     printf -- '- **Options:** \n'
     printf -- '- **Answer:** _(operator)_\n'
     printf -- '- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n'
@@ -234,7 +271,16 @@ fi
 trap '_syncp_rc=$?; [[ "$_syncp_rc" -ne 0 ]] && sync_port_restore_templates_main; govern::lock_release "$LOCK"' EXIT
 
 # ── 1. drift? ───────────────────────────────────────────────────────────────
-drift_out="$("$SYNC_TEMPLATES" --check 2>&1)"; drift_rc=$?
+# N4: pin the enumeration UPPER BOUND once, first — a single HEAD capture that
+# --check, --files, and the eventual marker advance all key off. Without it,
+# --check / --files / rev-parse each resolve HEAD independently, so a concurrent
+# governor merge landing a mirrored-file commit on live main between enumeration
+# and the marker write is EXCLUDED from the port yet INCLUDED in the marker
+# advance (silent drift loss via race). Passing GOVERN_SYNC_UPPER_BOUND bounds
+# sync-templates' internal "base..HEAD" walks to "base..$MARK_TO".
+MARK_TO="$(git -C "$LIVE_ROOT" rev-parse HEAD 2>/dev/null || echo HEAD)"
+
+drift_out="$(GOVERN_SYNC_UPPER_BOUND="$MARK_TO" "$SYNC_TEMPLATES" --check 2>&1)"; drift_rc=$?
 if [[ "$drift_rc" -eq 0 ]]; then
   govern::log "sync-port: templates in sync — nothing to port."
   exit 0
@@ -244,16 +290,41 @@ fi
 
 DRIFT_FILES=()
 while IFS= read -r _f; do [[ -n "$_f" ]] && DRIFT_FILES+=("$_f"); done \
-  < <("$SYNC_TEMPLATES" --files 2>/dev/null | awk '/\[mirrored\]/{print $2}')
+  < <(GOVERN_SYNC_UPPER_BOUND="$MARK_TO" "$SYNC_TEMPLATES" --files 2>/dev/null | awk '/\[mirrored\]/{print $2}')
 if [[ "${#DRIFT_FILES[@]}" -eq 0 ]]; then
   govern::die "sync-port: --check said drift but --files listed none — refusing to act (fail-closed)."
 fi
 NFILES="${#DRIFT_FILES[@]}"
 FREGEX="$(forbidden_regex)"
 MARKER_SHA="$("$SYNC_TEMPLATES" --sha 2>/dev/null || echo unknown)"
-MARK_TO="$(git -C "$LIVE_ROOT" rev-parse HEAD 2>/dev/null || echo HEAD)"
 BRANCH="sync-auto-${MARKER_SHA:0:9}-${NFILES}f"
 drift_files_ml="$(printf '%s\n' "${DRIFT_FILES[@]}")"
+
+# N2: advance-the-marker-after-a-human-merge. `/shiploop:push` runs sync-port
+# with NO_MERGE=1 and opens a PR for HUMAN review — but the NO_MERGE path exits
+# BEFORE the marker advance (step 5), so after the human merges nothing moves the
+# marker: the next run sees identical marker+drift, re-cuts the SAME branch, and
+# re-spawns a full porter against a tree that already carries the change (fails
+# the "committed nothing" gate → escalates, forever). Detect it here — a MERGED
+# PR for THIS drift branch → advance the marker + CAS-commit it (mirroring step
+# 5) and exit 0, no porter respawn. Fail-open on any gh error (offline /
+# rate-limit) — never block sync-port on a signal we can't fetch.
+if command -v "$GH_BIN" >/dev/null 2>&1 && [[ "$DRY_RUN" -ne 1 ]]; then
+  _merged_pr="$("$GH_BIN" pr list --repo "$META_SLUG" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  if [[ -n "$_merged_pr" ]]; then
+    govern::log "sync-port: MERGED PR #$_merged_pr on $META_SLUG for branch $BRANCH — advancing marker to ${MARK_TO:0:9} (no porter respawn)"
+    if ! "$SYNC_TEMPLATES" --mark "$MARK_TO" >/dev/null 2>&1; then
+      file_sync_escalation "merged PR #$_merged_pr found for $BRANCH but advancing the sync marker failed — run 'sync-templates.sh --mark $MARK_TO' by hand." "$BRANCH" "$drift_files_ml"
+      exit 1
+    fi
+    marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | head -1)"
+    [[ -n "$marker_rel" ]] || marker_rel="scripts/govern/.templates-synced-at"
+    govern::commit_meta_to_main "$LIVE_ROOT" "$marker_rel" "chore(govern): advance template-sync marker to ${MARK_TO:0:9} (sync-port merged PR #$_merged_pr)"
+    govern::log "sync-port: marker advanced to ${MARK_TO:0:9} after merged PR #$_merged_pr."
+    echo "sync-port: merged PR #$_merged_pr already landed — marker advanced to ${MARK_TO:0:9} (no porter respawn)"
+    exit 0
+  fi
+fi
 
 # skip-if-open-PR: if a prior sync-port left an OPEN PR for THIS drift branch,
 # re-spawning the porter would just fight the existing PR. Skip — the operator
@@ -515,7 +586,7 @@ if [[ "$NO_MERGE" -eq 1 ]]; then
 fi
 
 if ! "$MERGE_CMD" "$UPSTREAM_REPO" "$pr_num" 2>>"$LOG_DIR/merge.log"; then
-  file_sync_escalation "gate PASSED + PR #$pr_num opened but the auto-merge failed (CI not green / conflict; see $LOG_DIR/merge.log). Merge it by hand, then run sync-templates.sh --mark HEAD." "$BRANCH" "$drift_files_ml"
+  file_sync_escalation "gate PASSED + PR #$pr_num opened but the auto-merge failed (CI not green / conflict; see $LOG_DIR/merge.log). Merge it by hand, then run sync-templates.sh --mark $MARK_TO." "$BRANCH" "$drift_files_ml"
   exit 1
 fi
 govern::log "sync-port: merged $META_SLUG PR #$pr_num"
