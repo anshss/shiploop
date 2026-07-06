@@ -235,7 +235,7 @@ file_sync_escalation() { # reason  branch  files-multiline
     printf -- '- **Files:**'
     if [[ -n "$files" ]]; then printf ' %s' "$(printf '%s' "$files" | tr '\n' ' ')"; fi
     printf '\n'
-    printf -- '- **Question:** Port these into the templates by hand (additive + genericized), merge the branch, then run `sync-templates.sh --mark HEAD`.\n'
+    printf -- '- **Question:** Port these into the templates by hand (additive + genericized), merge the branch, then run `sync-templates.sh --mark %s`.\n' "$MARK_TO"
     printf -- '- **Options:** \n'
     printf -- '- **Answer:** _(operator)_\n'
     printf -- '- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n'
@@ -271,7 +271,16 @@ fi
 trap '_syncp_rc=$?; [[ "$_syncp_rc" -ne 0 ]] && sync_port_restore_templates_main; govern::lock_release "$LOCK"' EXIT
 
 # ── 1. drift? ───────────────────────────────────────────────────────────────
-drift_out="$("$SYNC_TEMPLATES" --check 2>&1)"; drift_rc=$?
+# N4: pin the enumeration UPPER BOUND once, first — a single HEAD capture that
+# --check, --files, and the eventual marker advance all key off. Without it,
+# --check / --files / rev-parse each resolve HEAD independently, so a concurrent
+# governor merge landing a mirrored-file commit on live main between enumeration
+# and the marker write is EXCLUDED from the port yet INCLUDED in the marker
+# advance (silent drift loss via race). Passing GOVERN_SYNC_UPPER_BOUND bounds
+# sync-templates' internal "base..HEAD" walks to "base..$MARK_TO".
+MARK_TO="$(git -C "$LIVE_ROOT" rev-parse HEAD 2>/dev/null || echo HEAD)"
+
+drift_out="$(GOVERN_SYNC_UPPER_BOUND="$MARK_TO" "$SYNC_TEMPLATES" --check 2>&1)"; drift_rc=$?
 if [[ "$drift_rc" -eq 0 ]]; then
   govern::log "sync-port: templates in sync — nothing to port."
   exit 0
@@ -281,16 +290,41 @@ fi
 
 DRIFT_FILES=()
 while IFS= read -r _f; do [[ -n "$_f" ]] && DRIFT_FILES+=("$_f"); done \
-  < <("$SYNC_TEMPLATES" --files 2>/dev/null | awk '/\[mirrored\]/{print $2}')
+  < <(GOVERN_SYNC_UPPER_BOUND="$MARK_TO" "$SYNC_TEMPLATES" --files 2>/dev/null | awk '/\[mirrored\]/{print $2}')
 if [[ "${#DRIFT_FILES[@]}" -eq 0 ]]; then
   govern::die "sync-port: --check said drift but --files listed none — refusing to act (fail-closed)."
 fi
 NFILES="${#DRIFT_FILES[@]}"
 FREGEX="$(forbidden_regex)"
 MARKER_SHA="$("$SYNC_TEMPLATES" --sha 2>/dev/null || echo unknown)"
-MARK_TO="$(git -C "$LIVE_ROOT" rev-parse HEAD 2>/dev/null || echo HEAD)"
 BRANCH="sync-auto-${MARKER_SHA:0:9}-${NFILES}f"
 drift_files_ml="$(printf '%s\n' "${DRIFT_FILES[@]}")"
+
+# N2: advance-the-marker-after-a-human-merge. `/shiploop:push` runs sync-port
+# with NO_MERGE=1 and opens a PR for HUMAN review — but the NO_MERGE path exits
+# BEFORE the marker advance (step 5), so after the human merges nothing moves the
+# marker: the next run sees identical marker+drift, re-cuts the SAME branch, and
+# re-spawns a full porter against a tree that already carries the change (fails
+# the "committed nothing" gate → escalates, forever). Detect it here — a MERGED
+# PR for THIS drift branch → advance the marker + CAS-commit it (mirroring step
+# 5) and exit 0, no porter respawn. Fail-open on any gh error (offline /
+# rate-limit) — never block sync-port on a signal we can't fetch.
+if command -v "$GH_BIN" >/dev/null 2>&1 && [[ "$DRY_RUN" -ne 1 ]]; then
+  _merged_pr="$("$GH_BIN" pr list --repo "$META_SLUG" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  if [[ -n "$_merged_pr" ]]; then
+    govern::log "sync-port: MERGED PR #$_merged_pr on $META_SLUG for branch $BRANCH — advancing marker to ${MARK_TO:0:9} (no porter respawn)"
+    if ! "$SYNC_TEMPLATES" --mark "$MARK_TO" >/dev/null 2>&1; then
+      file_sync_escalation "merged PR #$_merged_pr found for $BRANCH but advancing the sync marker failed — run 'sync-templates.sh --mark $MARK_TO' by hand." "$BRANCH" "$drift_files_ml"
+      exit 1
+    fi
+    marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | head -1)"
+    [[ -n "$marker_rel" ]] || marker_rel="scripts/govern/.templates-synced-at"
+    govern::commit_meta_to_main "$LIVE_ROOT" "$marker_rel" "chore(govern): advance template-sync marker to ${MARK_TO:0:9} (sync-port merged PR #$_merged_pr)"
+    govern::log "sync-port: marker advanced to ${MARK_TO:0:9} after merged PR #$_merged_pr."
+    echo "sync-port: merged PR #$_merged_pr already landed — marker advanced to ${MARK_TO:0:9} (no porter respawn)"
+    exit 0
+  fi
+fi
 
 # skip-if-open-PR: if a prior sync-port left an OPEN PR for THIS drift branch,
 # re-spawning the porter would just fight the existing PR. Skip — the operator
@@ -552,7 +586,7 @@ if [[ "$NO_MERGE" -eq 1 ]]; then
 fi
 
 if ! "$MERGE_CMD" "$UPSTREAM_REPO" "$pr_num" 2>>"$LOG_DIR/merge.log"; then
-  file_sync_escalation "gate PASSED + PR #$pr_num opened but the auto-merge failed (CI not green / conflict; see $LOG_DIR/merge.log). Merge it by hand, then run sync-templates.sh --mark HEAD." "$BRANCH" "$drift_files_ml"
+  file_sync_escalation "gate PASSED + PR #$pr_num opened but the auto-merge failed (CI not green / conflict; see $LOG_DIR/merge.log). Merge it by hand, then run sync-templates.sh --mark $MARK_TO." "$BRANCH" "$drift_files_ml"
   exit 1
 fi
 govern::log "sync-port: merged $META_SLUG PR #$pr_num"
