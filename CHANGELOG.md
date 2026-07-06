@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate and verdict pipeline (Phases 1-2). VERSION bump at release.
+
 ### Added
 
 - **Flow-registry verdict pipeline (validations feature, Phase 2).** Wires validation outcomes into
@@ -48,6 +50,54 @@
   - Tests: `test-flows-parser.sh` (parser round-trip + unknown-field preservation + grammar validation),
     `test-flows-cas-edit.sh` (CAS retry under an injected concurrent push), `test-flows-lint.sh` (every
     lint row). Scaffold now copies all of `govern/lib/*.sh` (not just `common.sh`).
+
+- **`templates/govern/test/test-spawn-worker-sweep.sh`** (N11) — regression test for the #239 orphan-resource sweep: asserts `spawn-worker.sh` fires `GOVERN_DEPLOY_SWEEP_CMD` on BOTH the clean-resolve and the hard-KILLED (timeout, exit >128, no report) exit paths — the #3001 leak class where a killed worker never runs its own cleanup — and that the sweep is handed the worker's start epoch + ticket number. Fails if the trap wiring is removed.
+- **`templates/govern/test/test-pr-hygiene-api.sh`** (N12) — stub-`gh` coverage for the two PR-hygiene wrappers that talk to the GitHub API (previously only their pure sub-helper `_strip_ticket_ref` was tested): `govern::scrub_pr_ticket_ref` (asserts the `-X PATCH repos/<slug>/pulls/<pr>` endpoint + scrubbed `.title`/`.body`, the idempotent no-op, and the non-object defensive no-op) and `govern::pr_spec_files` (asserts the `pulls/<pr>/files --jq '.[].filename'` leak grep). Red on endpoint/jq-path regressions.
+
+### Fixed
+- **N3 — sync-port forbidden-identity gate no longer treats dictionary words as identity strings.** `templates/govern/sync-port.sh` derived its forbidden-token list from raw `$GITHUB_ORG` + `$META_NAME` + `${REPOS[@]}` with no filter, so a reference workspace with repos named `docs`, `console`, `website` (or a 2-letter `aq`) would block a correctly-genericized ported line like "see the docs" as a fake leak. The repo-derived tokens are now filtered (minimum length, default 4, via `GOVERN_FORBIDDEN_MIN_LEN`, plus an embedded common-word stop list); `$GITHUB_ORG` and `$META_NAME` remain **always** forbidden and unfiltered (real org/name leaks still caught even when short). Added a curated `GOVERN_FORBIDDEN_TOKENS` override that **replaces** the derived org/meta/repo list; `GOVERN_FORBIDDEN_EXTRA` keeps its extend semantics. New regression `templates/govern/test/test-forbidden-tokens.sh` proves: "see the docs" passes with a repo named `docs`, org/meta names still fail, a distinctive repo name (`mjolnir`) still fails, and the override replaces the derived list.
+- **N1 — escalation boilerplate pinned the SHA, not `HEAD`.** `sync-port.sh`'s generic escalation body and the merge-failure message told the human to run `sync-templates.sh --mark HEAD`; a human resolving it days later would advance the marker over never-examined commits (silent drift-tracking loss). Both sites now interpolate the captured `$MARK_TO`, matching the other messages. No literal `--mark HEAD` remains.
+- **N2 — `/shiploop:push` now advances the marker after a human merges the PR.** The `NO_MERGE` review path exited before the marker advance, so after a merge the next run re-cut the same branch and re-spawned a full porter against an already-ported tree (fails the "committed nothing" gate → escalates forever). `sync-port.sh` now checks for a MERGED PR on the drift branch BEFORE spawning the porter; if found it advances the marker (`--mark $MARK_TO` + CAS-commit) and exits 0. Regression test with a `gh` stub (`test-sync-port-merged-marker.sh`).
+- **N4 — TOCTOU on the enumeration upper bound.** `sync-port.sh` resolved `HEAD` three independent times (`--check`, `--files`, `rev-parse`), so a mirrored-file commit landing on live main mid-run could be excluded from the port yet swept into the marker advance. `MARK_TO` is now captured ONCE, first, and threaded as a new `GOVERN_SYNC_UPPER_BOUND` env into `sync-templates.sh` (bounds `--check`/`--files`/`--diff` to `base..$MARK_TO` instead of `base..HEAD`; defaults to `HEAD`, unchanged behavior). Regression test (`test-sync-templates-upper-bound.sh`).
+- **K6 — hub→workspace pulls no longer conflate with local improvements.** `sync-templates.sh` `drift_commits()` was purely commit-based, so a `/shiploop:update` converge counted as harness→hub drift (verified live: 3 of 5 "unported" commits were pulls). `drift_commits()` is now content-aware — a commit whose post-state for a mirrored file already matches the template is a convergence and is skipped. Complemented by a converge-time marker-advance instruction (Phase 3.5) in `commands/update.md`, guarded to only auto-advance when there was no pre-existing local drift. Regression test (`test-sync-templates-converge.sh`).
+- **N5 — `workflows` orphaned from the update channel (permanent "behind" loop).** `scaffold.sh --diff-only` tracks `core-scripts worktrees govern githooks commands workflows`, but the bump loops in `commands/update.md` (Phase 3) and `commands/setup.md` (B1/B2) iterated only the first five — a pre-v1.5.0 workspace reported `workflows` drift forever. Added `workflows` to both loops (and a `workflows` row to setup.md's B1 inventory). Documented `.gitignore`'s deliberate exclusion from the drift set (it is placeholder-filled + merge-only, never overwritten, so not byte-comparable).
+- **N7 — `.harness-version` stamp conflated "any scaffold run" with "fully in sync".** `scaffold.sh` wrote the hub VERSION stamp unconditionally at the end of ANY invocation, incl single `--component` runs — so a partial run left doctor/govern-health false-reporting "up to date" while another component was behind. `component_stamp` now stamps ONLY when the workspace is fully converged against the templates (new `workspace_converged` gate, sharing one `probe_files` + `MECH_COMPONENTS` source of truth with `--diff-only`). Fresh `--component all` runs and the converging final bump of an `/update` loop still stamp; partial/non-converged runs do not.
+- **N8 — `commands/update.md` documented the wrong governor lock path.** The Phase 1 guard referenced `governor/.govern.lock/` (or `scripts/govern/.locks/*`); corrected to the real paths — single-run lock `governor/.govern.lock`, per-ticket claim locks `governor/.locks/ticket-<N>` (both under `governor/`, never `scripts/govern/`).
+- **N9 — `scaffold.sh --verify` skipped `.githooks/pre-commit`.** The `bash -n` find-sweep covered `*.sh`, `pre-push`, `prepare-commit-msg` but not `pre-commit` (a bash hook activated via `core.hooksPath`); a syntax-broken `pre-commit` would ship green. Added `-o -name 'pre-commit'`.
+- **K5 — `/shiploop:update` trusted a stale device clone.** Added a Phase-0.5 best-effort hub-freshness probe: when `$HUB` is a git clone, `git fetch -q origin` + `git rev-list --count HEAD..origin/main` warns with the behind-count and offers to `pull --ff-only` before any bump; degrades gracefully offline / non-git.
+
+- **husky (and any framework that regenerates its hooks dir on `npm install`) silently wiping
+  sub-repo attribution/pre-commit hooks — now audited AND re-asserted.** Each sub-repo is an
+  independent git repo that does not inherit the harness root's `core.hooksPath`; the harness
+  installs `prepare-commit-msg` (attribution) + `pre-commit` (optional lint-fix) into each
+  sub-repo's *resolved* hooks dir (husky's `.husky/_/` when applicable). Previously that install
+  happened only at fresh setup and at worktree creation — and in `worktree/new.sh` it ran BEFORE
+  the bootstrap step, so a bootstrap `npm install` triggering husky's `prepare` regenerated
+  `.husky/_/*` and wiped the hook. `doctor.sh` audited only the root's `core.hooksPath`, so a
+  stubbed sub-repo was invisible. Empirically confirmed with a real `npm install`: husky
+  regenerates `.husky/_/prepare-commit-msg`, replacing the attribution hook with its stub.
+  - **`templates/doctor.sh`** gains a "sub-repo commit hooks" section that diffs each sub-repo's
+    resolved `prepare-commit-msg`/`pre-commit` against `.githooks/` and flags a stubbed/stale/absent
+    hook (warn, never fail), pointing at the re-install path.
+  - **`templates/worktree/new.sh`** re-asserts both hook installers AFTER the bootstrap step, so a
+    bootstrap `npm install`/husky reinstall can no longer leave the worktree's sub-repos stubbed.
+  - **`commands/update.md` (Phase 3b)** and **`commands/setup.md` (Phase B2b)** now re-run the hook
+    installers across every sub-repo on update/bump — not fresh-setup-only — restoring a wiped hook
+    on each converge.
+  - **`templates/lib/githooks.sh`** extracts the shared `resolve_subrepo_hooksdir` resolver (both
+    installers now share it, byte-consistent) and adds the read-only `audit_subrepo_hooks` seam the
+    doctor check uses.
+  - Regression: **`templates/govern/test/test-subrepo-hook-resilience.sh`** proves the audit flags a
+    husky-stubbed sub-repo and that a re-assert after a simulated husky regeneration restores the
+    hook byte-identical to `.githooks/`.
+
+- **`templates/govern/spawn-worker.sh`** (N11) — the post-worker orphan sweep's test seam was dead: the genericization refactor moved the explicit `GOVERN_DEPLOY_SWEEP_CMD` fire BELOW a `-z "${GOVERN_WORKTREE_CMD:-}"` guard, so the sweep could never fire under a test worktree override (i.e. in any test). Dropped that clause from the guard (kept the DRY-mode skip); a live governor run never sets `GOVERN_WORKTREE_CMD`, so real behavior is unchanged while the #239 trap is now regression-testable.
+
+### Removed
+- **`govern::retarget_pr_base`** (N10) — a fully-implemented REST-PATCH workaround for the `gh pr edit --base` GraphQL-deprecation bug (#116) with ZERO callers anywhere (hub + live workspace verified). Deleted as dead code; the #116 workaround knowledge is preserved as a concise NOTE comment in `templates/govern/lib/common.sh` where a future base-retargeting caller (select-ticket dependency-reorder / preflight-main base reconciliation) would look.
+
+### Tests
+- `templates/govern/test/test-update-channel.sh`: rewrote assertion 2 (partial run on a non-converged workspace writes no stamp), added the convergence-stamp assertion to 3, and added assertion 9 — N7's done-when end-to-end (a partial `--component` run does not flip doctor to "up to date" while a component is behind; the converging bump then advances the stamp).
 
 ## 1.5.1 — 2026-07-05
 

@@ -256,8 +256,12 @@ run_deploy_sweep() {
   local sweep="${GOVERN_DEPLOY_SWEEP_CMD:-}"
   # No seam configured → nothing to sweep (this template has no deploy infra). Default = disabled.
   [[ -n "$sweep" ]] || return 0
-  # Skip in dry mode (no real worker, no resources) and when a worktree-cmd override is set (tests).
-  [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] || return 0
+  # Skip only in DRY mode (no real worker, no resources). An explicitly-wired seam DOES fire under a
+  # test worktree-cmd override — that is exactly how the #239 trap wiring is regression-tested
+  # (test-spawn-worker-sweep.sh). A live governor run never sets GOVERN_WORKTREE_CMD, so real
+  # behavior is unchanged; do NOT re-add a `-z "${GOVERN_WORKTREE_CMD:-}"` clause here or the sweep
+  # seam goes dead in tests and a removed trap can silently regress the #3001 kill-path leak.
+  [[ "${GOVERN_MODE:-live}" == "live" ]] || return 0
   # A time-window sweep closes EVERY resource born in this worker's window, so it is only safe in
   # SINGLE-RUN mode (one worker at a time). Under GOVERN_ALLOW_CONCURRENT=1 two parallel workers'
   # windows overlap and this could close a sibling's in-flight resource — relying instead on the
