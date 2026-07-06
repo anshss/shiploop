@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+Sub-repo commit-hook resilience (N6) — VERSION bump at release.
+
+### Fixed
+
+- **husky (and any framework that regenerates its hooks dir on `npm install`) silently wiping
+  sub-repo attribution/pre-commit hooks — now audited AND re-asserted.** Each sub-repo is an
+  independent git repo that does not inherit the harness root's `core.hooksPath`; the harness
+  installs `prepare-commit-msg` (attribution) + `pre-commit` (optional lint-fix) into each
+  sub-repo's *resolved* hooks dir (husky's `.husky/_/` when applicable). Previously that install
+  happened only at fresh setup and at worktree creation — and in `worktree/new.sh` it ran BEFORE
+  the bootstrap step, so a bootstrap `npm install` triggering husky's `prepare` regenerated
+  `.husky/_/*` and wiped the hook. `doctor.sh` audited only the root's `core.hooksPath`, so a
+  stubbed sub-repo was invisible. Empirically confirmed with a real `npm install`: husky
+  regenerates `.husky/_/prepare-commit-msg`, replacing the attribution hook with its stub.
+  - **`templates/doctor.sh`** gains a "sub-repo commit hooks" section that diffs each sub-repo's
+    resolved `prepare-commit-msg`/`pre-commit` against `.githooks/` and flags a stubbed/stale/absent
+    hook (warn, never fail), pointing at the re-install path.
+  - **`templates/worktree/new.sh`** re-asserts both hook installers AFTER the bootstrap step, so a
+    bootstrap `npm install`/husky reinstall can no longer leave the worktree's sub-repos stubbed.
+  - **`commands/update.md` (Phase 3b)** and **`commands/setup.md` (Phase B2b)** now re-run the hook
+    installers across every sub-repo on update/bump — not fresh-setup-only — restoring a wiped hook
+    on each converge.
+  - **`templates/lib/githooks.sh`** extracts the shared `resolve_subrepo_hooksdir` resolver (both
+    installers now share it, byte-consistent) and adds the read-only `audit_subrepo_hooks` seam the
+    doctor check uses.
+  - Regression: **`templates/govern/test/test-subrepo-hook-resilience.sh`** proves the audit flags a
+    husky-stubbed sub-repo and that a re-assert after a simulated husky regeneration restores the
+    hook byte-identical to `.githooks/`.
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
