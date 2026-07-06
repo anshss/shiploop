@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Governor test-coverage + dead-code cleanup (remediation batch F: N11, N12, N10). VERSION bump at release.
+
+### Added
+- **`templates/govern/test/test-spawn-worker-sweep.sh`** (N11) — regression test for the #239 orphan-resource sweep: asserts `spawn-worker.sh` fires `GOVERN_DEPLOY_SWEEP_CMD` on BOTH the clean-resolve and the hard-KILLED (timeout, exit >128, no report) exit paths — the #3001 leak class where a killed worker never runs its own cleanup — and that the sweep is handed the worker's start epoch + ticket number. Fails if the trap wiring is removed.
+- **`templates/govern/test/test-pr-hygiene-api.sh`** (N12) — stub-`gh` coverage for the two PR-hygiene wrappers that talk to the GitHub API (previously only their pure sub-helper `_strip_ticket_ref` was tested): `govern::scrub_pr_ticket_ref` (asserts the `-X PATCH repos/<slug>/pulls/<pr>` endpoint + scrubbed `.title`/`.body`, the idempotent no-op, and the non-object defensive no-op) and `govern::pr_spec_files` (asserts the `pulls/<pr>/files --jq '.[].filename'` leak grep). Red on endpoint/jq-path regressions.
+
+### Fixed
+- **`templates/govern/spawn-worker.sh`** (N11) — the post-worker orphan sweep's test seam was dead: the genericization refactor moved the explicit `GOVERN_DEPLOY_SWEEP_CMD` fire BELOW a `-z "${GOVERN_WORKTREE_CMD:-}"` guard, so the sweep could never fire under a test worktree override (i.e. in any test). Dropped that clause from the guard (kept the DRY-mode skip); a live governor run never sets `GOVERN_WORKTREE_CMD`, so real behavior is unchanged while the #239 trap is now regression-testable.
+
+### Removed
+- **`govern::retarget_pr_base`** (N10) — a fully-implemented REST-PATCH workaround for the `gh pr edit --base` GraphQL-deprecation bug (#116) with ZERO callers anywhere (hub + live workspace verified). Deleted as dead code; the #116 workaround knowledge is preserved as a concise NOTE comment in `templates/govern/lib/common.sh` where a future base-retargeting caller (select-ticket dependency-reorder / preflight-main base reconciliation) would look.
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
