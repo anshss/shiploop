@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Flow-registry substrate (validations feature, Phase 1).** A net-new `validation/flows.md` registry
+  keyed by stable dot-kebab flow ids pinned to code SHAs — the durable inventory of which user-facing
+  paths are proven at HEAD, stale, failed, or measured-ineffective. Ships as pure mechanism (no LLM):
+  - **`templates/govern/lib/flows.sh`** — a net-new block parser (flow blocks anchor on `^## <id>`,
+    disjoint from the ticket parser's `^## #<digits>`): `govern::flow_ids/flow_block/flow_field`
+    (inline-HTML-comment stripping), `govern::flow_set_field` (field upsert that preserves unknown
+    fields + comments verbatim), `govern::flow_validate` (grammar conformance), `govern::cas_edit`
+    (a compare-and-swap registry write — sync → edit-fn → commit → CAS-push with rebase-retry, factored
+    from bookkeep's step-0 sync + step-4/5 push, serialized under the bookkeep lock), glob-resolution
+    helpers, and `govern::flows_lint` (the lint matrix). Sourced by `common.sh` (guarded on existence).
+  - **`templates/govern/lint-validation-refs.sh`** extended additively with the flow-registry lint
+    matrix: a `logs/` evidence reference fails; a dangling `Evidence:` ref fails; a `Paths:` glob that
+    resolves to 0 tracked files fails **and auto-degrades the flow to `STALE`** (an empty git-log must
+    never read as "no changes"); oversized assets warn (>300 KB/file, >2 MB/dir); a PII/secret shape in
+    tracked evidence fails, suppressible with a `<!-- lint:allow <pattern> -->` marker.
+  - **`templates/seed/validation/flows.md`** — a seed registry documenting the block grammar; scaffold
+    installs it (+ `validation/evidence/assets/`) via `component_seeds` (never overwritten).
+  - Tests: `test-flows-parser.sh` (parser round-trip + unknown-field preservation + grammar validation),
+    `test-flows-cas-edit.sh` (CAS retry under an injected concurrent push), `test-flows-lint.sh` (every
+    lint row). Scaffold now copies all of `govern/lib/*.sh` (not just `common.sh`).
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.

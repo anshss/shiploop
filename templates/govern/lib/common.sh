@@ -18,6 +18,11 @@ export META_ROOT="$WS_ROOT"
 # shellcheck source=../../lib/workspace.sh
 source "$WS_ROOT/scripts/lib/workspace.sh"
 
+# Flow-registry substrate (validations feature). Sourced here so every govern:: consumer (bookkeep,
+# run-loop, file-ticket, spawn-worker, lint) inherits the flow parser + cas_edit + lint helpers.
+# Guarded on existence so a workspace scaffolded before this module shipped simply runs without it.
+[[ -f "$GOVERN_LIB_DIR/flows.sh" ]] && source "$GOVERN_LIB_DIR/flows.sh"
+
 GOVERNOR_DIR="$WS_ROOT/governor"
 PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
