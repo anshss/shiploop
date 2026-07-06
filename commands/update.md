@@ -51,6 +51,38 @@ Otherwise let `SCAFFOLD=$HUB/scaffold.sh`. Confirm `bash "$SCAFFOLD" --version` 
 that `$HUB/templates` is a directory. If either check fails, treat the hub as unresolvable and print
 the same guidance.
 
+## Phase 0.5 — Hub freshness probe (network, best-effort)
+
+`/update` is otherwise a **no-network LOCAL reconcile** — it compares this workspace against the hub
+clone on disk. But that clone can itself be behind GitHub: if it is, `/update` would happily report
+"already at hub VERSION" while both the clone AND this workspace are stale (observed live: a clone 1
+commit behind, missing a merged PR). Nothing else nudges the device clone to refresh — workspaces get
+doctor staleness warnings; the clone has no equivalent. This probe closes that gap (K5).
+
+Only when `$HUB` is a git clone (`git -C "$HUB" rev-parse --git-dir` succeeds — a plugin-cache or
+tarball install may not be), do a **best-effort** upstream check. It must degrade gracefully with no
+network and never block the update:
+
+```bash
+if git -C "$HUB" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$HUB" fetch -q origin 2>/dev/null; then
+    behind="$(git -C "$HUB" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+    if [ "${behind:-0}" -gt 0 ]; then
+      echo "⚠ hub clone is $behind commit(s) BEHIND origin/main ($HUB)."
+      echo "  This local reconcile can only pull what the clone already has."
+      echo "  Refresh it first (recommended):  git -C \"$HUB\" pull --ff-only origin main"
+    fi
+  else
+    echo "── /update: offline or no 'origin' remote — skipping hub freshness probe (local reconcile only) ──"
+  fi
+fi
+```
+
+If the clone is behind, WARN with the count and OFFER to `git -C "$HUB" pull --ff-only origin main`
+before continuing — do NOT auto-pull (the operator may be pinned intentionally). If the operator
+declines, proceed against the clone as-is and note in the Phase 5 report that the hub itself may be
+stale. Offline / non-git hub → skip silently and carry on with the local reconcile.
+
 ## Phase 1 — Workspace preconditions
 
 Must be a meta-repo workspace: `scripts/lib/workspace.sh` exists. Else STOP and tell the operator to
@@ -64,9 +96,10 @@ If not, STOP and offer to `git switch` first.
 clean. If dirty, STOP and print the paths. The operator commits/stashes first; the command overwrites
 mechanism scripts and would clobber uncommitted changes to them.
 
-**Governor lock guard.** If `governor/.govern.lock/` (or `scripts/govern/.locks/*`) is held by a live
-governor, STOP and tell the operator to wait for the run to end (or reclaim a stale lock with
-`bash scripts/govern/lock-release.sh`). A bump that overwrites `govern/lib/common.sh` while a
+**Governor lock guard.** If the single-run lock `governor/.govern.lock` is held, or any per-ticket
+claim lock `governor/.locks/ticket-<N>` exists (both under `governor/`, never under `scripts/govern/`),
+a live governor is running — STOP and tell the operator to wait for the run to end (or reclaim a stale
+lock with `bash scripts/govern/lock-release.sh`). A bump that overwrites `govern/lib/common.sh` while a
 governor run is live is a real hazard — the reference-instance doctrine documents this.
 
 ## Phase 2 — Version + diff check (no writes)
@@ -86,11 +119,13 @@ Otherwise proceed to Phase 3 with the list of `behind` components as the bump pl
 
 ## Phase 3 — Component-by-component bump
 
-Bump every mechanism component reported behind. These four are safe to refresh without an
-interview — they only read `workspace.sh`:
+Bump every mechanism component reported behind. These are safe to refresh without an
+interview — they only read `workspace.sh`. The loop MUST cover every component `--diff-only`
+tracks (`core-scripts worktrees govern githooks commands workflows`), or an untracked component
+loops "behind" forever (N5):
 
 ```bash
-for c in core-scripts worktrees govern githooks commands; do
+for c in core-scripts worktrees govern githooks commands workflows; do
   bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component "$c" --yes
 done
 # seeds: only fills absent seeds (never overwrites operator data).
@@ -109,6 +144,12 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge
 - `package-json` — carries operator-added scripts. Same rule: warn, don't overwrite.
 - `settings` (full) — carries operator hook additions. Use `settings-merge` (already run above) to
   add missing harness stanzas without touching the rest of the file.
+- `gitignore` — intentionally **not** a bump target and intentionally absent from the `--diff-only`
+  drift set. `.gitignore` is placeholder-filled (sub-repo names, lockfile ignores per package
+  manager) and **merge-only** — `component_gitignore` appends any missing scaffolded lines but never
+  overwrites operator entries, so a byte-for-byte template compare would false-report drift. New
+  scaffolded ignore lines land automatically the next time any interview-driven scaffold runs; there
+  is nothing to reconcile here.
 
 The knob-type migration guard (v1.1.0 → v1.2.0 array→string) inside `component_workspace_sh` prints
 the mechanical migration when it detects the legacy shape. If it fires, surface it in the report.
@@ -134,6 +175,36 @@ done
 The pre-commit installer is chain-safe (a non-ours pre-commit is left in place) and a no-op unless
 `WSP_LINT_FIX_CMD` is set. `doctor.sh`'s "sub-repo commit hooks" section flags any sub-repo whose
 resolved hook still differs from `.githooks/` — run this step when it warns.
+
+## Phase 3.5 — Advance the sync marker (converge bookkeeping)
+
+A hub→workspace bump REWRITES mirrored mechanism scripts, so the converge commit you're about to
+make touches mirrored files. `sync-templates.sh` is marker-based, so it would otherwise count that
+pull as harness→hub "drift" — a `/shiploop:push` run would then try to port the hub's own code back
+to the hub (`drift_commits`' content-aware skip catches most of this, but the marker is the durable
+fix). Advance the marker THROUGH the converge so a pull doesn't masquerade as unported local work.
+
+**Guard — only auto-advance when there was NO pre-existing local drift.** Record the drift state
+BEFORE the Phase-3 bump:
+
+```bash
+bash scripts/govern/sync-templates.sh --check >/dev/null 2>&1; PRE_DRIFT=$?   # 3 = had local drift, 0 = clean
+```
+
+Then, AFTER the operator commits the converge (Phase 5), advance the marker to that commit **only if
+`PRE_DRIFT` was 0**:
+
+```bash
+if [ "${PRE_DRIFT:-0}" -eq 0 ]; then
+  bash scripts/govern/sync-templates.sh --mark HEAD    # marks THROUGH the converge commit
+else
+  echo "⚠ pre-existing unported local drift — NOT auto-advancing the sync marker."
+  echo "  Run /shiploop:push to port your local mechanism improvements first, then --mark by hand."
+fi
+```
+
+If `PRE_DRIFT` was 3 there were genuine local mechanism improvements not yet pushed to the hub;
+auto-advancing would silently bury them. Warn and leave the marker for `/shiploop:push`.
 
 ## Phase 4 — Verify (no auth needed)
 
