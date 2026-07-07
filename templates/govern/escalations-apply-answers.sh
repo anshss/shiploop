@@ -308,4 +308,4 @@ govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is miss
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
   fi
 )
-echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule"
+echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule, externalized $n_ext"

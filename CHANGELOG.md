@@ -17,6 +17,20 @@
   pattern is unchanged, so the guard is never weakened — and the `.githooks/pre-push` sanctioned-branch
   check accepts `sl-<12hex>` under `GOVERN_RUN`. The existing PR title/body scrub remains the
   unconditional backstop for both cases.
+- **Externalization review gate (staged, operator-approved).** The externalization lane no longer
+  auto-files public issues. Each run now **stages** eligible Low tickets out of `tickets.md` into
+  `queue/tickets-externalize-review.md` and files ONE escalation questionnaire (Kind:
+  `externalize-review`, deduped so exactly one is ever open) with three dispositions: **approve-all**
+  files every staged ticket as a public issue and de-stages it; **decide-later** leaves them staged and
+  re-nudges next run; **move-back:&lt;ids&gt;** returns the listed tickets to `tickets.md` stamped
+  `**Externalize:** never` (honored by `govern::externalize_candidates`, so they never re-stage) while
+  the rest stay staged. Dispositions are wired through `escalations-apply-answers.sh` (mirroring the
+  flows `kill` path): the tokens are added to `govern::norm_disposition` **last and kind-gated**, so the
+  generic do-the-work/defer/mitigated lifecycle cannot regress, and the queue edits are published by
+  apply-answers' single atomic commit. Idempotence + partial-failure heal (the `externalized.md` ledger)
+  and dry-mode inertness are preserved. `externalize-low-tickets.sh` gains `--approve` / `--move-back`
+  modes; `file_open_escalation` gains optional Kind + disposition-hint args; `record-escalation-answer.sh`
+  accepts the new tokens.
 
 ### Fixed
 
