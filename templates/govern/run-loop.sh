@@ -372,7 +372,36 @@ write_summary() {
     echo "- **Ended:** $reason"
     echo "- **Ran for:** ${m}m ${s}s"
     echo "- **Mode:** $MODE${TARGET:+ (single ticket #$TARGET)}"
-    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · ↻ interrupted ${nintr:-0}"; echo
+    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · ↻ interrupted ${nintr:-0}"
+    # Cost transparency: a per-run spend line — tokens (always, when the worker JSONL carried usage)
+    # and dollar cost (only when the JSONL carried total_cost_usd), summed AND per ticket. Reads
+    # $HISTORY, where record()/history_enrich already folded each worker's stream-json usage +
+    # total_cost_usd. Best-effort + null-safe: a missing/un-parseable field degrades to tokens-only,
+    # or the whole line is skipped — it NEVER invents a pricing table (a workspace whose Claude Code
+    # emits no cost fields simply gets token counts). Filtered to THIS run by the .run field.
+    if [[ -s "$HISTORY" ]]; then
+      local _spend
+      _spend="$(GOVERN_RUN_ID="$(basename "$RUNDIR")" jq -rs '
+        map(select(.run == env.GOVERN_RUN_ID))
+        | map(. + {_tok: ((.tokens.total) // 0),
+                   _cost: (if (.costUsd|type) == "number" then .costUsd else null end)})
+        | (map(._tok) | add) as $tok
+        | (map(select(._cost != null) | ._cost) | add) as $cost
+        | (map(select(._cost != null)) | length) as $ncost
+        | length as $n
+        | if $n == 0 then empty else
+            "- **Spend:** "
+            + (if ($cost != null and $ncost > 0) then "~$" + (((($cost*100)|round)/100)|tostring) + " · " else "" end)
+            + ($tok|tostring) + " tokens across " + ($n|tostring)
+            + " ticket" + (if $n == 1 then "" else "s" end)
+            + (if $ncost == 0 then " (no per-ticket cost in the worker logs — token counts only)" else "" end)
+            + " (" + (map("#" + (.ticket|tostring) + " "
+                + (if ._cost != null then "$" + (((((._cost)*100)|round)/100)|tostring) + "/" else "" end)
+                + (._tok|tostring) + "t") | join(" · ")) + ")"
+          end' "$HISTORY" 2>/dev/null || true)"
+      [[ -n "$_spend" ]] && echo "$_spend"
+    fi
+    echo
     # #272: governor self-ROI telemetry — surface park rate + churn classes + tokens-per-ticket
     # automatically at run-end (this run vs the rolling all-time trend) so a waste class like #115
     # (most tickets self-referential churn) is visible without manual log spelunking. Best-effort.
@@ -852,6 +881,16 @@ while :; do
       merge_repo_merged=0; pr_summary=""
       while IFS=$'\t' read -r prepo pnum _purl; do
         [[ -n "$prepo" && -n "$pnum" ]] || continue
+        # Trust-ladder gate (GOVERN_AUTONOMY): in observe/pr-only the governor NEVER auto-merges —
+        # every PR is left open for the operator (exactly like a frontend sibling, #129). The ticket
+        # still resolves (its PR is the record of the work) and gets bookkept; only the final merge is
+        # withheld until the operator flips GOVERN_AUTONOMY=auto. A workspace.sh predating the ladder
+        # resolves to `auto`, so this branch is a pure no-op there (backward compat).
+        if ! govern::automerge_enabled; then
+          govern::log "$prepo#$pnum left open — GOVERN_AUTONOMY=$(govern::autonomy) (governor opens PRs, does not auto-merge; flip to auto to enable) [autonomy]"
+          pr_summary="$pr_summary $prepo#$pnum($(govern::autonomy)-left-open)"
+          continue
+        fi
         if govern::is_merge_repo "$prepo"; then
           if [[ "$MODE" == "dry" ]]; then
             govern::log "[dry] would await CI + merge $prepo#$pnum"

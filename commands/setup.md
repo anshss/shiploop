@@ -149,6 +149,32 @@ Mention optional next steps:
 - before the first `/govern`, from a **plain terminal** (not nested in a Claude session) run
   `claude -p "ping" --model sonnet --strict-mcp-config` to confirm worker auth.
 
+### Starter ticket — make the first `/govern` run land a green PR
+
+A fresh adopter's first `/govern` is far more convincing if it is short, cheap, and ends in a visible
+merged (or mergeable) PR. **After verification has passed**, look for ONE small, guaranteed-tractable
+item you already surfaced during scaffold and offer to file it as ticket #1 — the operator's first run
+then has a real, tiny target instead of an empty queue. In priority order, pick the best available:
+
+1. **A `doctor` warning the governor can fix** — e.g. a sub-repo missing a `.env.example` key that
+   `doctor`/`config-check` flagged, a `package.json` script alias gap, a lint nit.
+2. **A missing `.env.example` entry** — a referenced env var with no `.env.example` line (a safe,
+   single-file add).
+3. **A `README`/`CLAUDE.md` `TODO`** you can see is genuinely small and self-contained.
+
+Propose it to the operator in one line and **only file on their confirmation** (this is their repo's
+first ticket). File it with `file-ticket.sh` — reuse the existing mechanics, no new script — pinning a
+cheap model so the first run is fast and inexpensive:
+
+```bash
+# Model: haiku for a truly mechanical one-file fix, sonnet for a small search+edit.
+printf 'Where: <sub-repo>/<path>\nObserved: <the small gap>\nFix direction: <the obvious fix>\nDone when: <observable check>\n' \
+  | scripts/govern/file-ticket.sh --model haiku "<short starter title>" Low
+```
+
+If scaffold surfaced nothing tractable, skip this — do NOT invent busywork. Tell the operator their
+queue is empty and they can file their first real ticket with `/shiploop:investigate` or `file-ticket.sh`.
+
 ---
 
 ## Phase B — BUMP an existing meta-repo (component-by-component)
