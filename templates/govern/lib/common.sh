@@ -246,8 +246,11 @@ govern::disposition_lead_token() { # raw -> leading token (may be "")
   printf '%s' "$d"
 }
 
-# Canonicalize a free-text disposition into one of: do-the-work | defer | mitigated | keep-open
-# (empty for unrecognized so the caller can leave the entry untouched). Tolerant of
+# Canonicalize a free-text disposition into one of: do-the-work | kill | defer | mitigated | keep-open
+# (empty for unrecognized so the caller can leave the entry untouched). `kill` (validations Phase 5) is
+# the operator's disposition on a measured-INEFFECTIVE flow: delete the feature — apply-answers files a
+# removal ticket and the sweep tombstones the flow on its PR. Matched BEFORE mitigated/defer so its
+# tokens never fall through. Tolerant of
 # operator hand-edits / synonyms; the relay writes the canonical token directly.
 # NOTE: this matches a canonical token ANYWHERE in the input — so when classifying a
 # structured Disposition FIELD, anchor first via govern::disposition_lead_token (#87).
@@ -261,6 +264,7 @@ govern::norm_disposition() { # raw -> canonical|""
   d=" $d "
   case "$d" in
     *" do the work "*|*" dothework "*|*" unpark "*|*" un park "*|*" retry "*|*" work it "*|*" resolve "*|*" redo "*) echo "do-the-work";;
+    *" kill "*|*" killit "*|*" tombstone "*) echo "kill";;
     *" mitigated "*|*" mitigate "*|*" accept current state "*|*" accept as is "*|*" accepted "*|*" already acceptable "*|*" harm zero "*|*" harm already zero "*) echo "mitigated";;
     *" defer "*|*" defer indefinitely "*|*" wont do "*|*" won t do "*|*" keep manual "*|*" close "*|*" park "*|*" parked "*|*" no "*) echo "defer";;
     *" keep open "*|*" keepopen "*|*" wait "*|*" pending "*) echo "keep-open";;

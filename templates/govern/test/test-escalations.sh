@@ -127,7 +127,7 @@ assert_eq "$nf" "yes" "GOVERN_NOTIFY_CMD fires when pending escalations exist"
 
 # ── apply-answers: act on the recorded answers ───────────────────────────────────────────
 out="$(env "${env_common[@]}" bash "$APPLY" 2>/dev/null)"
-assert_contains "$out" "un-parked 1, deferred 1, mitigated 1, rules added 1" "apply summary: 1 un-park (#7), 1 defer (#5), 1 mitigated (#6), 1 rule (#7)"
+assert_contains "$out" "un-parked 1, deferred 1, mitigated 1, killed 0, rules added 1" "apply summary: 1 un-park (#7), 1 defer (#5), 1 mitigated (#6), 1 rule (#7)"
 
 # #7 do-the-work → escalation Resolved, ticket STILL in tickets.md (selectable again)
 assert_contains "$(grep -A50 '^## Resolved' "$T/escalations.md")" "#7" "#7 escalation moved under ## Resolved"

@@ -649,3 +649,211 @@ govern::flows_matching_paths() { # <meta-root> <max> <path> [path…] -> ranked 
     done < <(govern::flow_ids "$flows"); } | sort -rn -k1,1 | head -n "$max" | cut -f2-
   return 0
 }
+
+# ── Phase 5: capability adapters (generic — knob NAMES here, VALUES in workspace.sh) ─────────────────
+# A flow may declare `Requires: <cap> [<cap>…]` (space/comma list) naming the workspace capabilities its
+# validation needs. The generic layer maps each capability KEY to the env-var KNOB the workspace wires;
+# the knob's VALUE (a gstack command, a PostHog query wrapper, …) lives ONLY in scripts/lib/workspace.sh.
+# An absent knob means the flow cannot be validated headlessly → it files as BLOCKED with a named blocker
+# (anti-pattern #15), never silently as a runnable-then-billable row.
+govern::flow_cap_knob() { # <capability-key> -> env-var name | "" (unknown key we don't manage)
+  case "$1" in
+    browser)      printf 'WSP_BROWSER_CMD' ;;
+    analytics)    printf 'WSP_ANALYTICS_QUERY_CMD' ;;
+    test-account) printf 'TEST_USER_EMAIL' ;;
+    deploy)       printf 'GOVERN_DEPLOY_SWEEP_CMD' ;;
+    *)            printf '' ;;
+  esac
+}
+
+# The capability keys a flow `Requires:` whose knob is EMPTY (unset/blank) — one per line. An unknown
+# key (typo / a capability the generic layer doesn't manage) is IGNORED, never reported missing, so the
+# mechanism never blocks a flow on a capability it can't reason about. Empty output (rc 0) when the flow
+# declares no `Requires:` or every required knob is wired.
+govern::flow_missing_caps() { # id [file] -> missing capability keys, one per line
+  local id="$1" f="${2:-$FLOWS_FILE}" req cap knob val
+  req="$(govern::flow_field "$id" Requires "$f")"
+  [[ -n "$req" ]] || return 0
+  req="${req//,/ }"
+  for cap in $req; do
+    knob="$(govern::flow_cap_knob "$cap")"
+    [[ -n "$knob" ]] || continue         # unknown key — not one we manage
+    val="${!knob:-}"                      # indirect expansion (bash 3.2 supports ${!var})
+    [[ -n "$val" ]] || printf '%s\n' "$cap"
+  done
+  return 0
+}
+
+# A human-readable named-blocker string for a flow's missing capabilities, or "" when nothing is
+# missing. Feeds the BLOCKED `Blocker:` field at file/extract time.
+govern::flow_missing_cap_blocker() { # id [file] -> "no <cap> capability (<KNOB> unset); …" | ""
+  local id="$1" f="${2:-$FLOWS_FILE}" caps cap knob msg=""
+  caps="$(govern::flow_missing_caps "$id" "$f")"
+  [[ -n "$caps" ]] || return 0
+  for cap in $caps; do
+    knob="$(govern::flow_cap_knob "$cap")"
+    msg="${msg:+$msg; }no $cap capability ($knob unset)"
+  done
+  printf '%s' "$msg"
+}
+
+# ── Phase 5: analytics adapter (effectiveness read + passive-evidence source) ────────────────────────
+# The GENERIC interface to the workspace's analytics: run `$WSP_ANALYTICS_QUERY_CMD <source>` and echo
+# its stdout. `<source>` is the flow's declared measurement source (the `source:` clause on a Gate, or a
+# `Usage-source:` field) — an opaque string the workspace's adapter understands (a PostHog experiment id,
+# a HogQL query, an experiment handle). rc 2 (no output) when the knob is unwired — the caller degrades
+# to "no passive evidence / effectiveness BLOCKED". Never interprets the payload here; that is the
+# caller's job (passive evidence reads a leading integer; the worker reads the gate verdict).
+govern::flow_analytics_query() { # <source> -> adapter stdout; rc 2 if WSP_ANALYTICS_QUERY_CMD unset
+  local src="$1" knob="${WSP_ANALYTICS_QUERY_CMD:-}"
+  [[ -n "$knob" ]] || return 2
+  # The knob is a command line; the source is appended as the final arg. Intentional word-split so a
+  # multi-word command ("node analytics.js query") is honored.
+  # shellcheck disable=SC2086
+  $knob "$src" 2>/dev/null || true
+}
+
+# ── Phase 5: passive evidence (advisory; NEVER auto-stamps a verdict) ────────────────────────────────
+# Where the workspace wires an analytics adapter, a flow declaring a `Usage-source:` gets a passive
+# read: "0 real usage" is INEFFECTIVE-LEANING evidence the operator judges — it is NEVER a verdict the
+# harness stamps. Report-only by default (prints one advisory line per 0-usage flow, mutates nothing);
+# `--attach` additionally records a durable `Passive-note:` field via cas_edit (still never touching
+# Status/Disposition — a note, not a stamp). No-op (rc 0) when the analytics knob is unwired.
+govern::flows_passive_evidence() { # [meta-root] [--attach] -> advisory lines
+  local meta="" attach=0 a
+  for a in "$@"; do case "$a" in --attach) attach=1 ;; *) meta="$a" ;; esac; done
+  meta="${meta:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  if [[ -z "${WSP_ANALYTICS_QUERY_CMD:-}" ]]; then
+    govern::log "flows_passive_evidence: WSP_ANALYTICS_QUERY_CMD not wired — passive evidence off"; return 0
+  fi
+  local id status src usage attach_ids=""
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    src="$(govern::flow_field "$id" Usage-source "$flows")"
+    [[ -n "$src" ]] || continue
+    status="$(govern::flow_field "$id" Status "$flows")"
+    # Only a flow that is SUPPOSED to be in use (a positive verdict, or measuring) can be "0 usage".
+    case "$status" in PASS|EFFECTIVE|MEASURING) ;; *) continue ;; esac
+    usage="$(govern::flow_analytics_query "$src" | head -1 | grep -oE '^-?[0-9]+' | head -1 || true)"
+    [[ -n "$usage" ]] || continue         # non-numeric / query failed → can't judge, skip
+    if [[ "$usage" -eq 0 ]]; then
+      printf 'PASSIVE %s: 0 usage from analytics (source: %s) — INEFFECTIVE-leaning; operator decides (never auto-stamped).\n' "$id" "$src"
+      attach_ids="${attach_ids:+$attach_ids }$id"
+    fi
+  done < <(govern::flow_ids "$flows")
+  if [[ "$attach" == "1" && -n "$attach_ids" ]]; then
+    local _pn_ids="$attach_ids"
+    _flows_passive_attach_edit() { # <flows-file>
+      local f="$1" _i
+      for _i in $_pn_ids; do
+        govern::flow_set_field "$_i" Passive-note "0 usage in analytics ($(date +%F)) — INEFFECTIVE-leaning; operator decides" "$f" || true
+      done
+    }
+    govern::cas_edit "$flows" _flows_passive_attach_edit "docs(flows): passive-evidence advisory (0 usage)"
+    unset -f _flows_passive_attach_edit
+  fi
+  return 0
+}
+
+# ── Phase 5: due-advisories (MEASURING sample-window elapsed · Revalidate past due) ──────────────────
+# Extract a day-count N from a policy string like "every 14d", "7d", "14 days" → prints N (or "").
+govern::_flows_days_of() { # str -> N | ""
+  local s="$1" n
+  n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*d([[:space:]]|$)' | head -1 | grep -oE '[0-9]+' | head -1 || true)"
+  [[ -n "$n" ]] || n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*day' | head -1 | grep -oE '[0-9]+' | head -1 || true)"
+  printf '%s' "$n"
+}
+
+# Pure READ — one advisory line per flow that is (a) MEASURING with a declared `Sample-window: <N>d`
+# whose window has plausibly elapsed since it was armed (Validated date), or (b) a settled verdict whose
+# `Revalidate: every <N>d` policy is past due. NEVER files, NEVER mutates — the periodic supervisor pass
+# surfaces these for the operator (billable safety: filing a validation is always a human act). Empty
+# (rc 0) when nothing is due or there is no registry.
+govern::flows_due_advisories() { # [meta-root] -> advisory lines
+  local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  local now_epoch id status val vdate vepoch days win reval
+  now_epoch="$(date +%s)"
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    status="$(govern::flow_field "$id" Status "$flows")"
+    val="$(govern::flow_field "$id" Validated "$flows")"
+    vdate="${val%%[[:space:]]*}"
+    vepoch="$(govern::date_to_epoch "$vdate" 2>/dev/null || true)"
+    [[ -n "$vepoch" ]] || continue
+    days=$(( (now_epoch - vepoch) / 86400 ))
+    if [[ "$status" == "MEASURING" ]]; then
+      win="$(govern::_flows_days_of "$(govern::flow_field "$id" Sample-window "$flows")")"
+      if [[ -n "$win" && "$days" -ge "$win" ]]; then
+        printf 'MEASURING %s: sample window (%sd) elapsed — %sd since armed (%s). File a collect validation to read the gate + stamp EFFECTIVE/INEFFECTIVE.\n' "$id" "$win" "$days" "$vdate"
+      fi
+    fi
+    case " $GOVERN_FLOW_STALEABLE_STATUSES " in
+      *" $status "*)
+        reval="$(govern::_flows_days_of "$(govern::flow_field "$id" Revalidate "$flows")")"
+        if [[ -n "$reval" && "$days" -ge "$reval" ]]; then
+          printf 'REVALIDATE %s: due (every %sd; last validated %s, %sd ago). Re-file this flow to refresh its verdict.\n' "$id" "$reval" "$vdate" "$days"
+        fi ;;
+    esac
+  done < <(govern::flow_ids "$flows")
+  return 0
+}
+
+# ── Phase 5: kill loop — Flow-op parse, removal-ticket filing, tombstone-on-resolve ─────────────────
+# A ticket's `Flow-op:` field (leading-field-block, anchored like ticket_flow_ids) declares what a
+# resolve does to the flow registry: default "validate" (stamp a verdict), or "remove" (a KILL removal
+# ticket — its PR deletes the feature, and on resolve bookkeep TOMBSTONES the flow rather than stamping
+# a verdict). Empty/absent → validate.
+govern::ticket_flow_op() { # N [tickets-file] -> validate|remove
+  local n="$1" f="${2:-$TICKETS_FILE}" raw
+  raw="$(govern::ticket_block "$n" "$f" \
+    | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
+    | sed -n -E 's/^[[:space:]]*\*{0,2}[Ff]low-op:\*{0,2}[[:space:]]*//p' | head -1)"
+  raw="$(printf '%s' "$raw" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
+  case "$raw" in remove|removal|kill|tombstone) printf 'remove' ;; *) printf 'validate' ;; esac
+}
+
+# Mark an INEFFECTIVE flow as kill-pending (operator disposition): set Disposition so `list`/health show
+# the kill in flight AND the staleness sweep's kill-withdrawal rule (Phase 3) can auto-withdraw it if the
+# flow goes STALE before the removal lands. Writes through cas_edit; honors GOVERN_BOOKKEEP_LOCK_HELD.
+govern::flows_mark_kill_pending() { # <id> [meta-root]
+  local id="$1" meta="${2:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md"
+  [[ -f "$flows" ]] || return 0
+  govern::flow_exists "$id" "$flows" || { govern::log "flows_mark_kill_pending: '$id' not in registry — skipping"; return 0; }
+  local _kid="$id"
+  _flows_kill_pending_edit() { govern::flow_set_field "$_kid" Disposition "kill → removal ticket pending" "$1"; }
+  govern::cas_edit "$flows" _flows_kill_pending_edit "docs(flows): $id kill disposition — removal ticket pending"
+  unset -f _flows_kill_pending_edit
+  return 0
+}
+
+# Tombstone one or more flows (space/comma id list) on a KILL removal ticket's resolve: Status→TOMBSTONED,
+# Disposition annotated, ALL other fields (Validated/Evidence/history) preserved (a revived feature starts
+# from its record; re-extraction cannot resurrect it as new). SupersededBy is left UNSET — that field is
+# reserved for supersession (a rename/split), not a plain kill. Writes through cas_edit under the bookkeep
+# lock (honors GOVERN_BOOKKEEP_LOCK_HELD). No-op for an id not in the registry.
+govern::flows_tombstone() { # <idlist> [meta-root]
+  local idlist="$1" meta="${2:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local flows="$meta/validation/flows.md" id
+  [[ -f "$flows" ]] || { govern::log "flows_tombstone: no registry at $flows — nothing to tombstone"; return 0; }
+  idlist="${idlist//,/ }"
+  for id in $idlist; do
+    [[ -n "$id" ]] || continue
+    if ! govern::flow_exists "$id" "$flows"; then
+      govern::log "flows_tombstone: flow '$id' not in registry — skipping"; continue
+    fi
+    local _tid="$id"
+    _flows_tombstone_edit() { # <flows-file>
+      govern::flow_set_field "$_tid" Status TOMBSTONED "$1"
+      govern::flow_set_field "$_tid" Disposition "killed — removal PR opened; history preserved" "$1"
+    }
+    govern::cas_edit "$flows" _flows_tombstone_edit "docs(flows): tombstone $id (removal PR opened)"
+    unset -f _flows_tombstone_edit
+    govern::log "flows_tombstone: $id → TOMBSTONED (kill loop complete)"
+  done
+  return 0
+}

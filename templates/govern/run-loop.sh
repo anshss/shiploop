@@ -787,12 +787,19 @@ while :; do
           # Stamp the flow registry as a measured NEGATIVE (validations Phase 2): correctness→FAIL,
           # effectiveness→INEFFECTIVE. Stamp from the ORIGINAL report (before we null its PR for the
           # park) so the registry keeps the SHA pins + PR-URL linkage. No-op for a non-flow ticket.
-          if command -v govern::flows_stamp_from_report >/dev/null 2>&1; then
+          _flow_ids=""
+          if command -v govern::ticket_flow_ids >/dev/null 2>&1; then
             _flow_ids="$(govern::ticket_flow_ids "$N" "$TICKETS_FILE" 2>/dev/null || true)"
-            [[ -n "$_flow_ids" ]] && govern::flows_stamp_from_report "$report" gate-park "$_flow_ids" "$(govern::meta_root)" \
-              || true
           fi
-          report="$(printf '%s' "$report" | jq -c '.status="parked" | .pr=null | .escalation={title:"validation gate FAILED — decide ship-off/shelve/rework",reason:("the required validation/A-B gate FAILED (measured negative) — auto-shipping a negative is not a worker decision: " + (.validation.evidence // "see report")),question:"the measured result is negative; choose the disposition — ship default-OFF opt-in, shelve the branch, or rework scope + re-run. Do NOT auto-ship a gate-failed result.",options:["shelve","ship-default-off","rework"]}' 2>/dev/null || printf '%s' "$report")"
+          if [[ -n "$_flow_ids" ]] && command -v govern::flows_stamp_from_report >/dev/null 2>&1; then
+            govern::flows_stamp_from_report "$report" gate-park "$_flow_ids" "$(govern::meta_root)" || true
+          fi
+          # Phase 5 kill loop: a gate-failed FLOW ticket offers `kill` as a disposition (delete the
+          # measured-worthless feature) alongside the correctness dispositions — apply-answers files the
+          # removal ticket + tombstones the flow on its PR. Non-flow tickets keep the original options.
+          _gate_opts='["shelve","ship-default-off","rework"]'
+          [[ -n "$_flow_ids" ]] && _gate_opts='["kill","shelve","ship-default-off","rework"]'
+          report="$(printf '%s' "$report" | jq -c --argjson opts "$_gate_opts" '.status="parked" | .pr=null | .escalation={title:"validation gate FAILED — decide kill/ship-off/shelve/rework",reason:("the required validation/A-B gate FAILED (measured negative) — auto-shipping a negative is not a worker decision: " + (.validation.evidence // "see report")),question:"the measured result is negative; choose the disposition — kill (delete the measured-worthless feature), ship default-OFF opt-in, shelve the branch, or rework scope + re-run. Do NOT auto-ship a gate-failed result.",options:$opts}' 2>/dev/null || printf '%s' "$report")"
           status="parked"; anomaly=1 ;;
       esac
     fi
@@ -1111,6 +1118,26 @@ while :; do
     govern::log "supervisor review (anomaly=$anomaly, since_review=$since_review)"
     verdict="$("$DIR/govern-supervise.sh" "$RUNDIR" 2>/dev/null || echo '{"verdict":"ok"}')"
     since_review=0
+    # Phase 5 flow advisories (ADVISORY ONLY — never auto-files, billable safety): the periodic pass
+    # surfaces (a) MEASURING flows whose sample window has plausibly elapsed → file a collect run, (b)
+    # `Revalidate: every Nd` flows now past due, and (c) passive "0 usage" evidence where an analytics
+    # adapter is wired. Logged + appended to the run review for the operator; filing a validation stays a
+    # human act. Guarded on the parser + always non-fatal so a registry hiccup never perturbs the loop.
+    if [[ "$MODE" == "live" ]] && command -v govern::flows_due_advisories >/dev/null 2>&1; then
+      _fadv="$(govern::flows_due_advisories "$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")" 2>/dev/null || true)"
+      if command -v govern::flows_passive_evidence >/dev/null 2>&1; then
+        _fpas="$(govern::flows_passive_evidence "$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")" 2>/dev/null || true)"
+        [[ -n "$_fpas" ]] && _fadv="${_fadv:+$_fadv$'\n'}$_fpas"
+      fi
+      if [[ -n "$_fadv" ]]; then
+        printf -- '- after #%s (flow advisories):\n' "$N" >> "$REVIEW"
+        printf '%s\n' "$_fadv" | while IFS= read -r _l; do
+          [[ -n "$_l" ]] || continue
+          govern::log "flow advisory: $_l"
+          printf -- '  - %s\n' "$_l" >> "$REVIEW"
+        done
+      fi
+    fi
     concerns="$(printf '%s' "$verdict" | jq -r '(.concerns // [])|join("; ")' 2>/dev/null || true)"
     [[ -n "$concerns" ]] && printf -- '- after #%s: %s\n' "$N" "$concerns" >> "$REVIEW"
     # #57: the supervisor can defer specific tickets for the rest of THIS run (soft in-run skip —
