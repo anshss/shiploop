@@ -137,6 +137,28 @@ Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test
 - **`templates/govern/test/test-spawn-worker-sweep.sh`** (N11) — regression test for the #239 orphan-resource sweep: asserts `spawn-worker.sh` fires `GOVERN_DEPLOY_SWEEP_CMD` on BOTH the clean-resolve and the hard-KILLED (timeout, exit >128, no report) exit paths — the #3001 leak class where a killed worker never runs its own cleanup — and that the sweep is handed the worker's start epoch + ticket number. Fails if the trap wiring is removed.
 - **`templates/govern/test/test-pr-hygiene-api.sh`** (N12) — stub-`gh` coverage for the two PR-hygiene wrappers that talk to the GitHub API (previously only their pure sub-helper `_strip_ticket_ref` was tested): `govern::scrub_pr_ticket_ref` (asserts the `-X PATCH repos/<slug>/pulls/<pr>` endpoint + scrubbed `.title`/`.body`, the idempotent no-op, and the non-object defensive no-op) and `govern::pr_spec_files` (asserts the `pulls/<pr>/files --jq '.[].filename'` leak grep). Red on endpoint/jq-path regressions.
 
+- **Onboarding mechanisms — trust ladder, viral PR footer, cost transparency.** Four adopter-facing
+  mechanisms so a new fleet starts safe and cheap and grows autonomy on the operator's schedule:
+  - **Trust ladder (`GOVERN_AUTONOMY` in `workspace.sh`): `observe` → `pr-only` → `auto`.** `observe`
+    = workers open **draft** PRs, governor never merges (visible but inert); `pr-only` = normal PRs,
+    governor never merges (a human clicks merge); `auto` = today's full auto-merge. `merge-pr.sh` gates
+    at the outermost layer (fail-closed, distinct exit 6) and `run-loop.sh`'s merge loop leaves every PR
+    open under the lower rungs. **Backward compatible:** an absent/empty knob (any workspace.sh predating
+    the ladder) resolves to `auto`, so existing installs are unchanged; the scaffold **template** seeds
+    `pr-only` for new adopters. `spawn-worker.sh` instructs workers to open draft PRs in `observe`.
+    Documented in `commands/govern.md` + `templates/governor/README.md`.
+  - **Viral PR footer (`WSP_PR_FOOTER`, on by default).** Governor-worker PR bodies end with one
+    attribution line — `🤖 shipped by [shiploop](https://github.com/anshss/shiploop)` — injected via the
+    worker prompt (`spawn-worker.sh`), replacing the old generated-with line. Opt out with `WSP_PR_FOOTER=off`.
+  - **Starter ticket at setup** (`commands/setup.md`, fresh path, doc-only). After verification the setup
+    flow offers to file ticket #1 — a small, guaranteed-tractable item detected during scaffold (a doctor
+    warning, a missing `.env.example` key, a README TODO) via `file-ticket.sh` with a cheap model — so the
+    adopter's first `/shiploop:govern` run is short and ends in a visible green PR.
+  - **Cost transparency.** The governor run summary gains a **Spend** line — tokens and, when the worker
+    JSONL carried it, dollar cost, per ticket and summed — derived from the stream-json `usage` /
+    `total_cost_usd` that `history_enrich` already records. Token-only fallback when cost is absent; never
+    invents a pricing table.
+
 ### Fixed
 - **Ticket-queue isolation half-propagated to the hub (#46).** The queue-isolation fix reached `templates/govern/lib/common.sh` (`govern::out_of_scope_tickets`) but nothing wired it and the seed template lacked the behavioral rule, so a scaffolded workspace never flagged an external tool's ticket. Now (a) `templates/seed/CLAUDE.md`'s tickets-row carries the two-scopes rule (the queue admits only the current project's sub-repos and the harness itself; an external tool's follow-ups belong in its own tracker) so every new scaffold inherits it, and (b) the Stop-hook sweep (`templates/hooks/ticket-sweep-reminder.sh`) folds a **soft, never-blocking** advisory into its reconcile reason for any ticket whose `**Where:**` targets neither a sub-repo nor the harness — allowlist-based, so a Where-less ticket is never flagged and deletion stays the operator's call. New hermetic regression `templates/govern/test/test-queue-isolation-advisory.sh` (out-of-scope flagged / in-scope + no-Where not flagged / no advisory when all in-scope).
 - **N3 — sync-port forbidden-identity gate no longer treats dictionary words as identity strings.** `templates/govern/sync-port.sh` derived its forbidden-token list from raw `$GITHUB_ORG` + `$META_NAME` + `${REPOS[@]}` with no filter, so a reference workspace with repos named `docs`, `console`, `website` (or a 2-letter `aq`) would block a correctly-genericized ported line like "see the docs" as a fake leak. The repo-derived tokens are now filtered (minimum length, default 4, via `GOVERN_FORBIDDEN_MIN_LEN`, plus an embedded common-word stop list); `$GITHUB_ORG` and `$META_NAME` remain **always** forbidden and unfiltered (real org/name leaks still caught even when short). Added a curated `GOVERN_FORBIDDEN_TOKENS` override that **replaces** the derived org/meta/repo list; `GOVERN_FORBIDDEN_EXTRA` keeps its extend semantics. New regression `templates/govern/test/test-forbidden-tokens.sh` proves: "see the docs" passes with a repo named `docs`, org/meta names still fail, a distinctive repo name (`mjolnir`) still fails, and the override replaces the derived list.

@@ -56,9 +56,23 @@ asked the operator, so they sat unanswered indefinitely. Now the loop closes its
 exist (e.g. `GOVERN_NOTIFY_CMD='terminal-notifier -title Governor'` or a Slack webhook curl).
 Unset → the run summary's "Needs you" section is the signal.
 
+## Trust ladder (`GOVERN_AUTONOMY` in workspace.sh)
+One knob sets how far the governor goes on its own; graduate up a rung as trust builds (flip the value,
+nothing else):
+- **`observe`** — workers do the work, push `ticket-<N>`, and open a **draft** PR; the governor never
+  merges. Work is visible (a PR to read) but inert. The safest first setting.
+- **`pr-only`** — workers open normal PRs; the governor still never merges (a human clicks merge). The
+  default a fresh scaffold seeds — full pipeline minus the final merge.
+- **`auto`** — full autonomy: the governor auto-merges allowlisted-repo PRs on green-or-no-checks CI
+  (frontend stays PR-only regardless). The original behavior.
+
+Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` line and resolves to
+`auto` (unchanged). Graduation is always one direction you choose: observe → pr-only → auto.
+
 ## Policy (enforced by the scripts)
 - Sequential: one ticket fully resolved before the next.
-- Auto-merge only `GOVERN_MERGE_REPOS` (workspace.sh) on **green-or-no-checks** CI; every other repo
+- Auto-merge only `GOVERN_MERGE_REPOS` (workspace.sh) on **green-or-no-checks** CI, and only when
+  `GOVERN_AUTONOMY=auto` (the trust ladder above); every other repo — and every rung below `auto` —
   is PR-only.
 - Hard-stops (always escalate): destructive git; prod data / destructive schema / secrets.
 - Doctrine gap → park + escalate.
