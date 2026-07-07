@@ -1,5 +1,5 @@
 ---
-description: The self-improvement channel, push direction. Ports your workspace's mechanism-script improvements back to the hub so every other fleet inherits them. Detects drift (harness→template) with sync-templates.sh, then invokes sync-port.sh to genericize the changes via a headless porter and open a PR against your fork for HUMAN review. Reuses the fail-closed sync-port pipeline (bash -n + forbidden-identity-strings gate + scaffold-test-suite baseline diff) — never auto-merges.
+description: The self-improvement channel, push direction. Ports your workspace's mechanism-script improvements back to the hub so every other fleet inherits them. Detects drift (harness→template) with sync-templates.sh, then invokes sync-port.sh to genericize the changes via a headless porter and open a PR against the canonical hub — auto-forking when you lack push access — for HUMAN review. Reuses the fail-closed sync-port pipeline (bash -n + forbidden-identity-strings gate + scaffold-test-suite baseline diff) — never auto-merges.
 allowed-tools: Bash, Read
 ---
 
@@ -25,8 +25,27 @@ Companion to `/shiploop:update` (pull). The two commands close the loop on fleet
    - Validates: `bash -n` on changed shell files + forbidden-identity-strings gate on ADDED lines +
      scaffold-test-suite baseline diff.
    - On any gate failure, files an escalation and exits non-zero. NEVER pushes an unvalidated port.
-   - On pass, opens a PR against your fork of the hub for **HUMAN review**.
+   - On pass, opens a PR **against the canonical hub** for **HUMAN review** — routing by your access
+     posture (see below): a same-repo PR when you can push to the hub, otherwise a cross-repo PR from
+     your fork (auto-created via `gh repo fork` when you don't already have one).
 4. **Report** the PR URL (if any) and the marker state.
+
+## The three access postures (push v2 — the contribution funnel)
+
+`sync-port.sh` derives where the branch lands and where the PR opens from **git + GitHub**, not from
+workspace config — it reads the templates clone's `origin`, finds the canonical hub as that repo's
+`parent` (falling back to `origin` itself when there is no parent), and checks your push permission.
+So the PR **always** targets the real canonical hub, never stranding inside your own fork:
+
+| Posture | Your templates clone | What `/push` does |
+|---|---|---|
+| **direct-access** | you can push to `origin`, and `origin` **is** the hub (the maintainer) | push the branch to `origin`, open a **same-repo** PR (bare head). Historical behavior — unchanged. |
+| **fork** | `origin` is **your fork** of the hub (has a `parent`), you can push to it | push to `origin` (your fork), open a **cross-repo** PR against the hub (`<you>:<branch>`). |
+| **plain-clone** | a clone of the hub with **no push access** (the common adopter) | `gh repo fork --clone=false` creates your fork, the branch is pushed there, and a **cross-repo** PR opens against the hub. No manual fork step needed. |
+
+If GitHub can't resolve the clone's repo (offline, a non-GitHub remote), sync-port **degrades safely**
+to the historical direct-to-origin push — it only takes the fork funnel on an *affirmative* no-push
+signal, never on an unknown one.
 
 ## Why HUMAN review, never auto-merge
 
@@ -61,12 +80,15 @@ Source `scripts/lib/workspace.sh` (in a subshell) and check. If empty, STOP and 
 GOVERN_UPSTREAM_HARNESS_REPO not set in scripts/lib/workspace.sh — the sync channel is inert.
 
 To enable /shiploop:push:
-  1. Fork https://github.com/anshss/shiploop on GitHub.
-  2. Clone your fork locally (call it $FORK_DIR).
-  3. Edit scripts/lib/workspace.sh and set:
+  1. Get a local clone of the hub to port INTO. Either is fine (push v2 handles both):
+       • a PLAIN clone of https://github.com/anshss/shiploop  — no fork needed; /push auto-forks
+         on your behalf if you lack push access, and
+       • a clone of YOUR fork of the hub                      — /push opens a cross-repo PR from it.
+     Call its path $HUB_DIR.
+  2. Edit scripts/lib/workspace.sh and set:
        GOVERN_UPSTREAM_HARNESS_REPO="shiploop"
-       GOVERN_UPSTREAM_HARNESS_DIR="$FORK_DIR"
-  4. Re-run /shiploop:push.
+       GOVERN_UPSTREAM_HARNESS_DIR="$HUB_DIR"
+  3. Re-run /shiploop:push.
 ```
 
 ### Local hub clone must be reachable

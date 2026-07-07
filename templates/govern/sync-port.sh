@@ -300,6 +300,34 @@ MARKER_SHA="$("$SYNC_TEMPLATES" --sha 2>/dev/null || echo unknown)"
 BRANCH="sync-auto-${MARKER_SHA:0:9}-${NFILES}f"
 drift_files_ml="$(printf '%s\n' "${DRIFT_FILES[@]}")"
 
+# ── access posture (push v2 — the contribution funnel) ──────────────────────
+# The templates-repo clone the operator holds can sit in one of three postures:
+#   • direct-access — they can push to origin AND origin IS the canonical hub (the
+#     maintainer): push to origin, open a SAME-repo PR. Historical behavior.
+#   • fork          — origin is the operator's fork of the hub (a `parent`): push to
+#     origin (their fork), open a CROSS-repo PR against the canonical hub.
+#   • plain-clone   — a clone of the canonical hub with NO push access: `gh repo fork`
+#     the origin, push the branch to that fork, open a CROSS-repo PR against the hub.
+# We derive origin/canonical/permission from git+GitHub, not from workspace config, so the
+# PR always targets the REAL canonical hub (the `parent` of a fork, else origin itself) —
+# fixing the old bug where the PR opened inside the operator's own fork and stranded there.
+# Every lookup DEGRADES SAFELY: if gh can't resolve the repo (offline / a stub / a non-GitHub
+# remote) ORIGIN_SLUG is empty and we fall back to exactly the historical direct-to-origin push
+# against META_SLUG — no regression. We take the fork funnel ONLY on an AFFIRMATIVE no-push
+# signal (viewerPermission READ/TRIAGE/NONE); an unknown permission never forks.
+ORIGIN_SLUG=""; PARENT_SLUG=""; VIEWER_PERM=""
+if command -v "$GH_BIN" >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  _repo_json="$( (cd "$TEMPLATE_REPO_DIR" 2>/dev/null && "$GH_BIN" repo view \
+    --json nameWithOwner,parent,viewerPermission 2>/dev/null) || true)"
+  if [[ -n "$_repo_json" ]]; then
+    ORIGIN_SLUG="$(printf '%s' "$_repo_json" | jq -r '.nameWithOwner // empty' 2>/dev/null || true)"
+    PARENT_SLUG="$(printf '%s' "$_repo_json" | jq -r '.parent.nameWithOwner // empty' 2>/dev/null || true)"
+    VIEWER_PERM="$(printf '%s' "$_repo_json" | jq -r '.viewerPermission // empty' 2>/dev/null || true)"
+  fi
+fi
+# The repo the PR lands in: a fork's parent, else origin, else (gh un-resolvable) META_SLUG.
+CANONICAL_SLUG="${PARENT_SLUG:-${ORIGIN_SLUG:-$META_SLUG}}"
+
 # N2: advance-the-marker-after-a-human-merge. `/shiploop:push` runs sync-port
 # with NO_MERGE=1 and opens a PR for HUMAN review — but the NO_MERGE path exits
 # BEFORE the marker advance (step 5), so after the human merges nothing moves the
@@ -310,9 +338,9 @@ drift_files_ml="$(printf '%s\n' "${DRIFT_FILES[@]}")"
 # 5) and exit 0, no porter respawn. Fail-open on any gh error (offline /
 # rate-limit) — never block sync-port on a signal we can't fetch.
 if command -v "$GH_BIN" >/dev/null 2>&1 && [[ "$DRY_RUN" -ne 1 ]]; then
-  _merged_pr="$("$GH_BIN" pr list --repo "$META_SLUG" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  _merged_pr="$("$GH_BIN" pr list --repo "$CANONICAL_SLUG" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
   if [[ -n "$_merged_pr" ]]; then
-    govern::log "sync-port: MERGED PR #$_merged_pr on $META_SLUG for branch $BRANCH — advancing marker to ${MARK_TO:0:9} (no porter respawn)"
+    govern::log "sync-port: MERGED PR #$_merged_pr on $CANONICAL_SLUG for branch $BRANCH — advancing marker to ${MARK_TO:0:9} (no porter respawn)"
     if ! "$SYNC_TEMPLATES" --mark "$MARK_TO" >/dev/null 2>&1; then
       file_sync_escalation "merged PR #$_merged_pr found for $BRANCH but advancing the sync marker failed — run 'sync-templates.sh --mark $MARK_TO' by hand." "$BRANCH" "$drift_files_ml"
       exit 1
@@ -332,9 +360,9 @@ fi
 # marker. Fail-open on a gh error (no network / rate-limit) — never block
 # sync-port on a signal we can't fetch.
 if command -v "$GH_BIN" >/dev/null 2>&1 && [[ "$DRY_RUN" -ne 1 ]]; then
-  _open_pr="$("$GH_BIN" pr list --repo "$META_SLUG" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+  _open_pr="$("$GH_BIN" pr list --repo "$CANONICAL_SLUG" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
   if [[ -n "$_open_pr" ]]; then
-    govern::log "sync-port: OPEN PR #$_open_pr already exists on $META_SLUG for branch $BRANCH — skipping porter respawn (merge/close the PR, then re-run)"
+    govern::log "sync-port: OPEN PR #$_open_pr already exists on $CANONICAL_SLUG for branch $BRANCH — skipping porter respawn (merge/close the PR, then re-run)"
     exit 0
   fi
 fi
@@ -342,7 +370,19 @@ fi
 # ── --dry-run: print the plan, touch nothing ────────────────────────────────
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "sync-port plan (DRY RUN — no branch/porter/PR/merge):"
-  echo "  templates repo : $TEMPLATE_REPO_DIR ($META_SLUG)"
+  echo "  templates repo : $TEMPLATE_REPO_DIR (origin ${ORIGIN_SLUG:-<gh-unresolved>})"
+  echo "  PR would target: $CANONICAL_SLUG  (canonical hub)"
+  echo "  access posture : $(
+    if [[ -z "$ORIGIN_SLUG" ]]; then echo 'direct (gh un-resolvable — historical push to origin)';
+    elif [[ -n "$PARENT_SLUG" ]]; then
+      case "$VIEWER_PERM" in ADMIN|MAINTAIN|WRITE) echo 'fork (origin is your fork of the hub → cross-repo PR)';;
+        READ|TRIAGE|NONE) echo 'plain-clone (no push → gh repo fork → cross-repo PR)';;
+        *) echo 'direct (permission unknown — historical push to origin)';; esac
+    else
+      case "$VIEWER_PERM" in ADMIN|MAINTAIN|WRITE) echo 'direct (you can push to the canonical hub → same-repo PR)';;
+        READ|TRIAGE|NONE) echo 'plain-clone (no push → gh repo fork → cross-repo PR)';;
+        *) echo 'direct (permission unknown — historical push to origin)';; esac
+    fi)"
   echo "  templates root : $TEMPLATES_ROOT"
   echo "  marker synced-through: ${MARKER_SHA:0:9}   →  would advance to ${MARK_TO:0:9}"
   echo "  branch it WOULD cut  : $BRANCH  (off origin/main)"
@@ -351,7 +391,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "  FORBIDDEN identity strings (added lines grepped -iwE):"
   printf '    %s\n' "$(forbidden_tokens | tr '\n' ' ')"
   echo "  → would spawn the headless porter, VALIDATE (bash -n + forbidden grep + scaffold test),"
-  echo "    then would open a PR on $META_SLUG and merge it green-or-no-checks, then advance the marker."
+  echo "    then would open a PR on $CANONICAL_SLUG and merge it green-or-no-checks, then advance the marker."
   exit 0
 fi
 
@@ -556,11 +596,67 @@ else
   [[ -n "$ported_fails" ]] && govern::log "sync-port: scaffold layout-sensitive pre-existing failures IGNORED (also fail on the pre-port baseline): $ported_fails"
 fi
 
-# ── 4. gate PASSED → push, PR, merge ────────────────────────────────────────
-if ! git -C "$TEMPLATE_REPO_DIR" push -q -u origin "$BRANCH" 2>>"$LOG_DIR/git.log"; then
-  file_sync_escalation "gate PASSED but 'git push' of $BRANCH failed (see $LOG_DIR/git.log)." "$BRANCH" "$drift_files_ml"
-  exit 1
+# ── 4. gate PASSED → push (posture-aware) + open the PR against the canonical hub ──
+# Decide the push destination + PR head namespace from the access posture derived above.
+# fork_funnel=1 ONLY on an affirmative no-push signal; head_owner="" ⇒ same-repo (bare head).
+fork_funnel=0
+head_owner=""
+if [[ -n "$ORIGIN_SLUG" ]]; then
+  case "$VIEWER_PERM" in
+    ADMIN|MAINTAIN|WRITE) head_owner="${ORIGIN_SLUG%%/*}" ;;  # push to origin; head under its owner
+    READ|TRIAGE|NONE)     fork_funnel=1 ;;                    # no push → gh repo fork funnel
+    *)                    head_owner="${ORIGIN_SLUG%%/*}" ;;  # unknown perm → historical direct push
+  esac
 fi
+
+# The actual git push. Skipped under GOVERN_NO_PUSH=1 (tests / offline) exactly like every other
+# governor writer — the PR-create seam is still exercised so the funnel logic stays verifiable.
+if [[ "$fork_funnel" -eq 1 ]]; then
+  # plain-clone: no push access to origin → fork it under the operator's login, push the branch there.
+  own_login="$(govern::_own_login || true)"
+  if [[ -z "$own_login" ]]; then
+    file_sync_escalation "gate PASSED but no push access to $ORIGIN_SLUG and could not resolve your gh login to open a fork (is 'gh auth' set up?)." "$BRANCH" "$drift_files_ml"
+    exit 1
+  fi
+  fork_slug="$own_login/${ORIGIN_SLUG##*/}"
+  head_owner="$own_login"
+  # `gh repo fork` is idempotent (an already-existing fork is fine) and routes through GH_BIN (stubbed
+  # in tests). It is the mechanism that makes the cross-repo PR possible, so it runs even under NO_PUSH.
+  if ! "$GH_BIN" repo fork "$ORIGIN_SLUG" --clone=false >>"$LOG_DIR/gh.log" 2>&1; then
+    file_sync_escalation "gate PASSED but 'gh repo fork $ORIGIN_SLUG' failed (see $LOG_DIR/gh.log)." "$BRANCH" "$drift_files_ml"
+    exit 1
+  fi
+  if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]]; then
+    # A freshly-created fork can lag a moment before it accepts a push — retry briefly.
+    fork_url="https://github.com/${fork_slug}.git"
+    pushed=0
+    for _try in 1 2 3 4 5; do
+      if git -C "$TEMPLATE_REPO_DIR" push -q "$fork_url" "refs/heads/$BRANCH:refs/heads/$BRANCH" 2>>"$LOG_DIR/git.log"; then pushed=1; break; fi
+      sleep 3
+    done
+    if [[ "$pushed" -ne 1 ]]; then
+      file_sync_escalation "gate PASSED, fork $fork_slug ensured, but pushing $BRANCH to the fork failed (see $LOG_DIR/git.log)." "$BRANCH" "$drift_files_ml"
+      exit 1
+    fi
+  fi
+else
+  # direct-access / operator-owns-origin (their fork): push the branch to origin as before.
+  if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]]; then
+    if ! git -C "$TEMPLATE_REPO_DIR" push -q -u origin "$BRANCH" 2>>"$LOG_DIR/git.log"; then
+      file_sync_escalation "gate PASSED but 'git push' of $BRANCH failed (see $LOG_DIR/git.log)." "$BRANCH" "$drift_files_ml"
+      exit 1
+    fi
+  fi
+fi
+
+# Head ref: cross-repo (owner:branch) when the branch lives OUTSIDE the canonical hub, else bare.
+canon_owner="${CANONICAL_SLUG%%/*}"
+if [[ -n "$head_owner" && "$head_owner" != "$canon_owner" ]]; then
+  head_ref="$head_owner:$BRANCH"
+else
+  head_ref="$BRANCH"
+fi
+
 pr_title="sync: port harness drift into templates ($NFILES file(s), through ${MARK_TO:0:9})"
 pr_body="Automated harness→template sync (sync-port.sh). Ports drift through ${MARK_TO:0:9}.
 
@@ -569,7 +665,7 @@ $(printf -- '- %s\n' "${DRIFT_FILES[@]}")
 
 Validated: bash -n, forbidden-identity-strings gate (added lines), scaffold govern test suite.
 🤖 Generated with sync-port.sh"
-pr_url="$("$GH_BIN" pr create --repo "$META_SLUG" --base main --head "$BRANCH" \
+pr_url="$("$GH_BIN" pr create --repo "$CANONICAL_SLUG" --base main --head "$head_ref" \
            --title "$pr_title" --body "$pr_body" 2>>"$LOG_DIR/gh.log")"
 gh_rc=$?
 if [[ "$gh_rc" -ne 0 || -z "$pr_url" ]]; then
@@ -577,11 +673,11 @@ if [[ "$gh_rc" -ne 0 || -z "$pr_url" ]]; then
   exit 1
 fi
 pr_num="$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || true)"
-govern::log "sync-port: opened $META_SLUG PR #$pr_num — $pr_url"
+govern::log "sync-port: opened $CANONICAL_SLUG PR #$pr_num (head $head_ref) — $pr_url"
 
 if [[ "$NO_MERGE" -eq 1 ]]; then
   govern::log "sync-port: --no-merge — validated PR #$pr_num opened for review; NOT merging, marker held at ${MARKER_SHA:0:9}."
-  echo "sync-port: [no-merge] ported $NFILES file(s) → $META_SLUG PR #$pr_num ($pr_url) — review + merge, then: sync-templates.sh --mark $MARK_TO"
+  echo "sync-port: [no-merge] ported $NFILES file(s) → $CANONICAL_SLUG PR #$pr_num ($pr_url) — review + merge, then: sync-templates.sh --mark $MARK_TO"
   exit 0
 fi
 
@@ -589,7 +685,7 @@ if ! "$MERGE_CMD" "$UPSTREAM_REPO" "$pr_num" 2>>"$LOG_DIR/merge.log"; then
   file_sync_escalation "gate PASSED + PR #$pr_num opened but the auto-merge failed (CI not green / conflict; see $LOG_DIR/merge.log). Merge it by hand, then run sync-templates.sh --mark $MARK_TO." "$BRANCH" "$drift_files_ml"
   exit 1
 fi
-govern::log "sync-port: merged $META_SLUG PR #$pr_num"
+govern::log "sync-port: merged $CANONICAL_SLUG PR #$pr_num"
 
 # ── 5. advance the marker ──────────────────────────────────────────────────
 if ! "$SYNC_TEMPLATES" --mark "$MARK_TO" >/dev/null 2>&1; then
