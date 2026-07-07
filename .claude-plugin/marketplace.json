@@ -11,7 +11,7 @@
       "name": "shiploop",
       "source": "./",
       "description": "You do the specs and systems engineering. shiploop ships the code — a self-improving multi-agent harness that grinds your ticket backlog across every repo in your product with a fresh right-sized agent per ticket and guarded auto-merge, and every resolved ticket writes a lesson into your git-tracked CLAUDE.md so the next run is smarter.",
-      "version": "1.5.1",
+      "version": "1.6.0",
       "category": "workflow",
       "tags": ["self-improving", "multi-agent", "orchestration", "model-routing", "backlog", "monorepo", "worktrees", "autonomous", "governor"],
       "homepage": "https://github.com/anshss/shiploop",
