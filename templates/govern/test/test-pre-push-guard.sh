@@ -6,6 +6,7 @@
 #
 # Contract exercised (hook reads push refs on stdin: "<localref> <localsha> <remoteref> <remotesha>"):
 #   GOVERN_RUN=1  + refs/heads/ticket-301          -> allowed (exit 0)
+#   GOVERN_RUN=1  + refs/heads/sl-<12hex>          -> allowed (neutral public-repo scheme)
 #   GOVERN_RUN=1  + refs/heads/main                -> allowed (exit 0)
 #   GOVERN_RUN=1  + refs/heads/fix/foo             -> BLOCKED (exit 1, clear message)
 #   GOVERN_RUN=1  + refs/heads/ticket-301-extra    -> BLOCKED (strict: no suffix)
@@ -44,7 +45,7 @@ assert_eq "$rc" "0" "GOVERN_RUN=1 + main is allowed"
 
 run_hook 1 refs/heads/fix/foo
 assert_eq "$rc" "1" "GOVERN_RUN=1 + fix/foo (wrong-name feature branch) is BLOCKED"
-assert_contains "$err" "not a 'ticket-<N>' branch" "blocked message names the ticket-<N> rule"
+assert_contains "$err" "not a governor-owned branch" "blocked message names the governor-owned-branch rule"
 assert_contains "$err" "#55" "blocked message cites the orphaned-PR failure (#55)"
 
 run_hook 1 refs/heads/ticket-301-extra
@@ -52,6 +53,19 @@ assert_eq "$rc" "1" "GOVERN_RUN=1 + ticket-301-extra (suffix) is BLOCKED — nam
 
 run_hook 1 refs/heads/ticketfoo
 assert_eq "$rc" "1" "GOVERN_RUN=1 + ticketfoo (non-numeric) is BLOCKED"
+
+# ── neutral public-repo scheme (sl-<12hex>) is a sanctioned governor branch ───────
+run_hook 1 refs/heads/sl-a1b2c3d4e5f6
+assert_eq "$rc" "0" "GOVERN_RUN=1 + sl-<12hex> (neutral public-repo branch) is allowed"
+
+run_hook 1 refs/heads/sl-abc
+assert_eq "$rc" "1" "GOVERN_RUN=1 + sl-abc (too-short, wrong width) is BLOCKED"
+
+run_hook 1 refs/heads/sl-a1b2c3d4e5f6-extra
+assert_eq "$rc" "1" "GOVERN_RUN=1 + sl-<hex>-extra (suffix) is BLOCKED — name must be exact"
+
+run_hook 1 refs/heads/sl-A1B2C3D4E5F6
+assert_eq "$rc" "1" "GOVERN_RUN=1 + sl-<UPPERHEX> is BLOCKED — scheme is lowercase hex"
 
 # ── normal interactive session (GOVERN_RUN unset) ────────────────────────────
 run_hook - refs/heads/ticket-301

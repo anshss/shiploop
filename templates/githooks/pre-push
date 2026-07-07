@@ -9,9 +9,12 @@
 # GOVERN_RUN is unset and a feature-branch push here is rejected.
 #
 # Under GOVERN_RUN=1 the branch name is ALSO enforced (#301): a govern worker's feature branch MUST
-# be exactly `ticket-<N>` (its ticket number) so the governor can find + merge the PR (#55). A wrong
-# name (fix/…, a custom slug, ticket-<N>-suffix) silently orphans the PR and re-fails the ticket, so
-# reject it here — turning a hard-to-diagnose orphaned-PR failure into a loud pre-push error.
+# be a governor-owned name the governor can find + merge the PR by (#55) — either the classic
+# `ticket-<N>` (private repos) or the neutral `sl-<12hex>` scheme a worker uses on a PUBLIC repo so no
+# internal ticket-id leaks in the branch name (govern::neutral_branch). Both are deterministic and
+# discoverable. A wrong name (fix/…, a custom slug, ticket-<N>-suffix) silently orphans the PR and
+# re-fails the ticket, so reject it here — turning a hard-to-diagnose orphaned-PR failure into a loud
+# pre-push error.
 #
 # Pushes to `main` are ALWAYS allowed (that's the operator/governor bookkeeping path).
 # stdin lines: <local ref> <local sha> <remote ref> <remote sha>
@@ -28,16 +31,17 @@ while read -r _localref _localsha remoteref _remotesha; do
   [ "$branch" = "main" ] && continue
 
   if [ "$govern" = "1" ]; then
-    # Sanctioned governor run: only a strict `ticket-<N>` feature branch is allowed, so the
-    # governor can locate + merge the PR by that exact head (#55). Anything else is rejected.
-    if [[ "$branch" =~ ^ticket-[0-9]+$ ]]; then
+    # Sanctioned governor run: only a governor-owned feature branch is allowed so the governor can
+    # locate + merge the PR by that exact head (#55) — `ticket-<N>` (private) OR `sl-<12hex>` (the
+    # neutral public-repo scheme). Anything else is rejected.
+    if [[ "$branch" =~ ^ticket-[0-9]+$ || "$branch" =~ ^sl-[0-9a-f]{12}$ ]]; then
       continue
     fi
     blocked=1
-    echo "pre-push BLOCKED under GOVERN_RUN: branch '$branch' is not a 'ticket-<N>' branch." >&2
-    echo "  A govern worker's feature branch MUST be exactly ticket-<N> (its ticket number) so the" >&2
-    echo "  governor can find + merge the PR; a wrong name orphans it and re-fails the ticket (#55)." >&2
-    echo "  Rename it and push again, e.g.:  git branch -m ticket-<N> && git push -u origin ticket-<N>" >&2
+    echo "pre-push BLOCKED under GOVERN_RUN: branch '$branch' is not a governor-owned branch." >&2
+    echo "  A govern worker's feature branch MUST be ticket-<N> (private repo) or sl-<12hex> (public" >&2
+    echo "  repo) so the governor can find + merge the PR; a wrong name orphans it and re-fails the" >&2
+    echo "  ticket (#55). Rename it and push again, e.g.:  git branch -m ticket-<N> && git push -u origin ticket-<N>" >&2
   else
     # Normal interactive session: meta-repo files commit directly to `main` (anti-pattern #9).
     blocked=1

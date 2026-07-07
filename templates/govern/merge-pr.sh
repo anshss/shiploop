@@ -60,8 +60,9 @@ if ! _guard_reason="$(govern::pr_automerge_allowed "$REPO" "$PR")"; then
 fi
 unset _guard_reason
 
-# --delete-branch removes the REMOTE ticket-<N> head on merge (a surviving origin/ticket-<N>
-# collides when the ticket is re-opened and re-run).
+# --delete-branch removes the REMOTE head on merge (a surviving origin/ticket-<N> — or the neutral
+# origin/sl-<hex> on a public repo — collides when the ticket is re-opened and re-run). The actual
+# head name is read from the PR below, so this works for either naming scheme.
 cmd=(gh pr merge "$PR" --repo "$(govern::repo_slug "$REPO")" --squash --delete-branch)
 if [[ "${GOVERN_ECHO:-0}" == "1" ]]; then
   printf 'WOULD RUN: %s\n' "${cmd[*]}"

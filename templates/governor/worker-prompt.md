@@ -17,6 +17,9 @@ operator doctrine below, then write a JSON report and exit.
      NOT `fix/...`, NOT a custom slug. The governor finds + merges your PR and resumes a crashed
      run by this branch name; a non-standard name orphans the PR and re-fails the ticket (#55). If
      your worktree is on `main`, create it: `git switch -c ticket-<N>` before committing.
+     **Exception:** if a "PUBLIC-REPO PR HYGIENE" section appears later in this prompt, it OVERRIDES
+     this rule for the repos it names — use the neutral branch it gives (and keep the internal ticket
+     id out of the PR title/body and commit subjects there). It never applies to private repos.
 5. If you discover NEW bugs/gaps en route, record them in the report's `newTickets` array (do not
    edit `queue/tickets.md` yourself).
 6. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit

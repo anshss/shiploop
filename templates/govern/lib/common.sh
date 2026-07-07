@@ -829,11 +829,72 @@ govern::repo_localdir() { wsp_repo_localdir "$1"; }
 #   2. **Head repo == base repo** — the PR is NOT from a fork. Same login on a fork clone is not
 #      enough; a fork PR is unconditionally rejected (`fork-pr`).
 #   3. **Head branch matches governor pattern** — the branch was named by the governor's own worker
-#      (`ticket-<N>`) or the sync-port lane (`sync-auto-*`). Extend GOVERN_MERGE_BRANCH_RE if you add
-#      another governor-owned naming scheme. Mismatch → `bad-branch`.
+#      (`ticket-<N>` on a private repo, or the neutral `sl-<hex>` scheme on a PUBLIC repo — see
+#      govern::neutral_branch) or the sync-port lane (`sync-auto-*`). Extend GOVERN_MERGE_BRANCH_RE if
+#      you add another governor-owned naming scheme. Mismatch → `bad-branch`.
 # Any gh/jq/lookup error is treated as a block (`lookup-failed`) — a transient GitHub outage NEVER
 # degrades into a blind merge.
 GOVERN_MERGE_BRANCH_RE="${GOVERN_MERGE_BRANCH_RE:-^(ticket-[0-9]+|sync-auto-.*)$}"
+# Public-repo variant: the SAME governor-owned patterns PLUS the neutral `sl-<hex>` scheme a worker
+# uses on a public repo (so no internal ticket-id leaks in the branch name). Applied by the guard
+# ONLY when the target repo resolves PUBLIC (govern::repo_is_public); a private repo keeps
+# GOVERN_MERGE_BRANCH_RE unchanged, so this NEVER weakens the private-repo guard. `ticket-<N>` is
+# still accepted on public repos too, so an in-flight PR opened before a repo went public still merges.
+# NB: assigned via a conditional (not `${VAR:-default}`) because the `{12}` quantifier's `}` would
+# otherwise terminate the parameter-expansion default early and mangle the regex.
+[[ -n "${GOVERN_MERGE_BRANCH_RE_PUBLIC:-}" ]] || GOVERN_MERGE_BRANCH_RE_PUBLIC='^(sl-[0-9a-f]{12}|ticket-[0-9]+|sync-auto-.*)$'
+
+# ── public-repo neutral branch scheme ───────────────────────────────────────
+# On a PUBLIC repo the governor must not expose an internal ticket id anywhere an outsider can see it
+# — `ticket-42` implies a private tracker. So a worker on a public repo names its branch with an
+# OPAQUE, DETERMINISTIC token instead: `sl-<12 hex>` where the hex is derived from the ticket number.
+# Deterministic ⇒ the governor recovers the branch for ticket N by recomputing it (no extra state);
+# opaque ⇒ an outsider cannot read N off the branch. git-hash-object is used purely as a portable,
+# always-present (git is a hard dep) hash — NOT for any git object; the salt keeps it from colliding
+# with a bare sha of the number. 12 hex = 48 bits, so cross-ticket collisions are negligible.
+govern::neutral_branch() { # <N> -> stdout: sl-<12hex>
+  local n="$1" h
+  h="$(printf 'shiploop-neutral-branch:%s' "$n" | git hash-object --stdin 2>/dev/null | cut -c1-12)"
+  [[ "$h" =~ ^[0-9a-f]{12}$ ]] || { printf 'ticket-%s' "$n"; return 1; }  # hash unavailable → safe fallback
+  printf 'sl-%s' "$h"
+}
+
+# Per-run, per-repo visibility. `GOVERN_PUBLIC_REPOS` (space-separated SHORT names) is the deterministic
+# override and WINS over detection; when a repo isn't listed there, auto-detect via `gh repo view`.
+# Result cached in a run-scoped file so a 100-PR pass calls `gh repo view` at most once per repo.
+# FAIL-SAFE: any gh failure / unrecognized value ⇒ treated as PRIVATE (rc 1) = current behavior, so an
+# API hiccup never flips a repo's branch mechanics; it only risks NOT scrubbing a leak (cosmetic), which
+# the unconditional title/body scrub backstops anyway. Logged once per repo on the unknown path.
+_GOVERN_VIS_CACHE="${GOVERN_VIS_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.repo-visibility}"
+govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/internal/unknown
+  local repo="$1" r v slug raw
+  [[ -n "$repo" ]] || return 1
+  for r in ${GOVERN_PUBLIC_REPOS:-}; do [[ "$r" == "$repo" ]] && return 0; done
+  if [[ -f "$_GOVERN_VIS_CACHE" ]]; then
+    v="$(awk -v k="$repo" '$1==k{print $2; exit}' "$_GOVERN_VIS_CACHE" 2>/dev/null || true)"
+  fi
+  if [[ -z "${v:-}" ]]; then
+    command -v gh >/dev/null 2>&1 || return 1
+    slug="$(govern::repo_slug "$repo" 2>/dev/null || true)"
+    [[ -n "$slug" ]] || return 1
+    raw="$(gh repo view "$slug" --json visibility -q .visibility 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' || true)"
+    case "$raw" in
+      public|private|internal) v="$raw" ;;
+      *) v="unknown"; govern::log "repo-visibility lookup for '$repo' failed (gh) — treating as PRIVATE (current behavior); set GOVERN_PUBLIC_REPOS to override" ;;
+    esac
+    mkdir -p "$(dirname "$_GOVERN_VIS_CACHE")" 2>/dev/null || true
+    printf '%s %s\n' "$repo" "$v" >> "$_GOVERN_VIS_CACHE" 2>/dev/null || true
+  fi
+  [[ "$v" == "public" ]]
+}
+
+# The branch name a worker should use for ticket N on a given repo: neutral `sl-<hex>` on a PUBLIC
+# repo, the classic `ticket-<N>` on a private repo. Used to (a) instruct the worker and (b) recover
+# the expected head for PR discovery.
+govern::ticket_branch() { # <N> <repo> -> stdout: branch name
+  local n="$1" repo="$2"
+  if govern::repo_is_public "$repo"; then govern::neutral_branch "$n"; else printf 'ticket-%s' "$n"; fi
+}
 
 # Workspace gh-login cache. Resolved lazily on first call and reused for the rest of the run so a
 # 100-PR pass doesn't hit `gh api user` 100 times. A test can pre-seed _GOVERN_OWN_LOGIN=acme to skip
@@ -876,7 +937,11 @@ govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; r
   # spoofed fork owner name). Then branch pattern (final structural check).
   [[ "$author"     == "$own"        ]] || { printf 'external-author'; return 1; }
   [[ "$head_owner" == "$base_owner" ]] || { printf 'fork-pr';         return 1; }
-  [[ "$head" =~ $GOVERN_MERGE_BRANCH_RE ]] || { printf 'bad-branch';   return 1; }
+  # Branch pattern: a PUBLIC repo additionally accepts the neutral `sl-<hex>` scheme (no ticket-id in
+  # the branch name); a private repo uses the unchanged RE, so this branch never weakens for it.
+  local _bre="$GOVERN_MERGE_BRANCH_RE"
+  govern::repo_is_public "$repo" && _bre="$GOVERN_MERGE_BRANCH_RE_PUBLIC"
+  [[ "$head" =~ $_bre ]] || { printf 'bad-branch';   return 1; }
   return 0
 }
 
@@ -887,16 +952,20 @@ govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; r
 # re-run resume instead of opening a duplicate PR, AND lets a same-run worker that opened a PR but
 # returned a bad report still be adopted as resolved instead of recorded "failed".
 govern::find_pr() {
-  local n="$1" repo j row
+  local n="$1" repo j row nb
   command -v gh >/dev/null 2>&1 || return 1
+  # A public repo's head is the neutral `sl-<hex>` (deterministic from N); recompute it once and match
+  # it alongside the classic `ticket-<N>` head so mixed-visibility workspaces resolve either scheme.
+  nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
   # Search the whole merge UNIVERSE (GOVERN_MERGE_REPOS) plus the frontend repos —
   # NOT just $REPOS — so a PR on a cross-owner repo that is in the allowlist but not
   # a sub-repo (e.g. the meta-repo itself / a skill-template repo) is still found.
   # repo_slug resolves each name to its owner/repo (honoring cross-owner overrides).
   for repo in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do
     j="$(gh pr list --repo "$(govern::repo_slug "$repo")" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
-    row="$(jq -c --arg n "$n" '
+    row="$(jq -c --arg n "$n" --arg nb "$nb" '
       ( [ .[] | select(.headRefName == ("ticket-" + $n)) ][0] )
+      // ( [ .[] | select($nb != "" and .headRefName == $nb) ][0] )
       // ( [ .[] | select(.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)")) ][0] )
       // empty' <<<"$j" 2>/dev/null || true)"
     if [[ -n "$row" ]]; then
@@ -921,13 +990,14 @@ govern::_repos_merge_first() {
 # "repo<TAB>number<TAB>url" line per matching open PR, in merge-then-frontend order (backend-first,
 # anti-pattern #5-safe). Empty if none.
 govern::find_all_prs() {
-  local n="$1" repo j rows
+  local n="$1" repo j rows nb
   command -v gh >/dev/null 2>&1 || return 0
+  nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
   while IFS= read -r repo; do
     [[ -n "$repo" ]] || continue
     j="$(gh pr list --repo "$(govern::repo_slug "$repo")" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
-    rows="$(jq -r --arg n "$n" --arg repo "$repo" '
-      [ .[] | select(.headRefName == ("ticket-" + $n) or (.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)"))) ]
+    rows="$(jq -r --arg n "$n" --arg nb "$nb" --arg repo "$repo" '
+      [ .[] | select(.headRefName == ("ticket-" + $n) or ($nb != "" and .headRefName == $nb) or (.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)"))) ]
       | .[] | "\($repo)\t\(.number)\t\(.url // "")"' <<<"$j" 2>/dev/null || true)"
     [[ -n "$rows" ]] && printf '%s\n' "$rows"
   done < <(govern::_repos_merge_first)
