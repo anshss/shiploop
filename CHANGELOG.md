@@ -6,6 +6,20 @@ Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test
 
 ### Added
 
+- **push v2 — the auto-fork contribution funnel (#45).** `/shiploop:push` (via `sync-port.sh`) no longer
+  dead-ends adopters without push access, and no longer strands the PR inside the operator's fork. The
+  push + PR step now derives the access posture from **git + GitHub** (not workspace config): it reads the
+  templates clone's `origin`, resolves the **canonical hub** as that repo's `parent` (falling back to
+  `origin` when there is no parent), and checks push permission — so the PR **always** targets the real
+  hub. Three postures: **direct-access** (push to origin, same-repo PR — historical, unchanged),
+  **fork** (origin is the operator's fork → push there, open a **cross-repo** PR `<you>:<branch>` against
+  the hub), and **plain-clone** (no push access → `gh repo fork --clone=false` creates the fork, the
+  branch is pushed there, and a cross-repo PR opens against the hub — no manual fork step). GitHub
+  un-resolvable (offline / non-GitHub remote) **degrades safely** to the historical direct-to-origin push;
+  the fork funnel is taken ONLY on an affirmative no-push signal, never an unknown one. The real `git push`
+  honors `GOVERN_NO_PUSH`. `commands/push.md` documents the three postures and drops the manual-fork
+  precondition. New hermetic regression `templates/govern/test/test-sync-port-fork-funnel.sh` covers all
+  four paths (direct / fork / plain-clone / unknown-perm) with gh+git stubs.
 - **`/shiploop:flows` command UX (validations feature, Phase 4).** The operator surface over the flow
   registry — the model orchestrates + inventories, but every registry write goes through a script (bash
   owns bookkeeping under the governor lock):
