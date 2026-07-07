@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-07-07
 
-Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test-coverage + dead-code cleanup (remediation batches — N1–N12, K5, K6) plus the validation-flow registry substrate, verdict pipeline, staleness sweep, and `/shiploop:flows` command (Phases 1-4). VERSION bump at release.
+The self-maintenance release: a full-harness adversarial audit fixed 23 findings across the sync, update, and governor mechanisms (remediation batches — N1–N17, K1–K6), a new **validation-flow registry** landed end-to-end (`validation/flows.md` + verdict pipeline + staleness sweep + `/shiploop:flows` extract/list/file + long-horizon effectiveness gates and the kill loop, Phases 1–5), the contribution channel gained the **auto-fork funnel** (#45) and the queue-isolation rule (#46), and onboarding was rebuilt around time-to-first-magic: extract-first quickstart, the **trust ladder** (`GOVERN_AUTONOMY`: observe → pr-only → auto, new workspaces start pr-only), a starter ticket at setup, per-run cost transparency, and the opt-out PR footer. Nearly every change in this release was implemented, validated, and merged by the harness's own agent pattern.
 
 ### Added
 
