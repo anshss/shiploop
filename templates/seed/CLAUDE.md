@@ -45,7 +45,7 @@ not topic:
 
 | Where | Use when |
 |---|---|
-| **`queue/tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. |
+| **`queue/tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. **Isolation** — the queue admits exactly TWO scopes: the current project's sub-repos and the harness itself. Any tool/skill/product EXTERNAL to those two must NEVER file a ticket here, even when invoked from this workspace's terminal; its follow-ups go to its own tracker. |
 | **`CLAUDE.md`** (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. |
 | **`learnings.md`** (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for `CLAUDE.md` ("X provider flaky this week"). **Never** a work item (→ tickets) and **never** a fixed-bug writeup (→ promote or delete). |
 | **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. The memory dir is fronted by a `MEMORY.md` index — a list of one-line `[title](file.md) — gist` links pointing at per-topic note files; add the link when you add a note so it stays discoverable. |
