@@ -60,6 +60,7 @@ WORKTREE_BASE=""
 SCAFFOLD=""
 TEMPLATES_DIR=""
 KEEP_UNDO=0
+DETECT=0
 YES=0
 # Confirm flags for the warn+confirm preflights.
 CONFIRM_CLOUD=0
@@ -82,6 +83,7 @@ while [ "$#" -gt 0 ]; do
     --scaffold)          SCAFFOLD="$2"; shift 2 ;;
     --templates)         TEMPLATES_DIR="$2"; shift 2 ;;
     --keep-undo)         KEEP_UNDO=1; shift ;;
+    --detect)            DETECT=1; shift ;;
     --yes|-y)            YES=1; shift ;;
     --confirm-cloud-sync)   CONFIRM_CLOUD=1; shift ;;
     --confirm-nested)       CONFIRM_NESTED=1; shift ;;
@@ -93,14 +95,42 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# Resolve workspace dir (the repo root to wrap). pwd -P (physical path) so it matches
+# git's `rev-parse --show-toplevel`, which resolves symlinks (e.g. macOS /var ->
+# /private/var). A logical-path mismatch would false-trip the "not at repo root" refusal.
+[ -n "$WORKSPACE_DIR" ] || WORKSPACE_DIR="$(pwd)"
+WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" 2>/dev/null && pwd -P)" || { printf 'wrap.sh: bad --workspace-dir\n' >&2; exit 2; }
+cd "$WORKSPACE_DIR" || { printf 'wrap.sh: cannot cd into workspace dir\n' >&2; exit 2; }
+
+# ── Mode detection (the setup-entry six-row table) ───────────────────────────
+# Single tested source of truth for what /shiploop:setup should do in this folder.
+# Prints exactly one token; setup.md branches on it.
+#   upgrade           already a shiploop workspace (scripts/lib/workspace.sh present)
+#   wrap              at the ROOT of a git repo whose .git is a DIRECTORY  → offer wrap-in-place
+#   fresh             not inside any git repo                              → existing fresh scaffold
+#   refuse:gitfile    .git is a FILE (linked worktree / submodule)         → refuse
+#   refuse:bare       bare repository                                       → refuse
+#   refuse:below-root inside a git repo but below its root                 → refuse (cd to root)
+detect_mode() {
+  if [ -f scripts/lib/workspace.sh ]; then echo upgrade; return; fi
+  if [ -f .git ]; then echo refuse:gitfile; return; fi
+  # Bare repo first: it has no working tree, so `--show-toplevel` is empty and would
+  # otherwise look like "not a repo" (fresh).
+  if [ "$(git rev-parse --is-bare-repository 2>/dev/null || true)" = "true" ]; then echo refuse:bare; return; fi
+  local toplevel; toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$toplevel" ]; then echo fresh; return; fi
+  if [ -d .git ] && [ "$toplevel" = "$WORKSPACE_DIR" ]; then echo wrap; return; fi
+  echo refuse:below-root
+}
+
+if [ "$DETECT" -eq 1 ]; then
+  detect_mode
+  exit 0
+fi
+
 [ -n "$NAME" ] || { printf 'wrap.sh: --name <subfolder> is required\n' >&2; exit 2; }
 [ -n "$ORG" ] || { printf 'wrap.sh: --org is required (forwarded to scaffold)\n' >&2; exit 2; }
 [ -n "$REPOS_SPEC" ] || { printf 'wrap.sh: --repos is required (forwarded to scaffold)\n' >&2; exit 2; }
-
-# Resolve workspace dir (the repo root to wrap).
-[ -n "$WORKSPACE_DIR" ] || WORKSPACE_DIR="$(pwd)"
-WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" 2>/dev/null && pwd)" || { printf 'wrap.sh: bad --workspace-dir\n' >&2; exit 2; }
-cd "$WORKSPACE_DIR" || { printf 'wrap.sh: cannot cd into workspace dir\n' >&2; exit 2; }
 
 # Resolve scaffold.sh + templates (defaults relative to this script: templates/lib/wrap.sh).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -169,8 +199,14 @@ rollback_and_exit() {
       rmdir "$NAME" 2>/dev/null || true
       ;;
   esac
+  # Drop the (now-stale) manifest: post-rollback the paths it lists (.git,
+  # package.json, CLAUDE.md, …) name the RESTORED ORIGINAL repo, not scaffold
+  # output — so a subsequent run of the retained .wrap-undo.sh must NOT act on
+  # them. With the manifest gone the retained undo script is a safe no-op, while
+  # still satisfying the contract that .wrap-undo.sh stays on failure.
+  rm -f "$MANIFEST_FILE" 2>/dev/null || true
   warn "wrap FAILED (phase=$PHASE): ${FAIL_REASON:-unknown} — original layout restored."
-  [ -f "$UNDO_FILE" ] && warn "manual undo still available: $WORKSPACE_DIR/$UNDO_FILE"
+  [ -f "$UNDO_FILE" ] && warn "manual undo still available (safe no-op after this rollback): $WORKSPACE_DIR/$UNDO_FILE"
   exit "$ec"
 }
 
