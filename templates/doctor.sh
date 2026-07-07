@@ -99,6 +99,21 @@ else
   warn "core.hooksPath = '$hooks_path' (expected .githooks) — harness push guard/attribution may be inactive"
 fi
 
+# Root remote: the governor pushes meta-repo runtime artifacts (tickets.md CAS,
+# harness commits) to the root's `origin` and cross-driver ticket sync relies on
+# it. A wrap-in-place scaffold can leave the root remote-less ("skip for now"), which
+# silently DISABLES those paths — surface it as a first-class status line, not a
+# buried caveat.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  if [ -n "$(git -C "$ROOT" remote 2>/dev/null)" ]; then
+    ok "root has a git remote ($(git -C "$ROOT" remote | tr '\n' ' '))"
+  else
+    warn "root has no remote: governor CAS pushes and cross-driver ticket sync are DISABLED — add one (gh repo create / git remote add origin <url>)"
+  fi
+else
+  warn "root is not a git repo yet — run setup's git-init step"
+fi
+
 # ── Sub-repo commit hooks (attribution + optional pre-commit) ──
 # The root core.hooksPath above says NOTHING about sub-repo hook state: each sub-repo is an
 # independent git repo, and a framework reinstall (husky's `prepare` on `npm install`) silently

@@ -45,16 +45,112 @@ Workspace layout scaffold.sh produces:
 
 ---
 
-## Phase 0 — Detect fresh vs existing
+## Phase 0 — Detect the mode (fresh / upgrade / wrap-in-place / refuse)
 
 Print `── meta-repo setup ──`, then `pwd` and `ls -la`.
 
-Determine the mode:
-- If `scripts/lib/workspace.sh` exists → **BUMP MODE** (jump to Phase B).
-- Else if `package.json` exists and grep finds `"status": "bash scripts/status.sh"` (legacy marker) →
-  OLDER meta-repo (pre-workspace.sh). Treat as **BUMP MODE** but note the core scripts predate the
-  config-file architecture and must be re-parameterized (scaffold.sh handles that).
-- Else → **FRESH MODE**.
+Let `WRAP="$PLUGIN_ROOT/templates/lib/wrap.sh"`. Ask it what this folder is — it is the single
+tested source of truth for the entry decision (the six-row table below):
+
+```bash
+MODE="$(bash "$WRAP" --detect --workspace-dir "$(pwd)")"
+echo "mode: $MODE"
+```
+
+| `$MODE` | Context | Do |
+|---|---|---|
+| `upgrade` | already a shiploop workspace (`scripts/lib/workspace.sh` present) | **BUMP MODE** — jump to Phase B |
+| `fresh` | not inside any git repo (empty parent / sub-repos as children) | **FRESH MODE** — Phase 1 |
+| `wrap` | you are AT the root of a git repo whose `.git` is a directory | **WRAP OFFER** — Phase W |
+| `refuse:gitfile` | `.git` is a FILE (linked worktree / submodule checkout) | **STOP** — wrapping it corrupts the main repo's back-pointers. Tell the operator; out of scope for v1 |
+| `refuse:below-root` | inside a git repo but below its root | **STOP** — "cd to the repo root and re-run" (print the root path) |
+| `refuse:bare` | bare repository | **STOP** — nothing to wrap |
+
+Back-compat note: an OLDER meta-repo that predates `scripts/lib/workspace.sh` but has a
+`package.json` whose scripts include `"status": "bash scripts/status.sh"` is still an **upgrade** —
+`--detect` returns `fresh` for it (no `.git` at root typical), so if you see that legacy marker,
+treat it as **BUMP MODE** and note the core scripts must be re-parameterized (scaffold.sh handles it).
+
+## Phase W — Wrap-in-place offer (only when `$MODE == wrap`)
+
+You are standing inside the operator's existing project repo. Offer to **wrap it in place** — the
+quickstart path — and explain it in ONE paragraph before touching anything:
+
+> Wrap-in-place moves this repo's contents into a subfolder (`<name>/`) of this same path and
+> scaffolds the shiploop workspace root where the repo used to be. The path you `cd` into stays the
+> same (shell history, IDE recents, and Claude Code's session identity all survive); your repo, its
+> full history, and every untracked file move as a unit — verified byte-identical afterwards. A
+> `.wrap-undo.sh` is written first and only removed once the whole thing verifies; if anything fails
+> it rolls back automatically. It is one guarded script (`wrap.sh`) — never a sequence of moves I
+> drive by hand.
+
+Also offer the **fresh-folder alternative** for anyone who prefers it or wants a multi-repo workspace
+from the start: "or make an empty parent folder, move this repo into it, and run setup there" (that is
+the classic `mkdir myproduct && cd myproduct && mv ~/code/this-repo . && /shiploop:setup` flow → Phase 1).
+
+If the operator declines both, stop. If they pick wrap-in-place, continue in this phase:
+
+### W1 — Interview (what wrap.sh needs)
+
+Gather, confirming each:
+- **Subfolder name** (`NAME`): default = repo name from `git remote get-url origin` (`<org>/<repo>` →
+  `<repo>`), else the current folder name. This is where the repo will live (`<path>/<NAME>/`).
+- **Port + dev command** for the wrapped repo: same detection as Phase 1 (read its `package.json`
+  `dev` script / lockfile / `Makefile` / `Cargo.toml` / `go.mod`).
+- **GitHub org** (`ORG`): parse from the wrapped repo's `origin`. Confirm.
+- **Root package manager** (`ROOT_PM`), **worktree base**, **governor merge-allowlist**: as Phase 1.
+- Then the shared **Interview additions** (autonomy rung, more repos, auto-externalization) below.
+
+Build `REPOS_SPEC` with the wrapped repo pre-registered FIRST: `"$NAME:$PORT:$CMD"` (plus any extra
+repos the operator named — those are cloned AFTER the wrap, W4).
+
+### W2 — Invoke wrap.sh (single guarded call)
+
+```bash
+bash "$WRAP" \
+  --workspace-dir "$(pwd)" \
+  --name "$NAME" \
+  --pm "$ROOT_PM" --org "$ORG" \
+  --repos "$REPOS_SPEC" \
+  --merge-allowlist "$GOVERN_MERGE_REPOS" \
+  --worktree-base "$WORKTREE_BASE" \
+  --yes
+# exit 0 = wrapped + scaffolded; 3 = hard refusal; 4 = name collision; 5 = needs-confirm; 1 = rolled back
+```
+
+Handle the exit code — **do NOT try to move anything yourself; wrap.sh owns every filesystem step**:
+- **0** → wrapped + scaffolded. Continue to W3.
+- **3** (hard refusal) → print wrap.sh's `REFUSE:` message verbatim and STOP. These are fail-closed
+  (dirty tree, in-progress op, `.git`-as-file, linked worktree, absolute `core.worktree`/`hooksPath`,
+  `includeIf` gitdir abs, pre-existing `.wrap-undo.sh`, below-root, bare). Do not override.
+- **4** (name collision) → the chosen `NAME` clashes (case-insensitively on macOS/APFS) with an
+  existing entry. Ask for a different subfolder name and re-invoke.
+- **5** (needs-confirm) → wrap.sh printed one or more `NEEDS-CONFIRM[--confirm-x]: <why>` lines
+  (escaping symlink, cloud-synced folder, nested-in-another-repo, live dev servers, `git maintenance`
+  registration). Relay each `<why>` to the operator, get an explicit yes for each, then re-invoke
+  ADDING the exact `--confirm-*` flags they approved. If they decline any, STOP.
+- **1** (rolled back) → a step failed mid-flight; wrap.sh already restored the original layout and
+  kept `.wrap-undo.sh`. Print the failure reason and STOP — do not retry blindly.
+
+### W3 — Root remote
+
+The scaffold left the root as a fresh local git repo with no remote. Offer:
+- **`gh repo create`** (private by default): `gh repo create <org>/<meta-name> --private --source=. --remote=origin` (confirm the name).
+- **skip for now** — fine, but tell the operator plainly: **without a root remote the governor's CAS
+  ticket pushes and cross-driver ticket sync are DISABLED**; `doctor` and `config-check` will keep
+  surfacing it as a first-class status line until they add one.
+
+### W4 — Extra repos, hooks, verify
+
+- If the operator named additional repos in the interview, clone each into the root now (`git clone`)
+  and re-run `bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component workspace-sh --yes` is NOT needed —
+  instead add them to `REPOS` before W2, or clone + re-scaffold config. Simplest: clone them, then
+  re-run the config component so `workspace.sh` lists them.
+- Propagate sub-repo commit hooks (Phase 3 block) for the wrapped repo and any extras.
+- Verify: `bash scripts/govern/config-check.sh` (no-auth smoke) then continue to Phase Z's report.
+
+The wrapped repo is already gitignored at the root (`/<NAME>/`) and was NOT swept into the root
+commit — wrap.sh asserts both before removing the undo script, so you do not need to re-check.
 
 ## Phase 0.5 — Branch guard (root must be on its default branch)
 
@@ -94,6 +190,28 @@ You are gathering the inputs scaffold.sh needs:
 - **Worktree base:** default `$(dirname "$(pwd)")/<folder-name>.wt`. Confirm or override.
 - **Governor merge-allowlist:** ask which sub-repos may be **auto-merged** by the governor on
   green-or-no-checks CI. Default: **none** (safest) — the operator opts repos in.
+
+Then also run the shared **Interview additions** below.
+
+## Interview additions (BOTH modes — fresh and wrap)
+
+Ask these in both Phase 1 and Phase W (in wrap mode, ask them AFTER the wrap so the first repo is
+already registered):
+
+1. **More repos** — "what else belongs to this product?" For each, clone it into the root
+   (`git clone <url>`) so it becomes a sub-folder with its own `.git`, and add it to `REPOS` (fresh:
+   include in `REPOS_SPEC` before scaffold; wrap: clone after W2, then re-run
+   `--component workspace-sh --yes` so `workspace.sh` lists it). One repo is a fine workspace — don't push a split.
+2. **Autonomy rung (`GOVERN_AUTONOMY`)** — surface the trust ladder explicitly, one honest sentence each:
+   - **observe** — workers do the work and open a DRAFT PR; nothing is ever marked ready or merged. Watch-only.
+   - **pr-only** (default) — workers open normal ready-for-review PRs; the governor still never auto-merges. You review + merge.
+   - **auto** — allowlisted repos auto-merge on green-or-no-checks CI (still guarded by the three-factor check).
+   Scaffold seeds `pr-only`. If the operator picks another rung, set it AFTER scaffold:
+   `sed -i.bak -E 's/(GOVERN_AUTONOMY=.\$\{GOVERN_AUTONOMY:-)[a-z-]+/\1<rung>/' scripts/lib/workspace.sh && rm -f scripts/lib/workspace.sh.bak`.
+3. **Auto-externalization** — if any registered repo is PUBLIC (`gh repo view <org>/<repo> --json visibility`
+   → `PUBLIC`; silently skip if `gh` is absent), offer the existing `externalize-low-tickets.sh`
+   mechanism (moves Low-severity tickets to public GitHub issues). **Off by default** — only enable on
+   an explicit yes.
 
 ## Phase 2 (fresh) — Invoke scaffold.sh
 
