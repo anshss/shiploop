@@ -41,6 +41,10 @@ EXTERNALIZED_FILE="${GOVERN_EXTERNALIZED_FILE:-$QUEUE_DIR/externalized.md}"
 # live tickets.md) and held for one operator approval before any public issue is filed — the governor
 # never auto-publishes. Same block format as tickets.md; the governor never SELECTS work from it.
 EXTERNALIZE_REVIEW_FILE="${GOVERN_EXTERNALIZE_REVIEW_FILE:-$QUEUE_DIR/tickets-externalize-review.md}"
+# The `- **Kind:**` tag the externalization review questionnaire carries, so both the filer
+# (externalize-low-tickets.sh) and the dispatcher (escalations-apply-answers.sh) agree on the one
+# escalation identity without a magic string drifting between them.
+EXTERNALIZE_REVIEW_KIND="externalize-review"
 # Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
 # answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"

@@ -14,7 +14,9 @@
 # Usage:
 #   record-escalation-answer.sh <N> --answer "<text>" --disposition <token> [--rule "<text>"]
 #     <token> one of: do-the-work | defer | mitigated | keep-open (canonical tokens
-#     escalations-apply-answers.sh's govern::norm_disposition acts on).
+#     escalations-apply-answers.sh's govern::norm_disposition acts on), or the externalization
+#     review-gate answers approve-all | decide-later | move-back:<ids> (acted on only for a
+#     Kind==externalize-review questionnaire).
 #
 # Idempotent: re-running for the same N overwrites the same three fields, so a typo'd answer can be
 # corrected by calling it again before the next governor run applies it. Commits (and, unless
@@ -38,9 +40,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$answer" ]] || govern::die "--answer is required"
+# approve-all | decide-later | move-back:<ids> are the externalization review-gate answers (only acted
+# on for a Kind==externalize-review escalation); move-back carries an id payload (move-back:1,5).
 case "$disposition" in
-  do-the-work|defer|mitigated|keep-open) ;;
-  *) govern::die "--disposition must be one of do-the-work|defer|mitigated|keep-open (got: '$disposition')" ;;
+  do-the-work|defer|mitigated|keep-open|approve-all|decide-later) ;;
+  move-back|move-back:*) ;;
+  *) govern::die "--disposition must be one of do-the-work|defer|mitigated|keep-open|approve-all|decide-later|move-back:<ids> (got: '$disposition')" ;;
 esac
 
 [[ -f "$ESCALATIONS_FILE" ]] || govern::die "no escalations file at $ESCALATIONS_FILE"

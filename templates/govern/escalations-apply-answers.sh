@@ -48,6 +48,7 @@ fi
 resolved_csv=","          # tickets to move Open → Resolved
 notes_file="$(mktemp)"    # tab-separated: ticket<TAB>resolution note
 acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_kill=0; n_rule=0
+n_ext_approved=0; n_ext_moved=0; n_ext_later=0
 
 # Migrate a ticket block tickets.md → tickets-parked.md, renumbered to the parked queue's max+1.
 # Prints the new number, or empty if the block wasn't found in tickets.md.
@@ -95,6 +96,41 @@ delete_ticket_block() { # N -> 0 removed | 1 not found
   return 0
 }
 
+# Restore a staged ticket block from the externalization review file BACK to tickets.md, stamping it
+# `**Externalize:** never` so govern::externalize_candidates permanently excludes it — the operator
+# rejected externalizing it, and it must never re-stage. Mirrors migrate_to_parked's append-then-delete
+# shape (targeting the review file). Returns 0 if a block was restored, 1 if #N wasn't staged.
+restore_from_review() { # N -> 0 restored | 1 not found
+  local N="$1" block tmp
+  block="$(awk -v n="$N" '
+    $0 ~ "^##[[:space:]]+#" n "([^0-9]|$)" {grab=1}
+    grab {print}
+    grab && /^---[[:space:]]*$/ {exit}
+  ' "$EXTERNALIZE_REVIEW_FILE" 2>/dev/null)"
+  [[ -n "$block" ]] || return 1
+  # Append to tickets.md, inserting the never-stamp as the first field (after the heading's blank line;
+  # fall back to just before the closing --- if the block has no blank after its heading).
+  { printf '\n'
+    printf '%s\n' "$block" | awk '
+      BEGIN{ stamped=0 }
+      NR==1 { print; next }
+      !stamped && /^[[:space:]]*$/            { print; print "**Externalize:** never"; stamped=1; next }
+      !stamped && /^---[[:space:]]*$/         { print "**Externalize:** never"; stamped=1; print; next }
+      { print }
+      END{ if(!stamped) print "**Externalize:** never" }
+    '
+  } >> "$TICKETS_FILE"
+  # Delete the block from the review file.
+  tmp="$(mktemp)"
+  awk -v n="$N" '
+    $0 ~ "^##[[:space:]]+#" n "([^0-9]|$)" {grab=1}
+    grab && /^---[[:space:]]*$/ {grab=0; next}
+    grab {next}
+    {print}
+  ' "$EXTERNALIZE_REVIEW_FILE" > "$tmp" && mv "$tmp" "$EXTERNALIZE_REVIEW_FILE"
+  return 0
+}
+
 # Append an operator-confirmed rule to preferences.md (grows the doctrine slowly, #62).
 append_rule() { # N text
   local N="$1" text="$2" sect="## Auto-added rules (from answered escalations)"
@@ -109,6 +145,7 @@ while IFS= read -r row; do
   ans="$(jq -r '.answer // ""' <<<"$row")"
   dispraw="$(jq -r '.disposition // ""' <<<"$row")"
   ruleraw="$(jq -r '.makeRule // ""' <<<"$row")"
+  kind="$(jq -r '.kind // ""' <<<"$row")"
 
   # Skip entries the operator hasn't answered yet.
   govern::is_placeholder "$ans" && govern::is_placeholder "$dispraw" && continue
@@ -197,6 +234,50 @@ while IFS= read -r row; do
         govern::log "apply-answers: #$tk answered mitigated but no tickets.md block found — closing escalation only"
       fi
       ;;
+    approve-all|move-back|decide-later)
+      # Externalization review gate: these dispositions ONLY act on the one questionnaire (Kind ==
+      # externalize-review). The same token on any OTHER escalation is not ours — leave it open.
+      if [[ "$kind" != "$EXTERNALIZE_REVIEW_KIND" ]]; then : ; else
+        case "$disp" in
+          approve-all)
+            # File EVERY staged block as a public issue (the ONLY path that publishes). The filer clears
+            # the review file + ledger and commits them itself; we close the questionnaire here.
+            "$DIR/externalize-low-tickets.sh" --file-approved >&2 \
+              || govern::log "apply-answers: externalize --file-approved returned non-zero (some issues may be left staged) — questionnaire still closed"
+            resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "externalize approved — filed every staged ticket as a public issue (operator: approve-all)" >> "$notes_file"
+            n_ext_approved=$((n_ext_approved+1)); acted=1
+            govern::log "apply-answers: externalize questionnaire #$tk answered approve-all → filed staged tickets as public issues"
+            ;;
+          move-back)
+            # Restore the listed ids to tickets.md, stamping each `**Externalize:** never` so it never
+            # re-stages. Parse the id list from the RAW disposition (then the answer) — norm_disposition
+            # strips the payload, so read it ourselves.
+            _payload="$dispraw"; govern::is_placeholder "$_payload" && _payload=""
+            _ids="$(printf '%s' "$_payload" | grep -oiE 'move-?back[: ]*[0-9,[:space:]]+' | grep -oE '[0-9]+' | tr '\n' ' ' || true)"
+            [[ -z "${_ids// }" ]] && ! govern::is_placeholder "$ans" \
+              && _ids="$(printf '%s' "$ans" | grep -oiE 'move-?back[: ]*[0-9,[:space:]]+' | grep -oE '[0-9]+' | tr '\n' ' ' || true)"
+            if [[ -z "${_ids// }" ]]; then
+              govern::log "apply-answers: externalize #$tk answered move-back but no ticket ids parsed from '$dispraw' — leaving the questionnaire open for a corrected answer"
+            else
+              _restored=""
+              for _mid in $_ids; do
+                restore_from_review "$_mid" && _restored="${_restored:+$_restored }#$_mid" || govern::log "apply-answers: externalize move-back #$_mid — not staged in the review file (skipped)"
+              done
+              resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "externalize move-back — restored ${_restored:-none} to tickets.md, stamped **Externalize:** never (operator: move-back); any still-staged tickets re-nudge next run" >> "$notes_file"
+              n_ext_moved=$((n_ext_moved+1)); acted=1
+              govern::log "apply-answers: externalize questionnaire #$tk answered move-back → restored ${_restored:-none} (never re-stage)"
+            fi
+            ;;
+          decide-later)
+            # Defer the decision: leave everything staged, close THIS questionnaire; the next stage run
+            # re-nudges (deduped by Kind, so never a duplicate).
+            resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "externalize deferred — tickets left staged; will re-nudge next run (operator: decide-later)" >> "$notes_file"
+            n_ext_later=$((n_ext_later+1)); acted=1
+            govern::log "apply-answers: externalize questionnaire #$tk answered decide-later → left staged; re-nudge next run"
+            ;;
+        esac
+      fi
+      ;;
     keep-open|"")
       : ;;  # operator wrote something but not a terminal disposition → leave open
   esac
@@ -254,11 +335,11 @@ rm -f "$notes_file"
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # '|| true' → "" if dir missing
 govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing (#28)
 ( cd "$commit_dir"
-  git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
-  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, rules ${n_rule})" || true
+  git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" "$EXTERNALIZE_REVIEW_FILE" 2>/dev/null || true
+  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize approve ${n_ext_approved}/move-back ${n_ext_moved}/later ${n_ext_later}, rules ${n_rule})" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
   fi
 )
-echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule"
+echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, externalize(approve $n_ext_approved / move-back $n_ext_moved / later $n_ext_later), rules added $n_rule"
