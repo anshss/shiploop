@@ -37,6 +37,10 @@ TICKETS_FILE="${GOVERN_TICKETS_FILE:-$QUEUE_DIR/tickets.md}"
 # lane runs; read at run-start by tickets_already_issues so a partially-healed filing (issue on GitHub
 # but ledger not yet updated) still de-dups its ticket. Under queue/ alongside tickets.md.
 EXTERNALIZED_FILE="${GOVERN_EXTERNALIZED_FILE:-$QUEUE_DIR/externalized.md}"
+# Staging queue for the externalization REVIEW gate: eligible Low tickets are MOVED here (out of the
+# live tickets.md) and held for one operator approval before any public issue is filed — the governor
+# never auto-publishes. Same block format as tickets.md; the governor never SELECTS work from it.
+EXTERNALIZE_REVIEW_FILE="${GOVERN_EXTERNALIZE_REVIEW_FILE:-$QUEUE_DIR/tickets-externalize-review.md}"
 # Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
 # answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"
@@ -142,10 +146,10 @@ govern::escalations_open_ndjson() { # [escalations-file]
     function jesc(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\t/,"\\t",s); gsub(/\r/,"",s); return s }
     function flush(){
       if(have){
-        printf "{\"ticket\":%s,\"title\":\"%s\",\"opened\":\"%s\",\"reason\":\"%s\",\"question\":\"%s\",\"options\":\"%s\",\"answer\":\"%s\",\"disposition\":\"%s\",\"makeRule\":\"%s\"}\n", \
-          t, jesc(title), jesc(opened), jesc(reason), jesc(question), jesc(options), jesc(answer), jesc(disp), jesc(rule)
+        printf "{\"ticket\":%s,\"title\":\"%s\",\"opened\":\"%s\",\"reason\":\"%s\",\"question\":\"%s\",\"options\":\"%s\",\"answer\":\"%s\",\"disposition\":\"%s\",\"makeRule\":\"%s\",\"kind\":\"%s\"}\n", \
+          t, jesc(title), jesc(opened), jesc(reason), jesc(question), jesc(options), jesc(answer), jesc(disp), jesc(rule), jesc(kind)
       }
-      have=0; title="";opened="";reason="";question="";options="";answer="";disp="";rule=""
+      have=0; title="";opened="";reason="";question="";options="";answer="";disp="";rule="";kind=""
     }
     BEGIN{ in_open=0; have=0 }
     /^## Open/ { if(in_open) flush(); in_open=1; next }
@@ -159,6 +163,7 @@ govern::escalations_open_ndjson() { # [escalations-file]
     in_open && have {
       line=$0
       if      (match(line,/^- \*\*Opened:\*\* ?/))            opened=substr(line,RLENGTH+1)
+      else if (match(line,/^- \*\*Kind:\*\* ?/))              kind=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Reason:\*\* ?/))            reason=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Question:\*\* ?/))          question=substr(line,RLENGTH+1)
       else if (match(line,/^- \*\*Options:\*\* ?/))           options=substr(line,RLENGTH+1)
@@ -193,17 +198,39 @@ govern::has_open_escalation() { # ticket -> 0 if an open ### #N entry exists
   [[ -n "$hit" ]]
 }
 
+# Is there already an OPEN escalation of a given Kind? The externalization review gate uses this to
+# keep exactly ONE questionnaire open across runs (dedupe by `- **Kind:**`, not by ticket number,
+# since one questionnaire spans many staged tickets — the sync-port "identity is a field, not #N"
+# pattern). Prints the anchor ticket number of the first match; rc 0 if one exists, 1 otherwise.
+govern::has_open_escalation_kind() { # kind -> prints anchor #N; rc 0 if an open entry of that kind exists
+  local kind="$1" hit
+  [[ -n "$kind" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  hit="$(govern::escalations_open_ndjson 2>/dev/null \
+         | jq -r --arg k "$kind" 'select(.kind == $k) | .ticket' 2>/dev/null | head -1)"
+  [[ -n "$hit" ]] && { printf '%s' "$hit"; return 0; }
+  return 1
+}
+
 # Insert a standard escalation block under the "## Open" header in escalations.md (append to EOF if
 # the header is absent). Writes the SAME field structure run-loop.sh's park path writes — Reason /
 # Question / Options / Answer / Disposition / Make-this-a-rule — so escalations-apply-answers.sh can
 # process the operator's Disposition (do-the-work | defer | mitigated | keep-open) at the next run-start.
-# Args: ticket title reason question options. Live-only side effect — callers gate on mode.
-govern::file_open_escalation() { # N title reason question options
-  local N="$1" title="$2" reason="$3" question="$4" options="$5" blk tmp
+# Args: ticket title reason question options [kind] [disposition-hint]. Live-only side effect — callers
+# gate on mode. Optional trailing args (backward-compatible; existing 5-arg callers unchanged):
+#   kind — writes a `- **Kind:** <kind>` line (escalations_open_ndjson emits it) so a bespoke lane
+#          (e.g. externalize-review) can find + dispatch its own escalation without colliding with the
+#          generic park lane.
+#   disposition-hint — replaces the default Disposition placeholder help text (e.g. the review gate's
+#          "approve-all | decide-later | move-back:<ids>") so the operator sees the right choices.
+govern::file_open_escalation() { # N title reason question options [kind] [disp-hint]
+  local N="$1" title="$2" reason="$3" question="$4" options="$5" kind="${6:-}" disphint="${7:-}" blk tmp kindline
   blk="$(mktemp)"
+  kindline=""; [[ -n "$kind" ]] && kindline="- **Kind:** $kind"$'\n'
+  [[ -n "$disphint" ]] || disphint="operator: do-the-work | defer | mitigated | keep-open"
   # #312: stamp `Opened` (date; run id if the caller exported one) so govern-health.sh can age it.
-  printf '\n### #%s — %s\n- **Opened:** %s%s\n- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(operator: do-the-work | defer | mitigated | keep-open)_\n- **Make this a rule?:** _(operator)_\n' \
-    "$N" "$title" "$(date +%F)" "${TJ_RUN_ID:+ (run $TJ_RUN_ID)}" "$reason" "$question" "$options" > "$blk"
+  printf '\n### #%s — %s\n- **Opened:** %s%s\n%s- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(%s)_\n- **Make this a rule?:** _(operator)_\n' \
+    "$N" "$title" "$(date +%F)" "${TJ_RUN_ID:+ (run $TJ_RUN_ID)}" "$kindline" "$reason" "$question" "$options" "$disphint" > "$blk"
   if grep -q '^## Open' "$ESCALATIONS_FILE" 2>/dev/null; then
     tmp="$(mktemp)"
     awk -v bf="$blk" '{print} /^## Open/ && !done {while ((getline l < bf) > 0) print l; close(bf); done=1}' \
@@ -268,6 +295,14 @@ govern::norm_disposition() { # raw -> canonical|""
     *" mitigated "*|*" mitigate "*|*" accept current state "*|*" accept as is "*|*" accepted "*|*" already acceptable "*|*" harm zero "*|*" harm already zero "*) echo "mitigated";;
     *" defer "*|*" defer indefinitely "*|*" wont do "*|*" won t do "*|*" keep manual "*|*" close "*|*" park "*|*" parked "*|*" no "*) echo "defer";;
     *" keep open "*|*" keepopen "*|*" wait "*|*" pending "*) echo "keep-open";;
+    # Externalization review-gate dispositions — LAST so a generic answer that also happens to name a
+    # canonical token above wins there. apply-answers only ACTS on these for a Kind==externalize-review
+    # escalation, so over-matching a non-externalize answer here is harmless (it falls through to
+    # keep-open there). `move-back:1,5` → `move back 1 5` after the non-alnum collapse, so `move back`
+    # matches; the id payload is parsed from the RAW field by the caller, not from this token.
+    *" approve all "*|*" approveall "*|*" externalize all "*|*" file all "*|*" approve "*) echo "approve-all";;
+    *" move back "*|*" moveback "*|*" send back "*) echo "move-back";;
+    *" decide later "*|*" decidelater "*|*" decide "*) echo "decide-later";;
     *) echo "";;
   esac
 }
@@ -603,10 +638,10 @@ govern::externalize_candidates() { # [tickets-file] -> eligible ticket numbers, 
   # Harness markers: if the Where names any of these, the ticket is governor-internal → never externalize.
   local hmarkers="scripts/ governor/ queue/ workspace.sh meta-repo harness"
   awk -v target="$target" -v siblings="${siblings[*]:-}" -v hmarkers="$hmarkers" '
-    function flush() { if (cur!="" && sev=="low" && oss==1 && harness==0 && valid==0) print cur }
+    function flush() { if (cur!="" && sev=="low" && oss==1 && harness==0 && valid==0 && never==0) print cur }
     BEGIN { ns=split(siblings, sib, " "); nh=split(hmarkers, HM, " ") }
     /^## #[0-9]+/ {
-      flush(); cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); sev=""; oss=0; harness=0; valid=0
+      flush(); cur=$0; sub(/^## #/,"",cur); sub(/[^0-9].*/,"",cur); sev=""; oss=0; harness=0; valid=0; never=0
       # (4) validation/spike, or a maintainer-DECISION ticket ("… — decide X vs Y"), in the heading
       if ($0 ~ /VALIDATION|SPIKE/ || tolower($0) ~ /decide /) valid=1
       next
@@ -614,6 +649,9 @@ govern::externalize_candidates() { # [tickets-file] -> eligible ticket numbers, 
     cur!="" {
       low=tolower($0)
       if ($0 ~ /^\*\*Severity:\*\*/) { if (low ~ /low/) sev="low" }
+      # (5) operator opt-OUT: a `**Externalize:** never` field (set by the review gate move-back path)
+      # permanently excludes the ticket from staging, so a rejected ticket never re-stages.
+      else if ($0 ~ /^\*\*Externalize:\*\*/) { if (low ~ /never/) never=1 }
       else if ($0 ~ /^\*\*Where:\*\*/) {
         w=$0
         for (i=1;i<=ns;i++) if (sib[i]!="") gsub(sib[i], "", w)

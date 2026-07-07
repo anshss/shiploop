@@ -47,7 +47,7 @@ fi
 
 resolved_csv=","          # tickets to move Open → Resolved
 notes_file="$(mktemp)"    # tab-separated: ticket<TAB>resolution note
-acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_kill=0; n_rule=0
+acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_kill=0; n_rule=0; n_ext=0
 
 # Migrate a ticket block tickets.md → tickets-parked.md, renumbered to the parked queue's max+1.
 # Prints the new number, or empty if the block wasn't found in tickets.md.
@@ -109,6 +109,7 @@ while IFS= read -r row; do
   ans="$(jq -r '.answer // ""' <<<"$row")"
   dispraw="$(jq -r '.disposition // ""' <<<"$row")"
   ruleraw="$(jq -r '.makeRule // ""' <<<"$row")"
+  kindraw="$(jq -r '.kind // ""' <<<"$row")"
 
   # Skip entries the operator hasn't answered yet.
   govern::is_placeholder "$ans" && govern::is_placeholder "$dispraw" && continue
@@ -197,6 +198,45 @@ while IFS= read -r row; do
         govern::log "apply-answers: #$tk answered mitigated but no tickets.md block found — closing escalation only"
       fi
       ;;
+    approve-all|decide-later|move-back)
+      # Externalization review-gate dispositions. GATE: act ONLY when THIS escalation is the
+      # externalize-review questionnaire (Kind field). A stray approve/decide/move-back token on ANY
+      # OTHER escalation is ignored (left open) — so these globally-added norm_disposition tokens can
+      # never hijack the generic do-the-work/defer/mitigated lifecycle.
+      if [[ "$kindraw" != "externalize-review" ]]; then
+        govern::log "apply-answers: #$tk disposition '$disp' but Kind!=externalize-review — ignoring (escalation left open)"
+      else
+        case "$disp" in
+          approve-all)
+            # File EVERY staged ticket as a public issue. NO_COMMIT: the externalize script edits the
+            # review queue + ledger but defers the commit to this script's step-5, which publishes them
+            # atomically with the escalation resolution (mirrors the kill path's file-ticket NO_COMMIT).
+            GOVERN_EXTERNALIZE_NO_COMMIT=1 GOVERN_BOOKKEEP_LOCK_HELD=1 "$DIR/externalize-low-tickets.sh" --approve >&2 \
+              || govern::log "apply-answers: externalize --approve returned non-zero (a per-ticket gh failure left some staged) — continuing"
+            printf '%s\t%s\n' "$tk" "externalization APPROVED — staged tickets filed as public issues (operator: approve-all)" >> "$notes_file"
+            govern::log "apply-answers: externalize-review #$tk answered approve-all → filed staged tickets as public issues"
+            ;;
+          move-back)
+            # move-back:<ids> — norm_disposition dropped the id payload, so parse it from the RAW
+            # Disposition + Answer fields (digits only, deduped). Those ids return to tickets.md flagged
+            # `Externalize: never`; the rest stay staged and are re-nudged by a fresh questionnaire next run.
+            _mb="$(printf '%s %s' "$dispraw" "$ans" | grep -oE '[0-9]+' | awk '!seen[$0]++' | tr '\n' ' ' | sed -E 's/ +$//')"
+            GOVERN_EXTERNALIZE_NO_COMMIT=1 GOVERN_BOOKKEEP_LOCK_HELD=1 "$DIR/externalize-low-tickets.sh" --move-back "$_mb" >&2 \
+              || govern::log "apply-answers: externalize --move-back returned non-zero — continuing"
+            printf '%s\t%s\n' "$tk" "externalization MOVE-BACK — returned #[$_mb] to tickets.md as never-externalize; remaining staged tickets re-nudged next run (operator: move-back)" >> "$notes_file"
+            govern::log "apply-answers: externalize-review #$tk answered move-back → returned [$_mb] to tickets.md (never-externalize)"
+            ;;
+          decide-later)
+            # Leave everything staged; DON'T file. Resolving THIS questionnaire lets next run's stage
+            # pass re-file a fresh one for the still-staged tickets (the re-nudge). The Kind dedupe keeps
+            # exactly one open at a time, so an un-answered gate never stacks a duplicate.
+            printf '%s\t%s\n' "$tk" "externalization DEFERRED — tickets stay staged; a fresh questionnaire is re-filed next run (operator: decide-later)" >> "$notes_file"
+            govern::log "apply-answers: externalize-review #$tk answered decide-later → left staged; re-nudge next run"
+            ;;
+        esac
+        resolved_csv+="$tk,"; n_ext=$((n_ext+1)); acted=1
+      fi
+      ;;
     keep-open|"")
       : ;;  # operator wrote something but not a terminal disposition → leave open
   esac
@@ -254,8 +294,15 @@ rm -f "$notes_file"
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # '|| true' → "" if dir missing
 govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing (#28)
 ( cd "$commit_dir"
-  git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
-  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, rules ${n_rule})" || true
+  # Stage only files that EXIST — the externalization review queue + ledger (edited by the approve-all /
+  # move-back dispositions under GOVERN_EXTERNALIZE_NO_COMMIT=1) are absent on a run with no externalize
+  # disposition, and a single missing pathspec would make `git add` fail the WHOLE add (staging nothing).
+  _addfiles=()
+  for _f in "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" "$EXTERNALIZE_REVIEW_FILE" "$EXTERNALIZED_FILE"; do
+    [[ -e "$_f" ]] && _addfiles+=("$_f")
+  done
+  git add -- "${_addfiles[@]}" 2>/dev/null || true
+  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize ${n_ext}, rules ${n_rule})" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
