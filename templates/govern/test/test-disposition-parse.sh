@@ -39,6 +39,23 @@ assert_eq "$(govern::norm_disposition 'accept current state')" "mitigated" \
 assert_eq "$(govern::norm_disposition 'harm already zero')" "mitigated" \
   "free-text 'harm already zero' canonicalizes to mitigated (not defer)"
 
+# ── externalization review-gate tokens (approve-all | decide-later | move-back) ───────────
+# Added LAST in norm_disposition so a generic answer that also names a canonical token wins there;
+# apply-answers additionally kind-gates them, so they can't hijack the generic lifecycle.
+assert_eq "$(norm 'approve-all')" "approve-all" "approve-all classifies as approve-all"
+assert_eq "$(govern::norm_disposition 'file all')" "approve-all" "free-text 'file all' → approve-all"
+assert_eq "$(norm 'decide-later')" "decide-later" "decide-later classifies as decide-later"
+assert_eq "$(norm 'move-back:1,5')" "move-back" "move-back:1,5 (payload) classifies as move-back (payload parsed elsewhere)"
+assert_eq "$(govern::norm_disposition 'move back 3 7')" "move-back" "free-text 'move back 3 7' → move-back"
+# CRITICAL regression guard: adding those tokens must NOT reclassify the generic lifecycle tokens.
+assert_eq "$(norm 'do-the-work')" "do-the-work" "generic do-the-work STILL classifies as do-the-work (not hijacked)"
+assert_eq "$(norm 'defer')" "defer" "generic defer STILL classifies as defer"
+assert_eq "$(norm 'mitigated')" "mitigated" "generic mitigated STILL classifies as mitigated"
+assert_eq "$(norm 'keep-open')" "keep-open" "generic keep-open STILL classifies as keep-open"
+# A do-the-work answer that also contains 'approve' in prose is NOT hijacked to approve-all.
+assert_eq "$(govern::norm_disposition 'do the work, i approve')" "do-the-work" \
+  "an answer naming both 'do the work' and 'approve' resolves to do-the-work (generic wins)"
+
 # the unfilled Disposition placeholder is still recognized as not-yet-answered
 ph='_(operator: do-the-work | defer | mitigated | keep-open)_'
 govern::is_placeholder "$ph" && phflag=yes || phflag=no
