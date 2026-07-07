@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- **Public-repo PR hygiene (no internal ticket-ids on public PRs).** On a repo that is public, a
+  worker now names its branch with a neutral, deterministic `sl-<12hex>` token (`govern::neutral_branch`)
+  instead of `ticket-<N>`, and is instructed to keep the internal ticket id out of the PR title, body,
+  and commit subjects — an outsider can no longer infer a private tracker from the branch name. The
+  neutral name is a stateless function of the ticket number, so the governor still discovers, tracks,
+  and merges the PR (`find_pr`/`find_all_prs` match it alongside `ticket-<N>`). Repo visibility is set
+  explicitly by the new **`GOVERN_PUBLIC_REPOS`** knob (space-separated short names; wins over
+  detection) or auto-detected via `gh repo view` (cached once per run); a lookup failure is treated as
+  **private** so an API hiccup never changes a private repo's branch mechanics. The three-factor
+  auto-merge guard accepts the neutral branch **only** for public repos — the private-repo branch
+  pattern is unchanged, so the guard is never weakened — and the `.githooks/pre-push` sanctioned-branch
+  check accepts `sl-<12hex>` under `GOVERN_RUN`. The existing PR title/body scrub remains the
+  unconditional backstop for both cases.
+
 ### Fixed
 
 - **README/SKILL staleness.** Documented `/shiploop:flows` in the Commands table and corrected the

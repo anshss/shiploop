@@ -125,6 +125,35 @@ commit hook adds):
 🤖 shipped by [shiploop](https://github.com/anshss/shiploop)"
 fi
 
+# Public-repo PR hygiene: on a PUBLIC target repo the branch MUST NOT carry the internal ticket id
+# (an outsider seeing `ticket-<N>` infers a private tracker). Resolve which of this workspace's repos
+# are public (GOVERN_PUBLIC_REPOS knob wins; else `gh repo view` auto-detect, cached per run) and, if
+# any are, OVERRIDE the worker-prompt's "branch MUST be ticket-<N>" instruction for those repos with
+# the neutral `sl-<hex>` scheme (govern::neutral_branch) plus a no-ticket-ids-in-PR/commits rule. The
+# override appends LAST so it supersedes the static prompt. Private-only workspaces inject nothing —
+# zero behavior change and zero extra context in the common case.
+_pub_repos=""
+for _r in ${GOVERN_MERGE_REPOS:-} ${GOVERN_FRONTEND_REPOS:-}; do
+  govern::repo_is_public "$_r" 2>/dev/null && _pub_repos="${_pub_repos:+$_pub_repos }$_r"
+done
+if [[ -n "$_pub_repos" ]]; then
+  _neutral_branch="$(govern::neutral_branch "$N" 2>/dev/null || printf 'ticket-%s' "$N")"
+  prompt="$prompt
+
+## ⚠ PUBLIC-REPO PR HYGIENE — overrides the \"branch MUST be ticket-<N>\" rule for these repos
+These repos in this workspace are **PUBLIC**: ${_pub_repos}. On a public repo an internal ticket id
+must NOT be visible to outsiders. So **in any repo listed above ONLY**:
+1. Name your branch **\`${_neutral_branch}\`** — NOT \`ticket-$N\`. (It is a deterministic opaque token
+   for this ticket; the governor still finds + merges the PR by it. Create it with
+   \`git switch -c ${_neutral_branch}\`.)
+2. Put **NO** internal ticket id anywhere an outsider can read it: not in the **PR title**, not in the
+   **PR body**, and not in any **commit subject** (no \`#$N\`, no \`ticket $N\`, no \`ticket-$N\`).
+   Describe the change on its own merits.
+In every OTHER (private) repo you touch, keep the classic \`ticket-$N\` branch and normal messages.
+When a resource name is required, use \`${_neutral_branch}-<label>\` in public repos (\`ticket-$N-<label>\`
+elsewhere) so the orphan sweep still reaps it."
+fi
+
 # Flow-registry injection: a ticket carrying a `Flow:` field validates one or more registered flows.
 # Inject the FULL flow block(s) so the worker knows each flow's Kind/Gate/Surface/Paths, and remind it
 # to fill the report's flow fields. (The one-line "your change stales flows X,Y" summary for
