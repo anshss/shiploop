@@ -230,6 +230,26 @@ fs_is_case_insensitive() {
   return "$hit"
 }
 
+# Read a [core] key from a RAW git config file without invoking git on the repo.
+# Critical: an absolute core.worktree that points at a missing path makes EVERY
+# `git ...` invocation from inside the repo fail ("fatal: Invalid path") — even
+# `git config --file` (git still does repository discovery first). So the only way
+# to see a poisoning core.worktree is to parse the ini ourselves. Section-aware:
+# `[core]`, `[remote "x"]`, etc. Prints the value (empty if unset).
+raw_core_key() { # <config-file> <key>
+  [ -f "$1" ] || return 0
+  awk -v key="$(printf '%s' "$2" | tr 'A-Z' 'a-z')" '
+    function trim(s){ sub(/^[ \t]+/,"",s); sub(/[ \t]+$/,"",s); return s }
+    /^[ \t]*\[/ { s=$0; sub(/^[ \t]*\[[ \t]*/,"",s); sub(/[ \t"\]].*$/,"",s); section=tolower(s); next }
+    {
+      if (section=="core") {
+        low=tolower($0)
+        if (low ~ "^[ \t]*" key "[ \t]*=") { v=$0; sub(/^[ \t]*[^=]*=[ \t]*/,"",v); print trim(v); exit }
+      }
+    }
+  ' "$1"
+}
+
 # Resolve a symlink target to an absolute path (best-effort, portable). Prints the
 # resolved absolute path of the target's directory + basename, or empty on failure.
 resolve_symlink_abs() {
@@ -257,6 +277,35 @@ preflight() {
     refuse ".git is a FILE (linked worktree or submodule checkout) — wrapping it would corrupt the main repo. Main repo gitdir: ${mainrepo:-<unreadable>}. Out of scope for v1."
   fi
   [ -d .git ] || refuse "no .git directory here — not at the root of a git repo. cd to the repo root and re-run."
+
+  # 5 (moved EARLY — must run before any git command) — absolute-path git config
+  # that a relocation would strand. Read RAW: a bad core.worktree poisons every
+  # `git ...` from inside the repo, so a git-based read would silently miss it.
+  local cw ch
+  cw="$(raw_core_key .git/config worktree)"
+  if [ -n "$cw" ]; then
+    refuse "local git config sets core.worktree ($cw) — relocating would strand it. Remove it (git config --local --unset core.worktree) or wrap manually. v1 does not auto-repair."
+  fi
+  ch="$(raw_core_key .git/config hooksPath)"
+  case "$ch" in
+    /*) refuse "local git config sets an ABSOLUTE core.hooksPath ($ch) — relocating would strand it. Make it relative or unset it first." ;;
+  esac
+  # includeIf gitdir with an absolute path in local config
+  if [ -f .git/config ] && grep -Eiq '^[[:space:]]*\[includeif "gitdir:/' .git/config 2>/dev/null; then
+    refuse "local git config has an [includeIf \"gitdir:/abs...\"] section — an absolute gitdir condition breaks on relocation. Remove/relativize it first."
+  fi
+  # submodule configs — absolute worktree/hooksPath only (a submodule ALWAYS has a
+  # RELATIVE core.worktree pointing back at its checkout; that is normal and moves fine).
+  if [ -d .git/modules ]; then
+    local smc smw smh
+    while IFS= read -r smc; do
+      [ -n "$smc" ] || continue
+      smw="$(raw_core_key "$smc" worktree)"
+      case "$smw" in /*) refuse "submodule config $smc sets an ABSOLUTE core.worktree ($smw) — relocation would strand it. v1 refuses; resolve it first." ;; esac
+      smh="$(raw_core_key "$smc" hooksPath)"
+      case "$smh" in /*) refuse "submodule config $smc sets an absolute core.hooksPath ($smh) — resolve it first." ;; esac
+    done < <(find .git/modules -name config -type f 2>/dev/null)
+  fi
 
   # bare repo — nothing to wrap
   if [ "$(git rev-parse --is-bare-repository 2>/dev/null)" = "true" ]; then
@@ -291,32 +340,6 @@ preflight() {
     refuse "this repo has linked worktrees ($wt_count total). Remove them (git worktree remove ...) before wrapping — v1 does not auto-repair worktree gitdir pointers."
   fi
 
-  # 5 — no absolute-path git config that a relocation would strand
-  local cw ch
-  cw="$(git config --local --get core.worktree 2>/dev/null || true)"
-  if [ -n "$cw" ]; then
-    refuse "local git config sets core.worktree ($cw) — relocating would strand it. Remove it (git config --local --unset core.worktree) or wrap manually. v1 does not auto-repair."
-  fi
-  ch="$(git config --local --get core.hooksPath 2>/dev/null || true)"
-  case "$ch" in
-    /*) refuse "local git config sets an ABSOLUTE core.hooksPath ($ch) — relocating would strand it. Make it relative or unset it first." ;;
-  esac
-  # includeIf gitdir with an absolute path in local config
-  if [ -f "$gd/config" ] && grep -Eiq '^\[includeif "gitdir:/' "$gd/config" 2>/dev/null; then
-    refuse "local git config has an [includeIf \"gitdir:/abs...\"] section — an absolute gitdir condition breaks on relocation. Remove/relativize it first."
-  fi
-  # submodule configs — absolute worktree/hooksPath
-  if [ -d "$gd/modules" ]; then
-    local smc
-    while IFS= read -r smc; do
-      [ -n "$smc" ] || continue
-      if git config -f "$smc" --get core.worktree >/dev/null 2>&1; then
-        refuse "submodule config $smc sets core.worktree — relocation would strand it. v1 refuses; resolve it first."
-      fi
-      local smh; smh="$(git config -f "$smc" --get core.hooksPath 2>/dev/null || true)"
-      case "$smh" in /*) refuse "submodule config $smc sets an absolute core.hooksPath ($smh) — resolve it first." ;; esac
-    done < <(find "$gd/modules" -name config -type f 2>/dev/null)
-  fi
   # git maintenance register (global config carries the absolute path) — warn hard
   if git config --global --get-regexp '^maintenance\.repo$' 2>/dev/null | grep -Fq "$WORKSPACE_DIR"; then
     if [ "$CONFIRM_MAINTENANCE" -eq 0 ]; then
@@ -555,6 +578,10 @@ run_scaffold() {
     case "$b" in "$NAME"|"$UNDO_FILE"|"$MANIFEST_FILE"|.wrap-staging.*) continue ;; esac
     grep -Fxq "$b" "$MANIFEST_FILE" 2>/dev/null || printf '%s\n' "$b" >> "$MANIFEST_FILE"
   done
+
+  # Seam: fail AFTER scaffold has created real files, to exercise the trap's
+  # scaffold-output cleanup (_delete_scaffold_outputs) against actual output.
+  [ "${WRAP_TEST_FAIL_AT:-}" = "post-scaffold" ] && abort "test-injected post-scaffold failure"
 }
 
 verify_final() {
