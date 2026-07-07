@@ -79,7 +79,10 @@ echo "root default branch: $def   currently on: $cur"
 You are gathering the inputs scaffold.sh needs:
 
 - **Sub-repos:** `for d in */; do [ -d "$d/.git" ] && echo "${d%/}"; done`. If zero, stop and tell the
-  operator to clone their sub-repos first. Otherwise confirm the list.
+  operator to put at least one repo here first (as a sub-folder with its own `.git`). **One sub-repo is
+  enough** — a single-repo workspace is fully valid; the ticket queue, governor, worktrees, and
+  lesson-accretion all pay off at N=1, and the operator adds more sub-repos later. Don't nudge toward a
+  multi-repo split or assume microservices. Confirm the detected list.
 - **Ports + dev commands per sub-repo:** read each `<repo>/package.json` `dev` script; grep for `-p (\d{4})`
   (Next.js) or `PORT=(\d+)` (Express). **Resolve collisions:** if several default to 3000, assign
   distinct stable ports (3000, 3001, …). **Dev command (do NOT assume one PM):** lockfile signal —

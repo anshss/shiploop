@@ -202,6 +202,12 @@ Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test
 ### Tests
 - `templates/govern/test/test-update-channel.sh`: rewrote assertion 2 (partial run on a non-converged workspace writes no stamp), added the convergence-stamp assertion to 3, and added assertion 9 — N7's done-when end-to-end (a partial `--component` run does not flip doctor to "up to date" while a component is behind; the converging bump then advances the stamp).
 
+### Docs
+- **Extract-first onboarding (README restructure).** The README now leads with time-to-first-magic: Install moved up, and a two-act Quickstart is the first hands-on section. **Act 1 — "10 minutes: see your product's risk map"** (`/shiploop:setup` on a repo you already have → `/shiploop:flows extract` → `list`); the truthful minimal path is documented as setup → extract, because `extract` needs the scaffolded `scripts/govern/flows-*.sh` helpers + `validation/flows.md` (it is not runnable cold), and it deploys/merges nothing. **Act 2 — "file one ticket, watch it ship"** (starter ticket → `config-check.sh` → `/shiploop:govern`, pr-only). Requirements pulled up and made prominent (git/gh/jq; Act 1 needs only Claude Code + git + jq).
+- **Explicit trust ladder** (README `Trust and cost` + SKILL.md governor section): **observe → pr-only → auto**. New workspaces start pr-only; you graduate one repo at a time by adding it to `GOVERN_MERGE_REPOS` once you've watched its PRs behave. The three-factor merge guard, green-or-no-checks CI, and hard-stop doctrine are framed as why graduation is safe.
+- **N=1 is a first-class adopter.** README, SKILL.md, and the `commands/setup.md` interview now state that one repo is a fine meta-repo — the queue, governor, worktrees, and lesson-accretion all pay off at N=1; add sub-repos later. No assumption of microservices.
+- **Coherent wedge line.** README, SKILL.md, and `commands/flows.md` all describe `extract` as inventorying "every user-facing path that might break" so the risk-map framing reads identically everywhere.
+
 ## 1.5.1 — 2026-07-05
 
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.

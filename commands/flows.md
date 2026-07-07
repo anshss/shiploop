@@ -26,8 +26,10 @@ Run from the workspace root (main checkout or a worktree). First learn the layou
 
 ## `extract` — inventory the flows (staged, operator-gated)
 
-Build the combinatorial list of "paths a user might take that might break." **Fan out with `Agent`** —
-one worker per surface, so no single context has to hold the whole codebase:
+Build the combinatorial list of **every user-facing path that might break** — the paths a user might
+take through the product that could regress. This is the product's *risk map*, and a fresh `extract` is
+often an adopter's first taste of shiploop. **Fan out with `Agent`** — one worker per surface, so no
+single context has to hold the whole codebase:
 
 1. **Enumerate the surfaces to inventory.** Typically: every UI route/page, every API endpoint, every
    provider/integration matrix (a dimension that's *enumerable* — e.g. N providers × {deploy, feature-X,
