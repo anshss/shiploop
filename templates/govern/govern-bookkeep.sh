@@ -49,8 +49,13 @@ ticket_title="$(grep -m1 -E "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE" 2>/d
 # a flow-registry validation stamps validation/flows.md on resolve, and the flow ids live in the block
 # that step 1 deletes. Empty for a non-flow ticket (the stamp step then no-ops). Guarded on the parser.
 ticket_flow=""
+ticket_flow_op="validate"
 if command -v govern::ticket_flow_ids >/dev/null 2>&1; then
   ticket_flow="$(govern::ticket_flow_ids "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+  # A KILL removal ticket (Flow-op: remove) TOMBSTONES its flow(s) on resolve instead of stamping a
+  # verdict — captured now, before step 1 deletes the block. Default "validate" for a normal flow ticket.
+  command -v govern::ticket_flow_op >/dev/null 2>&1 \
+    && ticket_flow_op="$(govern::ticket_flow_op "$N" "$TICKETS_FILE" 2>/dev/null || echo validate)"
 fi
 
 # 1. Delete the ## #N block via the shared parser (govern::ticket_block_delete): boundary is
@@ -209,8 +214,17 @@ pr="$(printf '%s' "$report" | jq -r '
 # No-op for a non-flow ticket. A PII hit in the promoted summary returns 2 (logged; the resolve
 # itself already committed — the operator scrubs + re-stamps). Guarded on the parser + a jq report.
 if [[ -n "$ticket_flow" ]] && command -v govern::flows_stamp_from_report >/dev/null 2>&1; then
-  GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_stamp_from_report "$report" resolve "$ticket_flow" "$(govern::meta_root)" \
-    || govern::log "bookkeep #$N: flow-registry stamp returned non-zero (flows: $ticket_flow) — check for a PII-park or unreachable-SHA warning above"
+  if [[ "$ticket_flow_op" == "remove" ]]; then
+    # KILL loop completion (validations Phase 5): the removal ticket's PR deletes the feature; on resolve
+    # we TOMBSTONE the flow (Status TOMBSTONED, history preserved) rather than stamping a fresh verdict.
+    if command -v govern::flows_tombstone >/dev/null 2>&1; then
+      GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_tombstone "$ticket_flow" "$(govern::meta_root)" \
+        || govern::log "bookkeep #$N: flow-registry tombstone returned non-zero (flows: $ticket_flow)"
+    fi
+  else
+    GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_stamp_from_report "$report" resolve "$ticket_flow" "$(govern::meta_root)" \
+      || govern::log "bookkeep #$N: flow-registry stamp returned non-zero (flows: $ticket_flow) — check for a PII-park or unreachable-SHA warning above"
+  fi
 fi
 
 # 6. POINTER ON RESOLVE (#252). The ticket block is now gone; reconstructing the evidence path from

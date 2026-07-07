@@ -35,8 +35,10 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
 model_field=""
 flow_field=""
-# --model and --flow may appear in any order before the title. --flow <id[,id…]> tags this ticket as
-# a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the registry.
+flow_op_field=""
+# --model, --flow, --flow-op may appear in any order before the title. --flow <id[,id…]> tags this
+# ticket as a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the
+# registry. --flow-op remove marks it a KILL removal ticket (bookkeep tombstones the flow on resolve).
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --model)
@@ -50,6 +52,14 @@ while [[ "${1:-}" == --* ]]; do
       [[ -n "${2:-}" ]] || govern::die "--flow requires a value (flow-id[,flow-id…])"
       # Normalize whitespace around commas → a clean comma-list; reject spaces inside the value.
       flow_field="$(printf '%s' "$2" | tr -s ' ' | sed -E 's/ *, */,/g; s/^ +//; s/ +$//')"
+      shift 2 ;;
+    --flow-op)
+      case "${2:-}" in
+        validate) flow_op_field="" ;;                 # the default — no field emitted
+        remove)   flow_op_field="remove" ;;
+        "") govern::die "--flow-op requires a value (validate|remove)" ;;
+        *) govern::log "file-ticket: unknown flow-op '$2' — ignoring (allowlist: validate|remove)" ;;
+      esac
       shift 2 ;;
     *) break ;;
   esac
@@ -72,6 +82,12 @@ fi
 flow_block=""
 if [[ -n "$flow_field" ]]; then
   flow_block="**Flow:** $flow_field
+"
+fi
+# Flow-op: field (only emitted for a non-default "remove" — a KILL removal ticket). Sits in the same
+# leading field block so spawn-worker's anchored latch + bookkeep's pre-capture read it.
+if [[ -n "$flow_op_field" ]]; then
+  flow_block="${flow_block}**Flow-op:** $flow_op_field
 "
 fi
 

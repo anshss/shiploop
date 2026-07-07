@@ -70,15 +70,34 @@ inflight=" $( { grep -hInE '^[[:space:]]*[-*]?[[:space:]]*\**[Ff]low:' "$TICKETS
   | sed -E 's/^[^:]*:[^:]*://; s/^[[:space:]]*[-*]?[[:space:]]*\**[Ff]low:\**[[:space:]]*//' \
   | tr ',' ' ' | tr -s ' \t' '  ' | tr ' ' '\n' | grep . | tr '\n' ' '; } || true) "
 filtered=""
-excluded_blocked=""; excluded_inflight=""
+excluded_blocked=""; excluded_inflight=""; newly_blocked=""
 for id in $candidates; do
   if [[ "$(govern::flow_field "$id" Status "$FLOWS")" == "BLOCKED" ]]; then
     excluded_blocked="${excluded_blocked:+$excluded_blocked }$id"; continue
+  fi
+  # Capability gate (Phase 5): a flow that `Requires:` a workspace capability whose knob is UNSET can't
+  # be validated headlessly — filing it would queue a runnable-then-billable ticket that only parks with
+  # no evidence. Degrade it to BLOCKED with the NAMED blocker (anti-pattern #15) and exclude it, rather
+  # than filing. No-op when the flow declares no `Requires:` or every required knob is wired.
+  if command -v govern::flow_missing_cap_blocker >/dev/null 2>&1; then
+    _cap_blocker="$(govern::flow_missing_cap_blocker "$id" "$FLOWS" 2>/dev/null || true)"
+    if [[ -n "$_cap_blocker" ]]; then
+      _bid="$id" _bmsg="$_cap_blocker"
+      _flows_cap_block_edit() { # <flows-file>
+        govern::flow_set_field "$_bid" Status  BLOCKED "$1"
+        govern::flow_set_field "$_bid" Blocker "$_bmsg" "$1"
+      }
+      govern::cas_edit "$FLOWS" _flows_cap_block_edit "docs(flows): $id BLOCKED — $_cap_blocker" 2>/dev/null || true
+      unset -f _flows_cap_block_edit
+      newly_blocked="${newly_blocked:+$newly_blocked }$id ($_cap_blocker)"
+      continue
+    fi
   fi
   case "$inflight" in *" $id "*) excluded_inflight="${excluded_inflight:+$excluded_inflight }$id"; continue;; esac
   filtered="${filtered:+$filtered }$id"
 done
 
+[[ -n "$newly_blocked" ]]     && printf 'excluded (missing capability → marked BLOCKED): %s\n' "$newly_blocked"
 [[ -n "$excluded_blocked" ]]  && printf 'excluded (BLOCKED — has a named blocker): %s\n' "$excluded_blocked"
 [[ -n "$excluded_inflight" ]] && printf 'excluded (already an open Flow: ticket): %s\n' "$excluded_inflight"
 if [[ -z "$filtered" ]]; then printf 'Nothing to file.\n'; exit 0; fi

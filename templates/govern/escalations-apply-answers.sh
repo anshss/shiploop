@@ -47,7 +47,7 @@ fi
 
 resolved_csv=","          # tickets to move Open → Resolved
 notes_file="$(mktemp)"    # tab-separated: ticket<TAB>resolution note
-acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_rule=0
+acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_kill=0; n_rule=0
 
 # Migrate a ticket block tickets.md → tickets-parked.md, renumbered to the parked queue's max+1.
 # Prints the new number, or empty if the block wasn't found in tickets.md.
@@ -138,6 +138,40 @@ while IFS= read -r row; do
       n_unpark=$((n_unpark+1)); acted=1
       govern::log "apply-answers: #$tk answered do-the-work → un-parking (governor retries)"
       ;;
+    kill)
+      # Validations Phase 5 kill loop: the operator dispositioned a measured-INEFFECTIVE flow for
+      # DELETION. Read the flow id(s) off the still-parked ticket, mark each kill-pending (so `list`/
+      # health show it AND the sweep can auto-withdraw the kill if the flow goes STALE first), and file a
+      # normal removal ticket per flow (Flow-op: remove — bookkeep tombstones the flow when its PR opens).
+      # Then close the original validation ticket (its verdict is recorded + dispositioned), like mitigated.
+      _kflows=""
+      command -v govern::ticket_flow_ids >/dev/null 2>&1 \
+        && _kflows="$(govern::ticket_flow_ids "$tk" "$TICKETS_FILE" 2>/dev/null || true)"
+      if [[ -z "$_kflows" ]]; then
+        govern::log "apply-answers: #$tk answered kill but carries no Flow: id — nothing to tombstone; leaving the escalation open for a human"
+      else
+        _kmeta="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
+        _kfiled=""
+        for _kf in $_kflows; do
+          command -v govern::flows_mark_kill_pending >/dev/null 2>&1 \
+            && GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_mark_kill_pending "$_kf" "$_kmeta" || true
+          # NO_COMMIT: append only; apply-answers' own step-5 commit (under this lock) publishes it with
+          # the tickets.md block-deletion, so the removal ticket can't be clobbered (mirrors #240).
+          _rn="$(printf 'Where: flow %s (validation/flows.md) — measured INEFFECTIVE, operator dispositioned KILL.\nObserved: the feature is measured worthless; this is a DELETION, not a fix.\nFix direction: remove the feature end-to-end (code + UI + dead config) in the mapped sub-repo(s) and open a PR. Normal code ticket — NOT a validation run.\nDone when: the feature is deleted and a PR is open; the governor tombstones flow %s on resolve.\n' "$_kf" "$_kf" \
+            | GOVERN_FILE_TICKET_NO_COMMIT=1 GOVERN_BOOKKEEP_LOCK_HELD=1 "$DIR/file-ticket.sh" \
+                --flow "$_kf" --flow-op remove "KILL: remove $_kf (measured INEFFECTIVE)" Medium 2>/dev/null || true)"
+          [[ -n "$_rn" ]] && _kfiled="${_kfiled:+$_kfiled }#$_rn"
+        done
+        if [[ -n "$_kfiled" ]]; then
+          delete_ticket_block "$tk" || true
+          resolved_csv+="$tk,"; printf '%s\t%s\n' "$tk" "killed — filed removal ticket(s) $_kfiled for flow(s) $_kflows; governor tombstones on their PR (operator: kill)" >> "$notes_file"
+          n_kill=$((n_kill+1)); acted=1
+          govern::log "apply-answers: #$tk answered kill → filed removal ticket(s) $_kfiled for $_kflows; closing the validation ticket"
+        else
+          govern::log "apply-answers: #$tk answered kill but the removal ticket filing FAILED — leaving the escalation + ticket open for a retry"
+        fi
+      fi
+      ;;
     defer)
       M="$(migrate_to_parked "$tk")"
       if [[ -n "$M" ]]; then
@@ -221,10 +255,10 @@ commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # '
 govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing (#28)
 ( cd "$commit_dir"
   git add -- "$TICKETS_FILE" "$TICKETS_PARKED_FILE" "$ESCALATIONS_FILE" "$PREFERENCES_FILE" 2>/dev/null || true
-  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, rules ${n_rule})" || true
+  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, rules ${n_rule})" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
   fi
 )
-echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, rules added $n_rule"
+echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule"
