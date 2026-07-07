@@ -68,6 +68,10 @@ scripts/govern/flows-file.sh deploy-gpu.vastai comfyui.vastai --yes  # actually 
 - **Resource-group batching:** flows sharing a `Resource-group:` are filed as ONE ticket (comma-list
   `Flow:` field) — one worker, one deploy, N flows validated.
 - **BLOCKED excluded; in-flight guard** skips a flow that already has an open `Flow:` ticket.
+- **Capability gate:** a flow that `Requires:` a workspace capability whose knob is unset (`browser` →
+  `WSP_BROWSER_CMD`, `analytics` → `WSP_ANALYTICS_QUERY_CMD`, `test-account` → `TEST_USER_EMAIL`,
+  `deploy` → `GOVERN_DEPLOY_SWEEP_CMD`) can't be validated headlessly — `file` degrades it to BLOCKED
+  with the named blocker and excludes it, rather than queuing a runnable-then-billable ticket.
 - **`--all-*` preconditions:** batch filing refuses unless `GOVERN_DEPLOY_SWEEP_CMD` is wired (the
   post-worker orphan sweep is the safety net on the highest-spend path). Cheapest/fastest-provision
   flows are ordered first (so a truncated governor run maximizes coverage); slow-provision flows near
@@ -79,7 +83,22 @@ tickets on its next pass and stamps each flow's verdict back into the registry.
 
 ## Kill path (an INEFFECTIVE flow the operator wants gone)
 
-An INEFFECTIVE flow (measured worthless) is a **deletion candidate, not a fix candidate**. On the
-operator's `kill` disposition, file a normal removal ticket; when its PR opens, bookkeep tombstones the
-flow (history survives). A pending kill whose flow goes STALE first is auto-withdrawn by the sweep — a
-stale negative must not be acted on.
+An INEFFECTIVE flow (measured worthless) is a **deletion candidate, not a fix candidate**. When a gated
+validation parks gate-failed, the governor raises a disposition escalation whose options include
+**`kill`**. Answer it `kill` (via `/resolve` / the escalation answer flow) and at the next run-start
+`escalations-apply-answers.sh` marks the flow kill-pending and files a normal removal ticket; when that
+ticket's PR opens, bookkeep **tombstones** the flow (history survives — a revived feature starts from its
+record, re-extraction can't resurrect it as new). A pending kill whose flow goes STALE first is
+auto-withdrawn by the sweep — a stale negative must not be acted on.
+
+## Long-horizon, passive evidence & due advisories (surfaced, never auto-filed)
+
+Effectiveness gates accrue over days; a worker lives minutes. The split is **arm → collect**: an *arm*
+ticket verifies the experiment is running (flow → `MEASURING`); a later *collect* ticket reads the
+accrued gate and stamps `EFFECTIVE`/`INEFFECTIVE`. The periodic governor supervisor surfaces, as
+**advisory lines only** (never auto-filing — billable safety):
+
+- a `MEASURING` flow whose `Sample-window: <N>d` has plausibly elapsed → file a collect run;
+- a settled flow whose `Revalidate: every <N>d` policy is past due → re-file to refresh;
+- where an analytics adapter (`WSP_ANALYTICS_QUERY_CMD`) is wired, a flow declaring `Usage-source:` with
+  **0 real usage** → INEFFECTIVE-leaning passive evidence for the operator's kill decision.

@@ -20,6 +20,35 @@ Sub-repo, sync-channel, sync-port, update-channel correctness plus governor test
   honors `GOVERN_NO_PUSH`. `commands/push.md` documents the three postures and drops the manual-fork
   precondition. New hermetic regression `templates/govern/test/test-sync-port-fork-funnel.sh` covers all
   four paths (direct / fork / plain-clone / unknown-perm) with gh+git stubs.
+- **Flow-registry long-horizon + kill loop + capability adapters + passive evidence (validations feature,
+  Phase 5 — the final phase).** Closes the effectiveness/deletion half of the design:
+  - **Kill loop (INEFFECTIVE → TOMBSTONED).** `common.sh` `govern::norm_disposition` learns a `kill`
+    disposition; `run-loop.sh` adds `kill` to a gate-failed FLOW ticket's escalation options so it is
+    discoverable end-to-end; `escalations-apply-answers.sh` acts on `kill` — marks the flow kill-pending
+    (`govern::flows_mark_kill_pending`, so `list`/health show it in flight and the Phase-3 sweep can
+    auto-withdraw it if the flow goes STALE first) and files a normal removal ticket via `file-ticket.sh`
+    `--flow <id> --flow-op remove`; `govern-bookkeep.sh` pre-captures `Flow-op:` (`govern::ticket_flow_op`)
+    and on the removal ticket's resolve TOMBSTONES the flow (`govern::flows_tombstone` — Status→TOMBSTONED,
+    history preserved, `SupersededBy` reserved for supersession not a plain kill) instead of stamping a verdict.
+  - **Capability adapters (generic — knob NAMES in the template, VALUES only in `workspace.sh`).**
+    `govern::flow_cap_knob` / `flow_missing_caps` / `flow_missing_cap_blocker` map a flow's `Requires:`
+    capabilities (`browser`→`WSP_BROWSER_CMD`, `analytics`→`WSP_ANALYTICS_QUERY_CMD`,
+    `test-account`→`TEST_USER_EMAIL`, `deploy`→`GOVERN_DEPLOY_SWEEP_CMD`) to their env knobs; `flows-file.sh`
+    degrades a flow requiring an UNSET knob to BLOCKED with the named blocker (anti-pattern #15) instead of
+    queuing a runnable-then-billable ticket.
+  - **Passive evidence + due advisories (surfaced, NEVER auto-filed — billable safety).** `flows.sh`
+    `govern::flow_analytics_query` (generic `$WSP_ANALYTICS_QUERY_CMD <source>` read, rc 2 unwired),
+    `govern::flows_passive_evidence` (a wired analytics adapter + a flow's `Usage-source:` → "0 usage"
+    INEFFECTIVE-leaning advisory; `--attach` records a `Passive-note:`, never a Status/Disposition stamp),
+    `govern::flows_due_advisories` (MEASURING `Sample-window:` elapsed + `Revalidate: every Nd` past-due).
+    `run-loop.sh` surfaces all three as advisory lines in the periodic supervisor pass (logged + appended
+    to the run review) — the arm→collect split's collect nudge, filing stays a human act.
+  - Tests: `test-flows-kill-loop.sh` (norm_disposition kill, `--flow-op remove` field, `ticket_flow_op`
+    parse, `flows_tombstone`, `flows_mark_kill_pending` + sweep auto-withdrawal, apply-answers kill →
+    removal-ticket + validation-ticket-closed, bookkeep Flow-op:remove → tombstone),
+    `test-flows-capabilities.sh` (cap→knob map, missing-cap detection/blocker, flows-file BLOCKED gate,
+    unknown-key ignored), `test-flows-passive-advisories.sh` (analytics rc 2 unwired, passive 0-usage
+    advisory + never-stamps + `--attach` note, MEASURING-window + Revalidate-due lines, no-registry no-op).
 - **`/shiploop:flows` command UX (validations feature, Phase 4).** The operator surface over the flow
   registry — the model orchestrates + inventories, but every registry write goes through a script (bash
   owns bookkeeping under the governor lock):
