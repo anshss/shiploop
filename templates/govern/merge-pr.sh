@@ -11,6 +11,8 @@
 #       or a branch name outside GOVERN_MERGE_BRANCH_RE — or a gh lookup error). FAIL-CLOSED:
 #       the governor's auto-merge lane MUST NEVER land a PR it didn't itself open. A human can
 #       still merge via gh/web — the guard is scoped to THIS auto-merge path only.
+#   6 — refused: GOVERN_AUTONOMY is observe/pr-only (trust ladder) — the governor opens PRs but
+#       does not auto-merge in this mode. NOT a failure: the PR is left open for a human by design.
 # GOVERN_ECHO=1 prints instead of running. GOVERN_SKIP_CI=1 skips the green check — pass it
 # from a caller (run-loop) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
@@ -18,6 +20,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 REPO="${1:?repo required}"; PR="${2:?pr number required}"
+
+# Trust-ladder gate (GOVERN_AUTONOMY) — the OUTERMOST, fail-closed check. Only `auto` (or an
+# absent/empty knob, for a workspace.sh predating the ladder — backward compat) lets the governor
+# merge. observe/pr-only open PRs but NEVER merge; a human flips GOVERN_AUTONOMY=auto in
+# scripts/lib/workspace.sh as trust builds. Exit 6 = refused-by-autonomy (distinct from the CI/guard
+# refusals below) so a caller can classify it as "left open by design", not a failure.
+if ! govern::automerge_enabled; then
+  govern::log "not merging $REPO#$PR — GOVERN_AUTONOMY=$(govern::autonomy): the governor opens PRs but does not auto-merge in this mode. Flip GOVERN_AUTONOMY=auto in scripts/lib/workspace.sh to enable auto-merge."
+  exit 6
+fi
 
 if ! govern::is_merge_repo "$REPO"; then
   govern::log "refusing to merge $REPO#$PR — frontend is PR-only (other account merges)."
