@@ -38,7 +38,7 @@ Point shiploop at a repo you already have and get back an inventory of **every u
 3. **Extract the flow registry** — run `/shiploop:flows extract`. shiploop fans out over your codebase (one agent per surface, so no single context holds the whole repo) and inventories the combinatorial list of paths a user might take that could break. The inventory is **staged for your approval** and never auto-applied — you review the diff before a single row lands.
 4. **Read your risk map** — run `/shiploop:flows list`. It groups the registry by proven / measuring / untested / stale / failed / blocked. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works.
 
-That is the payoff with zero commitment. Extract reads your code and produces the map; it opens no PRs, merges nothing, and rents no compute. When you later want to *prove* a path actually works, `/shiploop:flows file <id>` queues a validation — and that one can deploy, so it is gated behind an explicit `--yes` and a spend cap.
+That is the payoff with zero commitment. Extract reads your code and produces the map; it opens no PRs, merges nothing, and rents no compute. When you later want to *prove* a path actually works, `/shiploop:flows file <id>` queues a validation — and that one can deploy, so it's dry by default: nothing is filed until you pass `--yes`, `--max-deploys N` caps how many it queues in one go, and batch selection (`--all-stale`/`--all-untested`) refuses outright unless `GOVERN_DEPLOY_SWEEP_CMD` — the orphan-sweep safety net on the highest-spend path — is wired.
 
 ### Act 2 — file one ticket, watch it ship
 
@@ -142,6 +142,7 @@ Between tickets a periodic supervisor (another fresh sub-session) audits the run
 
 - **`/shiploop:govern`** — ships your backlog. Runs the bash-driven ticket loop end-to-end.
 - **`/shiploop:setup`** — scaffold a workspace. Run it *inside an existing repo* to **wrap it in place** (repo moves into a subfolder, workspace scaffolds around it), or in an empty parent that already holds repos as sub-folders.
+- **`/shiploop:flows`** — inventory and validate the user-facing flows your product exposes. `extract` fans out over the codebase to build the risk map (staged for approval, never auto-applied); `list` shows the registry grouped by proven / stale / untested / blocked; `file` queues governor validation tickets behind a spend gate.
 - **`/shiploop:investigate`** — triage a bug: seed a notes file, pull logs, form a hypothesis, propose a fix.
 - **`/shiploop:resolve`** — close out a ticket: confirm the fix PR is open, promote the durable lesson into `CLAUDE.md`, delete the ticket, sweep for newly-discovered tickets.
 - **`/shiploop:update`** — the self-improvement channel, pull direction. Refresh mechanism scripts from the hub, preserve `scripts/lib/workspace.sh`.
@@ -151,11 +152,13 @@ Between tickets a periodic supervisor (another fresh sub-session) audits the run
 
 Read this before pointing the governor at anything you care about.
 
-**The trust ladder — observe → pr-only → auto.** You don't hand shiploop the keys on day one; you graduate it one repo at a time, as you watch it behave.
+**The trust ladder — observe → pr-only → auto.** One knob, `GOVERN_AUTONOMY` in `scripts/lib/workspace.sh`, gates how far the governor goes on its own; flip it as you watch the harness behave.
 
-- **observe** — run `/shiploop:govern --dry-run` (a real worker in plan mode; ships nothing) or just read the PRs the governor opens. See how it works a ticket before it can change anything.
-- **pr-only** — the rung every new workspace starts on. The default `GOVERN_MERGE_REPOS=""` (and the pr-only autonomy default) means every repo is PR-only: the governor opens a PR and stops, a human merges. Nothing auto-lands.
-- **auto** — opt a single repo in by adding it to `GOVERN_MERGE_REPOS`. Now that repo's tickets auto-merge on green CI — but only through the three-factor guard below. Opt in backends with post-merge CI safety nets first; keep frontends on pr-only where a bad deploy is user-visible.
+- **observe** — workers do real work: implement, commit, push a `ticket-<N>` branch, and open the PR as a **draft**. The governor never merges. Everything is visible (a PR to read) but inert — the safest first setting. This is distinct from `/shiploop:govern --dry-run`, a one-off flag that runs a single worker in plan mode with zero side effects (no branch, no PR at all) — use `--dry-run` to watch the loop once; use `GOVERN_AUTONOMY=observe` to run it for real with every PR held as a draft.
+- **pr-only** — the rung every new workspace's `workspace.sh` seeds. Workers open normal, ready-for-review PRs; the governor still never merges — a human clicks merge. Nothing auto-lands.
+- **auto** — full autonomy, but merging still needs the repo on the `GOVERN_MERGE_REPOS` allowlist (empty by default): `GOVERN_AUTONOMY=auto` and repo membership are both required before anything lands unattended. Opt in backends with post-merge CI safety nets first; frontends stay PR-only regardless of autonomy, since a bad deploy there is user-visible.
+
+Backward compat: a `workspace.sh` scaffolded before this knob shipped has no `GOVERN_AUTONOMY` line at all, which resolves to `auto` so existing installs keep today's behavior unchanged. A brand-new scaffold seeds `pr-only`, one rung down, so first-time adopters start conservative.
 
 You graduate a repo when you've watched enough PRs to trust the pattern, not before. The guards that make the auto rung safe to reach for:
 
@@ -185,6 +188,8 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 - **`GOVERN_EXTERNALIZE_REPO`** + **`GOVERN_EXTERNALIZE_SUBREPO`** — turn on the externalization lane. Every governor run files each OPEN Low-severity ticket whose Where targets `GOVERN_EXTERNALIZE_SUBREPO` as a public GitHub Issue on `GOVERN_EXTERNALIZE_REPO`, then removes it from the local queue. Seeds "good first issue" work for outside contributors. Both empty (default) = lane off.
 - **`GOVERN_UPSTREAM_HARNESS_REPO`** + **`GOVERN_UPSTREAM_HARNESS_DIR`** — turn on the sync channel. When set, `sync-templates.sh` detects harness-→-template drift and `sync-port.sh` auto-ports it into a PR against your fork of the harness, validated fail-closed. Both empty (default) = channel inert.
 - **`GOVERN_WORKER_MODEL`** — the fleet-wide default worker model (`opus` on install). The governor honors an optional per-ticket `Model:` line (values `haiku`|`sonnet`|`opus`) on a ticket's **first attempt only** — the brain filing/triaging the ticket picks the right tier (haiku = mechanical/single-file, sonnet = standard search+edit, opus = judgment-heavy). Any retry / park-retry escalates to `GOVERN_WORKER_MODEL` unconditionally. Unknown values are dropped fail-safe. File one with `scripts/govern/file-ticket.sh --model sonnet "Title"` or add a `**Model:** sonnet` line to the ticket block.
+- **`GOVERN_AUTONOMY`** — the trust-ladder rung: `observe` (workers do real work and open **draft** PRs; the governor never merges) | `pr-only` (workers open normal PRs; the governor still never merges — the rung a fresh scaffold seeds) | `auto` (the governor auto-merges `GOVERN_MERGE_REPOS` repos on green-or-no-checks CI). Absent/empty — a `workspace.sh` predating this knob — resolves to `auto` for backward compat. See "Trust and cost" above for the full ladder.
+- **`WSP_PR_FOOTER`** — every PR a governor worker opens ends its body with one attribution line, `🤖 shipped by [shiploop](https://github.com/anshss/shiploop)` (replacing any "Generated with" line), so an adopter's collaborators discover shiploop from the PR. On by default (any value other than `off`, or an absent knob). Set `WSP_PR_FOOTER=off` to suppress it — the worker then closes the body with just the plain Co-Authored-By trailer.
 
 ## Components
 
@@ -193,7 +198,7 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 | `.claude-plugin/plugin.json` | Plugin manifest (name, version, description) |
 | `.claude-plugin/marketplace.json` | Single-plugin marketplace manifest |
 | `SKILL.md` | Reference skill loaded by the plugin (the pattern doc) |
-| `commands/{setup,update,push,govern,resolve,investigate}.md` | The six slash commands |
+| `commands/{setup,update,push,govern,resolve,investigate,flows}.md` | The seven slash commands |
 | `scaffold.sh` | Deterministic scaffolder — copies templates, fills placeholders, verifies |
 | `install.sh` | Legacy clone-into-skills installer (kept working) |
 | `templates/lib/workspace.sh` | The ONE config file; every mechanism script sources it |
@@ -204,7 +209,7 @@ The harness ships with every advanced lane OFF by default so a fresh install is 
 | `templates/githooks/{pre-push,prepare-commit-msg,pre-commit}` | Enforced + optional git hooks |
 | `templates/governor/*.md` | Governor prompts (worker, supervisor) + operator files |
 | `templates/hooks/*` | SessionStart/UserPromptSubmit/PreToolUse/Stop/SessionEnd hooks |
-| `templates/seed/{CLAUDE.md,learnings.md,tickets.md,tickets-parked.md}` | First-run seeds (installed under `queue/`) |
+| `templates/seed/{CLAUDE.md,learnings.md}` + `templates/seed/{tickets.md,tickets-parked.md}` + `templates/seed/validation/flows.md` | First-run seeds — `CLAUDE.md`/`learnings.md` install at the workspace root, `tickets.md`/`tickets-parked.md` under `queue/`, `flows.md` under `validation/` |
 | `templates/workflows/deep-research.js` | Model-tiered `deep-research-tiered` Workflow (installed under `.claude/workflows/`) |
 | `templates/skills/deep-research-tiered/SKILL.md` | Skill entry that routes `deep-research`-shaped requests to the tiered workflow (installed under `.claude/skills/`) |
 | `.github/workflows/ci.yml` | Lint + manifest validation + scaffold-and-test the full suite on every PR |
