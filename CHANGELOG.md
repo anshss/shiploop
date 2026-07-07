@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-07-07
+
+The onboarding release: run setup inside your existing repo and shiploop wraps it in place — no empty-parent ritual. The transform is a single trap-guarded script with fail-closed preflights (linked worktrees, absolute git configs, escaping symlinks, cloud-sync roots), a manifest-based undo written before anything moves, and byte-identical post-move verification.
 
 ### Added
 
