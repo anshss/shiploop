@@ -40,7 +40,10 @@ done
 [[ -n "$answer" ]] || govern::die "--answer is required"
 case "$disposition" in
   do-the-work|defer|mitigated|keep-open) ;;
-  *) govern::die "--disposition must be one of do-the-work|defer|mitigated|keep-open (got: '$disposition')" ;;
+  # Externalization review-gate dispositions. move-back carries an id payload (move-back:1,5 or
+  # move-back 1 5), so accept either the bare token or a payload-suffixed form.
+  approve-all|decide-later|move-back|move-back:*|"move-back "*) ;;
+  *) govern::die "--disposition must be one of do-the-work|defer|mitigated|keep-open|approve-all|decide-later|move-back[:<ids>] (got: '$disposition')" ;;
 esac
 
 [[ -f "$ESCALATIONS_FILE" ]] || govern::die "no escalations file at $ESCALATIONS_FILE"
