@@ -208,10 +208,11 @@ already registered):
    - **auto** — allowlisted repos auto-merge on green-or-no-checks CI (still guarded by the three-factor check).
    Scaffold seeds `pr-only`. If the operator picks another rung, set it AFTER scaffold:
    `sed -i.bak -E 's/(GOVERN_AUTONOMY=.\$\{GOVERN_AUTONOMY:-)[a-z-]+/\1<rung>/' scripts/lib/workspace.sh && rm -f scripts/lib/workspace.sh.bak`.
-3. **Auto-externalization** — if any registered repo is PUBLIC (`gh repo view <org>/<repo> --json visibility`
-   → `PUBLIC`; silently skip if `gh` is absent), offer the existing `externalize-low-tickets.sh`
-   mechanism (moves Low-severity tickets to public GitHub issues). **Off by default** — only enable on
-   an explicit yes.
+3. **Externalization review gate** — if any registered repo is PUBLIC (`gh repo view <org>/<repo> --json visibility`
+   → `PUBLIC`; silently skip if `gh` is absent), offer the `externalize-low-tickets.sh` review gate: each
+   run STAGES Low-severity OSS-repo tickets into `queue/tickets-externalize-review.md` and files one
+   questionnaire; a public GitHub Issue is filed ONLY after the operator answers `approve-all` (never
+   auto-published). **Off by default** — only enable on an explicit yes.
 
 ## Phase 2 (fresh) — Invoke scaffold.sh
 

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- **Externalization is now a human-gated review gate — the governor never auto-publishes.** The
+  externalization lane no longer files a public GitHub Issue for a Low-severity OSS-repo ticket on its
+  own. Each run MOVES every eligible ticket out of the live `queue/tickets.md` into
+  `queue/tickets-externalize-review.md` and files ONE questionnaire escalation (`Kind:
+  externalize-review`, deduped so a re-nudge never stacks a duplicate) asking the operator to
+  `approve-all` (file every staged ticket as a public issue), `move-back:<ids>` (restore the listed
+  tickets to `tickets.md` and stamp each `**Externalize:** never` so eligibility never re-stages them),
+  or `decide-later` (keep them staged; ask again next run). A public issue is filed ONLY on
+  `approve-all` (`externalize-low-tickets.sh --file-approved`, invoked by the escalation dispatcher).
+  Dry mode stays inert in both phases. `record-escalation-answer.sh` accepts the three new dispositions.
+
 ### Fixed
 
 - **README/SKILL staleness.** Documented `/shiploop:flows` in the Commands table and corrected the
