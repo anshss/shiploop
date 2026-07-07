@@ -6,13 +6,53 @@
 >
 > A self-improving multi-agent harness that grinds your ticket backlog across every repo in your product — a fresh right-sized agent per ticket, guarded auto-merge, ~$0.54 a resolved ticket.
 
+## Install
+
 ```bash
 # In Claude Code:
 /plugin marketplace add anshss/shiploop
 /plugin install shiploop@shiploop
 ```
 
-Slash commands appear as `/shiploop:govern`, `/shiploop:setup`, etc. Point shiploop at a folder that contains your repos as sub-folders, drop tickets into `queue/tickets.md`, and run `/shiploop:govern`.
+Slash commands appear as `/shiploop:govern`, `/shiploop:setup`, `/shiploop:flows`, etc. Or clone + symlink instead: `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Both modes keep the same commands + templates layout; `scaffold.sh` resolves the templates directory from `${CLAUDE_PLUGIN_ROOT}` first (plugin path) and its own script directory as fallback (clone path).
+
+The fastest way to see what shiploop is for is the quickstart — point it at code you already have and read back a map of every user-facing path that might break, before you commit to anything.
+
+## Quickstart
+
+### Act 1 — 10 minutes: see your product's risk map
+
+Point shiploop at a repo you already have and get back an inventory of **every user-facing path that might break** — every route, endpoint, and provider×action cell — keyed by a stable id and pinned to the code it maps to. Nothing deploys, nothing merges, nothing billable. It's a read.
+
+1. **Install the plugin** (above).
+2. **Put your repo(s) in a workspace folder**, each as a sub-folder with its own `.git`. **One repo is a fine meta-repo** — you are not required to have microservices; the queue, governor, worktrees, and lesson-accretion all pay for themselves on a single repo, and you add more later.
+   ```bash
+   mkdir myproduct && cd myproduct
+   mv ~/code/your-repo .          # or: git clone <url> inside myproduct
+   ```
+3. **Scaffold the workspace** — run `/shiploop:setup`. It detects your sub-repo(s), their ports and dev commands, and writes the harness config into `myproduct/`. This is local file-ops plus a first git commit — no deploys, no product tokens spent, nothing leaves your machine.
+4. **Extract the flow registry** — run `/shiploop:flows extract`. shiploop fans out over your codebase (one agent per surface, so no single context holds the whole repo) and inventories the combinatorial list of paths a user might take that could break. The inventory is **staged for your approval** and never auto-applied — you review the diff before a single row lands.
+5. **Read your risk map** — run `/shiploop:flows list`. It groups the registry by proven / measuring / untested / stale / failed / blocked. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works.
+
+That is the payoff with zero commitment. Extract reads your code and produces the map; it opens no PRs, merges nothing, and rents no compute. When you later want to *prove* a path actually works, `/shiploop:flows file <id>` queues a validation — and that one can deploy, so it is gated behind an explicit `--yes` and a spend cap.
+
+### Act 2 — file one ticket, watch it ship
+
+Now let the harness ship a change. Your workspace starts on the **safe rung of the [trust ladder](#trust-and-cost)** — pr-only — so this first ticket ends at a PR you review, never an automatic merge.
+
+1. **Write a starter ticket.** Setup seeds one to try, or file your own: a small, well-scoped change to one file in one repo. `scripts/govern/file-ticket.sh "Title"` writes it into `queue/tickets.md` with a collision-safe number.
+2. **Smoke-test the install for free** — `bash scripts/govern/config-check.sh`. It sources your config, resolves every knob and helper, and exits nonzero on any gap. Instant, `$0`, no Claude auth, no tokens.
+3. **Run the governor** — `/shiploop:govern`. It spawns one fresh headless worker in its own git worktree; the worker edits → commits → opens a PR against your repo, then waits for CI. Because you're on the pr-only rung, it stops at the open PR.
+4. **Review, then graduate.** Read the PR. When you trust the pattern for that repo, add it to `GOVERN_MERGE_REPOS` in `scripts/lib/workspace.sh` — the next ticket auto-merges on green CI, guarded by the three-factor check in [Trust and cost](#trust-and-cost).
+
+A backlog goes in; reviewed PRs (then, once you graduate, merges) come out.
+
+## Requirements
+
+- **Claude Code CLI** — the plugin uses `/plugin` and slash-command mechanics; governor workers use `claude -p`. Act 1 (setup + extract) needs only this plus git and `jq`.
+- **git** ≥ 2.20 (worktree support), **bash** ≥ 4 (macOS ships 3.2 — the templates are guarded to run on both).
+- **`jq`** — hard-required, not optional: `scaffold.sh`'s settings-merge and `run-loop.sh` both fail closed without it (`govern::require jq`), and it's pervasive across the governor (spawn-worker, bookkeep, supervise, health, sync-port). Install it before `/shiploop:setup`.
+- **`gh` CLI**, authenticated (`gh auth status`) — needed for Act 2 and the governor (it opens PRs and reads CI check states), not for the Act 1 risk map.
 
 ## How it ships without burning your quota
 
@@ -103,62 +143,20 @@ Between tickets a periodic supervisor (another fresh sub-session) audits the run
 - **`/shiploop:update`** — the self-improvement channel, pull direction. Refresh mechanism scripts from the hub, preserve `scripts/lib/workspace.sh`.
 - **`/shiploop:push`** — the self-improvement channel, push direction. Send local mechanism-script improvements back to your fork of the hub through a fail-closed porter; never auto-merges.
 
-## Install
-
-### Preferred: plugin marketplace
-
-```bash
-# In Claude Code:
-/plugin marketplace add anshss/shiploop
-/plugin install shiploop@shiploop
-```
-
-Slash commands appear as `/shiploop:govern`, `/shiploop:setup`, etc.
-
-### Alternative: clone + symlink
-
-```bash
-git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop
-bash ~/.claude/skills/shiploop/install.sh
-```
-
-Both install modes keep the same commands + templates layout. `scaffold.sh` resolves the templates directory from `${CLAUDE_PLUGIN_ROOT}` first (plugin path) and from its own script directory as fallback (clone path).
-
-## Quickstart
-
-Get to a first governed ticket in under ten minutes.
-
-1. **Install** (either mode above).
-2. **`cd` into a folder** that contains your repos as sibling sub-folders, each with its own `.git`. If you don't have one handy, make a throwaway:
-   ```bash
-   mkdir demo && cd demo
-   git clone https://github.com/you/repo-a.git
-   git clone https://github.com/you/repo-b.git
-   ```
-3. **Scaffold**. Run `/shiploop:setup`. It detects your sub-repos, ports, and dev commands, asks for the root package manager and merge allowlist, and invokes the deterministic `scaffold.sh`.
-4. **Write one ticket** into `queue/tickets.md` — a short description of a small change to one of your repos.
-5. **Smoke-test the install for free — no auth, no tokens spent**:
-   ```bash
-   bash scripts/govern/config-check.sh     # sources config, resolves every knob + helper, exits nonzero on any gap
-   ```
-   Instant, `$0`, and doesn't touch Claude. Use it as the "does my install work" check on every fresh scaffold and after every `/shiploop:update`.
-6. **Optional end-to-end rehearsal** (spends worker tokens; never merges):
-   ```bash
-   /shiploop:govern --dry-run     # runs a REAL claude -p worker in plan mode; merge + bookkeep are skipped
-   ```
-   Plan mode blocks the worker from writing files or opening a PR, so nothing lands in git — but the worker itself is a live `claude -p --model opus` process that consumes tokens like any other ticket. Use this only when you want to observe the whole loop end-to-end; skip it if the config-check above is enough.
-7. **Run for real**:
-   ```bash
-   /shiploop:govern               # allowlist is still empty, so PR-only
-   ```
-   Watch it open a PR against the target repo. When you're satisfied, add that repo to `GOVERN_MERGE_REPOS` in `scripts/lib/workspace.sh` and let the next ticket auto-merge on green CI.
-
 ## Trust and cost
 
 Read this before pointing the governor at anything you care about.
 
-- **Auto-merge is OFF by default.** The default `GOVERN_MERGE_REPOS=""` means every repo is PR-only. You opt each repo in explicitly, one at a time. Recommended defaults: opt in backends with post-merge CI safety nets; keep frontends PR-only where a bad deploy is user-visible.
+**The trust ladder — observe → pr-only → auto.** You don't hand shiploop the keys on day one; you graduate it one repo at a time, as you watch it behave.
+
+- **observe** — run `/shiploop:govern --dry-run` (a real worker in plan mode; ships nothing) or just read the PRs the governor opens. See how it works a ticket before it can change anything.
+- **pr-only** — the rung every new workspace starts on. The default `GOVERN_MERGE_REPOS=""` (and the pr-only autonomy default) means every repo is PR-only: the governor opens a PR and stops, a human merges. Nothing auto-lands.
+- **auto** — opt a single repo in by adding it to `GOVERN_MERGE_REPOS`. Now that repo's tickets auto-merge on green CI — but only through the three-factor guard below. Opt in backends with post-merge CI safety nets first; keep frontends on pr-only where a bad deploy is user-visible.
+
+You graduate a repo when you've watched enough PRs to trust the pattern, not before. The guards that make the auto rung safe to reach for:
+
 - **Three-factor merge guard.** A PR only auto-merges when its author is the governor's own worker identity, its branch matches the governor's `ticket-<N>` naming, and the head is not from a fork. Any factor missing → PR stays open for a human.
+- **Evidence gates on the paths that matter.** CI must be green-or-no-checks before any auto-merge, the self-improvement and harness-sync ports run fail-closed (`bash -n` + a forbidden-identity gate + a scaffold-test baseline diff), and hard-stops (destructive git, prod data, destructive schema, secrets) make a worker park and escalate instead of acting. The flow registry from Act 1 is the outcome side of this: `/shiploop:flows` tracks which user-facing paths are *proven at HEAD* so a merge can be checked against real coverage, not just a green pipeline.
 - **Workers run with `bypassPermissions` by design.** Each ticket runs in an isolated worktree with a fresh Claude Code invocation running `claude -p --permission-mode bypassPermissions`. The blast radius is that worktree plus the branch it pushes. The harness enforces this: `.githooks/pre-push` rejects harness-repo pushes to anything but `main` unless the push is a sanctioned governor run (`GOVERN_RUN=1` + `ticket-<N>` branch).
 - **Cost, observed.** On the reference deployment — a working meta-repo running this harness against real product tickets — each resolved ticket costs about **623.9k output tokens (~$0.54)** on `claude-opus-4-7` workers, scaling roughly linearly with ticket complexity. The driver itself is pure bash and near-zero. Brain-decided right-sizing (haiku/sonnet on tickets that don't need opus) pushes that number down further; the observed figure is the opus-only baseline.
 - **The only truly-free smoke is `config-check.sh`.** `scripts/govern/config-check.sh` sources your workspace config, calls every helper with fake args, prints resolved values, and exits nonzero on any missing required knob. No Claude auth, no worker, no tokens. It is the "does my install work" check.
@@ -173,13 +171,6 @@ Two-way update channel — think `git pull` / `git push`, one command each direc
 - **`/shiploop:push`** — push local mechanism-script improvements back to the hub. Requires `GOVERN_UPSTREAM_HARNESS_REPO` set in `workspace.sh` (a fork you can PR against). Wraps `sync-templates.sh --check` (drift detection) → `sync-port.sh --no-merge` (headless porter genericizes your changes and opens a PR against your fork for HUMAN review). NEVER auto-merges. Workspace-specific files (`workspace.sh`, `package.json`, repo lists) are NEVER pushed.
 
 A version stamp lives in `scripts/lib/.harness-version`; `bash scripts/doctor.sh` and `<pm> run govern:health` warn "harness N releases behind" when your workspace lags the hub. Degrades gracefully when the hub can't be resolved.
-
-## Requirements
-
-- **Claude Code CLI** — the plugin uses `/plugin` and slash-command mechanics; governor workers use `claude -p`.
-- **`gh` CLI**, authenticated (`gh auth status`) — the governor opens PRs and reads CI check states.
-- **git** ≥ 2.20 (worktree support), **bash** ≥ 4 (macOS ships 3.2 — the templates are guarded to run on both).
-- **`jq`** — hard-required, not optional: `run-loop.sh` fails closed at startup (`govern::require jq`) and it's pervasive across the governor (spawn-worker, bookkeep, supervise, health, sync-port, scaffold settings-merge). Install it before your first `/shiploop:govern`.
 
 ## Opt-in knobs (edit `scripts/lib/workspace.sh`)
 
