@@ -60,4 +60,25 @@ assert_eq "$rc" "0" "4. partial lane → exit 0 (warning, not problem)"
 assert_contains "$out" "notice" "4. notices section printed"
 assert_contains "$out" "lane no-ops" "4. lane no-op notice"
 
+# ── 5. root-remote status line (wrap-in-place "skip remote" surfaces first-class)
+# Make the stub root a real git repo with a queue/ so govern::meta_root resolves to it.
+( cd "$ROOT" && git init -q && git config user.email t@t && git config user.name t )
+mkdir -p "$ROOT/queue" && : > "$ROOT/queue/tickets.md"
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "5. no-remote root → still exit 0 (warning, not a problem)"
+assert_contains "$out" "root remote" "5. root remote status line printed"
+assert_contains "$out" "DISABLED" "5. no-remote surfaces the CAS/sync DISABLED warning"
+
+# ── 6. once a remote exists, the line flips to show it ──────────────────────
+( cd "$ROOT" && git remote add origin https://example.com/acme/meta.git )
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "6. with remote → exit 0"
+assert_contains "$out" "origin" "6. root remote line shows the remote"
+
+# ── 7. --json carries root_remote ──────────────────────────────────────────
+out="$(bash "$TOOL" --json 2>&1)"
+printf '%s' "$out" | jq -e 'has("root_remote")' >/dev/null 2>&1 && \
+  printf 'ok   - 7. JSON has root_remote key\n' || \
+  { printf 'FAIL - 7. JSON missing root_remote\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+
 assert_done

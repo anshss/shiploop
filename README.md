@@ -25,14 +25,18 @@ The fastest way to see what shiploop is for is the quickstart — point it at co
 Point shiploop at a repo you already have and get back an inventory of **every user-facing path that might break** — every route, endpoint, and provider×action cell — keyed by a stable id and pinned to the code it maps to. Nothing deploys, nothing merges, nothing billable. It's a read.
 
 1. **Install the plugin** (above).
-2. **Put your repo(s) in a workspace folder**, each as a sub-folder with its own `.git`. **One repo is a fine meta-repo** — you are not required to have microservices; the queue, governor, worktrees, and lesson-accretion all pay for themselves on a single repo, and you add more later.
+2. **Scaffold the workspace — in place.** `cd` into your existing project and run `/shiploop:setup`:
    ```bash
-   mkdir myproduct && cd myproduct
-   mv ~/code/your-repo .          # or: git clone <url> inside myproduct
+   cd ~/code/your-project && /shiploop:setup
    ```
-3. **Scaffold the workspace** — run `/shiploop:setup`. It detects your sub-repo(s), their ports and dev commands, and writes the harness config into `myproduct/`. This is local file-ops plus a first git commit — no deploys, no product tokens spent, nothing leaves your machine.
-4. **Extract the flow registry** — run `/shiploop:flows extract`. shiploop fans out over your codebase (one agent per surface, so no single context holds the whole repo) and inventories the combinatorial list of paths a user might take that could break. The inventory is **staged for your approval** and never auto-applied — you review the diff before a single row lands.
-5. **Read your risk map** — run `/shiploop:flows list`. It groups the registry by proven / measuring / untested / stale / failed / blocked. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works.
+   Setup sees you're at a git repo root and offers **wrap-in-place**: your repo moves into a subfolder (`your-project/<name>/`) and the shiploop workspace is scaffolded where the repo used to be. The path you `cd` into stays the same (shell history, IDE recents, and Claude Code's session identity survive); your full history and every untracked file travel as one unit, verified byte-identical; and a `.wrap-undo.sh` reverses the whole thing until it all verifies. Local file-ops plus a first git commit — no deploys, no product tokens spent, nothing leaves your machine.
+
+   *Prefer a clean parent, or want to wrap several repos at once?* Make an empty folder, move your repo(s) in as sub-folders (each with its own `.git`), and run setup there instead — **one repo is a fine workspace**; you add more later.
+   ```bash
+   mkdir myproduct && cd myproduct && mv ~/code/your-repo .   # multi-repo / clean-start variant
+   ```
+3. **Extract the flow registry** — run `/shiploop:flows extract`. shiploop fans out over your codebase (one agent per surface, so no single context holds the whole repo) and inventories the combinatorial list of paths a user might take that could break. The inventory is **staged for your approval** and never auto-applied — you review the diff before a single row lands.
+4. **Read your risk map** — run `/shiploop:flows list`. It groups the registry by proven / measuring / untested / stale / failed / blocked. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works.
 
 That is the payoff with zero commitment. Extract reads your code and produces the map; it opens no PRs, merges nothing, and rents no compute. When you later want to *prove* a path actually works, `/shiploop:flows file <id>` queues a validation — and that one can deploy, so it is gated behind an explicit `--yes` and a spend cap.
 
@@ -137,7 +141,7 @@ Between tickets a periodic supervisor (another fresh sub-session) audits the run
 ## Commands
 
 - **`/shiploop:govern`** — ships your backlog. Runs the bash-driven ticket loop end-to-end.
-- **`/shiploop:setup`** — scaffold a workspace on any folder that already contains repos as sub-folders.
+- **`/shiploop:setup`** — scaffold a workspace. Run it *inside an existing repo* to **wrap it in place** (repo moves into a subfolder, workspace scaffolds around it), or in an empty parent that already holds repos as sub-folders.
 - **`/shiploop:investigate`** — triage a bug: seed a notes file, pull logs, form a hypothesis, propose a fix.
 - **`/shiploop:resolve`** — close out a ticket: confirm the fix PR is open, promote the durable lesson into `CLAUDE.md`, delete the ticket, sweep for newly-discovered tickets.
 - **`/shiploop:update`** — the self-improvement channel, pull direction. Refresh mechanism scripts from the hub, preserve `scripts/lib/workspace.sh`.
