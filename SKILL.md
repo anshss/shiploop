@@ -28,6 +28,8 @@ Don't use it when:
 
 If unsure, default to a single repo or Turborepo. Meta-repo is a deliberate, opinionated choice.
 
+**N=1 is fine.** A single repo is a valid meta-repo — the ticket queue, governor, worktrees, and lesson-accretion all pay for themselves on one repo; wrap it now and add sub-repos later. What you opt into is the *harness*, not a microservice count. The fastest first taste is `/shiploop:flows extract` on a repo you already have: it inventories every user-facing path that might break, staged for your approval, with nothing deployed or merged.
+
 ## Operating commands (once installed)
 
 Examples below use `npm run` (the default `ROOT_PM`); substitute your root PM — `pnpm <script>`, `yarn <script>`, or `bun run <script>` (the `<pm> run <script>` form works for all four).
@@ -47,6 +49,7 @@ Examples below use `npm run` (the default `ROOT_PM`); substitute your root PM �
 | `npm run worktree:status` | Slot table (`-- --gc` prunes orphans) |
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
+| `/shiploop:flows extract` | Inventory every user-facing path that might break — your product's risk map (staged for approval, no billing) |
 
 **Pass args/flags after the script with `--`** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`. npm and pnpm both need the `--` or they swallow the flags; yarn classic tolerates it either way. Bare verbs are fine without it.
 
@@ -87,6 +90,8 @@ Bar: would knowing this save a future session 5+ min? If yes, propose the edit a
 ## Governor (autonomous ticket loop)
 
 `npm run govern` / `/govern` launches a **pure-bash driver** (`scripts/govern/run-loop.sh`) that spends ~zero Claude context itself and dispatches a fresh **headless `claude -p` worker** per ticket. This is what lets the workspace grind a backlog unattended.
+
+**Autonomy is a ladder — observe → pr-only → auto.** A new workspace starts on **pr-only** (`GOVERN_MERGE_REPOS=""`): every repo's tickets stop at an open PR for a human. You graduate one repo at a time to **auto** by adding it to `GOVERN_MERGE_REPOS`, once you've watched enough of its PRs to trust the pattern. The three-factor merge guard, green-or-no-checks CI, and the hard-stop doctrine are what make graduating safe.
 
 - **Per ticket:** select (severity-ordered from `queue/tickets.md`) → spawn a worker in a fresh `ticket-<N>` worktree → worker implements + validates + opens a PR and returns a JSON report → for an auto-merge repo, await CI and merge on **green-or-no-checks** → deterministic `queue/tickets.md` bookkeeping (worker never writes it). Frontend/PR-only repos stop at the open PR.
 - **Worker autonomy:** workers run `--permission-mode bypassPermissions` (a headless worker can't answer prompts) scoped to throwaway worktrees, with `--setting-sources user` to drop the project's own hooks (so they don't inherit a fleet-wide SessionEnd cleanup or a stdout-clobbering Stop hook). The doctrine in `governor/preferences.md` defines the **hard-stops** (destructive git; prod data / destructive schema / secrets) that make a worker **park + escalate** instead of acting.
