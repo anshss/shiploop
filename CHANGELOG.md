@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-07-08
+
+The public-surfaces release: what outsiders see of a shiploop-run repo is now deliberately curated. Neutral `sl-<12hex>` branch names and zero internal ticket-ids on public-repo PRs (guards fully intact for private repos), and the externalization lane no longer publishes on your behalf — eligible tickets stage into a review queue behind ONE approve-all / decide-later / move-back questionnaire, with `Externalize: never` as a permanent per-ticket veto. Plus the five README staleness fixes.
 
 ### Added
 
