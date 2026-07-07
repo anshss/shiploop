@@ -95,6 +95,19 @@ if [[ "$_mr_rc" -ne 0 ]]; then
   h_meta_root="<unresolved>"
 fi
 
+# Root remote — a first-class status line. The governor pushes meta-repo runtime
+# artifacts (tickets.md CAS, harness commits) to the root's origin, and
+# cross-driver ticket sync depends on it. A wrap-in-place scaffold can leave the
+# root remote-less ("skip for now"), silently DISABLING those paths.
+h_root_remote=""
+if [[ "$h_meta_root" != "<unresolved>" ]] && git -C "$h_meta_root" rev-parse --git-dir >/dev/null 2>&1; then
+  h_root_remote="$(git -C "$h_meta_root" remote 2>/dev/null | tr '\n' ' ')"
+  h_root_remote="${h_root_remote% }"
+fi
+if [[ -z "$h_root_remote" ]]; then
+  warn_only+=("root has no git remote: governor CAS pushes + cross-driver ticket sync are DISABLED (gh repo create / git remote add origin <url>)")
+fi
+
 # Optional feature-flag combinatorics: if EXTERNALIZE_LANE is 1 but REPO+SUBREPO are empty,
 # the lane no-ops (documented). Not a failure; but adopters mixing partial values want a note.
 if [[ "${GOVERN_EXTERNALIZE_LANE:-0}" == "1" ]]; then
@@ -107,6 +120,7 @@ fi
 if [[ "$MODE" == json ]]; then
   jq -n \
     --arg meta_root      "$h_meta_root" \
+    --arg root_remote    "$h_root_remote" \
     --arg meta_name      "${META_NAME:-}" \
     --arg github_org     "${GITHUB_ORG:-}" \
     --arg root_pm        "${ROOT_PM:-}" \
@@ -122,7 +136,7 @@ if [[ "$MODE" == json ]]; then
     --argjson opt_seen   "$(printf '%s\n' "${opt_seen[@]}" | jq -R . | jq -s .)" \
     --argjson problems   "$( { [ "${#problems[@]}"  -gt 0 ] && printf '%s\n' "${problems[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
     --argjson warn_only  "$( { [ "${#warn_only[@]}" -gt 0 ] && printf '%s\n' "${warn_only[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
-    '{meta_root:$meta_root, meta_name:$meta_name, github_org:$github_org,
+    '{meta_root:$meta_root, root_remote:$root_remote, meta_name:$meta_name, github_org:$github_org,
       root_pm:$root_pm, worktree_base:$worktree_base, repos:$repos,
       helpers: {repo_slug:$h_slug, repo_localdir:$h_localdir, repo_port:$h_port,
                repo_cmd:$h_cmd, is_merge_repo:$h_ismerge, is_local_first:$h_islocal,
@@ -131,6 +145,7 @@ if [[ "$MODE" == json ]]; then
 else
   echo "════════ config-check (no-auth smoke) ════════"
   echo "meta_root       : $h_meta_root"
+  echo "root remote     : ${h_root_remote:-<none — governor CAS/ticket-sync DISABLED>}"
   echo "META_NAME       : ${META_NAME:-<empty>}"
   echo "GITHUB_ORG      : ${GITHUB_ORG:-<empty>}"
   echo "ROOT_PM         : ${ROOT_PM:-<empty>}"

@@ -143,7 +143,8 @@ PRs land independently — don't expect atomicity.
 
 ## Setup / upgrade a workspace
 
-Invoke **`/shiploop:setup`**. It is idempotent:
+Invoke **`/shiploop:setup`**. It detects the mode (via `wrap.sh --detect`) and is idempotent:
+- **Inside an existing repo (wrap-in-place):** the quickstart path — `cd your-project && /shiploop:setup`. Setup offers to move the repo into a subfolder (`your-project/<name>/`) and scaffold the workspace root where the repo used to be, so the path you `cd` into is unchanged. The transform is one guarded script (`templates/lib/wrap.sh`): fail-closed preflight (clean tree, no linked worktrees, no stranding absolute git config, single filesystem, …) → rename-only move → byte-identical verify (HEAD/branch/status/submodule SHAs) → scaffold with the repo pre-registered + gitignored → final verify, with a `trap` rollback and a manifest-based `.wrap-undo.sh` removed only once it all verifies.
 - **Fresh folder:** detects sub-repos (folders with `.git/`), ports, and per-sub-repo dev commands; asks which package manager you'll use at the root (sets `ROOT_PM`); writes `package.json` (thin bash-alias scripts), `.gitignore` (ignoring the off-PM root lockfiles), `scripts/lib/workspace.sh` (the one config file), copies the mechanism scripts, hooks, governor scaffold, and seed `queue/tickets.md`/`learnings.md`; wires `.claude/settings.json`; optionally installs + runs doctor.
 - **Existing meta-repo (bump):** detects which capabilities are present (core scripts / worktrees / tickets / governor / hooks) vs missing or outdated, then offers to add/upgrade each. Because all customization lives in `scripts/lib/workspace.sh`, the mechanism scripts are refreshed from latest templates without clobbering your tweaks.
 

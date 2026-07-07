@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Wrap-in-place setup.** `/shiploop:setup` run *inside* an existing git repo now offers to wrap it
+  in place instead of demanding the empty-parent ritual: the repo's contents move into a subfolder
+  (`<name>/`) of the same path and the shiploop workspace scaffolds where the repo used to be, so the
+  path you `cd` into stays stable (shell history, IDE recents, and Claude Code's path-keyed session
+  identity all survive). Quickstart is now literally `cd your-project && /shiploop:setup`; the
+  fresh-folder flow is demoted to the multi-repo / clean-start variant.
+  - The transform is ONE trap-guarded script (`templates/lib/wrap.sh`) invoked in a single call —
+    never a model-driven sequence of moves. Preflight is entirely fail-closed (clean tracked tree; no
+    in-progress merge/rebase/cherry-pick/bisect; `.git` must be a directory; no linked worktrees; no
+    stranding absolute-path git config — `core.worktree`/absolute `core.hooksPath`/`includeIf gitdir:/abs`,
+    incl. submodule configs, read RAW so a poisoning `core.worktree` can't hide; escaping root symlinks;
+    single-filesystem + cloud-sync guard; nested-repo guard; pre-existing wrap-artifact guard;
+    case-insensitive name-collision; live-writer + `git maintenance` warnings). The move is rename-only
+    (never copy), enumerated explicitly (never `mv * .*`), and verified **byte-identical** afterwards
+    (HEAD, branch, `git status --porcelain` snapshot, and submodule SHAs). A `trap` rolls the layout
+    back on any failure or `SIGINT`, and a manifest-based `.wrap-undo.sh` (written first, removed only
+    after the full end-to-end verify) reverses even a completed scaffold without clobbering the user's
+    same-named files.
+  - Setup entry now dispatches on `wrap.sh --detect` (six-row table: fresh / upgrade / wrap /
+    refuse-gitfile / refuse-below-root / refuse-bare). New shared interview additions in both modes:
+    the autonomy rung (`GOVERN_AUTONOMY`: observe / pr-only / auto), "what else belongs to this
+    product?" extra-repo cloning, and opt-in auto-externalization when a registered repo is public.
+- **`doctor` + `config-check`: "root has no remote" is now a first-class status line** — a
+  wrap-in-place scaffold that skips creating a root remote silently disables the governor's CAS ticket
+  pushes and cross-driver ticket sync, so both surfaces call it out (config-check also exposes
+  `root_remote` in `--json`) instead of burying it.
+
 ## 1.6.0 — 2026-07-07
 
 The self-maintenance release: a full-harness adversarial audit fixed 23 findings across the sync, update, and governor mechanisms (remediation batches — N1–N17, K1–K6), a new **validation-flow registry** landed end-to-end (`validation/flows.md` + verdict pipeline + staleness sweep + `/shiploop:flows` extract/list/file + long-horizon effectiveness gates and the kill loop, Phases 1–5), the contribution channel gained the **auto-fork funnel** (#45) and the queue-isolation rule (#46), and onboarding was rebuilt around time-to-first-magic: extract-first quickstart, the **trust ladder** (`GOVERN_AUTONOMY`: observe → pr-only → auto, new workspaces start pr-only), a starter ticket at setup, per-run cost transparency, and the opt-out PR footer. Nearly every change in this release was implemented, validated, and merged by the harness's own agent pattern.
