@@ -162,7 +162,35 @@ records the STALE degrade on its next pass (or run /shiploop:flows). "
   fi
 fi
 
-reason="${flows_note}Before ending: reconcile tickets.md (root meta-repo). \
+# --- queue-isolation advisory (#46): a SOFT, never-blocking note folded into the reconcile reason.
+# The queue admits exactly two scopes — this workspace's own sub-repos and the harness itself. A
+# ticket whose **Where:** line references NEITHER is likely about an EXTERNAL tool/skill/product that
+# merely shared this terminal (its follow-ups belong in its own tracker). govern::out_of_scope_tickets
+# is allowlist-based (flags only on the ABSENCE of any in-scope marker; no Where line ⇒ never flagged),
+# so a legit ticket is not caught. This NEVER blocks and NEVER auto-deletes — deleting is always the
+# operator's call. Run in a subshell so common.sh's `set -e` can't leak into this hook (no -e here);
+# empty on any failure, degrading to silence.
+outscope_note=""
+if [ -f "$MAIN/queue/tickets.md" ]; then
+  outscope_ids="$(
+    GOVERN_WS_ROOT="$MAIN" GOVERN_TICKETS_FILE="$MAIN/queue/tickets.md"
+    export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::out_of_scope_tickets >/dev/null 2>&1 || exit 0
+    govern::out_of_scope_tickets "$MAIN/queue/tickets.md" 2>/dev/null | cut -f1 | tr '\n' ' '
+  )"
+  outscope_ids="$(printf '%s' "${outscope_ids:-}" | sed -E 's/ +$//; s/^ +//')"
+  if [ -n "$outscope_ids" ]; then
+    outscope_note="QUEUE ISOLATION (advisory, non-blocking): ticket(s) #$(printf '%s' "$outscope_ids" | sed 's/ /, #/g') \
+have a **Where:** targeting NEITHER a sub-repo NOR the harness — likely about an EXTERNAL tool/skill \
+that shared this terminal. The queue admits only this project's sub-repos and the harness itself; an \
+external tool's follow-ups belong in ITS OWN tracker. Consider migrating or deleting (operator's call — \
+never auto-removed). "
+  fi
+fi
+
+reason="${outscope_note}${flows_note}Before ending: reconcile tickets.md (root meta-repo). \
 (1) NEW TICKETS — review what you touched/discovered this session. Any bug, gap, \
 missing capability, or follow-up that is NOT already a ticket gets its own numbered \
 ## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / Done when / Ref). \
