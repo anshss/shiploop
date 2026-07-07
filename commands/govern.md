@@ -35,6 +35,26 @@ you're almost certainly running it nested inside a Claude session — open a rea
 Also confirm the doctrine + allowlist are set: `governor/preferences.md` reflects how you'd decide,
 and `GOVERN_MERGE_REPOS` in `scripts/lib/workspace.sh` lists exactly the repos safe to auto-merge.
 
+## Trust ladder — how much the governor does on its own (`GOVERN_AUTONOMY`)
+One knob in `scripts/lib/workspace.sh` sets how far the governor is allowed to go. Graduate up a rung
+as you trust the loop — you never rewrite config, just flip the value:
+
+| `GOVERN_AUTONOMY` | Workers do the work + push `ticket-<N>` | Open a PR | Governor merges |
+|---|---|---|---|
+| `observe` | yes | **draft** PR (visible, inert) | never |
+| `pr-only` | yes | normal PR | never (a human merges) |
+| `auto` | yes | normal PR | auto-merges allowlisted repos on green-or-no-checks CI |
+
+- **Start at `observe`** to watch what the harness produces without a single line landing on `main`:
+  every ticket ends in a draft PR you read at your leisure.
+- **Move to `pr-only`** (the default a fresh scaffold seeds) once the drafts look right — now you get
+  the full ship pipeline minus the final click; nothing merges until you say so.
+- **Flip to `auto`** when you trust it — the governor merges allowlisted-repo PRs itself (frontend
+  stays PR-only regardless of the rung). This is the original behavior.
+
+Backward compat: a workspace scaffolded before the ladder existed has no `GOVERN_AUTONOMY` line and
+behaves as `auto` (unchanged). Add the line from the template to opt into a lower rung.
+
 ## Run it
 ```bash
 scripts/govern/run-loop.sh $ARGUMENTS
@@ -77,7 +97,8 @@ Relay its log lines to the operator as they appear. The driver does everything �
 
 ## Policy (enforced by the scripts, not by you)
 - Sequential; auto-merge only `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is
-  PR-only.
+  PR-only. The `GOVERN_AUTONOMY` trust-ladder rung gates this: `observe`/`pr-only` never auto-merge at
+  all (PRs are left open); only `auto` merges. See the Trust ladder section above.
 - Hard-stops (destructive git; prod data / destructive schema / secrets) and doctrine gaps → worker
   **parks** → escalation.
 - Additive prod migrations auto-apply only if `GOVERN_MIGRATE_CMD` is configured (else park for manual

@@ -785,6 +785,26 @@ govern::na_skip_prune() { # ",N,N," (current NA set, comma-wrapped)
 
 # Is $1 an auto-mergeable repo? (delegates to workspace.sh)
 govern::is_merge_repo() { wsp_is_merge_repo "$1"; }
+
+# ── Trust ladder (GOVERN_AUTONOMY) ──────────────────────────────────────────
+# observe → workers open DRAFT PRs; governor never merges (work visible, inert).
+# pr-only → workers open normal PRs; governor never merges (a human merges).
+# auto    → full autonomy: governor auto-merges green/none-CI allowlisted PRs (pre-ladder behavior).
+# BACKWARD COMPAT (load-bearing): an ABSENT or EMPTY knob — a workspace.sh scaffolded before the
+# ladder shipped never sets GOVERN_AUTONOMY — resolves to `auto`, so existing installs are UNCHANGED.
+# The scaffold TEMPLATE seeds `pr-only` for new adopters (workspace.sh). An unrecognized value also
+# degrades to `auto` — the ladder never SILENTLY disables a configured install on a typo; a real
+# downshift is an explicit `observe`/`pr-only`.
+govern::autonomy() {
+  case "${GOVERN_AUTONOMY:-}" in
+    observe|pr-only|auto) printf '%s' "$GOVERN_AUTONOMY" ;;
+    *) printf 'auto' ;;
+  esac
+}
+# 0 (true) iff the governor may auto-merge in the current mode (auto only).
+govern::automerge_enabled() { [[ "$(govern::autonomy)" == "auto" ]]; }
+# 0 (true) iff workers should open PRs as DRAFTS (observe mode only).
+govern::pr_draft() { [[ "$(govern::autonomy)" == "observe" ]]; }
 # Local-first repo (no deployed prod DB → additive migrations self-apply as shipped code). Opt-in via
 # GOVERN_LOCAL_FIRST_REPOS in workspace.sh; a workspace.sh that predates the knob (or doesn't define
 # the helper) is treated as "no local-first repos", so the branch is a pure no-op there.

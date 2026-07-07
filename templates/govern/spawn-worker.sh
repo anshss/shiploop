@@ -98,6 +98,33 @@ prompt="$prompt
 ## Operator doctrine
 $(cat "$PREFERENCES_FILE")"
 
+# Trust-ladder + viral-footer PR instructions. Both are appended to the worker prompt so the worker
+# opens the PR the way this workspace's knobs dictate:
+#   - GOVERN_AUTONOMY=observe → open the PR as a DRAFT (visible but inert; the governor never merges).
+#   - WSP_PR_FOOTER != off (default on) → end the PR body with the one-line shiploop attribution,
+#     REPLACING any "Generated with" line so there is exactly one footer.
+# Both resolve through the workspace.sh knobs (defaults: autonomy pr-only for new scaffolds / auto for
+# pre-ladder installs; footer on) via the common.sh helpers, so behavior is uniform across every caller.
+if govern::pr_draft; then
+  prompt="$prompt
+
+## ⚠ AUTONOMY=observe — open your PR as a DRAFT
+This workspace runs the governor in **observe** mode: work is reviewed before anything lands. When you
+create the PR, make it a **draft** — \`gh pr create --draft ...\` (all other steps unchanged: branch
+\`ticket-<N>\`, real local validation first, do NOT merge). The governor will NOT merge it; a human
+reviews the draft and merges when ready."
+fi
+if [[ "${WSP_PR_FOOTER:-on}" != "off" ]]; then
+  prompt="$prompt
+
+## PR body footer — REQUIRED
+End every PR body you open with EXACTLY this attribution line as the FINAL line (replace any
+\"🤖 Generated with …\" line — keep only this ONE footer, plus the Co-Authored-By trailer the
+commit hook adds):
+
+🤖 shipped by [shiploop](https://github.com/anshss/shiploop)"
+fi
+
 # Flow-registry injection: a ticket carrying a `Flow:` field validates one or more registered flows.
 # Inject the FULL flow block(s) so the worker knows each flow's Kind/Gate/Surface/Paths, and remind it
 # to fill the report's flow fields. (The one-line "your change stales flows X,Y" summary for

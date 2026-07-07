@@ -63,6 +63,22 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
+# ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────
+# How much the governor is allowed to do on its own. Flip ONE knob as trust builds — the graduation
+# is observe → pr-only → auto (see commands/govern.md + governor/README.md):
+#   observe   Workers do the work, commit, push their `ticket-<N>` branch, and open a DRAFT PR — but
+#             the governor NEVER merges. Everything is VISIBLE (a PR to read) yet INERT. The safest
+#             first setting: watch what the harness produces without a single line landing on `main`.
+#   pr-only   Workers open NORMAL (ready-for-review) PRs; the governor STILL never auto-merges — a
+#             human reviews + clicks merge. This is the default for a NEW scaffold: you get the full
+#             ship pipeline minus the final merge, so nothing lands until you say so.
+#   auto      Full autonomy — the governor auto-merges every allowlisted-repo PR on green-or-no-checks
+#             CI (frontend stays PR-only regardless). Flip to this once you trust the loop.
+# BACKWARD COMPAT: a workspace.sh that predates this knob has NO GOVERN_AUTONOMY line at all → the
+# governor treats an absent/empty value as `auto` (today's behavior is preserved for existing installs).
+# A NEW scaffold seeds `pr-only` right here, so first-time adopters start one rung down the ladder.
+export GOVERN_AUTONOMY="${GOVERN_AUTONOMY:-pr-only}"   # observe | pr-only | auto
+
 # Sub-repos that are LOCAL-FIRST — they run on each user's machine, NOT a deployed server, so they
 # have NO central prod DB. A schema change ships AS CODE (a migration that self-applies on the user's
 # local DB open), so an ADDITIVE migration needs NO manual prod apply — the governor must open the PR
@@ -130,6 +146,14 @@ export GOVERN_UPSTREAM_HARNESS_DIR="${GOVERN_UPSTREAM_HARNESS_DIR:-}"
 # regressions. Sub-repos that already have a pre-commit hook (husky, lefthook, hand-rolled) are
 # left untouched; the workspace hook is only installed where the slot is empty or previously ours.
 export WSP_LINT_FIX_CMD="${WSP_LINT_FIX_CMD:-}"
+
+# ── Viral PR footer (ON by default) ──────────────────────────────────────────
+# Every PR a governor worker opens ends its body with one attribution line:
+#   🤖 shipped by [shiploop](https://github.com/anshss/shiploop)
+# It marks work the harness shipped so an adopter's collaborators discover shiploop from the PR. ON by
+# default; set to `off` to suppress it (the worker then closes the body with the plain Co-Authored-By
+# trailer only). Any value other than `off` (or an absent knob, for a workspace.sh predating it) = ON.
+export WSP_PR_FOOTER="${WSP_PR_FOOTER:-on}"   # on | off
 
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
