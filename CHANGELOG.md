@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **README/SKILL staleness.** Documented `/shiploop:flows` in the Commands table and corrected the
+  slash-command count (six → seven); added `GOVERN_AUTONOMY` and `WSP_PR_FOOTER` to the opt-in knobs
+  list; rewrote the "Trust and cost" ladder to match `GOVERN_AUTONOMY`'s real mechanics (`observe` runs
+  real workers that open **draft** PRs — distinct from the separate `--dry-run` flag — and `auto`
+  requires both `GOVERN_AUTONOMY=auto` *and* `GOVERN_MERGE_REPOS` membership); corrected the Act 1
+  `/shiploop:flows file` gate description (dry-by-default + `--yes`, `--max-deploys N`, and the
+  `GOVERN_DEPLOY_SWEEP_CMD` precondition on batch modes — not a generic "spend cap"); fixed the seed
+  Components row (`CLAUDE.md`/`learnings.md` install at the workspace root, `tickets*.md` under
+  `queue/`, `flows.md` under `validation/` — not all under `queue/`). Mirrored the `GOVERN_AUTONOMY`
+  fix into `SKILL.md`'s governor section.
+
 ## 1.7.0 — 2026-07-07
 
 The onboarding release: run setup inside your existing repo and shiploop wraps it in place — no empty-parent ritual. The transform is a single trap-guarded script with fail-closed preflights (linked worktrees, absolute git configs, escaping symlinks, cloud-sync roots), a manifest-based undo written before anything moves, and byte-identical post-move verification.
