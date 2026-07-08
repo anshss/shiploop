@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Setup interview: ONE pause instead of six.** A live wrap-in-place onboarding paused six separate
+  times over ~8 minutes (proceed? → config batch → more config → mid-wrap `NEEDS-CONFIRM` → remote?
+  → install?), forcing the operator to babysit the run. `/shiploop:setup` now follows an explicit
+  interview doctrine: detect EVERYTHING first (repos, ports, dev commands, org, root PM, worktree
+  base, repo visibility), surface every wrap confirm-item up front via the new read-only
+  `wrap.sh --preflight` mode, then ask everything in a SINGLE batched `AskUserQuestion` call — and
+  run to completion without pausing. The root-remote choice, `install + doctor`, the starter ticket,
+  and auto-externalization are all collected in that one batch; wrap.sh exit-5 mid-run is now a
+  "should not happen" fallback rather than a guaranteed stop. Phase Z gains a `Decisions:` recap line.
+
+- **Setup machine time: one-shot detection + sonnet.** Excluding user-wait, the same onboarding
+  spent ~7 min on model round-trips vs ~30 s in actual tool execution — a bash probe per detected
+  value (port, lockfile, org, visibility…) each costing a full opus turn. Detection is now ONE
+  deterministic call (`templates/lib/detect-inputs.sh`, below) and setup.md's frontmatter drops
+  from `model: opus` to `model: sonnet` — justified because every judgment-heavy step is delegated
+  to guarded scripts (detect-inputs.sh, `wrap.sh --preflight`/`--yes`, scaffold.sh) with explicit
+  exit codes, leaving the command pure orchestration.
+
+### Added
+
+- **`detect-inputs.sh` (one-shot interview defaults).** Emits every setup default in a single
+  call — `root_pm`, `worktree_base`, `org`, one `repo=<name>|<port>|<cmd>|<visibility>` line per
+  sub-repo (ports de-collided to stable distinct values, dev command from lockfile/Makefile/
+  Cargo.toml/go.mod signals, visibility `unknown` when `gh` is absent), plus a ready-to-pass
+  `repos_spec=`. Setup-time tool like wrap.sh (templates/lib/, not installed into workspaces).
+  Covered by the new `test-detect-inputs.sh` (19 assertions: collisions, lockfile signals,
+  origin-vs-folder naming, arg errors).
+- **`wrap.sh --preflight` (read-only).** Runs only the preflight checks — same exit codes (0/3/4/5)
+  and the same `NEEDS-CONFIRM[--confirm-x]` lines, nothing moved or written; only `--name` required.
+  This is the seam that lets setup fold every confirm-item into its single upfront interview.
+  Covered by a new section 7 in `test-wrap-in-place.sh` (exit 5 list / exit 0 untouched-layout /
+  hard-refusal and collision surfacing).
+
 ## 1.8.0 — 2026-07-08
 
 The public-surfaces release: what outsiders see of a shiploop-run repo is now deliberately curated. Neutral `sl-<12hex>` branch names and zero internal ticket-ids on public-repo PRs (guards fully intact for private repos), and the externalization lane no longer publishes on your behalf — eligible tickets stage into a review queue behind ONE approve-all / decide-later / move-back questionnaire, with `Externalize: never` as a permanent per-ticket veto. Plus the five README staleness fixes.

@@ -1,5 +1,9 @@
 ---
-model: opus
+# sonnet on purpose: every judgment-heavy step is delegated to a deterministic script
+# (detect-inputs.sh, wrap.sh --preflight/--yes, scaffold.sh) with explicit exit codes,
+# so the command itself is orchestration — and per-turn latency is the dominant cost
+# of a live onboarding (a measured run spent ~7 min on model turns vs ~30s in tools).
+model: sonnet
 effort: medium
 description: Scaffold OR upgrade a shiploop workspace in the current folder — wraps N sub-repos into one workspace and installs the self-improving multi-agent harness (worktrees + ticket queue + governor + hooks; every resolved ticket writes a lesson into your git-tracked CLAUDE.md) that ships your backlog. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing workspace → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only. For ongoing maintenance (routine hub-to-workspace bumps), use /shiploop:update; for pushing local mechanism improvements back to the hub, use /shiploop:push.
 ---
@@ -30,6 +34,25 @@ merge-allowlist). Mechanism scripts are therefore identical across every install
 makes a bump safe: scaffold.sh refreshes mechanism scripts from templates and only ever (re)generates
 `workspace.sh` for customization. **Never hand-edit a mechanism script during setup; put the value in
 `workspace.sh`.**
+
+## Interview doctrine — ONE pause (read before asking anything)
+
+Setup used to scatter questions across the whole run (proceed? → config batch → more config →
+mid-wrap confirm → remote? → install?) — six separate pauses the operator had to babysit. That is
+a bug. The contract:
+
+1. **Detect first, ask second.** Run EVERY detection (mode, sub-repos, ports, dev commands, org,
+   root PM, worktree base, repo visibility) AND — in wrap mode — `wrap.sh --preflight` BEFORE the
+   first question. Preflight is read-only and surfaces every `REFUSE` / `NEEDS-CONFIRM` item up
+   front, so nothing new appears mid-transform.
+2. **One batched interview.** Ask everything in a SINGLE `AskUserQuestion` call (its 4-question
+   limit is enough — see the per-mode question specs below). Print the detected-defaults table
+   BEFORE the call; detected values are not questions — the operator overrides via "Other".
+3. **Then run to completion without pausing.** Every remaining step executes with the answers
+   already in hand. Legitimate post-interview stops are ONLY: wrap.sh exit 1 (rolled back),
+   exit 4 (name collision preflight somehow missed), or a NEW exit-5 item preflight could not
+   have seen. Never re-ask something the interview covered; never pause to confirm a step the
+   operator already authorized.
 
 Workspace layout scaffold.sh produces:
 ```
@@ -71,10 +94,49 @@ Back-compat note: an OLDER meta-repo that predates `scripts/lib/workspace.sh` bu
 `--detect` returns `fresh` for it (no `.git` at root typical), so if you see that legacy marker,
 treat it as **BUMP MODE** and note the core scripts must be re-parameterized (scaffold.sh handles it).
 
-## Phase W — Wrap-in-place offer (only when `$MODE == wrap`)
+## Phase W — Wrap-in-place (only when `$MODE == wrap`)
 
-You are standing inside the operator's existing project repo. Offer to **wrap it in place** — the
-quickstart path — and explain it in ONE paragraph before touching anything:
+You are standing inside the operator's existing project repo. Do NOT ask anything yet — gather
+everything (W0), then run the single interview (W1).
+
+### W0 — Detect + preflight (no questions, ONE tool call each)
+
+Do NOT hand-run per-value probes (a bash turn per port/lockfile/org/visibility is the dominant
+latency of a live setup). One call emits every interview default:
+
+```bash
+bash "$PLUGIN_ROOT/templates/lib/detect-inputs.sh" --workspace-dir "$(pwd)" --mode wrap
+# → root_pm= / worktree_base= / org= / repo=<NAME>|<port>|<cmd>|<visibility> / repos_spec=
+```
+
+The `repo=` line carries the wrap **subfolder name** (`NAME`, from `origin`, else folder name —
+this is where the repo will live: `<path>/<NAME>/`), its **port + dev command**, and its
+**visibility** (`PUBLIC` decides whether the auto-externalization option appears; `unknown` = `gh`
+absent, treat as private). Only override a detected value if you can SEE it is wrong (e.g. the dev
+script is nonstandard) — otherwise pass it through to the defaults table as-is.
+
+Then run the read-only preflight so every confirm-item surfaces NOW, not mid-transform:
+
+```bash
+bash "$WRAP" --preflight --workspace-dir "$(pwd)" --name "$NAME"
+```
+
+- **exit 5** → collect each `NEEDS-CONFIRM[--confirm-x]: <why>` line; each becomes an option in
+  interview Q4 (the live-writer item fires on every run by design — it is always in the batch).
+- **exit 4** (name collision) → pick the next sensible default (`<name>-app`) and re-run
+  preflight. Don't pause for this.
+- **exit 3** (hard refusal) → if the cause is uncommitted tracked changes that are plainly
+  trivial/harness-adjacent (a `.gitignore` line, an editor config), fold "commit these first:
+  <files>" into interview Q4 and re-run preflight after the commit is approved + made. Any other
+  `REFUSE` → print it verbatim and STOP.
+- **exit 0** → clean (only happens when confirm flags were already passed).
+
+### W1 — The single interview (the ONLY pause)
+
+Print, in one message: (a) the wrap explanation paragraph below, (b) the detected-defaults table
+(subfolder name, port, dev command, org, root PM, worktree base) with the note *"these apply as
+shown — pick Other on any question to override, or name extra repo clone URLs to add them"*, then
+(c) ONE `AskUserQuestion` call.
 
 > Wrap-in-place moves this repo's contents into a subfolder (`<name>/`) of this same path and
 > scaffolds the shiploop workspace root where the repo used to be. The path you `cd` into stays the
@@ -84,27 +146,32 @@ quickstart path — and explain it in ONE paragraph before touching anything:
 > it rolls back automatically. It is one guarded script (`wrap.sh`) — never a sequence of moves I
 > drive by hand.
 
-Also offer the **fresh-folder alternative** for anyone who prefers it or wants a multi-repo workspace
-from the start: "or make an empty parent folder, move this repo into it, and run setup there" (that is
-the classic `mkdir myproduct && cd myproduct && mv ~/code/this-repo . && /shiploop:setup` flow → Phase 1).
+The four questions:
+1. **Proceed?** — `wrap-in-place (recommended)` / `fresh-folder instead` (an empty parent folder:
+   `mkdir myproduct && cd myproduct && mv ~/code/this-repo . && /shiploop:setup` → Phase 1) /
+   `cancel`.
+2. **Autonomy rung** (`GOVERN_AUTONOMY`) — the trust ladder, one honest sentence each (see the
+   shared interview-content section). Picking `auto` allowlists THIS repo for auto-merge; a
+   different allowlist goes via Other.
+3. **Root remote** — `create private GitHub repo (<org>/<meta-name>)` / `skip for now`. The skip
+   option's description must say plainly: without a root remote the governor's CAS ticket pushes
+   and cross-driver ticket sync stay DISABLED.
+4. **Confirmations & extras** (multiSelect) — one option per W0 `NEEDS-CONFIRM` item (e.g. *"live
+   writer: dev servers and IDE indexers are stopped"*), plus `run <ROOT_PM> install + doctor at the
+   end (recommended)`, plus `file a starter ticket if a small tractable one surfaces (recommended)`,
+   plus — only when a registered repo is PUBLIC — `enable auto-externalization of Low tickets`.
 
-If the operator declines both, stop. If they pick wrap-in-place, continue in this phase:
-
-### W1 — Interview (what wrap.sh needs)
-
-Gather, confirming each:
-- **Subfolder name** (`NAME`): default = repo name from `git remote get-url origin` (`<org>/<repo>` →
-  `<repo>`), else the current folder name. This is where the repo will live (`<path>/<NAME>/`).
-- **Port + dev command** for the wrapped repo: same detection as Phase 1 (read its `package.json`
-  `dev` script / lockfile / `Makefile` / `Cargo.toml` / `go.mod`).
-- **GitHub org** (`ORG`): parse from the wrapped repo's `origin`. Confirm.
-- **Root package manager** (`ROOT_PM`), **worktree base**, **governor merge-allowlist**: as Phase 1.
-- Then the shared **Interview additions** (autonomy rung, more repos, auto-externalization) below.
+Handle the answers: `cancel` → stop. `fresh-folder` → print the mkdir/mv flow and stop. A
+`NEEDS-CONFIRM` option left unselected is a decline → STOP (wrap refuses without it). Extra repos
+named via Other → clone them after the wrap (W4).
 
 Build `REPOS_SPEC` with the wrapped repo pre-registered FIRST: `"$NAME:$PORT:$CMD"` (plus any extra
-repos the operator named — those are cloned AFTER the wrap, W4).
+repos the operator named — those are cloned AFTER the wrap, W4). Everything after this point runs
+WITHOUT pausing.
 
 ### W2 — Invoke wrap.sh (single guarded call)
+
+Pass the exact `--confirm-*` flag for every NEEDS-CONFIRM item the operator approved in Q4:
 
 ```bash
 bash "$WRAP" \
@@ -114,6 +181,7 @@ bash "$WRAP" \
   --repos "$REPOS_SPEC" \
   --merge-allowlist "$GOVERN_MERGE_REPOS" \
   --worktree-base "$WORKTREE_BASE" \
+  --confirm-live-writer <other approved --confirm-* flags> \
   --yes
 # exit 0 = wrapped + scaffolded; 3 = hard refusal; 4 = name collision; 5 = needs-confirm; 1 = rolled back
 ```
@@ -125,19 +193,20 @@ Handle the exit code — **do NOT try to move anything yourself; wrap.sh owns ev
   `includeIf` gitdir abs, pre-existing `.wrap-undo.sh`, below-root, bare). Do not override.
 - **4** (name collision) → the chosen `NAME` clashes (case-insensitively on macOS/APFS) with an
   existing entry. Ask for a different subfolder name and re-invoke.
-- **5** (needs-confirm) → wrap.sh printed one or more `NEEDS-CONFIRM[--confirm-x]: <why>` lines
-  (escaping symlink, cloud-synced folder, nested-in-another-repo, live dev servers, `git maintenance`
-  registration). Relay each `<why>` to the operator, get an explicit yes for each, then re-invoke
-  ADDING the exact `--confirm-*` flags they approved. If they decline any, STOP.
+- **5** (needs-confirm) → should NOT happen: W0's `--preflight` already surfaced every item and Q4
+  collected the approvals. If a NEW `NEEDS-CONFIRM[--confirm-x]: <why>` line appears anyway (the
+  environment changed between preflight and invoke), relay that one item, get an explicit yes,
+  re-invoke with the flag added. If they decline, STOP.
 - **1** (rolled back) → a step failed mid-flight; wrap.sh already restored the original layout and
   kept `.wrap-undo.sh`. Print the failure reason and STOP — do not retry blindly.
 
-### W3 — Root remote
+### W3 — Root remote (already answered — do not re-ask)
 
-The scaffold left the root as a fresh local git repo with no remote. Offer:
-- **`gh repo create`** (private by default): `gh repo create <org>/<meta-name> --private --source=. --remote=origin` (confirm the name).
-- **skip for now** — fine, but tell the operator plainly: **without a root remote the governor's CAS
-  ticket pushes and cross-driver ticket sync are DISABLED**; `doctor` and `config-check` will keep
+The scaffold left the root as a fresh local git repo with no remote. Apply the interview's Q3
+answer:
+- **create** → `gh repo create <org>/<meta-name> --private --source=. --remote=origin`.
+- **skip** → note it in the Phase Z report: **without a root remote the governor's CAS ticket
+  pushes and cross-driver ticket sync are DISABLED**; `doctor` and `config-check` will keep
   surfacing it as a first-class status line until they add one.
 
 ### W4 — Extra repos, hooks, verify
@@ -147,7 +216,10 @@ The scaffold left the root as a fresh local git repo with no remote. Offer:
   instead add them to `REPOS` before W2, or clone + re-scaffold config. Simplest: clone them, then
   re-run the config component so `workspace.sh` lists them.
 - Propagate sub-repo commit hooks (Phase 3 block) for the wrapped repo and any extras.
-- Verify: `bash scripts/govern/config-check.sh` (no-auth smoke) then continue to Phase Z's report.
+- If the interview's extras included install + doctor (the default), run `<ROOT_PM> install` +
+  `<ROOT_PM> run doctor` now — do not ask again.
+- Verify: `bash scripts/govern/config-check.sh` (no-auth smoke), consider the starter-ticket block
+  (Phase 4 — consent already collected in Q4), then continue to Phase Z's report.
 
 The wrapped repo is already gitignored at the root (`/<NAME>/`) and was NOT swept into the root
 commit — wrap.sh asserts both before removing the undo script, so you do not need to re-check.
@@ -170,48 +242,61 @@ echo "root default branch: $def   currently on: $cur"
 
 ---
 
-## Phase 1 (fresh) — Interview
+## Phase 1 (fresh) — Detect, then the single interview
 
-You are gathering the inputs scaffold.sh needs:
+**Detect first (no questions, ONE tool call):**
 
-- **Sub-repos:** `for d in */; do [ -d "$d/.git" ] && echo "${d%/}"; done`. If zero, stop and tell the
-  operator to put at least one repo here first (as a sub-folder with its own `.git`). **One sub-repo is
-  enough** — a single-repo workspace is fully valid; the ticket queue, governor, worktrees, and
-  lesson-accretion all pay off at N=1, and the operator adds more sub-repos later. Don't nudge toward a
-  multi-repo split or assume microservices. Confirm the detected list.
-- **Ports + dev commands per sub-repo:** read each `<repo>/package.json` `dev` script; grep for `-p (\d{4})`
-  (Next.js) or `PORT=(\d+)` (Express). **Resolve collisions:** if several default to 3000, assign
-  distinct stable ports (3000, 3001, …). **Dev command (do NOT assume one PM):** lockfile signal —
-  `package-lock.json`→`npm run dev`, `pnpm-lock.yaml`→`pnpm dev`, `yarn.lock`→`yarn dev`,
-  `bun.lockb`→`bun run dev`; else `Makefile` w/ a run target→`make run`, `Cargo.toml`→`cargo run`,
-  `go.mod`→`go run ./...`. Print a table; ask to confirm.
-- **Root package manager (`ROOT_PM`):** if a root lockfile exists, detect from it; else ask (default `npm`).
-- **GitHub org:** `git -C <first-repo> remote get-url origin` → parse `<org>/<repo>`. Confirm.
-- **Worktree base:** default `$(dirname "$(pwd)")/<folder-name>.wt`. Confirm or override.
-- **Governor merge-allowlist:** ask which sub-repos may be **auto-merged** by the governor on
-  green-or-no-checks CI. Default: **none** (safest) — the operator opts repos in.
+```bash
+bash "$PLUGIN_ROOT/templates/lib/detect-inputs.sh" --workspace-dir "$(pwd)" --mode fresh
+# → root_pm= / worktree_base= / org= / repo=<name>|<port>|<cmd>|<visibility> per sub-repo / repos_spec=
+```
 
-Then also run the shared **Interview additions** below.
+It scans every `*/` with its own `.git`, detects each repo's port + dev command (package.json dev
+script / lockfile signal / `Makefile` / `Cargo.toml` / `go.mod`), resolves port collisions to
+distinct stable ports (3000, 3001, …), detects the root PM from a root lockfile (default `npm`),
+parses the org from the first repo's `origin`, and marks visibility (`PUBLIC` enables the
+auto-externalization option; `unknown` = `gh` absent, treat as private). Do NOT re-derive these
+with per-value probes; only override a value you can SEE is wrong.
 
-## Interview additions (BOTH modes — fresh and wrap)
+- **Zero `repo=` lines** → stop and tell the operator to put at least one repo here first (as a
+  sub-folder with its own `.git`). **One sub-repo is enough** — a single-repo workspace is fully
+  valid; the ticket queue, governor, worktrees, and lesson-accretion all pay off at N=1, and the
+  operator adds more sub-repos later. Don't nudge toward a multi-repo split or assume microservices.
 
-Ask these in both Phase 1 and Phase W (in wrap mode, ask them AFTER the wrap so the first repo is
-already registered):
+**Then the single interview (the ONLY pause):** print the detected table (repos, ports, dev
+commands, org, root PM, worktree base) with the note *"these apply as shown — pick Other on any
+question to override, or name extra repo clone URLs to add them"*, then ONE `AskUserQuestion` call:
 
-1. **More repos** — "what else belongs to this product?" For each, clone it into the root
-   (`git clone <url>`) so it becomes a sub-folder with its own `.git`, and add it to `REPOS` (fresh:
-   include in `REPOS_SPEC` before scaffold; wrap: clone after W2, then re-run
-   `--component workspace-sh --yes` so `workspace.sh` lists it). One repo is a fine workspace — don't push a split.
+1. **Proceed?** — `scaffold with these detected values (recommended)` / `cancel`.
+2. **Autonomy rung** (`GOVERN_AUTONOMY`) — the trust ladder (shared interview-content section).
+3. **Governor merge-allowlist** (multiSelect) — which sub-repos may be **auto-merged** on
+   green-or-no-checks CI: one option per detected repo plus `none (default, safest)`. Only matters
+   on the `auto` rung — say so in the question.
+4. **Extras** (multiSelect) — `run <ROOT_PM> install + doctor at the end (recommended)`, `file a
+   starter ticket if a small tractable one surfaces (recommended)`, and — only when a repo is
+   PUBLIC — `enable auto-externalization of Low tickets`.
+
+Everything after this point runs WITHOUT pausing.
+
+## Interview content shared by BOTH modes (fresh and wrap)
+
+These decisions live INSIDE the single interview (W1 / Phase 1) — never as separate later
+questions:
+
+1. **More repos** — invited via the defaults-table note ("name extra repo clone URLs via Other").
+   For each, clone it into the root (`git clone <url>`) so it becomes a sub-folder with its own
+   `.git`, and add it to `REPOS` (fresh: include in `REPOS_SPEC` before scaffold; wrap: clone after
+   W2, then re-run `--component workspace-sh --yes` so `workspace.sh` lists it). One repo is a fine
+   workspace — don't push a split.
 2. **Autonomy rung (`GOVERN_AUTONOMY`)** — surface the trust ladder explicitly, one honest sentence each:
    - **observe** — workers do the work and open a DRAFT PR; nothing is ever marked ready or merged. Watch-only.
    - **pr-only** (default) — workers open normal ready-for-review PRs; the governor still never auto-merges. You review + merge.
    - **auto** — allowlisted repos auto-merge on green-or-no-checks CI (still guarded by the three-factor check).
    Scaffold seeds `pr-only`. If the operator picks another rung, set it AFTER scaffold:
    `sed -i.bak -E 's/(GOVERN_AUTONOMY=.\$\{GOVERN_AUTONOMY:-)[a-z-]+/\1<rung>/' scripts/lib/workspace.sh && rm -f scripts/lib/workspace.sh.bak`.
-3. **Auto-externalization** — if any registered repo is PUBLIC (`gh repo view <org>/<repo> --json visibility`
-   → `PUBLIC`; silently skip if `gh` is absent), offer the existing `externalize-low-tickets.sh`
-   mechanism (moves Low-severity tickets to public GitHub issues). **Off by default** — only enable on
-   an explicit yes.
+3. **Auto-externalization** — only offered when a registered repo is PUBLIC (detected before the
+   interview). Enables the existing `externalize-low-tickets.sh` mechanism (moves Low-severity
+   tickets to public GitHub issues). **Off by default** — only enable when selected.
 
 ## Phase 2 (fresh) — Invoke scaffold.sh
 
@@ -256,9 +341,10 @@ the "Optional pre-commit lint-fix hook" block there. Sub-repos that already have
 
 `worktree/new.sh` re-runs both installers for each sub-repo worktree it creates.
 
-## Phase 4 (fresh) — Initialize + report
+## Phase 4 (fresh) — Initialize + report (no questions)
 
-Ask: "Run `<ROOT_PM> install` + `<ROOT_PM> run doctor` now? (yes / skip)". Show output.
+If the interview's extras included it (the default), run `<ROOT_PM> install` + `<ROOT_PM> run doctor`
+now and show the output. If it was deselected, skip and note it in the Phase Z report.
 
 Mention optional next steps:
 - rename `scripts/lib/worktree-bootstrap.sh.example` → `.sh` and fill per-worktree setup;
@@ -271,7 +357,7 @@ Mention optional next steps:
 
 A fresh adopter's first `/govern` is far more convincing if it is short, cheap, and ends in a visible
 merged (or mergeable) PR. **After verification has passed**, look for ONE small, guaranteed-tractable
-item you already surfaced during scaffold and offer to file it as ticket #1 — the operator's first run
+item you already surfaced during scaffold to become ticket #1 — the operator's first run
 then has a real, tiny target instead of an empty queue. In priority order, pick the best available:
 
 1. **A `doctor` warning the governor can fix** — e.g. a sub-repo missing a `.env.example` key that
@@ -280,9 +366,11 @@ then has a real, tiny target instead of an empty queue. In priority order, pick 
    single-file add).
 3. **A `README`/`CLAUDE.md` `TODO`** you can see is genuinely small and self-contained.
 
-Propose it to the operator in one line and **only file on their confirmation** (this is their repo's
-first ticket). File it with `file-ticket.sh` — reuse the existing mechanics, no new script — pinning a
-cheap model so the first run is fast and inexpensive:
+The interview's extras question already collected consent (*"file a starter ticket if a small
+tractable one surfaces"*). If it was selected, file the best candidate now and describe it in one
+line of the Phase Z report; if deselected, put the proposal + the exact command in the report
+instead — either way, do NOT pause. File it with `file-ticket.sh` — reuse the existing mechanics,
+no new script — pinning a cheap model so the first run is fast and inexpensive:
 
 ```bash
 # Model: haiku for a truly mechanical one-file fix, sonnet for a small search+edit.
@@ -489,9 +577,12 @@ EOF
 Print:
 ```
 ── meta-repo workspace ready ──
-Mode:        <fresh | bumped>
+Mode:        <fresh | wrapped | bumped>
 Sub-repos:   <name (port)> …
 Installed:   core scripts · worktrees · tickets · governor · /govern + /resolve commands · hooks
+Decisions:   autonomy=<rung> · allowlist=<repos|none> · remote=<created|skipped> ·
+             starter ticket=<filed #N|proposed below|none> · externalization=<on|off>
+             (everything above came from the single interview — one recap, no re-asks)
 Try:
   <ROOT_PM> run status
   <ROOT_PM> run worktree:new -- try-it && cd <worktree-base>/try-it
