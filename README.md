@@ -73,31 +73,12 @@ New workspaces start on the **pr-only** rung: workers open PRs, the governor nev
 
 The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns state and control flow deterministically and spends near-zero Claude context. Model tokens burn only inside the fresh headless workers it spawns.
 
-```
-queue/tickets.md ──► pick next ticket
-                    │
-                    ▼
-        spawn fresh `claude -p` worker
-        in its own git worktree
-        (right-sized: haiku/sonnet/opus)
-                    │
-                    ▼
-        worker: edit → commit → open PR
-                    │
-                    ▼
-        wait for CI ─── green? ── no ──► escalate / park
-                    │
-                   yes
-                    ▼
-       three-factor auto-merge guard
-       (own author + own branch + no forks)
-                    │
-              on allowlist? ── no ──► leave PR open
-                    │
-                   yes
-                    ▼
-          merge → bookkeep queue/tickets.md → next ticket
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
+    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: queue/tickets.md feeds a fresh headless worker in its own git worktree (right-sized haiku/sonnet/opus), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a supervisor audits the run and can halt it. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
+  </picture>
+</p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
 - **Right-sized models.** The interactive "brain" stamps each ticket with the cheapest capable tier (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy); retries escalate to `GOVERN_WORKER_MODEL` unconditionally.
