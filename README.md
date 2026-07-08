@@ -1,7 +1,16 @@
 # shiploop
 
-[![CI](https://github.com/anshss/shiploop/actions/workflows/ci.yml/badge.svg)](https://github.com/anshss/shiploop/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+    <img src="assets/hero-light.svg" width="880" alt="shiploop — the self-improving harness that ships your backlog. Specs, tickets, and worktrees flow in; auto-merged PRs, green CI, and CLAUDE.md lessons flow out.">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/anshss/shiploop/actions/workflows/ci.yml"><img src="https://github.com/anshss/shiploop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 A self-improving multi-agent harness for Interactive Coding Agents. It works across every repo in your product - a fresh, right-sized headless agent per ticket, guarded auto-merge and after every resolved ticket it writes the durable lesson.
 
