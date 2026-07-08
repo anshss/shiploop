@@ -13,28 +13,57 @@ A self-improving multi-agent harness for Interactive Coding Agents. It works acr
 /plugin install shiploop@shiploop
 ```
 
-Commands appear as `/shiploop:setup`, `/shiploop:govern`, `/shiploop:flows`, etc. Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh` — same commands, same layout.
+This installs the plugin once, globally — commands appear as `/shiploop:setup`, `/shiploop:govern`, `/shiploop:flows`, etc. in every session. Each project you want shiploop on then gets its own one-time setup (next section). Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh` — same commands, same layout.
 
 ## Quickstart
 
-### 1. See your product's risk map - 10 minutes, nothing deploys
+### 1. Set it up on your project — one command, one round of questions
+
+Open Claude Code in the project you want shiploop to work on, and run setup:
 
 ```bash
-cd ~/code/your-project
-/shiploop:setup          # wrap your repo in place — reversible, byte-identical verify
-/shiploop:flows extract  # inventory every user-facing path that might break
-/shiploop:flows list     # your risk map: proven / untested / stale / failed
+cd ~/code/your-project && claude
+```
+```
+/shiploop:setup
 ```
 
-Setup offers **wrap-in-place**: your repo moves into a subfolder and the workspace scaffolds around it. The path you `cd` into stays the same, full history travels as one unit, and a generated `.wrap-undo.sh` reverses everything until it all verifies. One repo is a fine workspace — add more later (or start from an empty parent folder holding several repos, each with its own `.git`).
+Setup detects what the folder is and adapts:
+
+- **An existing repo → wrap-in-place.** Your repo moves into a subfolder and the workspace scaffolds around it. The path you `cd` into stays the same, full history travels as one unit verified byte-identical, and a generated `.wrap-undo.sh` reverses everything until it all verifies.
+- **A folder of repos (or an empty one) → fresh scaffold.** Each subfolder with its own `.git` becomes a sub-repo. One repo is a fine workspace — add more later.
+- **An existing workspace → upgrade**, component by component, without touching your config.
+
+It detects everything first (sub-repos, ports, dev commands, package manager), asks its questions in **one batched round**, then runs to completion. You end up with a workspace around your code:
+
+```
+your-project/
+  <your-repo>/              # your code, untouched, still its own git repo
+  queue/tickets.md          # the backlog the governor grinds
+  governor/                 # doctrine, escalations, improvements
+  scripts/                  # status / dev / doctor / worktrees / govern
+  scripts/lib/workspace.sh  # the ONE config file — every knob lives here
+  CLAUDE.md                 # git-tracked memory; every resolved ticket adds a lesson
+```
+
+### 2. See your product's risk map — 10 minutes, nothing deploys
+
+```
+/shiploop:flows extract   # inventory every user-facing path that might break
+/shiploop:flows list      # your risk map: proven / untested / stale / failed
+```
 
 Extract fans out one agent per surface, and the inventory is staged for your approval — it opens no PRs, merges nothing, rents no compute. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works. Proving a path (`/shiploop:flows file <id>`) *can* deploy, so it's dry by default: nothing files until `--yes`, `--max-deploys N` caps a batch, and `--all-stale`/`--all-untested` refuse unless the orphan-sweep (`GOVERN_DEPLOY_SWEEP_CMD`) is wired.
 
-### 2. File one ticket, watch it ship
+### 3. File one ticket, watch it ship
+
+From the workspace root:
 
 ```bash
 scripts/govern/file-ticket.sh "Fix empty-state copy on /settings"   # into queue/tickets.md
 bash scripts/govern/config-check.sh   # free smoke test — no tokens, no Claude auth
+```
+```
 /shiploop:govern                      # fresh worker → edits → PR → waits for CI
 ```
 
