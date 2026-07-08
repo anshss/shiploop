@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 392" width="940" height="392" role="img" aria-label="The shiploop governor loop">
+  <style>
+    .title { font: 600 12.5px ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #e6edf3; }
+    .sub   { font: 400 10.5px ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #9198a1; }
+    .lbl   { font: 400 10px ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #9198a1; }
+    .mono  { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #e6edf3; }
+    .monosub { font: 400 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #9198a1; }
+    .box   { fill: #161b22; stroke: #30363d; stroke-width: 1.25; }
+    .good  { fill: #0f2313; stroke: #0ca30c; stroke-width: 1.25; }
+    .warn  { fill: #2a2008; stroke: #eda100; stroke-width: 1.25; stroke-dasharray: 4 3; }
+    .acc   { fill: #12233a; stroke: #3987e5; stroke-width: 1.25; }
+    .ghost { fill: none; stroke: #4b5158; stroke-width: 1; stroke-dasharray: 4 3; }
+    .edge  { fill: none; stroke: #6e7681; stroke-width: 1.25; }
+    .dash  { fill: none; stroke: #6e7681; stroke-width: 1.25; stroke-dasharray: 4 3; }
+    .loop  { fill: none; stroke: #3987e5; stroke-width: 2; }
+    .looplbl { font: 600 11px ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #3987e5; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#6e7681"/>
+    </marker>
+    <marker id="b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#3987e5"/>
+    </marker>
+  </defs>
+
+  <!-- supervisor -->
+  <rect class="ghost" x="520" y="6" width="210" height="36" rx="18"/>
+  <text class="lbl" x="625" y="28" text-anchor="middle">supervisor audits the run · can halt</text>
+  <path class="dash" d="M625 42 V60"/>
+
+  <!-- main row -->
+  <rect class="box" x="22" y="64" width="178" height="72" rx="8"/>
+  <text class="mono" x="111" y="92" text-anchor="middle">queue/tickets.md</text>
+  <text class="sub" x="111" y="110" text-anchor="middle">your backlog,</text>
+  <text class="sub" x="111" y="124" text-anchor="middle">severity-ordered</text>
+
+  <rect class="box" x="246" y="64" width="214" height="72" rx="8"/>
+  <text class="title" x="353" y="92" text-anchor="middle">fresh headless worker</text>
+  <text class="sub" x="353" y="110" text-anchor="middle">own git worktree</text>
+  <text class="sub" x="353" y="124" text-anchor="middle">right-sized: haiku · sonnet · opus</text>
+
+  <rect class="box" x="506" y="64" width="140" height="72" rx="8"/>
+  <text class="title" x="576" y="96" text-anchor="middle">opens a PR</text>
+  <text class="sub" x="576" y="114" text-anchor="middle">waits for CI</text>
+
+  <rect class="box" x="692" y="64" width="158" height="72" rx="8"/>
+  <text class="title" x="771" y="96" text-anchor="middle">merge guard</text>
+  <text class="sub" x="771" y="114" text-anchor="middle">allowlist + three-factor</text>
+
+  <path class="edge" d="M200 100 H240" marker-end="url(#a)"/>
+  <path class="edge" d="M460 100 H500" marker-end="url(#a)"/>
+  <path class="edge" d="M646 100 H686" marker-end="url(#a)"/>
+
+  <!-- outcomes -->
+  <path class="edge" d="M746 136 V160 H628 V190" marker-end="url(#a)"/>
+  <text class="lbl" x="683" y="154" text-anchor="middle">green CI · on allowlist</text>
+  <path class="edge" d="M796 136 V160 H829 V190" marker-end="url(#a)"/>
+  <text class="lbl" x="846" y="180" text-anchor="start">otherwise</text>
+
+  <rect class="good" x="548" y="196" width="160" height="60" rx="8"/>
+  <text class="title" x="628" y="222" text-anchor="middle">✓ auto-merges</text>
+  <text class="sub" x="628" y="240" text-anchor="middle">only its own PRs, never forks</text>
+
+  <rect class="box" x="744" y="196" width="170" height="60" rx="8"/>
+  <text class="title" x="829" y="222" text-anchor="middle">PR waits for you</text>
+  <text class="sub" x="829" y="240" text-anchor="middle">pr-only — the default</text>
+
+  <!-- escalation -->
+  <path class="dash" d="M353 136 V190" marker-end="url(#a)"/>
+  <rect class="warn" x="246" y="196" width="214" height="60" rx="8"/>
+  <text class="title" x="353" y="222" text-anchor="middle">hard-stop → park + escalate</text>
+  <text class="monosub" x="353" y="240" text-anchor="middle">governor/escalations.md</text>
+
+  <!-- lesson channel -->
+  <path class="edge" d="M628 256 C628 282 590 280 590 296" marker-end="url(#a)"/>
+  <path class="edge" d="M829 256 C829 288 646 282 644 298" marker-end="url(#a)"/>
+
+  <rect class="acc" x="356" y="302" width="308" height="60" rx="8"/>
+  <text class="mono" x="510" y="328" text-anchor="middle">lesson → CLAUDE.md</text>
+  <text class="sub" x="510" y="346" text-anchor="middle">memory you can read, diff, and edit</text>
+
+  <!-- loop back -->
+  <path class="loop" d="M356 332 H118 Q104 332 104 318 V148" marker-end="url(#b)"/>
+  <text class="looplbl" x="237" y="324" text-anchor="middle">the next worker starts smarter</text>
+</svg>
