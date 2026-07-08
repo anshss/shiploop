@@ -261,4 +261,34 @@ assert_eq "$(detect "$D")" "refuse:gitfile" "6d. .git-as-file → refuse:gitfile
 D="$(mk_repo)"; mkdir -p "$D/sub"; assert_eq "$(detect "$D/sub")" "refuse:below-root" "6e. below root → refuse:below-root"
 D="$(mktemp -d)/bare.git"; git init -q --bare "$D"; assert_eq "$(detect "$D")" "refuse:bare" "6f. bare repo → refuse:bare"
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. --preflight (read-only checks — setup.md's single-interview seam)
+# ══════════════════════════════════════════════════════════════════════════════
+echo "── 7. --preflight (read-only) ──" >&2
+
+# 7a. no confirm flags → exit 5 listing NEEDS-CONFIRM; only --name required; nothing moved
+T="$(mk_repo)"; BEFORE="$(layout "$T")"
+out="$(/bin/bash "$WRAP" --preflight --workspace-dir "$T" --name myapp 2>&1)"; rc=$?
+assert_eq "$rc" "5" "7a. preflight w/o confirms → exit 5"
+assert_contains "$out" "confirm-live-writer" "7a. lists the live-writer confirm item"
+assert_eq "$(layout "$T")" "$BEFORE" "7a. preflight moved nothing"
+
+# 7b. all confirms passed → exit 0, still nothing moved, no wrap artifacts
+out="$(/bin/bash "$WRAP" --preflight --workspace-dir "$T" --name myapp --confirm-live-writer 2>&1)"; rc=$?
+assert_eq "$rc" "0" "7b. preflight w/ confirms → exit 0"
+assert_contains "$out" "nothing moved" "7b. says it is read-only"
+assert_eq "$(layout "$T")" "$BEFORE" "7b. layout untouched"
+[ ! -f "$T/.wrap-undo.sh" ] && printf 'ok   - 7b. no undo script written\n' || { printf 'FAIL - 7b. undo script written by preflight\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+
+# 7c. hard refusal still fires in preflight mode (dirty tracked tree → exit 3)
+T="$(mk_repo)"; echo "mutate" >> "$T/src/index.js"
+out="$(/bin/bash "$WRAP" --preflight --workspace-dir "$T" --name myapp --confirm-live-writer 2>&1)"; rc=$?
+assert_eq "$rc" "3" "7c. preflight surfaces hard refusal (3)"
+assert_contains "$out" "uncommitted" "7c. names the dirty tree"
+
+# 7d. name collision surfaces at preflight time (exit 4)
+T="$(mk_repo)"; mkdir "$T/myapp"
+out="$(/bin/bash "$WRAP" --preflight --workspace-dir "$T" --name myapp --confirm-live-writer 2>&1)"; rc=$?
+assert_eq "$rc" "4" "7d. preflight surfaces name collision (4)"
+
 assert_done
