@@ -19,12 +19,19 @@
 # workspaces (it lives in templates/lib/, which scaffold does not auto-copy).
 #
 # ── Exit codes (setup.md branches on these) ─────────────────────────────────
-#   0  wrapped + scaffolded OK
+#   0  wrapped + scaffolded OK (with --preflight: all checks pass, nothing touched)
 #   1  transform failed mid-flight — trap rolled the layout back; .wrap-undo.sh kept
 #   2  usage / argument error (nothing touched)
 #   3  hard preflight refusal, no override (nothing touched)
 #   4  subfolder-name collision (setup.md re-prompts for a name)
 #   5  warn+confirm preflight not yet confirmed (setup.md asks, re-invokes with --confirm-*)
+#
+# ── --preflight (read-only) ──────────────────────────────────────────────────
+# Runs ONLY the preflight checks and exits — nothing is moved or written. Same
+# exit codes (0/3/4/5) and the same NEEDS-CONFIRM[--confirm-x] lines, so setup.md
+# can surface EVERY refusal and confirm-item during its single upfront interview
+# instead of pausing mid-transform. Only --name is required (--org/--repos are
+# scaffold inputs and not needed for the checks).
 #
 # ── Test seams (env, undocumented for users) ────────────────────────────────
 #   WRAP_TEST_FAIL_AT=<moving|pre-rename|renamed|scaffolding>  force failure at a phase
@@ -61,6 +68,7 @@ SCAFFOLD=""
 TEMPLATES_DIR=""
 KEEP_UNDO=0
 DETECT=0
+PREFLIGHT_ONLY=0
 YES=0
 # Confirm flags for the warn+confirm preflights.
 CONFIRM_CLOUD=0
@@ -84,6 +92,7 @@ while [ "$#" -gt 0 ]; do
     --templates)         TEMPLATES_DIR="$2"; shift 2 ;;
     --keep-undo)         KEEP_UNDO=1; shift ;;
     --detect)            DETECT=1; shift ;;
+    --preflight)         PREFLIGHT_ONLY=1; shift ;;
     --yes|-y)            YES=1; shift ;;
     --confirm-cloud-sync)   CONFIRM_CLOUD=1; shift ;;
     --confirm-nested)       CONFIRM_NESTED=1; shift ;;
@@ -129,8 +138,10 @@ if [ "$DETECT" -eq 1 ]; then
 fi
 
 [ -n "$NAME" ] || { printf 'wrap.sh: --name <subfolder> is required\n' >&2; exit 2; }
-[ -n "$ORG" ] || { printf 'wrap.sh: --org is required (forwarded to scaffold)\n' >&2; exit 2; }
-[ -n "$REPOS_SPEC" ] || { printf 'wrap.sh: --repos is required (forwarded to scaffold)\n' >&2; exit 2; }
+if [ "$PREFLIGHT_ONLY" -eq 0 ]; then
+  [ -n "$ORG" ] || { printf 'wrap.sh: --org is required (forwarded to scaffold)\n' >&2; exit 2; }
+  [ -n "$REPOS_SPEC" ] || { printf 'wrap.sh: --repos is required (forwarded to scaffold)\n' >&2; exit 2; }
+fi
 
 # Resolve scaffold.sh + templates (defaults relative to this script: templates/lib/wrap.sh).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -604,6 +615,11 @@ verify_final() {
 trap on_signal INT TERM
 
 preflight
+
+if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
+  log "preflight-only: all checks pass — nothing moved. Safe to wrap."
+  exit 0
+fi
 
 log "wrapping $WORKSPACE_DIR — repo will move into $NAME/"
 do_move
