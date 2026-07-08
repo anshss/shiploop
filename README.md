@@ -3,9 +3,7 @@
 [![CI](https://github.com/anshss/shiploop/actions/workflows/ci.yml/badge.svg)](https://github.com/anshss/shiploop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> You do the specs and systems engineering. shiploop ships the code.
-
-A self-improving multi-agent harness for Claude Code. It grinds your ticket backlog across every repo in your product — a fresh, right-sized headless agent per ticket, guarded auto-merge on green CI — and after every resolved ticket it writes the durable lesson into your git-tracked `CLAUDE.md`, so each run is smarter and cheaper than the last. Measured cost: **~$0.54 per resolved ticket**.
+A self-improving multi-agent harness for Interactive Coding Agents. It works across every repo in your product - a fresh, right-sized headless agent per ticket, guarded auto-merge and after every resolved ticket it writes the durable lesson.
 
 ## Install
 
@@ -19,7 +17,7 @@ Commands appear as `/shiploop:setup`, `/shiploop:govern`, `/shiploop:flows`, etc
 
 ## Quickstart
 
-### 1. See your product's risk map — 10 minutes, nothing deploys
+### 1. See your product's risk map - 10 minutes, nothing deploys
 
 ```bash
 cd ~/code/your-project
