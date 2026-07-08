@@ -1,10 +1,7 @@
 # shiploop
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-    <img src="assets/hero-light.svg" width="880" alt="shiploop — the self-improving harness that ships your backlog. Specs, tickets, and worktrees flow in; auto-merged PRs, green CI, and CLAUDE.md lessons flow out.">
-  </picture>
+  <img src="assets/shiploop.png" width="880" alt="Shiploop — the harness loop, after Karpathy: a manager delegates each ticket to right-sized workers (haiku, sonnet, opus) through an objective gate; learnings feed back into the manager. Self-improving.">
 </p>
 
 <p align="center">
