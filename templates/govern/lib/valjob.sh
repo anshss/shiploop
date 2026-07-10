@@ -29,8 +29,10 @@ valjob::_log() {
 }
 # JSON string escaper (backslash + double-quote only — ids/providers/evidence pointers are simple).
 valjob::_esc() { local s="${1:-}"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
-# mtime in epoch seconds — BSD (`stat -f %m`) then GNU (`stat -c %Y`) so it works on macOS + Linux.
-valjob::_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+# mtime in epoch seconds — GNU (`stat -c %Y`) first, BSD (`stat -f %m`) fallback: on GNU coreutils,
+# `stat -f` means FILESYSTEM mode (succeeds and prints unrelated multi-line output), so BSD-first
+# order would silently "succeed" with garbage on Linux instead of falling through.
+valjob::_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 # Resolve + ensure the job dir; rc 1 (never abort) when VAL_JOB_DIR is unset.
 valjob::_require_dir() {
   if [[ -z "${VAL_JOB_DIR:-}" ]]; then valjob::_log "VAL_JOB_DIR unset"; return 1; fi
