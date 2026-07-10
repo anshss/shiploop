@@ -64,6 +64,7 @@ Workspace layout scaffold.sh produces:
   .claude/settings.json   scripts/worktree/*  + worktree/lib/registry.sh
   .claude/commands/*.md   scripts/govern/*    + govern/lib/common.sh  + govern/test/*
   CLAUDE.md               learnings.md                    .githooks/{pre-push,prepare-commit-msg}
+  README.md               (workspace landing page — "<name> on Shiploop"; never overwritten)
 ```
 
 ---
@@ -579,7 +580,7 @@ Print:
 ── meta-repo workspace ready ──
 Mode:        <fresh | wrapped | bumped>
 Sub-repos:   <name (port)> …
-Installed:   core scripts · worktrees · tickets · governor · /govern + /resolve commands · hooks
+Installed:   core scripts · worktrees · tickets · governor · /govern + /resolve commands · hooks · README
 Decisions:   autonomy=<rung> · allowlist=<repos|none> · remote=<created|skipped> ·
              starter ticket=<filed #N|proposed below|none> · externalization=<on|off>
              (everything above came from the single interview — one recap, no re-asks)
