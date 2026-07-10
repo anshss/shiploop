@@ -61,6 +61,8 @@ RUN_TESTS=0
 YES=0
 VERBOSE=0
 DIFF_ONLY=0
+SKIP_SUBREPO_HOOKS=0   # wrap.sh sets this: it must not mutate the moved sub-repo's
+                       # .git/hooks before its byte-identical rollback point retires.
 
 usage() {
   sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
@@ -89,6 +91,7 @@ while [ "$#" -gt 0 ]; do
     --yes|-y)            YES=1; shift ;;
     --verbose|-v)        VERBOSE=1; shift ;;
     --diff-only)         DIFF_ONLY=1; shift ;;
+    --skip-subrepo-hooks) SKIP_SUBREPO_HOOKS=1; shift ;;
     --version)           hub_version; exit 0 ;;
     -h|--help)           usage ;;
     *)                   die "unknown flag: $1 (see --help)" ;;
@@ -944,13 +947,49 @@ if [ "$DO_GIT_INIT" -eq 1 ]; then
     git init -q
     git config core.hooksPath .githooks
     git add scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
-            queue learnings.md CLAUDE.md README.md .claude/settings.json .claude/commands 2>/dev/null || true
+            queue learnings.md CLAUDE.md README.md \
+            .claude/settings.json .claude/commands .claude/skills .claude/workflows \
+            validation 2>/dev/null || true
     git -c user.email=scaffold@shiploop -c user.name=scaffold \
         commit -q -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)" || true
     info "initial commit created"
   else
     info "git already initialized — skipping init"
   fi
+fi
+
+# ── Propagate sub-repo commit hooks (attribution + optional lint-fix) ────────
+# Moves setup's Phase-3 hook loop into the scaffolder, so a fresh setup no longer
+# spends a model turn driving it by hand. Only for a full scaffold (COMPONENT=all —
+# fresh or a whole-refresh bump); standalone component runs skip it. wrap.sh passes
+# --skip-subrepo-hooks: it MUST NOT mutate the moved sub-repo's .git/hooks while its
+# byte-identical rollback is still armed (that would leave hook residue if the wrap
+# rolled back or the undo script ran) — wrap-mode setup installs them in W4, after
+# the rollback point retires. Isolated in a subshell (source + set changes never
+# leak) and best-effort. worktree/new.sh re-runs the same installers per worktree.
+if [ "$SKIP_SUBREPO_HOOKS" -eq 0 ] && [ "$COMPONENT" = "all" ] \
+   && [ -f scripts/lib/workspace.sh ] && [ -f scripts/lib/githooks.sh ]; then
+  log "propagating sub-repo commit hooks"
+  (
+    set +e
+    # shellcheck disable=SC1091
+    . scripts/lib/workspace.sh
+    # shellcheck disable=SC1091
+    . scripts/lib/githooks.sh
+    for _r in "${REPOS[@]}"; do
+      [ -d "$META_ROOT/$_r/.git" ] || [ -f "$META_ROOT/$_r/.git" ] || continue
+      if install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$_r" >/dev/null 2>&1; then
+        info "  ✓ $_r: attribution hook"
+      else
+        info "  – $_r: attribution hook skipped"
+      fi
+      if install_subrepo_pre_commit_hook "$META_ROOT" "$META_ROOT/$_r" >/dev/null 2>&1; then
+        info "  ✓ $_r: pre-commit hook"
+      else
+        info "  – $_r: pre-commit hook skipped"
+      fi
+    done
+  ) || true
 fi
 
 # ── Verify (bash -n + optional test suite) ──────────────────────────────────

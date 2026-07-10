@@ -100,14 +100,17 @@ treat it as **BUMP MODE** and note the core scripts must be re-parameterized (sc
 You are standing inside the operator's existing project repo. Do NOT ask anything yet — gather
 everything (W0), then run the single interview (W1).
 
-### W0 — Detect + preflight (no questions, ONE tool call each)
+### W0 — Detect + preflight (no questions, ONE combined tool call)
 
 Do NOT hand-run per-value probes (a bash turn per port/lockfile/org/visibility is the dominant
-latency of a live setup). One call emits every interview default:
+latency of a live setup), and do NOT split detection and preflight across turns — chain them in a
+SINGLE bash call so every interview default AND every confirm-item land together, in one turn:
 
 ```bash
-bash "$PLUGIN_ROOT/templates/lib/detect-inputs.sh" --workspace-dir "$(pwd)" --mode wrap
-# → root_pm= / worktree_base= / org= / repo=<NAME>|<port>|<cmd>|<visibility> / repos_spec=
+DET="$(bash "$PLUGIN_ROOT/templates/lib/detect-inputs.sh" --workspace-dir "$(pwd)" --mode wrap)"
+printf '%s\n' "$DET"     # root_pm= / worktree_base= / org= / repo=<NAME>|<port>|<cmd>|<visibility> / repos_spec=
+NAME="$(printf '%s\n' "$DET" | sed -n 's/^repo=\([^|]*\).*/\1/p' | head -1)"
+bash "$WRAP" --preflight --workspace-dir "$(pwd)" --name "$NAME"   # read-only; surfaces every REFUSE / NEEDS-CONFIRM
 ```
 
 The `repo=` line carries the wrap **subfolder name** (`NAME`, from `origin`, else folder name —
@@ -116,11 +119,9 @@ this is where the repo will live: `<path>/<NAME>/`), its **port + dev command**,
 absent, treat as private). Only override a detected value if you can SEE it is wrong (e.g. the dev
 script is nonstandard) — otherwise pass it through to the defaults table as-is.
 
-Then run the read-only preflight so every confirm-item surfaces NOW, not mid-transform:
-
-```bash
-bash "$WRAP" --preflight --workspace-dir "$(pwd)" --name "$NAME"
-```
+Preflight is read-only and fail-closed, so every confirm-item surfaces NOW, not mid-transform.
+A single **prunable** (stale, dead-gitdir) worktree no longer refuses — wrap.sh auto-prunes those
+before moving; only LIVE linked worktrees still refuse.
 
 - **exit 5** → collect each `NEEDS-CONFIRM[--confirm-x]: <why>` line; each becomes an option in
   interview Q4 (the live-writer item fires on every run by design — it is always in the batch).
@@ -216,7 +217,22 @@ answer:
   and re-run `bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component workspace-sh --yes` is NOT needed —
   instead add them to `REPOS` before W2, or clone + re-scaffold config. Simplest: clone them, then
   re-run the config component so `workspace.sh` lists them.
-- Propagate sub-repo commit hooks (Phase 3 block) for the wrapped repo and any extras.
+- Install sub-repo commit hooks now (the wrapped repo + any extras). Wrap mode DEFERS these — scaffold
+  runs with `--skip-subrepo-hooks` so it never touches the moved sub-repo's `.git/hooks` while the
+  byte-identical rollback is armed. Now that the wrap is committed, run the Phase-3 hook loop once. Fold
+  it into a SINGLE finalization bash block together with the other post-wrap steps (root remote, config
+  verify) so you don't spend a model turn per step:
+
+```bash
+source scripts/lib/workspace.sh
+source scripts/lib/githooks.sh
+for repo in "${REPOS[@]}"; do
+  [ -d "$META_ROOT/$repo/.git" ] || [ -f "$META_ROOT/$repo/.git" ] || continue
+  install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$repo"
+  install_subrepo_pre_commit_hook  "$META_ROOT" "$META_ROOT/$repo"
+done
+bash scripts/govern/config-check.sh          # no-auth smoke, same turn
+```
 - If the interview's extras included install + doctor (the default), run `<ROOT_PM> install` +
   `<ROOT_PM> run doctor` now — do not ask again.
 - Verify: `bash scripts/govern/config-check.sh` (no-auth smoke), consider the starter-ticket block
@@ -321,26 +337,19 @@ scripts block, .claude/settings.json wiring, seed files (queue/tickets.md, CLAUD
 absent), .githooks activation (`core.hooksPath = .githooks`), and initial commit. `--verify` runs
 `bash -n` over every installed script + sources workspace.sh.
 
-## Phase 3 (fresh) — Propagate attribution + pre-commit hooks into sub-repos
+## Phase 3 (fresh) — Sub-repo commit hooks (automatic — no turn needed)
 
-The `.githooks/prepare-commit-msg` attribution hook and the optional `.githooks/pre-commit` lint-fix
-hook need to be propagated into each sub-repo (only these two — the pre-push guard is harness-only):
-
-```bash
-source scripts/lib/workspace.sh
-source scripts/lib/githooks.sh
-for repo in "${REPOS[@]}"; do
-  [ -d "$META_ROOT/$repo/.git" ] || [ -f "$META_ROOT/$repo/.git" ] || continue
-  install_subrepo_attribution_hook "$META_ROOT" "$META_ROOT/$repo"
-  install_subrepo_pre_commit_hook "$META_ROOT" "$META_ROOT/$repo"
-done
-```
+`scaffold.sh` now propagates the `.githooks/prepare-commit-msg` attribution hook and the optional
+`.githooks/pre-commit` lint-fix hook into every sub-repo itself, at the end of the Phase 2 scaffold
+(only these two — the pre-push guard is harness-only). You do **not** run a hook loop by hand; the
+scaffold output already shows `✓ <repo>: attribution hook` / `✓ <repo>: pre-commit hook` lines.
 
 The pre-commit hook is a no-op until the operator sets `WSP_LINT_FIX_CMD` in `workspace.sh` — see
 the "Optional pre-commit lint-fix hook" block there. Sub-repos that already have a pre-commit hook
 (husky, lefthook, hand-rolled) are left untouched by the pre-commit installer.
 
-`worktree/new.sh` re-runs both installers for each sub-repo worktree it creates.
+`worktree/new.sh` re-runs both installers for each sub-repo worktree it creates. Only re-run the
+installers by hand if `doctor.sh`'s "sub-repo commit hooks" section later warns (see Phase B2b).
 
 ## Phase 4 (fresh) — Initialize + report (no questions)
 
