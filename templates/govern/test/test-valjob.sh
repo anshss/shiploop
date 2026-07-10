@@ -15,7 +15,7 @@ T="$(mktemp -d)"
 cleanup() {
   local p
   for p in "$T"/logs/validations/*/pgid; do
-    [[ -f "$p" ]] && kill -KILL "-$(cat "$p" 2>/dev/null)" 2>/dev/null
+    [[ -f "$p" ]] && kill -KILL "-$(cat "$p" 2>/dev/null)" 2>/dev/null || true
   done
   rm -rf "$T"
 }
