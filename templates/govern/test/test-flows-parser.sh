@@ -94,4 +94,35 @@ EOF
 if govern::flow_ids "$F" | grep -qx "#12"; then coll=1; else coll=0; fi
 assert_eq "$coll" "0" "flow_ids: a `## #12` ticket-style heading is never parsed as a flow id"
 
+# ── Regression: a `## <id>` heading sitting inside a multi-line <!-- --> comment block (e.g. a
+# scaffolded seed example kept as commented-out documentation) is decoration, not a real flow — the
+# block scanner must never see it. A real flow declared AFTER the comment block must still parse fine
+# (the comment-strip must not leak state and swallow the rest of the file).
+CF="$T/flows-comments.md"
+cat > "$CF" <<'EOF'
+# Flow registry
+
+<!--
+Example (not a real flow, kept for documentation):
+
+## deploy.example
+- **Kind:** correctness
+- **Surface:** UI → api
+- **Paths:** backend/**
+- **Status:** UNTESTED
+-->
+
+## real.flow
+- **Kind:** correctness
+- **Surface:** UI → api
+- **Paths:** src/real/**
+- **Status:** UNTESTED
+EOF
+cids="$(govern::flow_ids "$CF")"
+assert_eq "$cids" "real.flow" "flow_ids: a commented-out `## <id>` heading is skipped; the real flow after it still parses"
+if govern::flow_exists deploy.example "$CF"; then existed=1; else existed=0; fi
+assert_eq "$existed" "0" "flow_exists: a commented-out example never registers as present"
+cblk="$(govern::flow_block deploy.example "$CF")"
+assert_eq "$cblk" "" "flow_block: a commented-out heading returns an empty block"
+
 assert_done
