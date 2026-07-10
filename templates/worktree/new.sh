@@ -4,7 +4,11 @@
 # at main (workspace files commit directly to main in the main checkout, never
 # on a worktree branch — see the `worktree add --detach` below).
 #
-# Usage:  <pm> run worktree:new -- <name> [--only a,b] [--skip-bootstrap]
+# Usage:  <pm> run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]
+#
+# --base <branch> bases the new sub-repo branch on that ref (origin/<branch> when
+# reachable, else the local ref) instead of the sub-repo's default base — use it to
+# stack a worktree on an open PR's branch, typically together with --only <repo>.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,14 +24,17 @@ source "$ROOT/scripts/lib/githooks.sh" 2>/dev/null || true
 NAME=""
 ONLY=""
 SKIP_BOOTSTRAP=0
+BASE_OVERRIDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="$2"; shift 2 ;;
     --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
+    --base) BASE_OVERRIDE="$2"; shift 2 ;;
     -h|--help)
-      echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap]"
+      echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]"
       exit 0
       ;;
+    --) shift ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *)
       if [ -z "$NAME" ]; then NAME="$1"; else echo "extra arg: $1" >&2; exit 2; fi
@@ -36,7 +43,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$NAME" ] || { echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap]" >&2; exit 2; }
+[ -n "$NAME" ] || { echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]" >&2; exit 2; }
 
 # Validate name — safe for paths and branches
 if ! [[ "$NAME" =~ ^[a-z0-9._/-]+$ ]]; then
@@ -120,7 +127,18 @@ for repo in "${REPOS[@]}"; do
       echo "[$repo] branch '$NAME' exists, checking out"
       git -C "$src" worktree add "$dst" "$NAME" 2>&1 | sed "s/^/[$repo] /"
     else
-      base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+      if [ -n "$BASE_OVERRIDE" ]; then
+        git -C "$src" fetch origin "$BASE_OVERRIDE" --quiet 2>/dev/null || true
+        if git -C "$src" rev-parse --verify "origin/$BASE_OVERRIDE" >/dev/null 2>&1; then
+          base="origin/$BASE_OVERRIDE"
+        elif git -C "$src" rev-parse --verify "$BASE_OVERRIDE" >/dev/null 2>&1; then
+          base="$BASE_OVERRIDE"
+        else
+          echo "[$repo] --base '$BASE_OVERRIDE' not found (tried origin/$BASE_OVERRIDE and $BASE_OVERRIDE)" >&2; exit 2
+        fi
+      else
+        base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+      fi
       echo "[$repo] creating branch '$NAME' from $base"
       git -C "$src" worktree add -b "$NAME" "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
     fi
