@@ -77,7 +77,7 @@ GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless worker
 # BACKWARD COMPAT: a workspace.sh that predates this knob has NO GOVERN_AUTONOMY line at all → the
 # governor treats an absent/empty value as `auto` (today's behavior is preserved for existing installs).
 # A NEW scaffold seeds `pr-only` right here, so first-time adopters start one rung down the ladder.
-export GOVERN_AUTONOMY="${GOVERN_AUTONOMY:-pr-only}"   # observe | pr-only | auto
+export GOVERN_AUTONOMY="${GOVERN_AUTONOMY:-auto}"   # observe | pr-only | auto
 
 # Sub-repos that are LOCAL-FIRST — they run on each user's machine, NOT a deployed server, so they
 # have NO central prod DB. A schema change ships AS CODE (a migration that self-applies on the user's
