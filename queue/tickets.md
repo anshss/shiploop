@@ -98,22 +98,3 @@ Ref: spec §4; siblings #5 (core), #6-ish (stamping), workspace ticket #3 (parse
 
 ---
 
-## #7 — Hub: durable validation runner — registry stamping via cas_edit + evidence promotion templates (spec §5)
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: shiploop/ sub-repo (anshss/shiploop) — templates/govern/lib/flows.sh (extend govern::flows_stamp) + evidence write path validation/evidence/ + scaffold component wiring
-
-Observed: spec ACCEPTED (hub-first) — /Users/anshs/Folder/code/aquanode/.specs/2026-07-08-harness-durable-validation-runner-design.md §5 (absolute path; NOT in any worktree). The durable runner needs deterministic registry stamping on terminal PASS/FAIL.
-
-Fix direction — spec §5 exactly, generic hub templates:
-- On terminal PASS/FAIL, stamp validation/flows.md for the flow id: Status, Validated (repo@sha pins), Evidence pointer, Env — via govern::cas_edit UNDER the bookkeep mutex (the runner and a concurrent governor are two independent writers). Reuse/extend govern::flows_stamp.
-- Durable summary → validation/evidence/<flow-id>.md (git-tracked tier-2 sink). NEVER write .claude/context/validation/ (legacy path).
-- DEPENDENCY: workspace ticket #3 (flow-block parser comment-blindness) is being fixed in parallel by another worker in the same templates/govern/lib/flows.sh file — keep your diff surgical (flows_stamp + evidence write only), rebase on conflict, do NOT fix the parser yourself.
-
-Done when: stamping a fixture flow id updates exactly its block via cas_edit under the mutex; evidence file written to validation/evidence/; templates/govern/test/ regression covers a stamp racing a concurrent registry edit (CAS retry path); scaffold component map ships anything new; bash -n clean; PR opened on anshss/shiploop.
-
-Ref: spec §5; siblings #5 (core — owns status.jsonl), #6 (delivery — calls this stamp on apply), #3 (parser fix, same file — merge-order note in both PRs)
-
----
