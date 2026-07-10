@@ -273,6 +273,7 @@ component_core_scripts() {
   cp "$T/hooks/session-snapshot.sh" scripts/
   cp "$T/hooks/router-posture-reminder.sh" scripts/
   cp "$T/hooks/router-posture-guard.sh" scripts/
+  cp "$T/hooks/validations-pending-hook.sh" scripts/
   chmod +x scripts/*.sh
   # sourced libs (no +x needed but harmless)
   cp "$T/lib/session-state.sh" scripts/lib/
@@ -512,7 +513,8 @@ $(printf "$dev_lines" | sed '/^$/d')
     "worktree:exec": "bash scripts/worktree/exec.sh",
     "govern": "bash scripts/govern/run-loop.sh",
     "govern:health": "bash scripts/govern/govern-health.sh",
-    "govern:dry-run": "bash scripts/govern/dry-run.sh"
+    "govern:dry-run": "bash scripts/govern/dry-run.sh",
+    "govern:validations": "bash scripts/govern/govern-validations.sh"
   }
 }
 EOF
@@ -535,7 +537,8 @@ component_settings() {
     "SessionStart": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
       { "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 },
-      { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
+      { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 },
+      { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
     ]}],
     "UserPromptSubmit": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
@@ -589,7 +592,8 @@ component_settings_merge() {
 { "matcher": "*", "hooks": [
   { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
   { "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 },
-  { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
+  { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 },
+  { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
 ] }
 EOF
 )
@@ -629,7 +633,7 @@ def wire(event; markers; stanza):
     end;
 .
 | (if .hooks == null then .hooks = {} else . end)
-| wire("SessionStart";     "session-snapshot\\.sh|check-main-on-main\\.sh"; $ss)
+| wire("SessionStart";     "session-snapshot\\.sh|check-main-on-main\\.sh|validations-pending-hook\\.sh"; $ss)
 | wire("UserPromptSubmit"; "router-posture-reminder\\.sh";                   $up)
 | wire("PreToolUse";       "router-posture-guard\\.sh";                      $pt)
 | wire("Stop";             "ticket-sweep-reminder\\.sh";                     $sp)
@@ -669,7 +673,7 @@ probe_files() {
       for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard validations-pending-hook; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks; do
