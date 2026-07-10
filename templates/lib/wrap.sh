@@ -48,7 +48,7 @@ STAGING_GLOB=".wrap-staging.*"
 # dirs + seeds). Baked into the undo manifest BEFORE scaffold runs so the manifest
 # exists for the whole scaffolding window (a hard SIGKILL mid-scaffold still leaves
 # a usable .wrap-undo.sh). Post-scaffold reconciliation appends anything extra.
-SCAFFOLD_TOPLEVEL=".git scripts governor .githooks queue .claude .worktrees validation package.json .gitignore CLAUDE.md learnings.md"
+SCAFFOLD_TOPLEVEL=".git scripts governor .githooks queue .claude .worktrees validation package.json .gitignore CLAUDE.md learnings.md README.md"
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 log()  { printf '── %s\n' "$*" >&2; }
