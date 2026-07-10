@@ -1,8 +1,58 @@
 # Changelog
 
-## Unreleased
+## 1.9.0 — 2026-07-11
+
+The durable-validation-runner release: the harness's first durable-job primitive (jobs that survive
+session caps and structurally cannot orphan a billable resource), plus native parallel ticket
+execution in run-loop, plus the one-pause setup interview.
+
+### Added
+
+- **Durable validation runner — core launcher + job substrate.** Long, billable validation flows
+  (deploy → provision → verify classes, 45-60 min) can now run as durable jobs:
+  - `templates/govern/run-validation.sh` — `setsid`-detached launcher: returns a job-id
+    (`val-<flowid>-<ts>`) immediately, exports `VAL_JOB_ID` so every deploy the flow creates is
+    name-tagged, enforces a `GOVERN_VAL_TIMEOUT` wall cap (kills the job's process group and writes
+    terminal `ERROR` — durable ≠ immortal), and prunes terminal job dirs on a retention window.
+  - `templates/govern/lib/valjob.sh` — the substrate the runner and future fleet supervision share:
+    a `deploys.jsonl` manifest written *before* provisioning (a box is trackable even if the job
+    dies one line later), a runner-owned heartbeat (~30s, process liveness — not script
+    cooperation), a sticky reap-tombstone check at every phase boundary (tombstoned job → terminal
+    `ABORT`, touches nothing), and a deterministic orphan verdict exposed as data for the
+    workspace-wired `GOVERN_DEPLOY_SWEEP_CMD` — the hub never closes resources itself. (#76)
+- **Pending-results delivery + live-jobs surface.** A job's terminal record appends an atomically
+  written pending-result entry consumed exactly-once (bookkeep mutex) by any of three readers — the
+  governor supervisor, the SessionStart hook, or `flows status` on demand — so result delivery never
+  depends on a governor happening to be live when the job finishes. The live surface lists job-id,
+  phase, deploy-ids, and heartbeat age. (#78)
+- **`govern::flows_stamp` terminal-verdict entry point.** The runner deterministically stamps
+  `validation/flows.md` (Status / Validated repo@sha pins / Evidence pointer / Env) through
+  `cas_edit` under the bookkeep mutex — safe against a concurrent governor run writing the same
+  registry. (#75)
+- **run-loop ticket sets + `--parallel[=N]`.** `run-loop.sh 152 153 154 155` now works — multiple
+  numeric args previously kept only the LAST one silently — and `--parallel` fans the target set
+  out over N concurrent single-ticket drivers on the existing per-ticket claim-lock + bookkeep-mutex
+  machinery (`GOVERN_PARALLEL` is the env equivalent; the flag wins). (#73)
+- **Workspace README generated on setup** — new workspaces get a landing page describing the
+  harness layout.
+- **`worktree:new --base <branch>`** + tolerance for a forwarded `--` from PM arg-passing. (#71)
+
+### Fixed
+
+- **Flow-block parser, lint, and Stop hook are comment-aware.** `govern::flow_ids` no longer parses
+  `## <id>` headings inside multi-line `<!-- -->` HTML comments — the scaffolded example flows were
+  linted as real flows, their placeholder globs tripped the zero-match FAIL, `flow_set_field`
+  mutated `Status:` *inside* the comment blocks, and the Stop hook blocked every session end with a
+  misattributed missing-evidence message. Regression tests cover the parser, the lint, and the Stop
+  hook path. (#74, #77)
+- **Harness PR adoption under `set -e`** — `collect_ticket_prs`' harness re-scan no longer aborts
+  callers; duplicate-ticket flagging hardened. (#74)
+- **Worker PR footer** now reads "PR shipped by shiploop".
 
 ### Changed
+
+- **Driver-context hygiene is a documented anti-pattern.** The driver session never reads product
+  source — it dispatches fixes to workers and relays verdicts (seed `CLAUDE.md` + `SKILL.md`). (#72)
 
 - **Setup interview: ONE pause instead of six.** A live wrap-in-place onboarding paused six separate
   times over ~8 minutes (proceed? → config batch → more config → mid-wrap `NEEDS-CONFIRM` → remote?
