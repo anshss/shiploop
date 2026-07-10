@@ -369,6 +369,65 @@ component_seeds() {
   info "seeds present"
 }
 
+component_readme() {
+  log "component: README.md (workspace landing page)"
+
+  # Never clobber an existing README — the workspace root's README is operator-owned
+  # documentation once written. On a fresh scaffold the root has none (a wrapped repo's
+  # own README moved into its subfolder), so this only ever writes on first setup.
+  if [ -f README.md ]; then
+    info "README.md already present — leaving as-is"
+    return 0
+  fi
+
+  local meta_name; meta_name="$(basename "$WORKSPACE_DIR")"
+
+  # Human-readable sub-repo list for the landing page (falls back gracefully if
+  # invoked as a standalone --component readme with no --repos).
+  local repos_list=""
+  if [ "${#REPO_NAMES[@]}" -gt 0 ]; then
+    local i
+    for i in "${!REPO_NAMES[@]}"; do
+      repos_list+="\`${REPO_NAMES[$i]}\`, "
+    done
+    repos_list="${repos_list%, }"
+  else
+    repos_list="the repos under this workspace"
+  fi
+
+  local content
+  content=$(cat <<EOF
+# $meta_name on Shiploop
+
+**$meta_name** ships on [Shiploop](https://github.com/anshss/shiploop) — a self-improving
+multi-agent harness that grinds your ticket backlog across every repo in this workspace
+($repos_list). A fresh, right-sized headless agent takes each ticket, opens a PR, auto-merges
+on green CI where you've allowed it, and writes a durable lesson back into \`CLAUDE.md\` so the
+next run is smarter and cheaper.
+
+## Ship the backlog
+
+\`\`\`bash
+/shiploop:govern          # launch the governor loop over queue/tickets.md
+\`\`\`
+
+Everyday commands:
+
+\`\`\`bash
+$PM run status            # what's dirty / ahead / behind across every repo
+$PM run doctor            # health-check the workspace
+/shiploop:investigate     # triage a bug into a ticket
+/shiploop:resolve         # close a ticket and promote its lesson into CLAUDE.md
+\`\`\`
+
+Backlog lives in \`queue/tickets.md\`; per-workspace config in \`scripts/lib/workspace.sh\`.
+Full docs: the \`shiploop\` skill and <https://github.com/anshss/shiploop>.
+EOF
+)
+  printf '%s\n' "$content" > README.md
+  info "wrote README.md"
+}
+
 component_gitignore() {
   log "component: .gitignore"
   local subrepo_lines=""
@@ -848,6 +907,7 @@ case "$COMPONENT" in
     component_project_commands
     component_workflows
     component_seeds
+    component_readme
     component_gitignore
     component_package_json
     component_settings
@@ -860,6 +920,7 @@ case "$COMPONENT" in
   commands)       component_project_commands ;;
   workflows)      component_workflows ;;
   seeds)          component_seeds ;;
+  readme)         component_readme ;;
   gitignore)      component_gitignore ;;
   package-json)   component_package_json ;;
   settings)       component_settings ;;
@@ -883,7 +944,7 @@ if [ "$DO_GIT_INIT" -eq 1 ]; then
     git init -q
     git config core.hooksPath .githooks
     git add scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
-            queue learnings.md CLAUDE.md .claude/settings.json .claude/commands 2>/dev/null || true
+            queue learnings.md CLAUDE.md README.md .claude/settings.json .claude/commands 2>/dev/null || true
     git -c user.email=scaffold@shiploop -c user.name=scaffold \
         commit -q -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)" || true
     info "initial commit created"
