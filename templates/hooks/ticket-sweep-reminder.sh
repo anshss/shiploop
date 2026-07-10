@@ -60,19 +60,35 @@ Do not start other work — this is the only blocker."
   fi
 fi
 
-# --- dangling-validation-ref backstop (#252): a founder-os layout migration can DELETE a
-# `.claude/context/validation/*.md` summary while `features.md`/`direction.md`/`CLAUDE.md` still cite
-# it as proof → an orphaned claim. Surface it at session end: blocking, and UNgated by the
-# once-per-session marker below, so it nags until fixed. Run as a subprocess so the lint's set flags
-# can't leak into this hook.
+# --- validation-lint backstop: lint-validation-refs.sh guards TWO independent things — a dangling
+# `.claude/context/validation/*.md` reference (#252: a founder-os layout migration can DELETE a
+# summary while `features.md`/`direction.md`/`CLAUDE.md` still cite it as proof) AND the `validation/`
+# flow-registry lint matrix (govern::flows_lint — glob/Evidence-ref/logs-path/PII checks). Surface it
+# at session end: blocking, and UNgated by the once-per-session marker below, so it nags until fixed.
+# Run as a subprocess so the lint's set flags can't leak into this hook.
+#
+# This used to wrap EVERY failure in the #252 dangling-ref framing + founder-os remediation
+# ("git show <migration>^:<path>"), which misdiagnosed a FLOWS LINT FAIL (wrong path — this workspace
+# uses validation/, not .claude/context/validation/ — wrong cause, wrong fix). Branch on the lint's
+# own output shape instead of guessing: only the dangling-ref case gets that framing; anything else
+# (flows-lint glob/PII/logs-ref failures, or a future lint addition) surfaces the lint's real message
+# verbatim under a neutral wrapper.
 vlint="$SELF_ROOT/scripts/govern/lint-validation-refs.sh"
 [ -x "$vlint" ] || vlint="$SELF_ROOT/govern/lint-validation-refs.sh"
 if [ -x "$vlint" ]; then
-  if ! dangling="$("$vlint" "$MAIN" 2>&1)" && [ -n "${dangling:-}" ]; then
-    dangling_flat="$(printf '%s' "$dangling" | tr '\n' ' ')"
-    reason="A .claude/context/validation/*.md evidence summary is MISSING but still cited (#252): \
-${dangling_flat} Fix now: restore the deleted summary (git show <migration>^:<path>) or correct the \
+  if ! lint_out="$("$vlint" "$MAIN" 2>&1)" && [ -n "${lint_out:-}" ]; then
+    lint_flat="$(printf '%s' "$lint_out" | tr '\n' ' ')"
+    case "$lint_out" in
+      *'DANGLING .claude/context/validation'*)
+        reason="A .claude/context/validation/*.md evidence summary is MISSING but still cited (#252): \
+${lint_flat} Fix now: restore the deleted summary (git show <migration>^:<path>) or correct the \
 reference, commit, then stop. A migration likely orphaned it. This is the only blocker."
+        ;;
+      *)
+        reason="validation lint failed at session end: ${lint_flat} Fix the issue above, commit, \
+then stop. This is the only blocker."
+        ;;
+    esac
     esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
     printf '{"decision":"block","reason":"%s"}\n' "$esc"
     exit 0

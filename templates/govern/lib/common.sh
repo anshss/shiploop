@@ -1011,6 +1011,26 @@ govern::find_pr() {
       return 0
     fi
   done
+  # the sub-repo allowlist above never includes the meta-repo/harness remote itself, so a
+  # HARNESS-scope ticket's PR (pushed to the meta-repo's own origin, or to
+  # GOVERN_UPSTREAM_HARNESS_REPO) was invisible here — this feeds BOTH the pre-spawn resume check
+  # (run-loop.sh's "found existing PR — resuming") and the #55 same-run adoption safety net, so a
+  # crashed-and-resumed (or malformed-report) harness worker got silently re-spawned or recorded
+  # failed despite a clean, already-open PR. Fall back to the harness slug(s) directly.
+  local slug
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    j="$(gh pr list --repo "$slug" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
+    row="$(jq -c --arg n "$n" --arg nb "$nb" '
+      ( [ .[] | select(.headRefName == ("ticket-" + $n)) ][0] )
+      // ( [ .[] | select($nb != "" and .headRefName == $nb) ][0] )
+      // ( [ .[] | select(.headRefName | test("(^|[^0-9])ticket-" + $n + "([^0-9]|$)")) ][0] )
+      // empty' <<<"$j" 2>/dev/null || true)"
+    if [[ -n "$row" ]]; then
+      printf '%s %s %s\n' "${slug##*/}" "$(jq -r '.number' <<<"$row")" "$(jq -r '.url // ""' <<<"$row")"
+      return 0
+    fi
+  done < <(govern::harness_repo_slugs 2>/dev/null)
   return 1
 }
 
@@ -1060,6 +1080,73 @@ govern::collect_ticket_prs() {
     [[ -n "$repo" ]] || continue
     printf '%s\n' "$all" | awk -F'\t' -v r="$repo" '$1==r'
   done < <(govern::_repos_merge_first)
+  # the merge-first walk above only knows the configured sub-repo allowlist
+  # (REPOS/GOVERN_MERGE_REPOS/GOVERN_FRONTEND_REPOS), so a HARNESS-scope ticket's reported PR — repo
+  # is the meta-repo's own remote, never a member of that allowlist — was silently dropped from the
+  # "FULL" set this function promises, even though it was sitting right there in `all`. That silent
+  # drop is what let a clean worker resolve (status:"resolved", a real open harness PR) fall through
+  # with no PR recognized downstream. Re-scan `all` for any row matching a known harness slug and
+  # emit it too, re-verified still-open via `gh pr view` (harness rows skip the normal
+  # find_all_prs/gh-list re-confirmation `discovered` gets, so verify them here instead of trusting
+  # the worker's JSON blind).
+  printf '%s\n' "$all" | while IFS=$'\t' read -r repo num _url; do
+    [[ -n "$repo" ]] || continue
+    govern::is_harness_repo "$repo" && govern::harness_pr_verify "$repo" "$num"
+  done || true
+  # The loop's own exit status is the last iteration's `is_harness_repo && harness_pr_verify` chain —
+  # 1 whenever the ticket's rows include no harness repo (the common case). Under a caller's `set -e`
+  # (govern-supervise.sh, run-loop.sh, this file's own test suite) that nonzero would abort the WHOLE
+  # calling script right here, before this function's own `return 0` below ever runs — the `|| true`
+  # neutralizes the loop's exit status so callers always see a clean 0 from this function regardless
+  # of whether a harness row was found.
+  return 0
+}
+
+# owner/repo slugs recognized as "the harness/meta-repo" — the root repo's OWN git origin
+# (the common case: a governor-dispatched HARNESS-scope ticket's PR targets this repo itself) plus
+# GOVERN_UPSTREAM_HARNESS_REPO if configured (the /shiploop:push hub — a workspace may route some
+# harness work there instead). Neither is ever a member of REPOS/GOVERN_MERGE_REPOS/
+# GOVERN_FRONTEND_REPOS, so every lookup keyed off that allowlist is blind to both.
+govern::harness_repo_slugs() { # -> owner/repo lines
+  local root rslug
+  root="$(govern::meta_root 2>/dev/null || true)"
+  if [[ -n "$root" ]] && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    rslug="$(git -C "$root" remote get-url origin 2>/dev/null \
+      | sed -E 's#^(git@github\.com:|https://github\.com/)([^/]+/[^/.]+)(\.git)?$#\2#')"
+    [[ -n "$rslug" && "$rslug" == */* ]] && printf '%s\n' "$rslug"
+  fi
+  [[ -n "${GOVERN_UPSTREAM_HARNESS_REPO:-}" ]] && printf '%s\n' "$GOVERN_UPSTREAM_HARNESS_REPO"
+}
+
+# Is short-name/slug $1 a recognized harness/meta-repo target (matches a bare repo name OR a full
+# owner/repo slug from govern::harness_repo_slugs)? rc 0 yes, 1 no.
+govern::is_harness_repo() { # repo -> 0/1
+  local r="$1" slug
+  [[ -n "$r" ]] || return 1
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    case "$slug" in "$r"|*"/$r") return 0 ;; esac
+  done < <(govern::harness_repo_slugs)
+  return 1
+}
+
+# Verify a reported PR against a harness/meta-repo slug DIRECTLY via `gh pr view` — bypassing the
+# sub-repo-name allowlist scan entirely (that scan is what drops it). Prints
+# "repo<TAB>number<TAB>url" and returns 0 only if $1 matches a known harness slug AND gh confirms the
+# PR is still OPEN there; returns 1 (prints nothing) otherwise.
+govern::harness_pr_verify() { # repo number -> "repo\tnumber\turl"
+  local repo="$1" num="$2" slug matched="" state url
+  command -v gh >/dev/null 2>&1 || return 1
+  [[ -n "$repo" && -n "$num" ]] || return 1
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    case "$slug" in "$repo"|*"/$repo") matched="$slug"; break ;; esac
+  done < <(govern::harness_repo_slugs)
+  [[ -n "$matched" ]] || return 1
+  state="$(gh pr view "$num" --repo "$matched" --json state -q '.state' 2>/dev/null || true)"
+  [[ "$state" == "OPEN" ]] || return 1
+  url="$(gh pr view "$num" --repo "$matched" --json url -q '.url' 2>/dev/null || true)"
+  printf '%s\t%s\t%s\n' "$repo" "$num" "$url"
 }
 
 # ── cross-run wait-for-merge / dependency deferrals (#119) ───────────────────

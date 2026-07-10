@@ -134,6 +134,40 @@ fi
 # Allocate the next number under the already-held lock (the mkdir mutex is NOT reentrant, so tell the
 # allocator to skip re-acquiring it), then append the block.
 n="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE")"
+
+# Cheap word-overlap duplicate flag — NEVER blocks filing, purely advisory. Confirmed gap: zero
+# dedup existed before this (only collision-safe numbering + a heading-collision lint), which is
+# exactly how two tickets got filed for the identical root cause before, needing a manual supervisor
+# merge. Tokenize the new title and every existing `## #N — Title` heading
+# (lowercase, non-alnum stripped, short/stopword tokens dropped); if over half the new title's
+# words already appear in one existing heading, prepend a `⚠ possible duplicate of #M` marker to
+# the body — read-only against TICKETS_FILE, no lock/append semantics touched.
+govern::_dup_title_words() { # title -> sorted unique lowercase words, len>2, common stopwords dropped
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '\n' \
+    | awk 'length($0)>2 && !/^(the|and|for|with|from|this|that|into|onto|over|your|have|does|when|only|ever|never|both)$/' \
+    | sort -u
+}
+dup_of=""
+new_words="$(govern::_dup_title_words "$title")"
+new_count="$(printf '%s\n' "$new_words" | grep -c . || true)"
+if [[ "$new_count" -gt 0 && -f "$TICKETS_FILE" ]]; then
+  while IFS=$'\t' read -r hnum htitle; do
+    [[ -n "$hnum" ]] || continue
+    ex_words="$(govern::_dup_title_words "$htitle")"
+    shared="$(comm -12 <(printf '%s\n' "$new_words") <(printf '%s\n' "$ex_words") | grep -c . || true)"
+    if [[ "$shared" -gt 0 ]] && awk -v s="$shared" -v n="$new_count" 'BEGIN{exit !(s/n >= 0.5)}'; then
+      dup_of="$hnum"; break
+    fi
+  done < <(grep -E '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]' "$TICKETS_FILE" 2>/dev/null \
+              | sed -E 's/^##[[:space:]]+#([0-9]+)[[:space:]]*[—-][[:space:]]*/\1\t/')
+fi
+if [[ -n "$dup_of" ]]; then
+  govern::log "file-ticket: new ticket #$n's title overlaps existing #$dup_of — flagging as a possible duplicate (still filing)"
+  body="⚠ possible duplicate of #$dup_of
+
+$body"
+fi
+
 printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
