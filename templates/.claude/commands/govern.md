@@ -8,8 +8,18 @@ allowed-tools: Bash, Read
 Launch the governor — a **pure-bash driver** (`scripts/govern/run-loop.sh`) so this session's context
 stays flat (near-zero parent cost). Claude runs only in fresh, bounded sub-sessions: the per-ticket
 **worker** and a periodic **supervisor**. `$ARGUMENTS`: empty = whole eligible backlog · a number =
-one ticket · `--dry-run` = prove it, ship nothing · `--exclude N,N` = skip tickets a parallel govern
-session owns.
+one ticket · **multiple numbers = work exactly that ticket SET, sequentially, in severity order**
+(e.g. `152 153 154 155` works all four, in one run — a numeric arg no longer silently overwrites the
+previous one and truncates the run to the last ticket) · `--dry-run` = prove it, ship nothing ·
+`--exclude N,N` = skip tickets a parallel govern session owns.
+
+**Running tickets in parallel:** add `--parallel[=N]` to any of the above (or set `GOVERN_PARALLEL=N`)
+to work the ticket set — or, with no explicit numbers, the top-N eligible backlog tickets — with N
+concurrent drivers instead of one sequential process; N defaults to the target-set size, or 4 for a
+bare backlog pull. This is the built-in equivalent of the manual recipe of hand-launching N separate
+single-ticket `run-loop.sh <N>` drivers, each with `GOVERN_ALLOW_CONCURRENT=1` — the per-ticket claim
+lock + the bookkeep lock make either form exactly-once safe; `--parallel` just drives the fan-out/
+wait/aggregate for you and reports one combined resolved/parked/failed/timed-out tally at the end.
 
 Run from the **main checkout** of the meta-repo (not a worktree), in a **plain terminal** — NOT from
 inside an interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env
@@ -74,8 +84,8 @@ Relay its log lines to the operator as they appear. The driver does everything �
   the reason; don't take over.
 
 ## Policy (enforced by the scripts, not by you)
-- Sequential; auto-merge only `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is
-  PR-only.
+- Sequential by default (`--parallel` opts into N concurrent single-ticket drivers, see above); auto-
+  merge only `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is PR-only.
 - Hard-stops (destructive git; prod data / destructive schema / secrets) and doctrine gaps → worker
   **parks** → escalation.
 - Additive prod migrations auto-apply only if `GOVERN_MIGRATE_CMD` is configured (else park for manual
