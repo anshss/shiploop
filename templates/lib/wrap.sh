@@ -344,11 +344,20 @@ preflight() {
     refuse "a git operation is in progress (merge/rebase/cherry-pick/revert/bisect) — finish or abort it first."
   fi
 
-  # 4 — no linked worktrees
-  local wt_count
-  wt_count="$(git worktree list 2>/dev/null | wc -l | tr -d ' ')"
-  if [ "${wt_count:-1}" -gt 1 ]; then
-    refuse "this repo has linked worktrees ($wt_count total). Remove them (git worktree remove ...) before wrapping — v1 does not auto-repair worktree gitdir pointers."
+  # 4 — no LIVE linked worktrees. Prunable (stale, dead-gitdir) worktrees are just
+  # dangling pointers `git worktree prune` clears non-destructively — a stale pointer
+  # from a deleted temp checkout must NOT hard-refuse the wrap (that forced a manual
+  # prune + a second preflight round-trip, splitting setup's single interview in two).
+  # Count only NON-prunable entries here (read-only); the real wrap prunes the dead
+  # ones just before moving. LIVE linked worktrees still refuse — v1 can't repair them.
+  local wt_live
+  wt_live="$(git worktree list --porcelain 2>/dev/null | awk '
+    /^worktree /{ have=1; prunable=0 }
+    /^prunable/{ prunable=1 }
+    /^$/{ if (have && !prunable) n++; have=0 }
+    END{ if (have && !prunable) n++; print n+0 }')"
+  if [ "${wt_live:-1}" -gt 1 ]; then
+    refuse "this repo has LIVE linked worktrees ($wt_live). Remove them (git worktree remove ...) before wrapping — v1 does not auto-repair worktree gitdir pointers."
   fi
 
   # git maintenance register (global config carries the absolute path) — warn hard
@@ -569,10 +578,14 @@ run_scaffold() {
   [ "${WRAP_TEST_FAIL_AT:-}" = "scaffolding" ] && abort "test-injected scaffold failure"
 
   log "scaffolding workspace root (wrapped repo pre-registered as $NAME)"
+  # --skip-subrepo-hooks: the moved sub-repo's .git/hooks must stay untouched while
+  # the byte-identical rollback is armed. Wrap-mode setup installs sub-repo hooks in
+  # W4, after this wrap succeeds and the undo lifeline is retired.
   local -a sc_args=(
     --workspace-dir "$WORKSPACE_DIR"
     --pm "$PM" --org "$ORG" --repos "$REPOS_SPEC"
     --merge-allowlist "$MERGE_ALLOWLIST"
+    --skip-subrepo-hooks
     --git-init --verify --yes
   )
   [ -n "$WORKTREE_BASE" ] && sc_args+=(--worktree-base "$WORKTREE_BASE")
@@ -622,6 +635,9 @@ if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
 fi
 
 log "wrapping $WORKSPACE_DIR — repo will move into $NAME/"
+# Clear stale (prunable) worktree pointers so they don't ride along into the moved
+# repo. Only dead-gitdir pointers are removed; live worktrees were refused in preflight.
+git worktree prune 2>/dev/null || true
 do_move
 verify_move
 run_scaffold

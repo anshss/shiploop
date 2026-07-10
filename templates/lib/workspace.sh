@@ -17,7 +17,16 @@ set -uo pipefail
 # Absolute path of the workspace root (the main checkout). Scripts that live in
 # scripts/, scripts/worktree/, scripts/govern/ resolve it relative to themselves;
 # this fallback assumes this file sits at <root>/scripts/lib/workspace.sh.
-META_ROOT="${META_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# nounset-safe: BASH_SOURCE[0] is UNSET when this file is sourced at a `bash -c`
+# or interactive top level (not from within another script), which under `set -u`
+# (above) would abort with "BASH_SOURCE[0]: parameter not set". Fall back to $PWD —
+# the workspace root in every path that sources this file directly (setup's hook
+# propagation, config-check, ad-hoc `source scripts/lib/workspace.sh`).
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  META_ROOT="${META_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+else
+  META_ROOT="${META_ROOT:-$PWD}"
+fi
 
 # Workspace name (folder basename) and the package manager the ROOT uses to run
 # the cross-cutting scripts. Sub-repos keep their OWN package manager (see
