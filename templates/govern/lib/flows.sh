@@ -351,6 +351,30 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
   printf '%s' "$v" | grep -oE "(^|[^A-Za-z0-9._-])${repo}@[0-9a-f]+" 2>/dev/null | head -1 | sed -E "s/.*${repo}@//" || true
 }
 
+# ── Runner-facing entry point (durable validation runner, spec §5) ──────────
+# A caller with a settled terminal verdict and no ticket-resolve workflow context (the durable
+# validation runner has a job's terminal PASS/FAIL, not a report.json/resolve-or-gate-park outcome) —
+# stamp the registry directly. Translates PASS→resolve / FAIL→gate-park and hands off to
+# govern::flows_stamp_from_report VERBATIM, so every existing guard (never-overwrite-fresher,
+# ancestor-verify + squash-merge substitution, PII-park, evidence promotion, cas_edit under the
+# bookkeep mutex) applies identically regardless of which caller (governor bookkeep or the runner)
+# produced the verdict. ABORT/ERROR are not registry-stampable (a job that never settled PASS/FAIL
+# carries no verdict to record — it routes to the pending-results escalation path, spec §4, instead):
+# rc 1, nothing written. <record-json> is the same {pr, prs, validation:{…}} shape
+# govern::flows_stamp_from_report already parses — validatedShas, evidence, environment, and (for an
+# effectiveness-kind flow) gatePassed/measured.
+govern::flows_stamp() { # <id> <verdict:PASS|FAIL> <record-json> [meta-root]
+  local id="$1" verdict="$2" record="$3" meta="${4:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
+  local outcome
+  case "$verdict" in
+    PASS) outcome=resolve ;;
+    FAIL) outcome=gate-park ;;
+    *) govern::log "flows_stamp: verdict '$verdict' is not registry-stampable (only PASS/FAIL settle the registry; ABORT/ERROR route to the pending-results escalation path instead)"
+       return 1 ;;
+  esac
+  govern::flows_stamp_from_report "$record" "$outcome" "$id" "$meta"
+}
+
 # Stamp the registry from a worker report. Deterministic — the model ran the validation; bash records
 # it. Args: <report-json> <outcome: resolve|gate-park> <flow-ids space/comma list> [meta-root].
 # Per flow id: Status per Kind × outcome (correctness resolve→PASS, park→FAIL; effectiveness
