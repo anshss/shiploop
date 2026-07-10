@@ -55,3 +55,16 @@ Observed: the flow block parser matches '^## <id>' headings with no multi-line H
 Done when: (1) the parser tracks <!-- --> comment state and skips headings/fields inside comment blocks, matching the grammar's 'comments are decoration' contract; (2) a regression test covers a registry whose only flows are comment-wrapped examples (lint must pass, file must stay unmutated); (3) the Stop hook reason distinguishes flows-lint failures from dangling-evidence-ref failures instead of wrapping both in the #252 message. Fix belongs in the hub templates too (templates/govern/lib/flows.sh) — port via the sync flow.
 
 ---
+
+## #4 — README landing page never reaches existing workspaces via /shiploop:update
+
+**Severity:** Low
+**Model:** sonnet
+
+Where: shiploop/scaffold.sh (component_readme) + shiploop/commands/update.md (Phase 3 bump loop)
+Observed: the README landing-page feature (component_readme) only runs under `--component all` or `--component readme`. /shiploop:update Phase 3 bumps only mechanism components (core-scripts worktrees govern githooks commands workflows) + seeds + settings-merge, and README is not in MECH_COMPONENTS (--diff-only drift set). So existing workspaces scaffolded before the feature never gain a root README on update. Also component_readme reads ROOT_PM from $PM (default npm) and repos from --repos, but update passes neither, so an update-generated README would show wrong PM + generic repo list.
+Fix direction: (1) component_readme: when --pm/--repos are absent, source scripts/lib/workspace.sh and read ROOT_PM + REPOS for accurate content. (2) update.md Phase 3: add `readme` to the bump loop (safe — component_readme never overwrites an existing README).
+Done when: running /shiploop:update in a workspace with no root README creates an accurate `<Project> on Shiploop` README (correct PM + sub-repos); a workspace with an existing README is left untouched; a workspace with no ROOT_PM resolvable still produces a sane default.
+Ref: session 2026-07-11 — README feature shipped (commit 9828a35); update-gap surfaced while answering whether /shiploop:update creates a README.
+
+---
