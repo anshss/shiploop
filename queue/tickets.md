@@ -42,3 +42,16 @@ the top one, then deletes it on resolve. Keep entries in the shape below so the 
 **Ref:** Link to a log line / PR / investigation, if any.
 
 ---
+
+## #3 — flows lint parses flow blocks inside HTML comments — false-positive Stop-hook block + in-comment mutation
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: scripts/govern/lib/flows.sh — govern::flow_ids / govern::flow_block / govern::flow_set_field
+
+Observed: the flow block parser matches '^## <id>' headings with no multi-line HTML-comment awareness. The scaffolded validation/flows.md carried two commented-out example flows (<!-- ... ## deploy.example ... -->); the lint parsed them as real flows, their placeholder backend/** globs tripped the zero-match FAIL, flow_set_field auto-degraded Status→STALE INSIDE the comment blocks (dirtying the file), and the Stop hook (ticket-sweep-reminder.sh) blocked every session end — mislabeling the flows-lint output as a missing-evidence-summary (#252) error. Workaround applied: examples removed from flows.md (commit e466250).
+
+Done when: (1) the parser tracks <!-- --> comment state and skips headings/fields inside comment blocks, matching the grammar's 'comments are decoration' contract; (2) a regression test covers a registry whose only flows are comment-wrapped examples (lint must pass, file must stay unmutated); (3) the Stop hook reason distinguishes flows-lint failures from dangling-evidence-ref failures instead of wrapping both in the #252 message. Fix belongs in the hub templates too (templates/govern/lib/flows.sh) — port via the sync flow.
+
+---
