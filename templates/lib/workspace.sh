@@ -149,7 +149,7 @@ export WSP_LINT_FIX_CMD="${WSP_LINT_FIX_CMD:-}"
 
 # ── Viral PR footer (ON by default) ──────────────────────────────────────────
 # Every PR a governor worker opens ends its body with one attribution line:
-#   🤖 shipped by [shiploop](https://github.com/anshss/shiploop)
+#   PR shipped by [shiploop](https://github.com/anshss/shiploop)
 # It marks work the harness shipped so an adopter's collaborators discover shiploop from the PR. ON by
 # default; set to `off` to suppress it (the worker then closes the body with the plain Co-Authored-By
 # trailer only). Any value other than `off` (or an absent knob, for a workspace.sh predating it) = ON.
