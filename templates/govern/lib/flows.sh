@@ -24,33 +24,72 @@ GOVERN_FLOW_STATUSES='UNTESTED PASS FAIL STALE MEASURING INEFFECTIVE EFFECTIVE B
 GOVERN_FLOW_VALIDATED_STATUSES='PASS FAIL STALE MEASURING INEFFECTIVE EFFECTIVE'
 
 # ── Parser ──────────────────────────────────────────────────────────────────
-# All flow ids in declaration order. A `## <id>` heading whose remainder is not a valid id (e.g. a
-# stray `## #12` ticket-style heading, or a `## Some Prose Header`) is skipped, so the registry file
-# may carry a human preamble under normal `##` headings without tripping the parser.
-govern::flow_ids() { # [file] -> one id per line
-  local f="${1:-$FLOWS_FILE}"
+# Strip HTML comment CONTENT (`<!-- ... -->`), including comments that span multiple lines, from
+# <file>, preserving line count (a fully-consumed line prints blank) so downstream line-anchored
+# parsing is unaffected. A seed example flow kept as commented-out documentation must never be
+# parsed as a real flow — the block scanner below anchors on `^## `, which a multi-line comment can
+# straddle (`<!-- Example ... ## deploy.example ... -->`); stripping BEFORE that scan is what makes
+# "HTML comments are decoration" true for headings, not just for field values (govern::flow_field
+# already strips INLINE comments from values; this is the block-scanner's equivalent).
+govern::_flows_strip_comments() { # file -> stdout, comment content removed
+  local f="$1"
   [[ -f "$f" ]] || return 0
   awk '
-    /^## / {
-      rest=$0; sub(/^## /,"",rest)
-      if (rest ~ /^[a-z0-9][a-z0-9.-]*$/) print rest
+    {
+      line = $0
+      out = ""
+      while (length(line) > 0) {
+        if (incomment) {
+          p = index(line, "-->")
+          if (p > 0) { line = substr(line, p+3); incomment = 0 }
+          else       { line = "" }
+        } else {
+          p = index(line, "<!--")
+          if (p == 0) { out = out line; line = "" }
+          else {
+            out = out substr(line, 1, p-1)
+            rest = substr(line, p+4)
+            q = index(rest, "-->")
+            if (q > 0) { line = substr(rest, q+3) }
+            else       { incomment = 1; line = "" }
+          }
+        }
+      }
+      print out
     }
   ' "$f"
 }
 
+# All flow ids in declaration order. A `## <id>` heading whose remainder is not a valid id (e.g. a
+# stray `## #12` ticket-style heading, or a `## Some Prose Header`) is skipped, so the registry file
+# may carry a human preamble under normal `##` headings without tripping the parser. Scans the
+# COMMENT-STRIPPED file, so a `## <id>` heading sitting inside a multi-line `<!-- ... -->` block
+# (e.g. a commented-out seed example) is never mistaken for a real flow.
+govern::flow_ids() { # [file] -> one id per line
+  local f="${1:-$FLOWS_FILE}"
+  [[ -f "$f" ]] || return 0
+  govern::_flows_strip_comments "$f" | awk '
+    /^## / {
+      rest=$0; sub(/^## /,"",rest)
+      if (rest ~ /^[a-z0-9][a-z0-9.-]*$/) print rest
+    }
+  '
+}
+
 # Print the whole block for flow <id>: its `## <id>` heading through the line before the next `## `
-# heading (or EOF). Empty output if the id isn't present.
+# heading (or EOF). Empty output if the id isn't present. Scans the comment-stripped file (see
+# govern::_flows_strip_comments) so a commented-out block can never match.
 govern::flow_block() { # id [file]
   local id="$1" f="${2:-$FLOWS_FILE}"
   [[ -f "$f" ]] || return 0
-  awk -v id="$id" '
+  govern::_flows_strip_comments "$f" | awk -v id="$id" '
     /^## / {
       cur=$0; sub(/^## /,"",cur)
       if (cur==id) { grab=1; print; next }
       if (grab) { grab=0; exit }
     }
     grab { print }
-  ' "$f"
+  '
 }
 
 # Does the registry carry flow <id>?  rc 0 present, 1 absent.
