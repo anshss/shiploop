@@ -31,18 +31,6 @@ the top one, then deletes it on resolve. Keep entries in the shape below so the 
 
 ---
 
-## #1 — Example ticket (delete me)
-
-**Severity:** Low
-**Model:** sonnet
-**Where:** `path/to/file.ts` (which sub-repo / area)
-**Observed:** What's wrong or missing, concretely.
-**Fix direction:** The intended approach (not a full design).
-**Done when:** The acceptance check that closes this.
-**Ref:** Link to a log line / PR / investigation, if any.
-
----
-
 ## #3 — flows lint parses flow blocks inside HTML comments — false-positive Stop-hook block + in-comment mutation
 
 **Severity:** Medium
