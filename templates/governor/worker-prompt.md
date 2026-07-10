@@ -20,8 +20,12 @@ operator doctrine below, then write a JSON report and exit.
      **Exception:** if a "PUBLIC-REPO PR HYGIENE" section appears later in this prompt, it OVERRIDES
      this rule for the repos it names — use the neutral branch it gives (and keep the internal ticket
      id out of the PR title/body and commit subjects there). It never applies to private repos.
-5. If you discover NEW bugs/gaps en route, record them in the report's `newTickets` array (do not
-   edit `queue/tickets.md` yourself).
+5. If you discover NEW bugs/gaps en route, FIRST `grep '^## #' queue/tickets.md` in this worktree for
+   an existing ticket with the same symptom/root cause — the `crossRefs` check below only compares
+   against the ticket you're CURRENTLY working, not against a new one you're about to mint, and that
+   gap is exactly how two tickets have gotten filed for the same identical root cause before. If one
+   already covers it, put its number in `crossRefs.overlaps` instead of minting a duplicate. Only if
+   none exists, record it in the report's `newTickets` array (do not edit `queue/tickets.md` yourself).
 6. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
    the sub-repo `CLAUDE.md` inside your PR (sub-repo-level).
 
