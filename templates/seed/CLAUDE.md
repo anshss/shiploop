@@ -112,6 +112,14 @@ Adding/removing a sub-repo is a one-file edit there.
    in the main checkout — never branched/PR'd.
 9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next
    `dev` serves stale code on `EADDRINUSE`).
+10. **The driver session neither READS nor edits product source — reading is the bigger sin.** Every
+    `Read` of a source file becomes permanent driver-context cargo, re-sent to the model on every later
+    turn for the rest of the session; a few "minor" inline fixes cost more in re-read context than
+    they're worth. Triage review findings and tickets from their text alone; dispatch any fix — however
+    small — to a fresh headless worker or subagent briefed with the finding + branch, and relay only its
+    verdict (pass/fail + PR state). The driver's lane is: orchestrate, merge, verify via terse command
+    output, and bookkeep coordination files (`queue/`, `governor/`, `CLAUDE.md`) — those it may read and
+    edit freely.
 
 > Replace the `<…>` placeholders and the Sub-repos table with your workspace's specifics, then append
 > your own conventions, gotchas, and architecture notes below as you learn them.

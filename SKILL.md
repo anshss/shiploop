@@ -130,6 +130,7 @@ The harness is configured so a session runs **long without stopping to ask permi
 8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo coordination files (CLAUDE.md, queue/tickets.md, learnings.md, scripts/) commit directly to main in the main checkout — never branched/PR'd.
 9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next `dev` serves stale code on `EADDRINUSE`). Worktree: `npm run worktree:rm`. Backstops: SessionEnd hook + `dev.sh` frees each port before binding.
 10. **Workers never write `queue/tickets.md`** — the governor's bookkeeper does, in the main checkout (avoids two writers racing the file).
+11. **The driver session neither READS nor edits product source — reading is the bigger sin.** Every `Read` of a source file becomes permanent driver-context cargo, re-sent to the model on every later turn for the rest of the session; a few "minor" inline fixes cost more in re-read context than they're worth. Triage review findings and tickets from their text alone; dispatch any fix — however small — to a fresh headless worker or subagent briefed with the finding + branch, and relay only its verdict (pass/fail + PR state). The driver's lane is: orchestrate, merge, verify via terse command output, and bookkeep coordination files (`queue/`, `governor/`, `CLAUDE.md`) — those it may read and edit freely.
 
 ## Cross-stack discipline
 
