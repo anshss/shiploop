@@ -16,6 +16,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --gc) GC=1; shift ;;
     -h|--help) echo "usage: $ROOT_PM run worktree:status -- [--gc]"; exit 0 ;;
+    --) shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
