@@ -74,4 +74,27 @@ assert_contains "$(cat "$T/err")" "PII/secret" "PII FAIL message"
 printf '# evidence\nauth flow validates an email login someone@example.com <!-- lint:allow email -->\n' > "$M/validation/evidence/deploy.example.md"
 assert_eq "$(run_lint)" "0" "PII with a <!-- lint:allow --> marker is suppressed (rc 0)"
 
+# ── Regression: a registry whose ONLY "flows" are commented-out seed examples must lint cleanly
+# (rc 0) and stay byte-for-byte unmutated — a `## <id>` heading sitting inside a multi-line
+# `<!-- ... -->` block must never be treated as a real flow, so its placeholder zero-match glob can
+# never trip the zero-match FAIL + auto-degrade-to-STALE mutation INSIDE the comment.
+cat > "$F" <<'EOF'
+# Flow registry
+
+<!--
+Example (not a real flow, kept for documentation):
+
+## deploy.example
+- **Kind:** correctness
+- **Surface:** UI → api
+- **Paths:** backend/**
+- **Status:** UNTESTED
+-->
+EOF
+cp "$F" "$F.pre-lint"
+assert_eq "$(run_lint)" "0" "registry with only comment-wrapped example flows lints cleanly (rc 0)"
+assert_eq "$(govern::flow_ids "$F")" "" "comment-wrapped example is never parsed as a flow id"
+if diff -q "$F" "$F.pre-lint" >/dev/null 2>&1; then unmutated=0; else unmutated=1; fi
+assert_eq "$unmutated" "0" "lint never mutates a registry whose only flows are comment-wrapped"
+
 assert_done

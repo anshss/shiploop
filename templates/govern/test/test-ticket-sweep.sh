@@ -124,4 +124,32 @@ dirty_subrepo "$T"
 out="$(sweep "$T" sess9clean)"
 assert_contains "$out" '"decision":"block"' "no baseline + dirty tree → absolute fallback fires"
 
+# ── 10. Regression: a FLOWS LINT FAIL (zero-match glob) at session end must surface the lint's own
+#        message under the neutral wrapper, NEVER the #252 dangling-.claude/context/validation-ref
+#        framing — the two are independent failure shapes from the same lint script.
+T="$(mk_sandbox)"
+mkdir -p "$T/main/validation"
+cat > "$T/main/validation/flows.md" <<'EOF'
+## ghost.flow
+- **Kind:** correctness
+- **Surface:** UI → api
+- **Paths:** nosuchdir/**
+- **Status:** UNTESTED
+EOF
+( cd "$T/main" && git add -A && git commit -q -m "seed flows registry" )
+out="$(sweep "$T" sess10)"
+assert_contains "$out" '"decision":"block"' "flows-lint FAIL at session end still blocks"
+assert_contains "$out" "validation lint failed at session end" "flows-lint FAIL uses the neutral wrapper"
+if printf '%s' "$out" | grep -q '#252'; then mislabeled=1; else mislabeled=0; fi
+assert_eq "$mislabeled" "0" "flows-lint FAIL is never mislabeled as the #252 dangling-ref case"
+
+# ── 11. The #252 dangling-ref case is UNCHANGED: still gets its own framing, not the neutral wrapper.
+T="$(mk_sandbox)"
+mkdir -p "$T/main/.claude/context"
+printf 'See [proof](.claude/context/validation/ghost.md) for evidence.\n' > "$T/main/.claude/context/claim.md"
+( cd "$T/main" && git add -A && git commit -q -m "seed dangling ref" )
+out="$(sweep "$T" sess11)"
+assert_contains "$out" '"decision":"block"' "dangling-ref case still blocks"
+assert_contains "$out" "#252" "dangling-ref case still gets the #252 framing"
+
 assert_done
