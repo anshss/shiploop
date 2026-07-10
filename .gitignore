@@ -1,0 +1,54 @@
+# sub-repos — each has its own git tree, do not track from the workspace root
+/shiploop/
+
+# workspace runtime
+node_modules/
+logs/
+
+# governor driver→relay escalation hand-off (#62) — regenerated every run-end, not source
+governor/pending-escalations.json
+
+# governor runtime mkdir-mutexes (#41 — never commit; transient lock dirs)
+governor/.govern.lock/
+governor/.bookkeep.lock/
+governor/.locks/
+# governor cross-run failure history (#60) — per-machine runtime state, not source
+governor/ticket-history.jsonl
+# governor TokenJam run id — per-run runtime state (one per loop invocation; removed on clean exit)
+governor/.run-id
+# Root lockfile policy — the ROOT uses ONE package manager (ROOT_PM in
+# scripts/lib/workspace.sh). The off-PM root lockfiles are ignored so a stray
+# `npm install` / `pnpm install` in the wrong PM can't commit a divergent root
+# lockfile. (A pnpm root also ignores its OWN lockfile: pnpm v11 rewrites an empty
+# root lockfile on every run; config can't suppress it.) All entries are root-
+# anchored, so a real lockfile inside a sub-repo is unaffected. /shiploop:setup
+# replaces the line below with the off-PM lockfiles for the chosen ROOT_PM
+# (npm root → /pnpm-lock.yaml /yarn.lock /bun.lockb).
+/pnpm-lock.yaml
+/yarn.lock
+/bun.lockb
+
+# env files (per-repo .env is the source of truth; .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# OS / editor junk
+.DS_Store
+*.swp
+*.swo
+
+# Claude Code workspace state — track the shared AI context (commands/, settings.json)
+# but ignore per-session + snapshot files
+.claude/transcript.md
+.claude/projects/
+
+# Worktree state — local registry, transient lock dirs, generated per-worktree env
+.worktrees/*
+!.worktrees/.gitkeep
+worktree.env
+
+# Auto-generated planning/spec artifacts (skill output — not source of truth)
+.plans/
+.specs/
+

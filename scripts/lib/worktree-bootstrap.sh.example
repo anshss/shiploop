@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# OPTIONAL per-worktree bootstrap hook.
+#   Rename to scripts/lib/worktree-bootstrap.sh (drop the .example) to enable.
+#   worktree/new.sh runs it AFTER the trees + worktree.env are laid out, with:
+#     $1 = worktree name   $2 = slot number   $3 = absolute worktree path
+#
+# This is where ALL project-specific "make the stack runnable in a fresh worktree"
+# steps live — install deps, run codegen, point a worktree DB at prod, set a
+# per-slot service namespace, etc. Best-effort: new.sh calls it with `|| true`.
+#
+# Example (a Node backend + Next.js console, prod DB by default, per-slot Redis):
+set -uo pipefail
+NAME="$1"; SLOT="$2"; WT="$3"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# 1) Install deps + codegen for the services this worktree will run.
+#    (npm install often exits non-zero on harmless notices — verify by
+#     node_modules presence rather than exit code.)
+# ORCH="$WT/backend"
+# if [ -f "$ORCH/package.json" ]; then
+#   ( cd "$ORCH" && npm install --silent && npx prisma generate >/dev/null 2>&1 ) || true
+# fi
+# CONSOLE="$WT/console"
+# [ -f "$CONSOLE/package.json" ] && ( cd "$CONSOLE" && npm install --silent >/dev/null 2>&1 ) || true
+
+# 2) Point this worktree's backend at the prod DB (worktrees test against prod by
+#    convention; the local DB stays reserved for schema-mutating work in the main
+#    checkout). Read PROD_DATABASE_URL from the workspace .env.
+# ENV="$WT/backend/.env"
+# if [ -f "$ENV" ] && grep -q '^PROD_DATABASE_URL=' "$ROOT/.env"; then
+#   url=$(grep '^PROD_DATABASE_URL=' "$ROOT/.env" | head -1 | cut -d= -f2-)
+#   sed -i.bak -E '/^[[:space:]]*#?[[:space:]]*DATABASE_URL=/d' "$ENV"; rm -f "$ENV.bak"
+#   [ -n "$(tail -c 1 "$ENV" 2>/dev/null)" ] && printf '\n' >> "$ENV"
+#   printf 'DATABASE_URL=%s\n' "$url" >> "$ENV"
+# fi
+
+# 3) Per-slot service namespace so parallel stacks don't collide (e.g. Redis
+#    logical DB = slot, so BullMQ queues don't cross between worktrees).
+# if [ -f "$ENV" ]; then
+#   sed -i.bak -E '/^[[:space:]]*#?[[:space:]]*REDIS_DB=/d' "$ENV"; rm -f "$ENV.bak"
+#   [ -n "$(tail -c 1 "$ENV" 2>/dev/null)" ] && printf '\n' >> "$ENV"
+#   printf 'REDIS_DB=%s\n' "$SLOT" >> "$ENV"
+# fi
+
+echo "[worktree-bootstrap] $NAME (slot $SLOT) ready"

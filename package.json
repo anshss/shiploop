@@ -1,0 +1,26 @@
+{
+  "name": "shiploop-meta-repo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:shiploop": "bash scripts/dev.sh --only shiploop",
+    "status": "bash scripts/status.sh",
+    "doctor": "bash scripts/doctor.sh",
+    "branch": "bash scripts/branch.sh",
+    "switch": "bash scripts/switch.sh",
+    "pull": "bash scripts/pull-all.sh",
+    "push": "bash scripts/push-prs.sh",
+    "sync": "bash scripts/sync.sh",
+    "tail": "bash scripts/tail.sh",
+    "health": "bash scripts/health.sh",
+    "worktree": "bash scripts/worktree/main.sh",
+    "worktree:new": "bash scripts/worktree/new.sh",
+    "worktree:rm": "bash scripts/worktree/rm.sh",
+    "worktree:status": "bash scripts/worktree/status.sh",
+    "worktree:exec": "bash scripts/worktree/exec.sh",
+    "govern": "bash scripts/govern/run-loop.sh",
+    "govern:health": "bash scripts/govern/govern-health.sh",
+    "govern:dry-run": "bash scripts/govern/dry-run.sh"
+  }
+}
