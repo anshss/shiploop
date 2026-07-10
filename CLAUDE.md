@@ -94,6 +94,8 @@ Adding/removing a sub-repo is a one-file edit there.
 
 ## Anti-patterns (load-bearing)
 
+- **Bash `local a=x b="$a"` breaks under `set -u`** (which `scripts/govern/lib/common.sh` enables in every govern script): a single `local` statement's assignments do NOT see each other's expansions during that same statement — `$a` is unbound when `b`'s RHS is evaluated, even though `a` is being assigned in the same line. Split into two statements (`local a="$1"; local b="$a-suffix"` or `local a="$1"\nlocal b pending; pending="$a-suffix"`) whenever a later local's value derives from an earlier one in the same declaration. Caught while adding `templates/govern/lib/valpending.sh` — `local jobdir="$1" pending="$jobdir/pending-result.json" ...` failed with `jobdir: unbound variable` despite `jobdir` being assigned two words earlier on the same line.
+
 1. **MCP servers always at workspace root.** Never `claude mcp add` from a sub-repo.
 2. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files; each
    commits independently.

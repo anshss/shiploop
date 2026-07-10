@@ -79,22 +79,3 @@ Ref: spec §1–§3 (absolute path above)
 
 ---
 
-## #6 — Hub: durable validation runner — pending-results delivery + live-jobs surface templates (spec §4)
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: shiploop/ sub-repo (anshss/shiploop) — templates/govern/ NEW pending-results emit/apply (reuse the escalations-emit-pending.sh atomic tmp+mv pattern) + small integrations: govern-supervise.sh pass, SessionStart hook template, a flows-status/govern-validations live-jobs listing + scaffold component wiring
-
-Observed: spec ACCEPTED (hub-first) — /Users/anshs/Folder/code/aquanode/.specs/2026-07-08-harness-durable-validation-runner-design.md §4 (absolute path; NOT in any worktree). A validation finishing with no governor active lands in silence; supervisor-only adoption is insufficient.
-
-Fix direction — spec §4 exactly, generic hub templates: on a terminal record in a job's status.jsonl, append a pending-result entry; three readers apply — (1) governor supervisor next pass, (2) SessionStart hook surfaces unadopted results, (3) flows status / govern validations on demand. Apply = evidence-stamp on PASS, escalation entry on FAIL/ABORT, then mark consumed. Consumption serialized under the bookkeep mutex — racing readers never double-stamp/double-escalate. Live-jobs surface lists job-id, phase, deploy-ids, heartbeat age.
-
-Interface contract: job dir logs/govern/validations/<job>/, status.jsonl, heartbeat per spec §1–§3 — OWNED by sibling ticket #5 (core); consume the spec formats, do NOT edit #5's files; use a fixture job dir in tests.
-
-Done when: templates/govern/test/ fixture proves: pending entry emitted atomically for terminal PASS and FAIL; each reader applies + marks consumed exactly once under the mutex (two-reader race test); live listing shows phase + heartbeat age; scaffold component map ships the files; bash -n clean; PR opened on anshss/shiploop.
-
-Ref: spec §4; siblings #5 (core), #6-ish (stamping), workspace ticket #3 (parser fix)
-
----
-
