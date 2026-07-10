@@ -44,28 +44,6 @@ Ref: session 2026-07-11 — README feature shipped (commit 9828a35); update-gap 
 
 ---
 
-## #5 — Hub: durable validation runner — core launcher + job substrate templates (spec §1–§3)
-
-**Severity:** High
-**Model:** opus
-
-Where: shiploop/ sub-repo (anshss/shiploop) — templates/govern/run-validation.sh (NEW) + templates/govern/lib/valjob.sh (NEW) + scaffold component wiring + templates/govern/test/
-
-Observed: spec ACCEPTED (hub-first) — read it from /Users/anshs/Folder/code/aquanode/.specs/2026-07-08-harness-durable-validation-runner-design.md (absolute path; gitignored there, NOT in any worktree). Long billable validations have no durable, orphan-proof launcher anywhere in the fleet; trap-only cleanup leaked live boxes 3x during aquanode #343.
-
-Fix direction — implement spec §1–§3 job side exactly, as HUB TEMPLATES (generic, zero workspace-specific logic):
-- §1 launcher: setsid-detached launch of a flow validation script; job-id val-<flowid>-<ts>; job dir logs/govern/validations/<job>/; export VAL_JOB_ID for deploy name-tagging val-<jobid>-<label>; return job-id immediately, non-blocking; GOVERN_VAL_TIMEOUT wall cap (generous, hours) — on expiry kill the job process group + write terminal ERROR; retention pruning of terminal job dirs (keep last N or ~14d).
-- §2 job side: manifest deploys.jsonl — one line (id + provider) appended BEFORE provisioning; runner-owned heartbeat wrapper (~30s while the script pgid is alive — heartbeat = process liveness, NOT script cooperation); expose the deterministic orphan verdict (heartbeat >~3min stale OR terminal record OR sticky tombstone) as data for GOVERN_DEPLOY_SWEEP_CMD — the hub NEVER closes boxes itself.
-- §3: status.jsonl schema {phase, deploys, verdict, evidence}; tombstone-check helper called at each phase boundary — tombstone present → terminal ABORT, touch nothing; terminal record PASS|FAIL|ABORT|ERROR.
-- Wire new template files into scaffold.sh's component map so /shiploop:setup and /shiploop:update distribute them.
-- These file formats are the INTERFACE CONTRACT for sibling tickets (delivery, stamping) — implement per spec, do not invent different names/paths.
-
-Done when: bash -n clean; a templates/govern/test/test-valjob.sh (bash 3.2-safe, like siblings) proves with a fake flow script: (1) job survives parent exit; (2) manifest line precedes the mock provision; (3) heartbeat stops within ~60s of pgid SIGKILL; (4) GOVERN_VAL_TIMEOUT kill writes terminal ERROR; (5) a pre-placed tombstone at a boundary yields terminal ABORT with zero side effects; scaffold component map ships the new files; PR opened on anshss/shiploop.
-
-Ref: spec §1–§3 (absolute path above)
-
----
-
 ## #9 — Harness self-improvement: promote safe proposals from run-20260711-033250
 
 **Severity:** Low
