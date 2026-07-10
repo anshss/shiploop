@@ -294,8 +294,8 @@ component_worktrees() {
 
 component_govern() {
   log "component: govern"
-  cp "$T"/govern/*.sh scripts/govern/
-  cp "$T"/govern/lib/*.sh scripts/govern/lib/   # common.sh + flows.sh (validations substrate)
+  cp "$T"/govern/*.sh scripts/govern/           # incl. run-validation.sh (durable validation runner)
+  cp "$T"/govern/lib/*.sh scripts/govern/lib/   # common.sh + flows.sh + valjob.sh (job substrate)
   cp "$T"/govern/test/*.sh scripts/govern/test/
   chmod +x scripts/govern/*.sh scripts/govern/test/*.sh
   # governor/*.md — refresh prompt templates only; preserve operator data.
