@@ -29,6 +29,8 @@ ExitPlanMode isn't available in this session, so I'll finalize directly with the
 
 ## 2026-07-11 03:57 — run run-20260711-033248 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-11 03:57:** 5 safe proposal(s) → ticket **#11**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 The plan file is written. Since this is a read-only harness-improvement review (not an implementation task), here is the required deliverable directly:
 
 - `scripts/govern/lint-tickets.sh` (+ new `govern::lint_dependency_phrasing` helper in `scripts/govern/lib/common.sh`): flag a ticket whose body references another ticket number alongside dependency language ("sibling", "owned by", "interface contract", "dependency:", "built on", "blocked by") but has no literal `**Depends on:** #N` line — why: tickets #6 and #7 both said they depended on #5 ("OWNED by sibling ticket #5", "DEPENDENCY: ..."), but neither used the phrase `depends on` that `govern::ticket_deps` (`common.sh:1107`) requires, so the existing #119 pre-spawn gate (`run-loop.sh:674-690`, built specifically to prevent this class of problem) never fired and both merged while #5 stayed open.
