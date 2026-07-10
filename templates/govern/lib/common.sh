@@ -1092,7 +1092,13 @@ govern::collect_ticket_prs() {
   printf '%s\n' "$all" | while IFS=$'\t' read -r repo num _url; do
     [[ -n "$repo" ]] || continue
     govern::is_harness_repo "$repo" && govern::harness_pr_verify "$repo" "$num"
-  done
+  done || true
+  # The loop's own exit status is the last iteration's `is_harness_repo && harness_pr_verify` chain —
+  # 1 whenever the ticket's rows include no harness repo (the common case). Under a caller's `set -e`
+  # (govern-supervise.sh, run-loop.sh, this file's own test suite) that nonzero would abort the WHOLE
+  # calling script right here, before this function's own `return 0` below ever runs — the `|| true`
+  # neutralizes the loop's exit status so callers always see a clean 0 from this function regardless
+  # of whether a harness row was found.
   return 0
 }
 
