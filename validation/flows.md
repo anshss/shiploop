@@ -26,20 +26,6 @@ Unknown fields are preserved verbatim on rewrite. `<!-- HTML comments -->` are d
 strip them); a legitimate PII mention is allowlisted with `<!-- lint:allow <pattern> -->` on the line.
 
 Populate with `/shiploop:flows extract` (staged for your approval), then `/shiploop:flows file <ids>`
-to queue validations. Delete the two examples below once you add real flows.
-
-<!-- Example (correctness). Delete once you register real flows.
-## deploy.example
-- **Kind:** correctness
-- **Surface:** console UI → orchestrator → provider
-- **Paths:** backend/src/deploy/**
-- **Status:** UNTESTED
--->
-
-<!-- Example (effectiveness). Delete once you register real flows.
-## optimizer.example
-- **Kind:** effectiveness
-- **Gate:** A/B vs control, token-cost reduction ≥10%, N≥100 sessions · source: analytics:experiment/opt-v2
-- **Paths:** backend/src/optimizer/**
-- **Status:** UNTESTED
--->
+to queue validations. Example blocks (a `correctness` flow and a gated `effectiveness` flow) live in
+the design spec — they are not embedded here because the block parser reads `## <id>` headings even
+inside HTML comments and would lint placeholder globs as real flows.
