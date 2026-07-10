@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
       echo "usage: $ROOT_PM run worktree:rm -- <name> [--force] [--keep-branch]"
       exit 0
       ;;
+    --) shift ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *)
       if [ -z "$NAME" ]; then NAME="$1"; else echo "extra arg: $1" >&2; exit 2; fi
