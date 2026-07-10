@@ -18,6 +18,8 @@ No `ExitPlanMode` tool is available in this session, so I'll deliver the GOVERN-
 
 ## 2026-07-11 03:56 — run run-20260711-033247 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-11 03:56:** 2 safe proposal(s) → ticket **#10**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 ExitPlanMode isn't available in this session, so I'll finalize directly with the required output format.
 
 - `scripts/govern/spawn-worker.sh`: add a `GOVERN_FIX_CI` prompt-override block (mirrored on the existing `GOVERN_RESOLVE_CONFLICT` block at spawn-worker.sh:214-236) instructing a CI-fix-redispatch worker that the PR already exists, not to redo the ticket, and to query `gh pr checks`/`gh run view --log-failed` to diagnose the actual CI failure before fixing — currently `GOVERN_FIX_CI` is set by run-loop.sh:275 but never read anywhere in spawn-worker.sh, so the redispatched worker gets the plain first-attempt prompt with no idea CI is red or why, and just re-verifies locally and resubmits (the traced cause of ticket #5's `PR#76(CI-red-left-open)` outcome) — why: this is the direct, code-confirmed root cause, not a one-off worker mistake.
