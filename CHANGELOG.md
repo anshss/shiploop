@@ -24,6 +24,17 @@
 
 ### Added
 
+- **`govern::flows_stamp` (durable validation runner, spec §5).** A runner-facing entry point over
+  the existing `govern::flows_stamp_from_report`: takes a flow id, a settled terminal verdict
+  (`PASS`/`FAIL`), and a `{pr, prs, validation}` record — translates `PASS`→resolve / `FAIL`→gate-park
+  and reuses every existing guard (never-overwrite-fresher, ancestor-verify + squash-merge
+  substitution, PII-park, evidence promotion under `validation/evidence/`, `cas_edit` under the
+  bookkeep mutex) verbatim. `ABORT`/`ERROR` refuse to stamp (rc 1) — they carry no settled verdict
+  and route to the pending-results escalation path instead. Lets the durable validation runner
+  (once its job substrate lands) stamp the registry directly from a job's terminal record with no
+  report.json/ticket-resolve context required. Covered by the new
+  `test-flows-stamp-terminal.sh` (PASS/FAIL mapping, ABORT/ERROR refusal, exact-block isolation in a
+  multi-flow registry, and a stamp racing a concurrent registry edit through the real CAS-retry path).
 - **`detect-inputs.sh` (one-shot interview defaults).** Emits every setup default in a single
   call — `root_pm`, `worktree_base`, `org`, one `repo=<name>|<port>|<cmd>|<visibility>` line per
   sub-repo (ports de-collided to stable distinct values, dev command from lockfile/Makefile/
