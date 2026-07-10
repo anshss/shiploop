@@ -45,6 +45,8 @@ The plan/findings are saved at `/Users/anshs/.claude/plans/govern-improve-you-ar
 
 ## 2026-07-11 04:06 — run run-20260711-035801 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-11 04:06:** 2 safe proposal(s) → ticket **#12**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 **GOVERN-IMPROVE output:**
 
 - scripts/govern/run-loop.sh: in the `red)` case (~lines 907–913) of the merge-repo PR walk, attach a `.escalation` object to `$report` and set `status="parked"` (not `"failed"`) — exactly like the adjacent `unmergeable)`/`error)`/`external-blocked)` cases — so a PR that's still CI-red after the fix-worker retry gets a real `## Open` entry in `governor/escalations.md` instead of silently landing in `state.jsonl` as `failed` with no escalation. This is what happened to ticket #5 (`shiploop#76` left open on red CI, no escalation filed).
