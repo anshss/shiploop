@@ -42,3 +42,10 @@ The plan file is written. Since this is a read-only harness-improvement review (
 None of these touch hard-stops, run bounds, the permission gate, or the merge allowlist — all are additive lints/flags/schema fields that tighten an already-intentional dependency mechanism.
 
 The plan/findings are saved at `/Users/anshs/.claude/plans/govern-improve-you-are-reviewing-merry-curry.md`.
+
+## 2026-07-11 04:06 — run run-20260711-035801 (resolved/parked/failed observed)
+
+**GOVERN-IMPROVE output:**
+
+- scripts/govern/run-loop.sh: in the `red)` case (~lines 907–913) of the merge-repo PR walk, attach a `.escalation` object to `$report` and set `status="parked"` (not `"failed"`) — exactly like the adjacent `unmergeable)`/`error)`/`external-blocked)` cases — so a PR that's still CI-red after the fix-worker retry gets a real `## Open` entry in `governor/escalations.md` instead of silently landing in `state.jsonl` as `failed` with no escalation. This is what happened to ticket #5 (`shiploop#76` left open on red CI, no escalation filed).
+- scripts/govern/run-loop.sh: same fix also closes a second-order bug — the `#60` consecutive-failure circuit breaker (`consecutive_fails`, line ~700) is only checked when `-z "$resumed"`, but a red-CI ticket always has an open PR to resume, so it currently bypasses the circuit breaker entirely and would silently re-dispatch a fresh CI-fix worker on every future run indefinitely. Parking it removes it from selection via the existing escalation-exclusion path, so no separate change to the `resumed` branch is needed.
