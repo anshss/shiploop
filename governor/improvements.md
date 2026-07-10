@@ -8,6 +8,8 @@ _(empty — the governor appends here)_
 
 ## 2026-07-11 03:55 — run run-20260711-033250 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-11 03:55:** 3 safe proposal(s) → ticket **#9**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 No `ExitPlanMode` tool is available in this session, so I'll deliver the GOVERN-IMPROVE output directly per its contract (the analysis is saved to the plan file at `/Users/anshs/.claude/plans/govern-improve-you-are-reviewing-radiant-shore.md` for reference).
 
 - `queue/tickets.md`: document `**Depends on:** #K[, #J...]` as a first-class "Optional per-ticket field" (next to the existing `Model:` entry, ~line 22-31) — state that this exact phrase is what `govern::ticket_deps()` (`scripts/govern/lib/common.sh:1095-1116`) parses and what the #119 pre-spawn gate (`run-loop.sh:673-688`) enforces, and that "Ref:"/"siblings"/other prose is not machine-read — why: #7 (commit `49c3c8c`) declared its real blocking prerequisites on #5/#6 as prose siblings only, never the literal phrase, so the gate silently no-op'd and #7 was picked/resolved (shiploop#75) before #5/#6 landed — the exact case the supervisor flagged after the fact. The enforcement already exists; it was just undocumented.
