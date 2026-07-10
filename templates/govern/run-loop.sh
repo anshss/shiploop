@@ -1334,6 +1334,18 @@ while :; do
     bash "$DIR/../reap-orphan-deploys.sh" --quiet 2>/dev/null || true
   fi
 
+  # Durable validation runner (spec §4, reader 1/3): on the SAME supervisor cadence, mechanically
+  # adopt any terminal validation job the runner (ticket #5) left pending — a validation that
+  # finishes with no governor active would otherwise land in silence until the NEXT run. Purely
+  # deterministic (no LLM call, unlike govern-supervise.sh below); serialized under the bookkeep
+  # mutex so this pass and a concurrent SessionStart-hook / `govern validations` reader can never
+  # double-stamp or double-escalate the same terminal job. Guarded on existence + always non-fatal.
+  if [[ "$MODE" == "live" && ( "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ) \
+        && -f "$DIR/validations-pending-apply.sh" ]]; then
+    _valapplied="$(bash "$DIR/validations-pending-apply.sh" --reader govern-supervisor 2>/dev/null || true)"
+    [[ -n "$_valapplied" ]] && govern::log "validation job(s) adopted: $(printf '%s' "$_valapplied" | tr '\n' ' ')"
+  fi
+
   if [[ "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ]]; then
     govern::log "supervisor review (anomaly=$anomaly, since_review=$since_review)"
     verdict="$("$DIR/govern-supervise.sh" "$RUNDIR" 2>/dev/null || echo '{"verdict":"ok"}')"
