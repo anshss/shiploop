@@ -3,7 +3,7 @@
 # every function resolves its govern:: deps at call time, so definition order relative to common.sh
 # is irrelevant. See .specs/2026-07-06-shiploop-validations-design.md.
 #
-# The registry (validation/flows.md) is a git-tracked inventory of user-reachable *flows*, each keyed
+# The registry (.claude/shiploop/validation/flows.md) is a git-tracked inventory of user-reachable *flows*, each keyed
 # by a STABLE dot-kebab id and pinned to code SHAs, so the system always knows which paths are proven
 # at HEAD, which are stale, which failed, and which measured ineffective. This module is the pure
 # mechanism: a net-new block parser (flow blocks anchor on `^## <id>`, DISJOINT from the ticket parser
@@ -13,8 +13,8 @@
 # is Phase 2), no staleness sweep (Phase 3).
 
 # ── Paths (overridable for tests) ───────────────────────────────────────────
-FLOWS_FILE="${GOVERN_FLOWS_FILE:-$WS_ROOT/validation/flows.md}"
-FLOWS_EVIDENCE_DIR="${GOVERN_FLOWS_EVIDENCE_DIR:-$WS_ROOT/validation/evidence}"
+FLOWS_FILE="${GOVERN_FLOWS_FILE:-$WS_ROOT/.claude/shiploop/validation/flows.md}"
+FLOWS_EVIDENCE_DIR="${GOVERN_FLOWS_EVIDENCE_DIR:-$WS_ROOT/.claude/shiploop/validation/evidence}"
 
 # A flow id is lowercase, dot-separated kebab segments: coarse→fine (deploy-gpu.vastai). The heading
 # anchor is `## <id>`; the ticket parser's `## #<digits>` can never collide (a `#` is not in the id
@@ -290,8 +290,8 @@ govern::flows_pii_scan() { # file [file...] -> "file:line: token" per un-allowed
 # PII row, which fails (the Stop-hook gate; the promotion path parks instead). Missing registry ⇒ rc 0.
 govern::flows_lint() { # [meta-root] -> rc 1 if any FAIL row tripped
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
-  local evdir="$meta/validation/evidence"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
+  local evdir="$meta/.claude/shiploop/validation/evidence"
   local rc=0 id status glob cnt ev
   [[ -f "$flows" ]] || return 0
 
@@ -418,14 +418,14 @@ govern::flows_stamp() { # <id> <verdict:PASS|FAIL> <record-json> [meta-root]
 # it. Args: <report-json> <outcome: resolve|gate-park> <flow-ids space/comma list> [meta-root].
 # Per flow id: Status per Kind × outcome (correctness resolve→PASS, park→FAIL; effectiveness
 # resolve→EFFECTIVE if gatePassed==true else MEASURING, park→INEFFECTIVE); Validated = date · reachable
-# repo@sha pins · PR url (+ measured for effectiveness); Env; Evidence → validation/evidence/<id>.md.
+# repo@sha pins · PR url (+ measured for effectiveness); Env; Evidence → .claude/shiploop/validation/evidence/<id>.md.
 # Guards: never-overwrite-fresher (skip a stamp whose incoming pin is an ANCESTOR of the recorded one);
 # ancestor-verify + squash-merge substitution on every pin. Writes through cas_edit under the bookkeep
 # lock (honors GOVERN_BOOKKEEP_LOCK_HELD=1), committing the promoted evidence summary in the SAME commit.
 # Returns 0; a PII hit in a promoted summary returns 2 (the caller PARKs, per "never abort mid-resolve").
 govern::flows_stamp_from_report() { # report outcome flowids [meta-root]
   local report="$1" outcome="$2" idlist="$3" meta="${4:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md" evdir="$meta/validation/evidence"
+  local flows="$meta/.claude/shiploop/validation/flows.md" evdir="$meta/.claude/shiploop/validation/evidence"
   local id kind newstatus env measured pr_url pii_park=0
   [[ -f "$flows" ]] || { govern::log "flows_stamp: no registry at $flows — nothing to stamp"; return 0; }
   idlist="${idlist//,/ }"
@@ -496,9 +496,9 @@ govern::flows_stamp_from_report() { # report outcome flowids [meta-root]
       govern::flow_set_field "$_sid" Status    "$_sstatus"                      "$1"
       govern::flow_set_field "$_sid" Validated "$_sval"                         "$1"
       govern::flow_set_field "$_sid" Env       "$_senv"                         "$1"
-      govern::flow_set_field "$_sid" Evidence  "validation/evidence/$_sid.md"   "$1"
+      govern::flow_set_field "$_sid" Evidence  ".claude/shiploop/validation/evidence/$_sid.md"   "$1"
     }
-    govern::cas_edit "$flows" _flows_stamp_edit "docs(flows): stamp $id → $newstatus" "validation/evidence/$id.md"
+    govern::cas_edit "$flows" _flows_stamp_edit "docs(flows): stamp $id → $newstatus" ".claude/shiploop/validation/evidence/$id.md"
     unset -f _flows_stamp_edit
     govern::log "flows_stamp: $id → $newstatus (env=$env${pins:+, $pins})"
   done
@@ -607,7 +607,7 @@ govern::flows_sweep_file() { # <flows-file>
 # dry). Honors GOVERN_NO_PUSH / GOVERN_BOOKKEEP_LOCK_HELD like every other cas_edit write.
 govern::flows_sweep() { # [meta-root]
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   GOVERN_FLOWS_SWEEP_STALED=""
   GOVERN_FLOWS_SWEEP_META="$meta" govern::cas_edit "$flows" govern::flows_sweep_file \
@@ -621,7 +621,7 @@ govern::flows_sweep() { # [meta-root]
 # The Stop hook's cheap advisory path.
 govern::flows_sweep_scan() { # [meta-root]
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   GOVERN_FLOWS_SWEEP_STALED=""
   GOVERN_FLOWS_SWEEP_META="$meta" GOVERN_FLOWS_SWEEP_DRY=1 govern::flows_sweep_file "$flows"
@@ -637,7 +637,7 @@ govern::flows_sweep_scan() { # [meta-root]
 # PASS is fresh by definition). Empty (rc 0, no output) when there is no registry.
 govern::flows_status_summary() { # [meta-root] -> one line | empty
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   local id status disp total=0 pend=0 st
   local counts_UNTESTED=0 counts_PASS=0 counts_FAIL=0 counts_STALE=0 counts_MEASURING=0
@@ -689,7 +689,7 @@ govern::flows_status_summary() { # [meta-root] -> one line | empty
 govern::flows_matching_paths() { # <meta-root> <max> <path> [path…] -> ranked flow ids
   local meta="$1" max="$2"; shift 2
   local -a paths=("$@")
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" && ${#paths[@]} -gt 0 ]] || return 0
   local id status
   { while IFS= read -r id; do
@@ -786,7 +786,7 @@ govern::flows_passive_evidence() { # [meta-root] [--attach] -> advisory lines
   local meta="" attach=0 a
   for a in "$@"; do case "$a" in --attach) attach=1 ;; *) meta="$a" ;; esac; done
   meta="${meta:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   if [[ -z "${WSP_ANALYTICS_QUERY_CMD:-}" ]]; then
     govern::log "flows_passive_evidence: WSP_ANALYTICS_QUERY_CMD not wired — passive evidence off"; return 0
@@ -836,7 +836,7 @@ govern::_flows_days_of() { # str -> N | ""
 # (rc 0) when nothing is due or there is no registry.
 govern::flows_due_advisories() { # [meta-root] -> advisory lines
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   local now_epoch id status val vdate vepoch days win reval
   now_epoch="$(date +%s)"
@@ -884,7 +884,7 @@ govern::ticket_flow_op() { # N [tickets-file] -> validate|remove
 # flow goes STALE before the removal lands. Writes through cas_edit; honors GOVERN_BOOKKEEP_LOCK_HELD.
 govern::flows_mark_kill_pending() { # <id> [meta-root]
   local id="$1" meta="${2:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md"
+  local flows="$meta/.claude/shiploop/validation/flows.md"
   [[ -f "$flows" ]] || return 0
   govern::flow_exists "$id" "$flows" || { govern::log "flows_mark_kill_pending: '$id' not in registry — skipping"; return 0; }
   local _kid="$id"
@@ -901,7 +901,7 @@ govern::flows_mark_kill_pending() { # <id> [meta-root]
 # lock (honors GOVERN_BOOKKEEP_LOCK_HELD). No-op for an id not in the registry.
 govern::flows_tombstone() { # <idlist> [meta-root]
   local idlist="$1" meta="${2:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
-  local flows="$meta/validation/flows.md" id
+  local flows="$meta/.claude/shiploop/validation/flows.md" id
   [[ -f "$flows" ]] || { govern::log "flows_tombstone: no registry at $flows — nothing to tombstone"; return 0; }
   idlist="${idlist//,/ }"
   for id in $idlist; do

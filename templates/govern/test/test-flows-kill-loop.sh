@@ -39,12 +39,12 @@ assert_eq "$(govern::ticket_flow_op "$rn" "$T/tickets.md")" "remove"   "ticket_f
 assert_eq "$(govern::ticket_flow_op "$vn" "$T/tickets.md")" "validate" "ticket_flow_op: normal flow ticket → validate"
 
 # ── flows_tombstone: Status→TOMBSTONED, history (Validated/Evidence) preserved, SupersededBy unset. ──
-M="$T/m"; mkdir -p "$M/queue" "$M/validation" "$M/backend"
+M="$T/m"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/backend"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 git init -q "$M/backend"; git -C "$M/backend" config user.email ci@test; git -C "$M/backend" config user.name ci
 printf 'v1\n' > "$M/backend/app.txt"; git -C "$M/backend" add -A; git -C "$M/backend" commit -q -m c1
 SHA1="$(git -C "$M/backend" rev-parse HEAD)"
-FL="$M/validation/flows.md"
+FL="$M/.claude/shiploop/validation/flows.md"
 cat > "$FL" <<EOF
 ## opt.dead
 - **Kind:** effectiveness
@@ -54,14 +54,14 @@ cat > "$FL" <<EOF
 - **Status:** INEFFECTIVE
 - **Validated:** 2026-07-01 · backend@${SHA1:0:7} · PR https://x/8 (measured: +2.1%, n=140)
 - **Env:** prod
-- **Evidence:** validation/evidence/opt.dead.md
+- **Evidence:** .claude/shiploop/validation/evidence/opt.dead.md
 EOF
 git -C "$M" add -A; git -C "$M" commit -q -m seed
 
 govern::flows_tombstone "opt.dead" "$M"
 assert_eq "$(govern::flow_field opt.dead Status "$FL")" "TOMBSTONED" "flows_tombstone: Status → TOMBSTONED"
 assert_contains "$(govern::flow_field opt.dead Validated "$FL")" "measured: +2.1%, n=140" "flows_tombstone: validated history preserved"
-assert_contains "$(govern::flow_field opt.dead Evidence "$FL")" "validation/evidence/opt.dead.md" "flows_tombstone: Evidence pointer preserved"
+assert_contains "$(govern::flow_field opt.dead Evidence "$FL")" ".claude/shiploop/validation/evidence/opt.dead.md" "flows_tombstone: Evidence pointer preserved"
 assert_eq "$(printf '%s' "$(govern::flow_field opt.dead SupersededBy "$FL")")" "" "flows_tombstone: SupersededBy NOT set (plain kill ≠ supersession)"
 
 # ── flows_mark_kill_pending + sweep auto-withdrawal on a freshly-STALE flow. ─────────────────────────
@@ -95,7 +95,7 @@ cat > "$FL" <<EOF
 - **Status:** INEFFECTIVE
 - **Validated:** 2026-07-01 · backend@${SHA1:0:7} · PR https://x/8
 - **Env:** prod
-- **Evidence:** validation/evidence/opt.dead.md
+- **Evidence:** .claude/shiploop/validation/evidence/opt.dead.md
 EOF
 cat > "$M/queue/tickets.md" <<'EOF'
 ## #12 — KILL: remove opt.dead (measured INEFFECTIVE)
@@ -115,9 +115,9 @@ assert_contains "$(govern::flow_field opt.dead Validated "$FL")" "PR https://x/8
 assert_eq "$(grep -c '^## #12' "$M/queue/tickets.md" || true)" "0" "bookkeep: removal ticket block deleted on resolve"
 
 # ── escalations-apply-answers: `kill` marks kill-pending + files a removal ticket + closes the ticket.
-A="$T/apply"; mkdir -p "$A/queue" "$A/validation" "$A/governor"
+A="$T/apply"; mkdir -p "$A/queue" "$A/.claude/shiploop/validation" "$A/governor"
 git init -q "$A"; git -C "$A" config user.email ci@test; git -C "$A" config user.name ci
-AFL="$A/validation/flows.md"
+AFL="$A/.claude/shiploop/validation/flows.md"
 cat > "$AFL" <<'EOF'
 ## opt.dead
 - **Kind:** effectiveness

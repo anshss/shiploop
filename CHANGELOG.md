@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.10.0 — 2026-07-17
+
+The validation-sink relocation release: the governor-owned validation sink moved out of the
+co-tenant `.claude/context/` namespace to a dedicated `.claude/shiploop/validation/`.
+
+### Changed
+
+- **Validation sink relocated to `.claude/shiploop/validation/`.** The flow registry
+  (`flows.md`), its evidence tree (`evidence/`), and the #252 promoted validation summaries now all
+  live under `.claude/shiploop/validation/` instead of the root-level `validation/` + the co-tenant
+  `.claude/context/validation/`. This keeps the governor-owned, git-tracked sink outside the
+  `.claude/context/` namespace a co-tenant tool (e.g. vibelab) may sweep, so a governor commit no
+  longer needs a per-path exclusion to avoid clobbering co-tenant WIP.
+  - Every citing mechanism was repointed: `govern/lib/flows.sh` (`FLOWS_FILE`/`FLOWS_EVIDENCE_DIR`
+    defaults), `govern-bookkeep.sh` (summary promotion path), `spawn-worker.sh`, `flows-*.sh`,
+    `doctor.sh`, the worker prompt, the Stop-hook sweep reminder, and `commands/flows.md`.
+  - `lint-validation-refs.sh` now scans BOTH `.claude/context` and `.claude/shiploop` as citation
+    sources and flags any surviving `.claude/context/validation/*.md` reference as dangling, so a
+    stale ref after the move fails the Stop-hook lint rather than passing silently.
+  - `scaffold.sh` seeds the registry at `.claude/shiploop/validation/flows.md` (seed source moved to
+    `templates/seed/.claude/shiploop/validation/flows.md`).
+  - **Migration:** an existing workspace converging past this version must `git mv` its sink once —
+    see the one-time step in `/shiploop:update` (Phase 3).
+
 ## 1.9.0 — 2026-07-11
 
 The durable-validation-runner release: the harness's first durable-job primitive (jobs that survive

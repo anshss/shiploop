@@ -24,7 +24,7 @@ Some human preamble under a normal `## Heading` that is NOT a flow id.
 - **Status:** PASS
 - **Validated:** 2026-07-06 · mjolnir@a1b2c3d console@9c8d7e6 · PR https://github.com/x/mjolnir/pull/301
 - **Env:** prod <!-- last measured on the prod box -->
-- **Evidence:** validation/evidence/deploy-gpu.vastai.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy-gpu.vastai.md
 - **X-Custom-Unknown:** keep-me-verbatim
 
 ## optimizer.ab-test

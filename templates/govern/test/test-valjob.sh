@@ -65,7 +65,7 @@ assert_contains "$(valjob::orphan_verdict)" "ORPHAN tombstone" "tombstone domina
 rm -f "$VAL_JOB_DIR/tombstone"
 
 # terminal record writes the status marker, is idempotent (first writer wins), and → ORPHAN.
-valjob::terminal PASS "validation/evidence/x.md"
+valjob::terminal PASS ".claude/shiploop/validation/evidence/x.md"
 assert_eq "$(cat "$VAL_JOB_DIR/status")" "PASS" "terminal writes the status marker"
 valjob::terminal FAIL "second attempt"
 assert_eq "$(cat "$VAL_JOB_DIR/status")" "PASS" "terminal is idempotent — first writer wins (no double-stamp)"
@@ -93,7 +93,7 @@ valjob::manifest_add box-ok mockprov && printf 'manifest box-ok\n' >> "$VAL_JOB_
 printf 'provision box-ok\n' >> "$VAL_JOB_DIR/journal"          # mock provision — strictly AFTER manifest
 printf 'provisioned\n'      >  "$VAL_JOB_DIR/provision.done"
 valjob::phase provision
-valjob::terminal PASS "validation/evidence/flow-ok.md"
+valjob::terminal PASS ".claude/shiploop/validation/evidence/flow-ok.md"
 EOF
 job_ok="$(GOVERN_VAL_HEARTBEAT_INTERVAL=1 bash "$RUNV" "$T/flow_ok.sh")"
 jd_ok="$VALDIR/$job_ok"

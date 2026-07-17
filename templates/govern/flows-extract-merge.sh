@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Merge a STAGED flow-extraction diff into validation/flows.md (validations Phase 4, `/shiploop:flows
+# Merge a STAGED flow-extraction diff into .claude/shiploop/validation/flows.md (validations Phase 4, `/shiploop:flows
 # extract`). Extraction fans out over the codebase via Agent workers and writes a proposed registry
 # fragment (a flows.md-format file of `## <id>` blocks); this script is the deterministic, operator-
 # gated MERGE — the model never writes the registry directly.
@@ -30,7 +30,7 @@ approve=0; [[ "${2:-}" == "--approve" ]] && approve=1
 [[ -f "$staged" ]] || govern::die "staged file not found: $staged"
 
 META="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
-FLOWS="${GOVERN_FLOWS_FILE:-$META/validation/flows.md}"
+FLOWS="${GOVERN_FLOWS_FILE:-$META/.claude/shiploop/validation/flows.md}"
 mkdir -p "$(dirname "$FLOWS")"
 [[ -f "$FLOWS" ]] || : > "$FLOWS"   # first extraction into a fresh registry
 

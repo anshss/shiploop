@@ -13,13 +13,13 @@ mkdir -p "$T/governor"
 source "$DIR/../lib/common.sh"
 
 # Meta-root git repo with a real tracked file (so globs can resolve) + a real evidence summary.
-M="$T/meta"; mkdir -p "$M/src/real" "$M/validation/evidence"
+M="$T/meta"; mkdir -p "$M/src/real" "$M/.claude/shiploop/validation/evidence"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 printf 'keep\n' > "$M/src/real/keep.txt"
-printf '# evidence\nverdict: PASS\n' > "$M/validation/evidence/deploy.example.md"
+printf '# evidence\nverdict: PASS\n' > "$M/.claude/shiploop/validation/evidence/deploy.example.md"
 git -C "$M" add -A; git -C "$M" commit -q -m init
 
-F="$M/validation/flows.md"
+F="$M/.claude/shiploop/validation/flows.md"
 run_lint() { govern::flows_lint "$M" 2>"$T/err"; echo $?; }   # prints rc; stderr → $T/err
 
 # ── Clean baseline: a validated flow with a real glob + present evidence + no logs/PII → rc 0.
@@ -31,7 +31,7 @@ cat > "$F" <<'EOF'
 - **Status:** PASS
 - **Validated:** 2026-07-06 · meta@abc123 · PR https://github.com/x/y/pull/1
 - **Env:** prod
-- **Evidence:** validation/evidence/deploy.example.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy.example.md
 EOF
 assert_eq "$(run_lint)" "0" "clean registry lints cleanly (rc 0)"
 
@@ -43,7 +43,7 @@ assert_contains "$(cat "$T/err")" "logs/" "logs/ FAIL message names the path"
 cp "$F.clean" "$F"
 
 # ── Row: a dangling Evidence ref (no such file, not a URL) → FAIL.
-govern::flow_set_field deploy.example Evidence "validation/evidence/ghost.md" "$F"
+govern::flow_set_field deploy.example Evidence ".claude/shiploop/validation/evidence/ghost.md" "$F"
 assert_eq "$(run_lint)" "1" "dangling Evidence ref → FAIL (rc 1)"
 assert_contains "$(cat "$T/err")" "dangles" "dangling FAIL message says 'dangles'"
 cp "$F.clean" "$F"
@@ -61,17 +61,17 @@ assert_eq "$(run_lint)" "0" "https Evidence URL is accepted (rc 0)"
 cp "$F.clean" "$F"
 
 # ── Row: oversized asset → WARN only (rc stays 0).
-mkdir -p "$M/validation/evidence/assets/deploy.example"
-dd if=/dev/zero of="$M/validation/evidence/assets/deploy.example/big.bin" bs=1024 count=320 >/dev/null 2>&1
+mkdir -p "$M/.claude/shiploop/validation/evidence/assets/deploy.example"
+dd if=/dev/zero of="$M/.claude/shiploop/validation/evidence/assets/deploy.example/big.bin" bs=1024 count=320 >/dev/null 2>&1
 assert_eq "$(run_lint)" "0" "oversized asset is a WARN, not a FAIL (rc 0)"
 assert_contains "$(cat "$T/err")" "300 KB" "asset-size WARN message"
-rm -rf "$M/validation/evidence/assets"
+rm -rf "$M/.claude/shiploop/validation/evidence/assets"
 
 # ── Row: PII in a tier-2 evidence file → FAIL; a lint:allow marker on the line suppresses it.
-printf '# evidence\ncontact leaked: someone@example.com during the run\n' > "$M/validation/evidence/deploy.example.md"
+printf '# evidence\ncontact leaked: someone@example.com during the run\n' > "$M/.claude/shiploop/validation/evidence/deploy.example.md"
 assert_eq "$(run_lint)" "1" "PII (email) in evidence → FAIL (rc 1)"
 assert_contains "$(cat "$T/err")" "PII/secret" "PII FAIL message"
-printf '# evidence\nauth flow validates an email login someone@example.com <!-- lint:allow email -->\n' > "$M/validation/evidence/deploy.example.md"
+printf '# evidence\nauth flow validates an email login someone@example.com <!-- lint:allow email -->\n' > "$M/.claude/shiploop/validation/evidence/deploy.example.md"
 assert_eq "$(run_lint)" "0" "PII with a <!-- lint:allow --> marker is suppressed (rc 0)"
 
 # ── Regression: a registry whose ONLY "flows" are commented-out seed examples must lint cleanly

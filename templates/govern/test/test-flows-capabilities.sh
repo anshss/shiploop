@@ -13,10 +13,10 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
 export GOVERN_NO_PUSH=1
 
-M="$T/meta"; mkdir -p "$M/queue" "$M/validation" "$M/governor" "$M/backend"
+M="$T/meta"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/governor" "$M/backend"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 export GOVERN_TICKETS_FILE="$M/queue/tickets.md"
-export GOVERN_FLOWS_FILE="$M/validation/flows.md"
+export GOVERN_FLOWS_FILE="$M/.claude/shiploop/validation/flows.md"
 export GOVERN_TICKET_SEQ_FILE="$M/governor/.ticket-seq"
 : > "$GOVERN_TICKETS_FILE"
 source "$DIR/../lib/common.sh"
@@ -82,7 +82,7 @@ assert_contains "$(fld ui.deploy Blocker)" "WSP_BROWSER_CMD unset" "flows-file: 
 assert_contains "$out" "api.close"         "flows-file: the no-Requires flow is still planned"
 
 # Spot-check the gate FLIPS: with both knobs wired, ui.deploy is NOT blocked and gets planned. ───────
-git -C "$M" checkout -q -- validation/flows.md 2>/dev/null || git -C "$M" checkout -q HEAD -- validation/flows.md 2>/dev/null || true
+git -C "$M" checkout -q -- .claude/shiploop/validation/flows.md 2>/dev/null || git -C "$M" checkout -q HEAD -- .claude/shiploop/validation/flows.md 2>/dev/null || true
 cat > "$FLOWS" <<'EOF'
 ## ui.deploy
 - **Kind:** correctness

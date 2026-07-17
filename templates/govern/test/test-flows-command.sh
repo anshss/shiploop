@@ -14,12 +14,12 @@ mk_ws_stub "$T"
 export GOVERN_NO_PUSH=1
 
 # Meta repo with a git tree so meta_root resolves; queue + validation live under it.
-M="$T/meta"; mkdir -p "$M/queue" "$M/validation" "$M/backend"
+M="$T/meta"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/backend"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 # GOVERN_WS_ROOT stays $T (mk_ws_stub's workspace.sh lives there); meta_root resolves to $M via the
 # tickets path's git toplevel, and the scripts take the registry/tickets locations from the overrides.
 export GOVERN_TICKETS_FILE="$M/queue/tickets.md"
-export GOVERN_FLOWS_FILE="$M/validation/flows.md"
+export GOVERN_FLOWS_FILE="$M/.claude/shiploop/validation/flows.md"
 export GOVERN_TICKET_SEQ_FILE="$M/governor/.ticket-seq"
 mkdir -p "$M/governor"
 : > "$GOVERN_TICKETS_FILE"
@@ -35,7 +35,7 @@ cat > "$GOVERN_FLOWS_FILE" <<'EOF'
 - **Status:** PASS
 - **Validated:** 2026-07-01 · backend@abc1234 · PR https://x/1
 - **Env:** prod
-- **Evidence:** validation/evidence/deploy.a.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy.a.md
 
 ## opt.b
 - **Kind:** effectiveness
@@ -45,7 +45,7 @@ cat > "$GOVERN_FLOWS_FILE" <<'EOF'
 - **Status:** PASS
 - **Validated:** 2026-07-01 · backend@abc1234 · PR https://x/2
 - **Env:** prod
-- **Evidence:** validation/evidence/opt.b.md
+- **Evidence:** .claude/shiploop/validation/evidence/opt.b.md
 EOF
 
 # ── EXTRACT-MERGE ───────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ cat >> "$GOVERN_FLOWS_FILE" <<'EOF'
 - **Status:** MEASURING
 - **Validated:** 2026-07-02 · backend@abc1234 · PR https://x/9
 - **Env:** prod
-- **Evidence:** validation/evidence/opt.measuring.md
+- **Evidence:** .claude/shiploop/validation/evidence/opt.measuring.md
 EOF
 list_out="$("$DIR/../flows-list.sh" 2>&1)"
 assert_contains "$list_out" "BLOCKED (1)" "list: groups by status"
