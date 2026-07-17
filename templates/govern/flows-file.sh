@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 META="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
-FLOWS="${GOVERN_FLOWS_FILE:-$META/validation/flows.md}"
+FLOWS="${GOVERN_FLOWS_FILE:-$META/.claude/shiploop/validation/flows.md}"
 [[ -f "$FLOWS" ]] || govern::die "no flow registry at $FLOWS"
 TIMEOUT="${GOVERN_WORKER_TIMEOUT:-3600}"
 
@@ -164,12 +164,12 @@ while IFS= read -r key || [[ -n "$key" ]]; do   # `|| [[ -n ]]` — read the fin
     csv="$(printf '%s' "$gids" | tr ' ' ',')"
     title="VALIDATION: $label"; [[ "$gn" -gt 1 ]] && title="VALIDATION: $label resource-group ($gn flows)"
     body="$(cat <<EOF
-Where: flow(s) $gids (validation/flows.md)
+Where: flow(s) $gids (.claude/shiploop/validation/flows.md)
 Observed: registry status warrants a real validation run.
 Fix direction: drive the REAL user path for each flow (rule #12 — real UI/API, headless browser, real
   deploy where needed), then fill the report validation.{validatedShas,environment,gatePassed,
   measured,flowIds}. Name every provisioned resource ticket-<N>-<label> so the orphan sweep can reap it.
-Done when: each flow above is stamped in validation/flows.md with a fresh verdict (PASS/FAIL or
+Done when: each flow above is stamped in .claude/shiploop/validation/flows.md with a fresh verdict (PASS/FAIL or
   EFFECTIVE/INEFFECTIVE/MEASURING) pinned to the validated SHAs, with a promoted evidence summary.
 EOF
 )"

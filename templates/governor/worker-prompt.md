@@ -113,7 +113,7 @@ asks for a PASS/FAIL from an actual run. For these:
      where YOU, the worker, dump everything during the run: screenshots, ground-truth files,
      `report.json`, command logs. It is per-machine and ephemeral — it does NOT travel in any commit.
      Always write your full PASS/FAIL `REPORT.md` here (the hard rule above).
-  2. **`.claude/context/validation/ticket-<N>-<slug>.md` (git-TRACKED) — the durable SUMMARY.** This
+  2. **`.claude/shiploop/validation/ticket-<N>-<slug>.md` (git-TRACKED) — the durable SUMMARY.** This
      is the polished, committed evidence summary that any project context cites as proof. You do
      **NOT** hand-write this in your worktree — **the governor's bookkeeping auto-promotes it on
      resolve** from your `validation.evidence` + the PR(s). Your job is just to make
@@ -180,7 +180,7 @@ Field rules:
   + `ranLiveTest:true` + a concrete `evidence` string ONLY if you actually ran the test this run; if
   you could not run it, `ranLiveTest:false` and PARK (don't report `resolved`). `null` for ordinary
   code/docs tickets where no empirical run is the deliverable. Additional fields when the ticket
-  carries a **`Flow:`** field (a flow-registry validation — the governor stamps `validation/flows.md`
+  carries a **`Flow:`** field (a flow-registry validation — the governor stamps `.claude/shiploop/validation/flows.md`
   from these):
   - `gatePassed` (bool) — did the flow's declared gate pass? `false` = a measured NEGATIVE (the governor
     parks it as gate-failed and records the flow FAIL/INEFFECTIVE for the operator's ship-vs-kill call).

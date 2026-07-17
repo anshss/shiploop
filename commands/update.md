@@ -134,6 +134,22 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge
 ```
 
+**One-time (v1.10.0): relocate the validation sink.** The governor-owned validation sink moved out of
+the co-tenant `.claude/context/` namespace to `.claude/shiploop/validation/`. A workspace converging
+PAST v1.10.0 must move its existing sink once, BEFORE running the governor, so promoted summaries and
+the flow registry keep resolving:
+
+```bash
+# flow registry + evidence (root-level sink in pre-1.10.0 layouts)
+[ -e validation/flows.md ] && { mkdir -p .claude/shiploop/validation; git mv validation/flows.md .claude/shiploop/validation/flows.md; }
+[ -e validation/evidence ] && git mv validation/evidence .claude/shiploop/validation/evidence
+# #252 promoted summaries (if this workspace kept them under .claude/context/)
+[ -d .claude/context/validation ] && { mkdir -p .claude/shiploop/validation; git mv .claude/context/validation/* .claude/shiploop/validation/ 2>/dev/null; rmdir .claude/context/validation 2>/dev/null; }
+```
+
+Refs in `CLAUDE.md` / founder-os context that cite `.claude/context/validation/*.md` now flag as
+dangling via `lint-validation-refs.sh` (Stop hook) until repointed at `.claude/shiploop/validation/`.
+
 **Never bump these without the operator's explicit ask** — they carry per-workspace customization:
 
 - `workspace-sh` — `scripts/lib/workspace.sh` (config sink). If new knobs landed in the hub, warn and

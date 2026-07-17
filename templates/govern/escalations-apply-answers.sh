@@ -158,7 +158,7 @@ while IFS= read -r row; do
             && GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_mark_kill_pending "$_kf" "$_kmeta" || true
           # NO_COMMIT: append only; apply-answers' own step-5 commit (under this lock) publishes it with
           # the tickets.md block-deletion, so the removal ticket can't be clobbered (mirrors #240).
-          _rn="$(printf 'Where: flow %s (validation/flows.md) — measured INEFFECTIVE, operator dispositioned KILL.\nObserved: the feature is measured worthless; this is a DELETION, not a fix.\nFix direction: remove the feature end-to-end (code + UI + dead config) in the mapped sub-repo(s) and open a PR. Normal code ticket — NOT a validation run.\nDone when: the feature is deleted and a PR is open; the governor tombstones flow %s on resolve.\n' "$_kf" "$_kf" \
+          _rn="$(printf 'Where: flow %s (.claude/shiploop/validation/flows.md) — measured INEFFECTIVE, operator dispositioned KILL.\nObserved: the feature is measured worthless; this is a DELETION, not a fix.\nFix direction: remove the feature end-to-end (code + UI + dead config) in the mapped sub-repo(s) and open a PR. Normal code ticket — NOT a validation run.\nDone when: the feature is deleted and a PR is open; the governor tombstones flow %s on resolve.\n' "$_kf" "$_kf" \
             | GOVERN_FILE_TICKET_NO_COMMIT=1 GOVERN_BOOKKEEP_LOCK_HELD=1 "$DIR/file-ticket.sh" \
                 --flow "$_kf" --flow-op remove "KILL: remove $_kf (measured INEFFECTIVE)" Medium 2>/dev/null || true)"
           [[ -n "$_rn" ]] && _kfiled="${_kfiled:+$_kfiled }#$_rn"
