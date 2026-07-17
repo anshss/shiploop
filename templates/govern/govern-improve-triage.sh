@@ -32,10 +32,11 @@ RUNID="${1:-}"
 
 [[ -f "$FILE" ]] || { govern::log "improve-triage: no improvements.md — nothing to triage"; exit 0; }
 
-# Rail-touching / human-gate patterns (matched case-insensitively per proposal line). Mirrors
-# govern-self-apply.sh's PROTECTED_PATTERNS (the knob identifiers) PLUS the human-readable rail phrases
-# the improve-reviewer writes. Extend BOTH in lockstep when a new safety rail is added.
-RAIL='OPERATOR DECISION|GOVERN_MERGE_REPOS|is_merge_repo|merge allowlist|merge-allowlist|bypassPermissions|GOVERN_PERMISSION_MODE|permission mode|permission gate|permflag|setting-sources|GOVERN_MAX_TICKETS|GOVERN_MAX_BAD_STREAK|GOVERN_MAX_RUNTIME|GOVERN_SELF_APPLY|run bound|loop bound|hard-stop|hard stop|safety rail|green-or-none|green or none|auto-merge|auto merge'
+# Rail-touching / human-gate patterns (matched case-insensitively per proposal line). The shared knob
+# identifiers come from ONE definition (GOVERN_PROTECTED_PATTERNS in common.sh — #331), so a rail added
+# there is protected here automatically; this line only adds the human-readable rail PHRASES the
+# improve-reviewer writes (which self-apply, grepping a code diff, doesn't need).
+RAIL="${GOVERN_PROTECTED_PATTERNS}|OPERATOR DECISION|merge allowlist|merge-allowlist|permission mode|permission gate|run bound|loop bound|hard-stop|hard stop|safety rail|green-or-none|green or none|auto-merge|auto merge"
 
 # ── Locate the target block (a `## ` heading and everything up to the next `## ` / EOF) ──
 if [[ -n "$RUNID" ]]; then

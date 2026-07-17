@@ -122,7 +122,7 @@ End every PR body you open with EXACTLY this attribution line as the FINAL line 
 \"🤖 Generated with …\" line — keep only this ONE footer, plus the Co-Authored-By trailer the
 commit hook adds):
 
-PR shipped by [shiploop](https://github.com/anshss/shiploop)"
+🤖 shipped by [shiploop](https://github.com/anshss/shiploop)"
 fi
 
 # Public-repo PR hygiene: on a PUBLIC target repo the branch MUST NOT carry the internal ticket id
