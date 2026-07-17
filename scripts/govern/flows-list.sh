@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render validation/flows.md grouped by status (validations Phase 4, `/shiploop:flows list`). READ-ONLY
+# Render .claude/shiploop/validation/flows.md grouped by status (validations Phase 4, `/shiploop:flows list`). READ-ONLY
 # by default: it never mutates the registry — it runs the cheap report-only staleness scan and ANNOTATES
 # any flow whose mapped paths have moved past its validated SHA ("would go STALE"), so the operator sees
 # reality without a surprise commit. `--sweep` first runs the persisting sweep (records the STALE
@@ -13,7 +13,7 @@ command -v govern::flow_ids >/dev/null 2>&1 || govern::die "flow parser (flows.s
 
 do_sweep=0; [[ "${1:-}" == "--sweep" ]] && do_sweep=1
 META="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
-FLOWS="${GOVERN_FLOWS_FILE:-$META/validation/flows.md}"
+FLOWS="${GOVERN_FLOWS_FILE:-$META/.claude/shiploop/validation/flows.md}"
 [[ -f "$FLOWS" ]] || { printf 'No flow registry yet (%s). Run `/shiploop:flows extract` to inventory flows.\n' "${FLOWS#"$META/"}"; exit 0; }
 
 # Persisting sweep (records STALE) or report-only scan (annotate only).

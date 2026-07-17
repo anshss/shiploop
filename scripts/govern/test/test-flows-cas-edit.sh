@@ -20,8 +20,8 @@ gitcfg() { git -C "$1" config user.email ci@test; git -C "$1" config user.name c
 git init -q --bare "$T/origin.git"
 git clone -q "$T/origin.git" "$T/A"; gitcfg "$T/A"
 git -C "$T/A" checkout -q -b main
-mkdir -p "$T/A/validation"
-printf '# Flow registry\n\n## deploy.example\n- **Kind:** correctness\n- **Status:** UNTESTED\n' > "$T/A/validation/flows.md"
+mkdir -p "$T/A/.claude/shiploop/validation"
+printf '# Flow registry\n\n## deploy.example\n- **Kind:** correctness\n- **Status:** UNTESTED\n' > "$T/A/.claude/shiploop/validation/flows.md"
 printf 'base\n' > "$T/A/base.txt"
 git -C "$T/A" add -A; git -C "$T/A" commit -q -m init; git -C "$T/A" push -q -u origin main
 
@@ -44,15 +44,15 @@ myedit() {
 }
 
 GOVERN_BOOKKEEP_LOCK="$T/governor/.bookkeep.lock" \
-  govern::cas_edit "$T/A/validation/flows.md" myedit "chore(flows): stamp deploy.example"
+  govern::cas_edit "$T/A/.claude/shiploop/validation/flows.md" myedit "chore(flows): stamp deploy.example"
 
 # A's working tree carries our edit.
-assert_eq "$(GOVERN_FLOWS_FILE="$T/A/validation/flows.md" govern::flow_field deploy.example Status "$T/A/validation/flows.md")" "PASS" "cas_edit: local edit applied (Status→PASS)"
+assert_eq "$(GOVERN_FLOWS_FILE="$T/A/.claude/shiploop/validation/flows.md" govern::flow_field deploy.example Status "$T/A/.claude/shiploop/validation/flows.md")" "PASS" "cas_edit: local edit applied (Status→PASS)"
 
 # origin/main carries BOTH the concurrent commit AND our flows edit — proving the CAS retry replayed
 # our commit onto the moved main rather than clobbering or dropping either.
 V="$T/verify"; git clone -q "$T/origin.git" "$V"
-assert_contains "$(cat "$V/validation/flows.md")" "**Status:** PASS" "cas_edit: our edit reached origin/main"
+assert_contains "$(cat "$V/.claude/shiploop/validation/flows.md")" "**Status:** PASS" "cas_edit: our edit reached origin/main"
 assert_eq "$([[ -f "$V/other.txt" ]] && echo yes || echo no)" "yes" "cas_edit: concurrent driver's commit preserved on origin/main"
 # Exactly one linear history with both commits (no lost update).
 log="$(git -C "$V" log --oneline | tr '\n' '|')"
@@ -63,7 +63,7 @@ assert_contains "$log" "stamp deploy.example" "cas_edit: our commit in origin hi
 printf 'x\n' >> "$T/A/base.txt"; git -C "$T/A" add -A; git -C "$T/A" commit -q -m "drift" # move A's main ahead locally
 noedit() { govern::flow_set_field deploy.example Env local "$1"; }
 GOVERN_NO_PUSH=1 GOVERN_BOOKKEEP_LOCK="$T/governor/.bookkeep.lock" \
-  govern::cas_edit "$T/A/validation/flows.md" noedit "chore(flows): env"
-assert_eq "$(govern::flow_field deploy.example Env "$T/A/validation/flows.md")" "local" "cas_edit(NO_PUSH): local edit applied"
+  govern::cas_edit "$T/A/.claude/shiploop/validation/flows.md" noedit "chore(flows): env"
+assert_eq "$(govern::flow_field deploy.example Env "$T/A/.claude/shiploop/validation/flows.md")" "local" "cas_edit(NO_PUSH): local edit applied"
 
 assert_done

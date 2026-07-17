@@ -16,7 +16,7 @@ export GOVERN_NO_PUSH=1
 source "$DIR/../lib/common.sh"
 
 # Meta repo M with a sub-repo `backend`: c1 (SHA1) then c2 (SHA2) touching backend/src/app.txt.
-M="$T/meta"; mkdir -p "$M/validation"
+M="$T/meta"; mkdir -p "$M/.claude/shiploop/validation"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 mkdir -p "$M/backend/src"; git init -q "$M/backend"; git -C "$M/backend" config user.email ci@test; git -C "$M/backend" config user.name ci
 printf 'v1\n' > "$M/backend/src/app.txt"; git -C "$M/backend" add -A; git -C "$M/backend" commit -q -m c1
@@ -26,7 +26,7 @@ SHA2="$(git -C "$M/backend" rev-parse HEAD)"
 # The sweep targets refs/remotes/origin/main; set it directly to HEAD (==SHA2) without a real remote,
 # so a pin at SHA1 reads a backend/src/ change since-validated (STALE) and a pin at SHA2 reads clean.
 git -C "$M/backend" update-ref refs/remotes/origin/main "$SHA2"
-FLOWS="$M/validation/flows.md"
+FLOWS="$M/.claude/shiploop/validation/flows.md"
 status_of() { govern::flow_field "$1" Status "$FLOWS"; }
 
 seed() { # <status> [validated-sha] [extra-lines...]
@@ -39,7 +39,7 @@ seed() { # <status> [validated-sha] [extra-lines...]
 - **Status:** $st
 - **Validated:** 2026-07-01 · backend@${sha:0:7} · PR https://x/1
 - **Env:** prod
-- **Evidence:** validation/evidence/deploy.correctness.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy.correctness.md
 EOF
   for extra in "$@"; do printf -- '%s\n' "$extra" >> "$FLOWS"; done
 }
@@ -88,7 +88,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** PASS
 - **Validated:** 2026-07-01 · ghostrepo@deadbee · PR https://x/2
 - **Env:** prod
-- **Evidence:** validation/evidence/api.ghost.md
+- **Evidence:** .claude/shiploop/validation/evidence/api.ghost.md
 EOF
 GOVERN_FLOWS_SWEEP_META="$M" GOVERN_FLOWS_SWEEP_STALED="" govern::flows_sweep_file "$FLOWS" 2>/dev/null
 assert_eq "$(status_of api.ghost)" "PASS" "missing/un-cloned repo → cannot compute → status unchanged (not falsely fresh, not falsely stale)"
@@ -102,7 +102,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** PASS
 - **Validated:** 2026-07-01 · backend@${SHA1:0:7} ghostrepo@deadbee · PR https://x/3
 - **Env:** prod
-- **Evidence:** validation/evidence/multi.repo.md
+- **Evidence:** .claude/shiploop/validation/evidence/multi.repo.md
 EOF
 GOVERN_FLOWS_SWEEP_META="$M" GOVERN_FLOWS_SWEEP_STALED="" govern::flows_sweep_file "$FLOWS" 2>/dev/null
 assert_eq "$(status_of multi.repo)" "STALE" "present-repo change stales even when another mapped repo is missing (monotonic)"
@@ -124,7 +124,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** PASS
 - **Validated:** d · backend@${SHA2:0:7} · PR p
 - **Env:** prod
-- **Evidence:** validation/evidence/a.one.md
+- **Evidence:** .claude/shiploop/validation/evidence/a.one.md
 
 ## a.two
 - **Kind:** correctness
@@ -133,7 +133,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** STALE
 - **Validated:** d · backend@${SHA1:0:7} · PR p
 - **Env:** prod
-- **Evidence:** validation/evidence/a.two.md
+- **Evidence:** .claude/shiploop/validation/evidence/a.two.md
 
 ## a.three
 - **Kind:** correctness
@@ -149,7 +149,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** INEFFECTIVE
 - **Validated:** d · backend@${SHA1:0:7} · PR p
 - **Env:** prod
-- **Evidence:** validation/evidence/a.four.md
+- **Evidence:** .claude/shiploop/validation/evidence/a.four.md
 - **Disposition:** kill → removal PR pending
 EOF
 sum="$(govern::flows_status_summary "$M")"
@@ -169,7 +169,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** PASS
 - **Validated:** d · backend@${SHA2:0:7} · PR p
 - **Env:** prod
-- **Evidence:** validation/evidence/deploy.vastai.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy.vastai.md
 
 ## deploy.broad
 - **Kind:** correctness
@@ -178,7 +178,7 @@ cat > "$FLOWS" <<EOF
 - **Status:** PASS
 - **Validated:** d · backend@${SHA2:0:7} · PR p
 - **Env:** prod
-- **Evidence:** validation/evidence/deploy.broad.md
+- **Evidence:** .claude/shiploop/validation/evidence/deploy.broad.md
 
 ## unrelated.untested
 - **Kind:** correctness

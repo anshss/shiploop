@@ -61,7 +61,7 @@ Do not start other work — this is the only blocker."
 fi
 
 # --- validation-lint backstop: lint-validation-refs.sh guards TWO independent things — a dangling
-# `.claude/context/validation/*.md` reference (#252: a founder-os layout migration can DELETE a
+# `.claude/shiploop/validation/*.md` reference (#252: a founder-os layout migration can DELETE a
 # summary while `features.md`/`direction.md`/`CLAUDE.md` still cite it as proof) AND the `validation/`
 # flow-registry lint matrix (govern::flows_lint — glob/Evidence-ref/logs-path/PII checks). Surface it
 # at session end: blocking, and UNgated by the once-per-session marker below, so it nags until fixed.
@@ -69,7 +69,7 @@ fi
 #
 # This used to wrap EVERY failure in the #252 dangling-ref framing + founder-os remediation
 # ("git show <migration>^:<path>"), which misdiagnosed a FLOWS LINT FAIL (wrong path — this workspace
-# uses validation/, not .claude/context/validation/ — wrong cause, wrong fix). Branch on the lint's
+# uses validation/, not .claude/shiploop/validation/ — wrong cause, wrong fix). Branch on the lint's
 # own output shape instead of guessing: only the dangling-ref case gets that framing; anything else
 # (flows-lint glob/PII/logs-ref failures, or a future lint addition) surfaces the lint's real message
 # verbatim under a neutral wrapper.
@@ -79,8 +79,8 @@ if [ -x "$vlint" ]; then
   if ! lint_out="$("$vlint" "$MAIN" 2>&1)" && [ -n "${lint_out:-}" ]; then
     lint_flat="$(printf '%s' "$lint_out" | tr '\n' ' ')"
     case "$lint_out" in
-      *'DANGLING .claude/context/validation'*)
-        reason="A .claude/context/validation/*.md evidence summary is MISSING but still cited (#252): \
+      *'DANGLING .claude/shiploop/validation'*)
+        reason="A .claude/shiploop/validation/*.md evidence summary is MISSING but still cited (#252): \
 ${lint_flat} Fix now: restore the deleted summary (git show <migration>^:<path>) or correct the \
 reference, commit, then stop. A migration likely orphaned it. This is the only blocker."
         ;;
@@ -160,7 +160,7 @@ fi
 # (which deliberately runs without -e); empty on any failure, so the advisory simply degrades to
 # silence. The governor's persisting sweep records the actual STALE degrade later.
 flows_note=""
-if [ -f "$MAIN/validation/flows.md" ]; then
+if [ -f "$MAIN/.claude/shiploop/validation/flows.md" ]; then
   staled_ids="$(
     GOVERN_WS_ROOT="$MAIN" GOVERN_TICKETS_FILE="$MAIN/queue/tickets.md"
     export GOVERN_WS_ROOT GOVERN_TICKETS_FILE

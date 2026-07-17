@@ -10,11 +10,11 @@ command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "git/j
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T" "alpha"   # REPOS = (alpha web)
-mkdir -p "$T/governor" "$T/validation"
+mkdir -p "$T/governor" "$T/.claude/shiploop/validation"
 export GOVERN_NO_PUSH=1
 
 # Registry: a PASS flow mapped under alpha/src/pay/**.
-cat > "$T/validation/flows.md" <<'EOF'
+cat > "$T/.claude/shiploop/validation/flows.md" <<'EOF'
 ## checkout.pay
 - **Kind:** correctness
 - **Surface:** UI → alpha
@@ -22,7 +22,7 @@ cat > "$T/validation/flows.md" <<'EOF'
 - **Status:** PASS
 - **Validated:** 2026-07-01 · alpha@abc1234 · PR https://x/1
 - **Env:** prod
-- **Evidence:** validation/evidence/checkout.pay.md
+- **Evidence:** .claude/shiploop/validation/evidence/checkout.pay.md
 EOF
 
 printf 'DOCTRINE\n' > "$T/governor/preferences.md"

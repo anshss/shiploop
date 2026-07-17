@@ -14,14 +14,14 @@ export GOVERN_NO_PUSH=1
 source "$DIR/../lib/common.sh"
 
 # Meta repo M with a sub-repo `backend` that carries two commits (sha1 ancestor of sha2).
-M="$T/meta"; mkdir -p "$M/validation"
+M="$T/meta"; mkdir -p "$M/.claude/shiploop/validation"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 mkdir -p "$M/backend"; git init -q "$M/backend"; git -C "$M/backend" config user.email ci@test; git -C "$M/backend" config user.name ci
 printf 'v1\n' > "$M/backend/app.txt"; git -C "$M/backend" add -A; git -C "$M/backend" commit -q -m c1
 SHA1="$(git -C "$M/backend" rev-parse HEAD)"
 printf 'v2\n' >> "$M/backend/app.txt"; git -C "$M/backend" add -A; git -C "$M/backend" commit -q -m c2
 SHA2="$(git -C "$M/backend" rev-parse HEAD)"
-FLOWS="$M/validation/flows.md"
+FLOWS="$M/.claude/shiploop/validation/flows.md"
 
 seed_flows() {
   cat > "$FLOWS" <<EOF
@@ -50,7 +50,7 @@ assert_eq "$(status_of deploy.correctness)" "PASS" "resolve+correctness → PASS
 assert_contains "$(govern::flow_field deploy.correctness Validated "$FLOWS")" "backend@${SHA2:0:7}" "PASS: reachable SHA pinned"
 assert_contains "$(govern::flow_field deploy.correctness Validated "$FLOWS")" "PR https://github.com/acme/backend/pull/7" "PASS: PR-URL linkage"
 assert_eq "$(govern::flow_field deploy.correctness Env "$FLOWS")" "prod" "PASS: Env recorded"
-assert_eq "$([[ -f "$M/validation/evidence/deploy.correctness.md" ]] && echo yes)" "yes" "PASS: evidence summary promoted"
+assert_eq "$([[ -f "$M/.claude/shiploop/validation/evidence/deploy.correctness.md" ]] && echo yes)" "yes" "PASS: evidence summary promoted"
 
 # ── resolve + effectiveness, gatePassed=true → EFFECTIVE with measured; gate absent → MEASURING.
 rep_eff="$(jq -nc --arg s "$SHA2" '{status:"resolved",pr:{repo:"backend",number:8,url:"u8"},validation:{ranLiveTest:true,evidence:"A/B ran",environment:"prod",gatePassed:true,measured:"+12%, n=200",validatedShas:{backend:$s}}}')"
@@ -106,6 +106,6 @@ rep_pii="$(jq -nc --arg s "$SHA2" '{status:"resolved",pr:null,validation:{ranLiv
 if govern::flows_stamp_from_report "$rep_pii" resolve "deploy.correctness" "$M"; then rc=0; else rc=$?; fi
 assert_eq "$rc" "2" "PII in summary → return 2 (PARK signal)"
 assert_eq "$(status_of deploy.correctness)" "UNTESTED" "PII: flow NOT stamped"
-assert_eq "$([[ -f "$M/validation/evidence/deploy.correctness.md" ]] && echo yes || echo no)" "no" "PII: no orphaned summary left"
+assert_eq "$([[ -f "$M/.claude/shiploop/validation/evidence/deploy.correctness.md" ]] && echo yes || echo no)" "no" "PII: no orphaned summary left"
 
 assert_done
