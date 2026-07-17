@@ -1,5 +1,5 @@
 ---
-description: Inventory, inspect, and validate the user-facing flows your product exposes. `extract` fans out over the codebase to build the combinatorial list of paths a user might take that could break (staged for your approval, never auto-applied); `list` shows the registry grouped by proven / stale / untested / blocked; `file` queues governor validation tickets with a spend gate (resource-group batching, cheapest-first, --max-deploys, refuses billable batch runs without an orphan-sweep). The durable registry (validation/flows.md) always knows which paths are proven at HEAD, which went stale, which failed, and which measured ineffective.
+description: Inventory, inspect, and validate the user-facing flows your product exposes. `extract` fans out over the codebase to build the combinatorial list of paths a user might take that could break (staged for your approval, never auto-applied); `list` shows the registry grouped by proven / stale / untested / blocked; `file` queues governor validation tickets with a spend gate (resource-group batching, cheapest-first, --max-deploys, refuses billable batch runs without an orphan-sweep). The durable registry (.claude/shiploop/validation/flows.md) always knows which paths are proven at HEAD, which went stale, which failed, and which measured ineffective.
 allowed-tools: Bash, Read, Agent
 ---
 
@@ -11,13 +11,13 @@ allowed-tools: Bash, Read, Agent
 > copy is the fallback for a workspace that predates the flows feature; the playbook below is identical
 > in shape, but always run the workspace's own `scripts/govern/flows-*.sh`, never a hub path.
 
-Manage the **flow registry** (`validation/flows.md`) — the git-tracked inventory of user-reachable
+Manage the **flow registry** (`.claude/shiploop/validation/flows.md`) — the git-tracked inventory of user-reachable
 paths through the product, each keyed by a stable id and pinned to the code SHAs it was last validated
 at. `$ARGUMENTS` selects the subcommand: `extract` · `list` · `file <ids…|--all-stale|--all-untested>`.
 
 **Load-bearing division of labor:** the model (you) orchestrates and *inventories*; **all registry
 writes go through the `scripts/govern/flows-*.sh` scripts** (deterministic bash owns bookkeeping, under
-the same lock as the governor). You never hand-edit `validation/flows.md`.
+the same lock as the governor). You never hand-edit `.claude/shiploop/validation/flows.md`.
 
 Run from the workspace root (main checkout or a worktree). First learn the layout:
 `source scripts/lib/workspace.sh` (for `$REPOS`, `$GITHUB_ORG`).

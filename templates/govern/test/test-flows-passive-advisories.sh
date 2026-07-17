@@ -14,9 +14,9 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
 export GOVERN_NO_PUSH=1
 
-M="$T/meta"; mkdir -p "$M/validation" "$M/governor"
+M="$T/meta"; mkdir -p "$M/.claude/shiploop/validation" "$M/governor"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
-export GOVERN_FLOWS_FILE="$M/validation/flows.md"
+export GOVERN_FLOWS_FILE="$M/.claude/shiploop/validation/flows.md"
 source "$DIR/../lib/common.sh"
 FLOWS="$GOVERN_FLOWS_FILE"
 fld() { govern::flow_field "$1" "$2" "$FLOWS"; }

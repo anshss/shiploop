@@ -13,11 +13,11 @@ command -v git >/dev/null 2>&1 || { echo "git absent — skip"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/governor" "$T/queue" "$T/validation"
+mkdir -p "$T/governor" "$T/queue" "$T/.claude/shiploop/validation"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
 # Seed the flow registry with the flow this fixture job validates.
-cat > "$T/validation/flows.md" <<'EOF'
+cat > "$T/.claude/shiploop/validation/flows.md" <<'EOF'
 # Flow registry
 
 ## deploy.example
@@ -37,7 +37,7 @@ printf '# Tickets\n' > "$T/queue/tickets.md"
 
 export GOVERN_TICKETS_FILE="$T/queue/tickets.md" \
        GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-       GOVERN_FLOWS_FILE="$T/validation/flows.md" \
+       GOVERN_FLOWS_FILE="$T/.claude/shiploop/validation/flows.md" \
        GOVERN_BOOKKEEP_LOCK="$T/governor/.bookkeep.lock" \
        GOVERN_TICKET_SEQ_FILE="$T/governor/.ticket-seq" \
        GOVERN_NO_PUSH=1
@@ -49,12 +49,12 @@ VDIR="$T/logs/govern/validations"
 # ── (1) PASS: apply stamps the registry ──
 mkdir -p "$VDIR/val-deploy.example-1000"
 cat > "$VDIR/val-deploy.example-1000/status.jsonl" <<'EOF'
-{"ts":1050,"phase":"terminal","deploys":["dep-1"],"verdict":"PASS","evidence":"validation/evidence/deploy.example.md"}
+{"ts":1050,"phase":"terminal","deploys":["dep-1"],"verdict":"PASS","evidence":".claude/shiploop/validation/evidence/deploy.example.md"}
 EOF
 govern::valpending_emit "$VDIR/val-deploy.example-1000"
 govern::valpending_apply_one "$VDIR/val-deploy.example-1000" reader-a && applied1=yes || applied1=no
 assert_eq "$applied1" "yes" "apply_one applies a fresh PASS pending entry"
-assert_eq "$(govern::flow_field deploy.example Status "$T/validation/flows.md")" "PASS" "PASS apply stamps the flow registry Status field"
+assert_eq "$(govern::flow_field deploy.example Status "$T/.claude/shiploop/validation/flows.md")" "PASS" "PASS apply stamps the flow registry Status field"
 assert_eq "$(jq -r '.consumed' "$VDIR/val-deploy.example-1000/pending-result.json")" "true" "PASS apply marks the entry consumed"
 assert_eq "$(jq -r '.consumedBy' "$VDIR/val-deploy.example-1000/pending-result.json")" "reader-a" "consumedBy records which reader applied it"
 
@@ -65,7 +65,7 @@ assert_eq "$applied1b" "no" "apply_one on an already-consumed entry is a no-op (
 # ── (2) FAIL: apply files an escalation, never touches the registry ──
 mkdir -p "$VDIR/val-deploy.example-2000"
 cat > "$VDIR/val-deploy.example-2000/status.jsonl" <<'EOF'
-{"ts":2050,"phase":"terminal","deploys":["dep-2"],"verdict":"FAIL","evidence":"validation/evidence/deploy.example-run2.md"}
+{"ts":2050,"phase":"terminal","deploys":["dep-2"],"verdict":"FAIL","evidence":".claude/shiploop/validation/evidence/deploy.example-run2.md"}
 EOF
 govern::valpending_emit "$VDIR/val-deploy.example-2000"
 govern::valpending_apply_one "$VDIR/val-deploy.example-2000" reader-a && applied2=yes || applied2=no
@@ -77,7 +77,7 @@ assert_eq "$(jq -r '.consumed' "$VDIR/val-deploy.example-2000/pending-result.jso
 # ── (3) the load-bearing race: TWO readers apply the SAME terminal job concurrently ──
 mkdir -p "$VDIR/val-deploy.example-3000"
 cat > "$VDIR/val-deploy.example-3000/status.jsonl" <<'EOF'
-{"ts":3050,"phase":"terminal","deploys":["dep-3"],"verdict":"FAIL","evidence":"validation/evidence/deploy.example-run3.md"}
+{"ts":3050,"phase":"terminal","deploys":["dep-3"],"verdict":"FAIL","evidence":".claude/shiploop/validation/evidence/deploy.example-run3.md"}
 EOF
 govern::valpending_emit "$VDIR/val-deploy.example-3000"
 esc_before="$(grep -c '^### #' "$T/governor/escalations.md" || true)"
@@ -90,7 +90,7 @@ race_one() {
   local rc=0
   ( export GOVERN_TICKETS_FILE="$T/queue/tickets.md" \
            GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-           GOVERN_FLOWS_FILE="$T/validation/flows.md" \
+           GOVERN_FLOWS_FILE="$T/.claude/shiploop/validation/flows.md" \
            GOVERN_BOOKKEEP_LOCK="$T/governor/.bookkeep.lock" \
            GOVERN_TICKET_SEQ_FILE="$T/governor/.ticket-seq" \
            GOVERN_NO_PUSH=1 GOVERN_WS_ROOT="$T"

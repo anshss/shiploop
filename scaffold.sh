@@ -365,10 +365,10 @@ component_seeds() {
   [ -f queue/tickets-parked.md ] || cp "$T/seed/tickets-parked.md" queue/
   [ -f learnings.md ]            || cp "$T/seed/learnings.md" .
   [ -f CLAUDE.md ]               || cp "$T/seed/CLAUDE.md" .
-  # Flow registry (validations feature): validation/flows.md + the evidence sink dir. Never overwrite.
-  if [ ! -f validation/flows.md ] && [ -f "$T/seed/validation/flows.md" ]; then
-    mkdir -p validation/evidence/assets
-    cp "$T/seed/validation/flows.md" validation/flows.md
+  # Flow registry (validations feature): .claude/shiploop/validation/flows.md + the evidence sink dir. Never overwrite.
+  if [ ! -f .claude/shiploop/validation/flows.md ] && [ -f "$T/seed/.claude/shiploop/validation/flows.md" ]; then
+    mkdir -p .claude/shiploop/validation/evidence/assets
+    cp "$T/seed/.claude/shiploop/validation/flows.md" .claude/shiploop/validation/flows.md
   fi
   info "seeds present"
 }

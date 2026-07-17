@@ -13,9 +13,9 @@ command -v git >/dev/null 2>&1 || { echo "git absent — skip"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/governor" "$T/queue" "$T/validation"
+mkdir -p "$T/governor" "$T/queue" "$T/.claude/shiploop/validation"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
-cat > "$T/validation/flows.md" <<'EOF'
+cat > "$T/.claude/shiploop/validation/flows.md" <<'EOF'
 # Flow registry
 
 ## deploy.example
@@ -41,12 +41,12 @@ touch "$VDIR/val-comfyui.vastai-1000/heartbeat"
 mkdir -p "$VDIR/val-deploy.example-2000"
 cat > "$VDIR/val-deploy.example-2000/status.jsonl" <<'EOF'
 {"ts":2000,"phase":"provisioning","deploys":["dep-b1"],"verdict":null,"evidence":null}
-{"ts":2050,"phase":"terminal","deploys":["dep-b1"],"verdict":"PASS","evidence":"validation/evidence/deploy.example.md"}
+{"ts":2050,"phase":"terminal","deploys":["dep-b1"],"verdict":"PASS","evidence":".claude/shiploop/validation/evidence/deploy.example.md"}
 EOF
 
 export GOVERN_TICKETS_FILE="$T/queue/tickets.md" \
        GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-       GOVERN_FLOWS_FILE="$T/validation/flows.md" \
+       GOVERN_FLOWS_FILE="$T/.claude/shiploop/validation/flows.md" \
        GOVERN_BOOKKEEP_LOCK="$T/governor/.bookkeep.lock" \
        GOVERN_TICKET_SEQ_FILE="$T/governor/.ticket-seq" \
        GOVERN_WS_ROOT="$T" GOVERN_NO_PUSH=1
@@ -61,7 +61,7 @@ assert_contains "$out" "val-deploy.example-2000" "listing includes the terminal 
 assert_contains "$out" "TERMINAL=PASS" "terminal job shows its verdict instead of a heartbeat age"
 
 # The default (apply-on-list) pass already adopted job B's PASS this run.
-assert_contains "$(cat "$T/validation/flows.md")" "**Status:** PASS" \
+assert_contains "$(cat "$T/.claude/shiploop/validation/flows.md")" "**Status:** PASS" \
   "running the CLI end-to-end also adopted (stamped) the terminal PASS job on the way"
 assert_eq "$(jq -r '.consumed' "$VDIR/val-deploy.example-2000/pending-result.json")" "true" "the adopted job's pending entry is marked consumed"
 

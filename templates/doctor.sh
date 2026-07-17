@@ -220,9 +220,9 @@ fi
 
 # ── Flow registry — validation-flow status counts (validations feature) ──
 # One line per the design's doctor row: PASS-fresh / STALE / UNTESTED / … / pending-disposition. A
-# read-only count of validation/flows.md (no sweep, no network). Silent when the workspace carries no
+# read-only count of .claude/shiploop/validation/flows.md (no sweep, no network). Silent when the workspace carries no
 # registry (adopter scaffolded before the feature, or nothing registered yet).
-if [ -f "$ROOT/validation/flows.md" ] && [ -f "$ROOT/scripts/govern/lib/flows.sh" ]; then
+if [ -f "$ROOT/.claude/shiploop/validation/flows.md" ] && [ -f "$ROOT/scripts/govern/lib/flows.sh" ]; then
   section "flows"
   # flows.sh references WS_ROOT at source time; the summary itself takes an explicit meta arg and uses
   # only the pure awk/grep parser (no govern:: deps), so a bare flows.sh source is enough here.

@@ -9,7 +9,7 @@ command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "git/j
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/governor" "$T/validation"
+mkdir -p "$T/governor" "$T/.claude/shiploop/validation"
 export GOVERN_NO_PUSH=1
 source "$DIR/../lib/common.sh"
 
@@ -29,7 +29,7 @@ assert_eq "$(govern::ticket_flow_ids "$n1" "$T/tickets.md")" "deploy.correctness
 assert_eq "$(govern::ticket_flow_ids "$n2" "$T/tickets.md")" "a.b c.d" "ticket_flow_ids: comma-list → space-list"
 
 # ── spawn-worker: injects the FULL flow block + the flowIds reminder for a Flow ticket.
-cat > "$T/validation/flows.md" <<'EOF'
+cat > "$T/.claude/shiploop/validation/flows.md" <<'EOF'
 ## deploy.correctness
 - **Kind:** correctness
 - **Surface:** console UI → backend
@@ -68,12 +68,12 @@ assert_contains "$seen" "## deploy.correctness" "spawn-worker: injects the full 
 assert_contains "$seen" "(echo: deploy.correctness)" "spawn-worker: reminds the worker to echo flowIds"
 
 # ── govern-bookkeep: pre-captures Flow + stamps the registry PASS on resolve, and deletes the ticket.
-M="$T/m"; mkdir -p "$M/queue" "$M/validation" "$M/backend"
+M="$T/m"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/backend"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 git init -q "$M/backend"; git -C "$M/backend" config user.email ci@test; git -C "$M/backend" config user.name ci
 printf 'app\n' > "$M/backend/a.txt"; git -C "$M/backend" add -A; git -C "$M/backend" commit -q -m c1
 BSHA="$(git -C "$M/backend" rev-parse HEAD)"
-cat > "$M/validation/flows.md" <<'EOF'
+cat > "$M/.claude/shiploop/validation/flows.md" <<'EOF'
 ## deploy.correctness
 - **Kind:** correctness
 - **Surface:** UI → backend
@@ -92,8 +92,8 @@ git -C "$M" add -A; git -C "$M" commit -q -m seed
 rep="$(jq -nc --arg s "$BSHA" '{status:"resolved",pr:{repo:"backend",number:3,url:"https://github.com/acme/backend/pull/3"},newTickets:[],validation:{ranLiveTest:true,evidence:"drove real deploy; PASS",environment:"prod",validatedShas:{backend:$s}}}')"
 printf '%s' "$rep" | GOVERN_TICKETS_FILE="$M/queue/tickets.md" GOVERN_GOVERNOR_DIR="$M/governor" \
   GOVERNOR_DIR="$M/governor" "$DIR/../govern-bookkeep.sh" 12 >/dev/null 2>&1
-assert_eq "$(govern::flow_field deploy.correctness Status "$M/validation/flows.md")" "PASS" "bookkeep: stamped the flow PASS on resolve"
-assert_contains "$(govern::flow_field deploy.correctness Validated "$M/validation/flows.md")" "backend@${BSHA:0:7}" "bookkeep: pinned the validated SHA"
+assert_eq "$(govern::flow_field deploy.correctness Status "$M/.claude/shiploop/validation/flows.md")" "PASS" "bookkeep: stamped the flow PASS on resolve"
+assert_contains "$(govern::flow_field deploy.correctness Validated "$M/.claude/shiploop/validation/flows.md")" "backend@${BSHA:0:7}" "bookkeep: pinned the validated SHA"
 if grep -q "^## #12" "$M/queue/tickets.md"; then del=1; else del=0; fi
 assert_eq "$del" "0" "bookkeep: deleted the resolved ticket block"
 

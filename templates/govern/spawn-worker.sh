@@ -169,7 +169,7 @@ $_fb
   if [[ -n "$flow_blocks" ]]; then
     prompt="$prompt
 
-## Flow(s) this ticket validates (from validation/flows.md)
+## Flow(s) this ticket validates (from .claude/shiploop/validation/flows.md)
 This is a flow-registry validation. Drive the REAL path for each flow below (rule #12), then in your
 report's \`validation\` object record: \`validatedShas\` (map each mapped sub-repo folder → its
 \`git rev-parse HEAD\` at validation time), \`environment\` (\"local\"|\"prod\"), \`gatePassed\`
@@ -184,7 +184,7 @@ elif command -v govern::flows_matching_paths >/dev/null 2>&1; then
   # tokens in the ticket block (its "Where:" area); flows whose mapped globs overlap them are surfaced
   # most-specific first, capped. Silent when nothing overlaps (the common case) — zero context cost then.
   _flow_meta="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
-  if [[ -f "$_flow_meta/validation/flows.md" && ${#REPOS[@]} -gt 0 ]]; then
+  if [[ -f "$_flow_meta/.claude/shiploop/validation/flows.md" && ${#REPOS[@]} -gt 0 ]]; then
     _repo_alt="$(printf '%s|' "${REPOS[@]}")"; _repo_alt="${_repo_alt%|}"
     # Extract distinct `<repo>/<path>` tokens the ticket names (dedup, order-stable).
     _cand_paths="$(printf '%s' "$block" \
@@ -196,7 +196,7 @@ elif command -v govern::flows_matching_paths >/dev/null 2>&1; then
       if [[ -n "$_stale_flows" ]]; then
         prompt="$prompt
 
-## Heads-up — flows your change may STALE (validation/flows.md)
+## Heads-up — flows your change may STALE (.claude/shiploop/validation/flows.md)
 This is NOT a validation ticket, but your change touches paths mapped by these currently-validated
 flow(s): ${_stale_flows}. That's expected — the governor's staleness sweep will mark them STALE
 automatically once your PR lands; you do NOT need to re-validate them here. Noted only so a later
