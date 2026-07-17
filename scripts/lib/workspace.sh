@@ -48,7 +48,7 @@ SLOT_PORT_STEP=10                    # port offset per worktree slot
 
 # Where worktrees live: $WORKTREE_BASE/<name>/ (a sibling of the main checkout
 # so editor/file-watchers don't index it as a subdir of the workspace).
-WORKTREE_BASE="${WORKTREE_BASE:-/Users/anshs/Folder/code/shiploop.wt}"   # e.g. $HOME/code/aquanode.wt
+WORKTREE_BASE="${WORKTREE_BASE:-$HOME/Folder/code/worktrees/shiploop.wt}"
 
 # ── Governor (autonomous ticket loop) ───────────────────────────────────────
 # Repos the governor may AUTO-MERGE once CI is green-or-no-checks. Everything
