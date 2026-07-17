@@ -108,7 +108,7 @@ What makes the top rung safe to reach for:
 - **Bounded blast radius** — workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
 - **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
 
-Cost, observed: **~623.9k output tokens (~$0.54) per resolved ticket** on `claude-opus-4-7` workers, scaling roughly linearly with ticket complexity — that's the opus-only baseline; right-sizing pushes it down. `config-check.sh` is the only truly free smoke ($0, no auth); `/shiploop:govern --dry-run` runs a real worker in plan mode — zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
+Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34–$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate — see **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample skews `opus`-heavy on self-referential harness tickets; right-sizing (haiku/sonnet on tickets that don't need opus) pushes it down. `config-check.sh` is the only truly free smoke ($0, no auth); `/shiploop:govern --dry-run` runs a real worker in plan mode — zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## Commands
 
@@ -153,7 +153,7 @@ Devin, Cursor, Copilot, and Claude Code all do one task you hand them well. ship
 
 ## Proof
 
-400+ tickets auto-found and resolved on the maintainer's production multi-repo product. The harness audits, fixes, and releases *itself* through the same loop — every governor edge case found in the field ports back into these templates with a regression test, and the hermetic suite goes RED in CI before a breaking change can merge. A sanitized public evidence artifact (auto-merge acceptance rate, per-tier cost) is on the roadmap.
+281 tickets auto-found and resolved on the maintainer's production multi-repo product, of 290 governor-authored PRs merged — 0 confirmed reverts. The harness audits, fixes, and releases *itself* through the same loop — every governor edge case found in the field ports back into these templates with a regression test, and the hermetic suite goes RED in CI before a breaking change can merge. See **[PROOF.md](PROOF.md)** for the full sanitized evidence artifact: auto-merge/human-merge split, revert rate, cost-per-ticket distribution, and the exact re-runnable queries behind every number.
 
 ## Contributing
 
