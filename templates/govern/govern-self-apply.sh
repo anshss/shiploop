@@ -20,7 +20,10 @@ RUNDIR="${1:?run dir required}"
 [[ "${GOVERN_SELF_APPLY:-0}" == "1" ]] || { govern::log "self-apply: disabled (GOVERN_SELF_APPLY=1 to enable)"; exit 0; }
 
 ALLOWED="scripts/govern/select-ticket.sh scripts/govern/await-ci.sh scripts/govern/merge-pr.sh scripts/govern/spawn-worker.sh scripts/govern/run-loop.sh scripts/govern/dry-run.sh"
-PROTECTED_PATTERNS='GOVERN_MERGE_REPOS|is_merge_repo|bypassPermissions|GOVERN_PERMISSION_MODE|permflag=|setting-sources|GOVERN_MAX_TICKETS|GOVERN_MAX_BAD_STREAK|GOVERN_MAX_RUNTIME|GOVERN_SELF_APPLY|destructive|"green" \|\| '
+# Shared safety-rail knob identifiers (GOVERN_PROTECTED_PATTERNS, defined in common.sh — #331) PLUS
+# this lane's own diff-shape guards: `destructive` and the merge-gate `"green" ||` clause, which are
+# meaningful only in a code diff (not in triage's natural-language proposal lines) so they stay local.
+PROTECTED_PATTERNS="${GOVERN_PROTECTED_PATTERNS}|destructive|\"green\" \\|\\| "
 
 cd "$WS_ROOT"
 # Refuse to run on a dirty harness tree (don't entangle the agent's edits with anything else).

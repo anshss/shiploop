@@ -584,69 +584,82 @@ component_settings_merge() {
     return 0
   fi
   local root="$WORKSPACE_DIR"
-  # Reference stanzas — same commands as component_settings. jq --argjson pulls
-  # each in as a value; the pipeline walks .hooks.<event> and appends the
-  # harness stanza IFF no existing matcher entry mentions a harness-script name.
-  local session_start user_prompt pre_tool stop session_end
-  session_start=$(cat <<EOF
-{ "matcher": "*", "hooks": [
-  { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
-  { "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 },
-  { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 },
-  { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
-] }
+  # Individual harness hook commands — same commands as component_settings, but each carries its OWN
+  # script marker and is checked + appended INDIVIDUALLY per event. The old design tested ONE marker
+  # alternation for the whole event and skipped the ENTIRE event if ANY marker matched — so a NEWLY
+  # introduced hook (e.g. validations-pending-hook.sh added after an install already had
+  # session-snapshot.sh) never got appended to an existing settings.json. Per-hook checking fixes that:
+  # a hook lands iff its own marker is absent, and re-running is idempotent (all markers then present).
+  local ss_snap ss_learn ss_main ss_val up_reminder pt_guard stop_hook se_cleanup
+  ss_snap=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 }
 EOF
 )
-  user_prompt=$(cat <<EOF
-{ "matcher": "*", "hooks": [
-  { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
-] }
+  ss_learn=$(cat <<EOF
+{ "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 }
 EOF
 )
-  pre_tool=$(cat <<EOF
-{ "matcher": "Read|Bash", "hooks": [
-  { "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
-] }
+  ss_main=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
 EOF
 )
-  stop=$(cat <<EOF
-{ "matcher": "*", "hooks": [
-  { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
-] }
+  ss_val=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
 EOF
 )
-  session_end=$(cat <<EOF
-{ "matcher": "*", "hooks": [
-  { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
-] }
+  up_reminder=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
 EOF
 )
-  # Marker substrings — if ANY of these appear in an existing event's hooks[].command,
-  # we treat that event as already-wired for the harness and leave it alone.
-  # (One marker per event; a single match is enough to skip.)
+  pt_guard=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
+EOF
+)
+  stop_hook=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
+EOF
+)
+  se_cleanup=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
+EOF
+)
+  # Spec: per event, the matcher + the desired hooks each keyed by its own script marker. wire appends
+  # ONLY the hooks whose marker is absent from that event's existing commands (grouped under the
+  # matcher), so a fresh install gets one full stanza per event while an existing install gains only
+  # the newly-missing hooks.
+  local spec
+  spec=$(jq -n \
+    --argjson ss_snap "$ss_snap" --argjson ss_learn "$ss_learn" \
+    --argjson ss_main "$ss_main" --argjson ss_val "$ss_val" \
+    --argjson up "$up_reminder" --argjson pt "$pt_guard" \
+    --argjson sp "$stop_hook" --argjson se "$se_cleanup" \
+    '[
+      {event:"SessionStart", matcher:"*", items:[
+        {marker:"session-snapshot\\.sh",         hook:$ss_snap},
+        {marker:"learnings\\.md",                hook:$ss_learn},
+        {marker:"check-main-on-main\\.sh",       hook:$ss_main},
+        {marker:"validations-pending-hook\\.sh", hook:$ss_val}
+      ]},
+      {event:"UserPromptSubmit", matcher:"*",         items:[{marker:"router-posture-reminder\\.sh", hook:$up}]},
+      {event:"PreToolUse",       matcher:"Read|Bash", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
+      {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
+      {event:"SessionEnd",       matcher:"*",         items:[{marker:"session-end-cleanup\\.sh",     hook:$se}]}
+    ]') || die "settings-merge: failed to build hook spec (jq error)"
   local jq_prog
   jq_prog=$(cat <<'JQ'
-def wire(event; markers; stanza):
-  .hooks[event] as $existing
-  | if ($existing // []) | tostring | test(markers) then . else
-      .hooks[event] = (($existing // []) + [stanza])
-    end;
-.
-| (if .hooks == null then .hooks = {} else . end)
-| wire("SessionStart";     "session-snapshot\\.sh|check-main-on-main\\.sh|validations-pending-hook\\.sh"; $ss)
-| wire("UserPromptSubmit"; "router-posture-reminder\\.sh";                   $up)
-| wire("PreToolUse";       "router-posture-guard\\.sh";                      $pt)
-| wire("Stop";             "ticket-sweep-reminder\\.sh";                     $sp)
-| wire("SessionEnd";       "session-end-cleanup\\.sh";                       $se)
+def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
+reduce $spec[] as $e (
+  (if .hooks == null then .hooks = {} else . end);
+  event_cmds($e.event) as $have
+  | ($e.items | map(. as $it | select(($have | test($it.marker)) | not) | $it.hook)) as $missing
+  | if ($missing | length) == 0 then .
+    else .hooks[$e.event] = ((.hooks[$e.event] // []) + [ {matcher: $e.matcher, hooks: $missing} ])
+    end
+)
 JQ
 )
   local tmp; tmp="$(mktemp)"
-  if jq --argjson ss "$session_start" \
-        --argjson up "$user_prompt" \
-        --argjson pt "$pre_tool" \
-        --argjson sp "$stop" \
-        --argjson se "$session_end" \
-        "$jq_prog" "$target" > "$tmp"; then
+  if jq --argjson spec "$spec" "$jq_prog" "$target" > "$tmp"; then
     if ! diff -q "$target" "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$target"
       info "merged harness hook stanzas into $target"
