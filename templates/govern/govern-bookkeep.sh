@@ -31,11 +31,21 @@ trap 'govern::lock_release "$BK_LOCK"' EXIT
 # checkout's push — only an origin sync can. Guarded + non-fatal: skipped without an origin
 # (local-only / test repo) and under GOVERN_NO_PUSH=1. ff-pull is the happy path; if local main
 # carries unpushed append-only bookkeep/filing commits (diverged), rebase them rather than give up.
+# #370: `-c rebase.autoStash=true` so a CO-TENANT session's unrelated dirty tracked files (e.g.
+# .claude/context/** WIP) never block this rebase — git transiently stashes them, rebases, then
+# restores them byte-identically. This does NOT mask a GENUINE content conflict (both sides edited
+# tickets.md/escalations.md): that still fails the rebase and falls through to the reconcile-manually
+# log line, unchanged.
+# #377: the rebase runs through govern::pull_rebase_autostash so the OVERLAPPING-same-file case — origin
+# advancing a govern SCRIPT a co-tenant is concurrently editing — can NEVER wedge the shared index. That
+# case's autostash POP conflicts but git STILL exits 0 (only a warning), leaving unmerged index entries;
+# the old `|| { rebase --abort; }` fallback never fired (rc 0) and every later git add/commit failed
+# "unmerged files". The helper detects the rc-0-but-unmerged wedge and recovers (local main IS synced;
+# co-tenant WIP parked in the preserved stash, never touched). A genuine conflict still returns 1 → log.
 if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$commit_dir" remote get-url origin >/dev/null 2>&1; then
   git -C "$commit_dir" pull --ff-only origin main >/dev/null 2>&1 \
-    || git -C "$commit_dir" pull --rebase origin main >/dev/null 2>&1 \
-    || { git -C "$commit_dir" rebase --abort >/dev/null 2>&1 || true
-         govern::log "bookkeep #$N: pre-edit ff-pull AND rebase-pull failed — local main diverged from origin/main; reconcile manually ('git pull --rebase origin main && git push') before the next ticket"; }
+    || govern::pull_rebase_autostash "$commit_dir" \
+    || govern::log "bookkeep #$N: pre-edit ff-pull AND rebase-pull failed — local main diverged from origin/main; reconcile manually ('git pull --rebase origin main && git push') before the next ticket"
 fi
 
 # 0b. Capture the ticket TITLE before the block is deleted (#252) — the promoted validation
@@ -194,11 +204,17 @@ pr="$(printf '%s' "$report" | jq -r '
   # claim lock (#41) guarantees a concurrent push is a DIFFERENT ticket's block, so there's no
   # overlap to conflict on. Guarded + non-fatal: a pure no-op without an origin (local-only / test
   # repo) or under GOVERN_NO_PUSH=1; exhausting all retries logs one clear reconcile message.
+  # #370/#377: the rebase runs through govern::pull_rebase_autostash — same coexistence rationale as
+  # the pre-edit sync above. A co-tenant's dirty tracked files never block this retry loop; an
+  # OVERLAPPING-same-file autostash-pop conflict (rc 0 + unmerged index) is detected and recovered
+  # (our commit is already rebased onto origin/main → the next push is a fast-forward; co-tenant WIP is
+  # parked in the preserved stash, untouched); and a genuine tickets.md content conflict still returns
+  # 1 → break → the retries-exhausted log below.
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     pushed=0
     for _attempt in 1 2 3 4 5; do
       if git push origin HEAD:main >/dev/null 2>&1; then pushed=1; break; fi
-      git pull --rebase origin main >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1 || true; break; }
+      govern::pull_rebase_autostash "$commit_dir" || break
     done
     if [[ "$pushed" != "1" ]]; then
       govern::log "bookkeep #$N: push to origin/main failed after 5 rebase-retries — local main now ahead/diverged; reconcile ('git pull --rebase origin main && git push') before the next ticket."

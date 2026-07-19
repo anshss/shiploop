@@ -69,13 +69,16 @@ if [[ "$behind" != "0" ]] && [[ -n "$(git -C "$d" status --porcelain 2>/dev/null
   # them. Committing locally turns a behind-only state into diverged, so recompute ahead/behind
   # afterwards. Each pathspec is best-effort: a path that isn't dirty is a harmless no-op.
   ( cd "$d"
+    _pf_paths=()
     for p in governor/improvements.md governor/.ticket-seq governor/escalations.md governor/pending-escalations.json; do
-      git add -- "$p" 2>/dev/null || true
+      git add -- "$p" 2>/dev/null && _pf_paths+=("$p") || true
     done
-    # Commit whatever the loop just staged; a bare `git commit -m ...` (no `-- <paths>`)
-    # avoids the git-pathspec-does-not-match error that would abort the whole commit if any
-    # allowlist path was clean. At run-start nothing else should be staged, so scope stays tight.
-    git commit -q -m "chore(govern): commit uncommitted runtime artifacts before reconcile (preflight self-heal #111)" 2>/dev/null || true
+    # #375 sweep-guard: commit ONLY the allowlist paths that exist (pathspec), never a bare
+    # `git commit`. The old "at run-start nothing else should be staged" assumption is FALSE in a
+    # shared checkout — a co-tenant's staged .claude/context WIP was present and a bare commit swept
+    # it onto origin/main (incident 2026-07-17). Pathspec-scoping is structurally sweep-proof and
+    # still tolerates a clean allowlist path (git just omits it; `|| true` covers "nothing to commit").
+    [[ ${#_pf_paths[@]} -gt 0 ]] && git commit -q -m "chore(govern): commit uncommitted runtime artifacts before reconcile (preflight self-heal #111)" -- "${_pf_paths[@]}" 2>/dev/null || true
   ) || true
   govern::log "preflight: committed uncommitted governor runtime artifacts so the rebase isn't blocked (#111 self-heal)"
   read -r behind ahead < <(git -C "$d" rev-list --left-right --count origin/main...HEAD 2>/dev/null || echo "0	0")

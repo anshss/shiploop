@@ -302,7 +302,11 @@ govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is miss
     [[ -e "$_f" ]] && _addfiles+=("$_f")
   done
   git add -- "${_addfiles[@]}" 2>/dev/null || true
-  git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize ${n_ext}, rules ${n_rule})" || true
+  # #375 sweep-guard: commit ONLY the governor's own paths. A bare pathspec-less `git commit` here
+  # committed the ENTIRE staged index — in a shared checkout a co-tenant's staged .claude/context WIP
+  # got swept onto origin/main under this message (incident 2026-07-17). Scope to "${_addfiles[@]}"
+  # (the exact files staged just above) so it is structurally incapable of it.
+  [[ ${#_addfiles[@]} -gt 0 ]] && git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize ${n_ext}, rules ${n_rule})" -- "${_addfiles[@]}" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"

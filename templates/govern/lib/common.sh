@@ -92,6 +92,17 @@ govern::is_selfref_repo() { # repo -> 0 if self-referential (harness/templates),
   local r="$1" x; for x in $GOVERN_SELFREF_REPOS; do [[ "$r" == "$x" ]] && return 0; done; return 1
 }
 
+# Shared safety-rail knob identifiers (#331). govern-self-apply.sh and govern-improve-triage.sh both
+# need to recognize the same protected knobs; keeping the list in ONE place stops a rail added to one
+# but not the other from leaving the knob unprotected in the other:
+#   • govern-self-apply.sh greps the applied DIFF (case-sensitively) for these + its own diff-shape
+#     guards (`destructive`, the merge-gate `"green" ||` clause).
+#   • govern-improve-triage.sh greps each PROPOSAL LINE (case-INsensitively) for these + the
+#     human-readable rail PHRASES the improve-reviewer writes ("auto-merge", "hard-stop", …).
+# Only genuinely shared knob names live here; each script appends its own extras (see there). Alternation
+# for `grep -E`; every token is a literal identifier (no regex metachars), so it composes safely with `|`.
+GOVERN_PROTECTED_PATTERNS='GOVERN_MERGE_REPOS|is_merge_repo|bypassPermissions|GOVERN_PERMISSION_MODE|permflag|setting-sources|GOVERN_MAX_TICKETS|GOVERN_MAX_BAD_STREAK|GOVERN_MAX_RUNTIME|GOVERN_SELF_APPLY'
+
 govern::log() { printf '[govern %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 govern::die() { printf '[govern ERROR] %s\n' "$*" >&2; exit 1; }
 
@@ -142,6 +153,11 @@ govern::assert_commit_dir() { # <dir>
 govern::escalations_open_ndjson() { # [escalations-file]
   local file="${1:-$ESCALATIONS_FILE}"
   [[ -f "$file" ]] || return 0
+  # #331: a NEW entry heading requires the `— ` title separator every writer emits (file_open_escalation
+  # + run-loop's park block both print `### #N — <title>`). A bare `### #42` ref an operator pastes into
+  # a multi-line Reason/Answer body therefore is NOT mistaken for a new entry. Then validate each emitted
+  # object with jq before it reaches any caller, so a jesc-escaping regression can't silently ship
+  # malformed NDJSON (a bad line is dropped with a stderr warning rather than corrupting a consumer's jq).
   awk '
     function jesc(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\t/,"\\t",s); gsub(/\r/,"",s); return s }
     function flush(){
@@ -154,7 +170,7 @@ govern::escalations_open_ndjson() { # [escalations-file]
     BEGIN{ in_open=0; have=0 }
     /^## Open/ { if(in_open) flush(); in_open=1; next }
     /^## /     { if(in_open) flush(); in_open=0; next }
-    in_open && /^### +#[0-9]+/ {
+    in_open && /^### +#[0-9]+ +— / {
       flush(); have=1
       t=$0; sub(/^### +#/,"",t); sub(/[^0-9].*/,"",t)
       title=$0; sub(/^### +#[0-9]+[^A-Za-z0-9]*/,"",title)
@@ -172,7 +188,23 @@ govern::escalations_open_ndjson() { # [escalations-file]
       else if (match(line,/^- \*\*Make this a rule\?:\*\* ?/)) rule=substr(line,RLENGTH+1)
     }
     END{ if(in_open) flush() }
-  ' "$file"
+  ' "$file" | govern::_ndjson_validate
+}
+
+# Pass through only lines that parse as one JSON object; warn + drop anything malformed. jq is already a
+# hard dependency of every escalations_open_ndjson consumer, but degrade safe if it's somehow absent
+# (pass the raw stream through) rather than blanking every entry. #331.
+govern::_ndjson_validate() {
+  if ! command -v jq >/dev/null 2>&1; then cat; return 0; fi
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if printf '%s\n' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      printf '%s\n' "$line"
+    else
+      printf '[govern WARN] escalations parser dropped malformed NDJSON: %s\n' "$line" >&2
+    fi
+  done
 }
 
 # Is an Answer/Disposition field still the unfilled placeholder (or empty)?  The
@@ -779,6 +811,52 @@ govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   ' "$f"
 }
 
+# govern::sync_port_collision_tickets — tickets that touch a file with an OPEN
+# sync-port manual-port escalation (#314). Each open `sync-port:` escalation carries a
+# structured `- **Files:** <space-separated live paths>` line (written by sync-port.sh's
+# file_sync_escalation) naming the harness files whose port is mid-flight on a `sync-auto-*`
+# branch. Selecting a ticket that edits one of those exact paths THIS run risks colliding
+# with that in-progress manual port (the #309 sync-port-branch collision the supervisor
+# caught only by reading both by hand). Exclude such a ticket the same way
+# not_automatable_tickets() does — it stays in tickets.md and becomes selectable again the
+# moment the sync-port escalation resolves (branch merged, entry moves out of `## Open`).
+# Match is on the FULL path token as written in the Files line (substring within the ticket
+# block), so a ticket that merely mentions a bare basename does not false-collide.
+# Emits "N\t<first colliding path>" lines (tab-separated), like not_automatable_tickets.
+govern::sync_port_collision_tickets() { # [tickets-file] [escalations-file] -> "N\tpath" lines
+  local tf="${1:-$TICKETS_FILE}" ef="${2:-$ESCALATIONS_FILE}"
+  # -s on the escalations file: an EMPTY escalations file would collapse the two-file FNR==NR
+  # split (NR never advances), mis-parsing the first ticket line — and it can carry no collisions
+  # anyway, so short-circuit.
+  [[ -f "$tf" && -s "$ef" ]] || return 0
+  # Single two-file pass (escalations THEN tickets) — carries the path set in an awk array so it
+  # survives BSD awk (no newline-bearing -v allowed). First file builds PATH_SET from every OPEN
+  # sync-port escalation's Files: line; second file emits N\t<path> for the first path a ticket
+  # block contains.
+  awk '
+    FNR==NR {
+      if ($0 ~ /^## Open/)     { in_open=1; next }
+      if ($0 ~ /^## Resolved/) { in_open=0; next }
+      if ($0 ~ /^## /)         { in_open=0; next }
+      if (in_open && $0 ~ /^### +#[0-9]+/) { is_sync=($0 ~ /sync-port:/); next }
+      if (in_open && is_sync && $0 ~ /^- \*\*Files:\*\*/) {
+        line=$0; sub(/^- \*\*Files:\*\* */,"",line)
+        n=split(line, a, /[ \t]+/)
+        for (i=1;i<=n;i++) if (a[i]!="") PATH_SET[a[i]]=1
+      }
+      next
+    }
+    /^##[[:space:]]+#[0-9]+/ {
+      if (cur!="" && hit!="") printf "%s\t%s\n", cur, hit
+      cur=$0; sub(/^##[[:space:]]+#/,"",cur); sub(/[^0-9].*/,"",cur); hit=""; next
+    }
+    cur!="" && hit=="" {
+      for (p in PATH_SET) if (index($0,p)>0) { hit=p; break }
+    }
+    END { if (cur!="" && hit!="") printf "%s\t%s\n", cur, hit }
+  ' "$ef" "$tf"
+}
+
 # ── chronically-skipped NA tickets → permanent-disposition nudge (#120) ──────
 # The #92 selector auto-skips a "NOT govern-automatable" ticket every run — correct, but on its own
 # the ticket churns a skip note forever and never leaves the live queue. We persist a per-ticket
@@ -1181,14 +1259,25 @@ govern::pr_state() { # repo pr -> STATE|""
 # code — no caller ever needed it; re-add it with a stub test the day a real caller does.)
 
 # Dependency numbers a ticket DECLARES via a body line like `**Depends on:** #K` (or `Depends on: #K,
-# #J`). Prints one bare number per declared dep (deduped order-preserving). Reads #N's block only —
-# bounded by the next `## #` heading — so a later ticket's deps never leak in. Reads $2 (def TICKETS_FILE).
+# #J`), PLUS implicit deps declared FROM THE OTHER SIDE: any OTHER ticket whose body carries a
+# `**Blocks:** #N, #M` line naming this ticket is treated as an implicit blocker (#N "blocks" this
+# ticket ⇒ this ticket "depends on" #N). This lets a single blocker declare the edge once instead of
+# every dependent having to add its own `**Depends on:**` marker (#309). Prints one bare number per
+# dep (deduped order-preserving). The `**Depends on:**` scan reads #N's block only — bounded by the
+# next `## #` heading — so a later ticket's declared deps never leak in; the `**Blocks:**` scan reads
+# every OTHER block (that's the point) but only emits a blocker when its Blocks line names #N exactly
+# (numeric compare, so #12 never matches #1). Reads $2 (def TICKETS_FILE).
 govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
   local n="$1" f="${2:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
   awk -v n="$n" '
-    $0 ~ ("^##[[:space:]]+#" n "([^0-9]|$)") { inblk=1; next }
-    inblk && /^##[[:space:]]+#[0-9]+/        { inblk=0 }
+    # Track the number of the ticket block currently being scanned, so a **Blocks:** line can be
+    # attributed to the blocker ticket that declares it. `cur == n` ⇔ we are inside #N own block.
+    match($0, /^##[[:space:]]+#[0-9]+/) {
+      cur=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", cur)
+      inblk=(cur==n); next
+    }
+    # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block.
     inblk {
       low=tolower($0)
       if (low ~ /depends[ \t]+on/) {
@@ -1199,6 +1288,56 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
         }
       }
     }
+    # (B) implicit deps from a BLOCKER: another ticket #cur declaring a `**Blocks:** ... #N ...` line.
+    # Matched on the BOLD marker (`**Blocks:**` / `**Blocks**`) or a line-leading `Blocks:` — NOT the
+    # bare word "blocks", which shows up in prose far more than "depends on" does (e.g. "this blocks
+    # the deploy flow") and would falsely link tickets. Only fires when the marker line names #N
+    # exactly. `cur != n` skips #N own `**Blocks:**` (that names its dependents, not its blockers);
+    # `cur != ""` guards the preamble before the first heading.
+    cur != n && cur != "" {
+      low=tolower($0)
+      if (low ~ /\*\*blocks:?\*\*/ || low ~ /^[[:space:]]*blocks:/) {
+        s=$0; names_n=0
+        while (match(s,/#[0-9]+/)) {
+          if (substr(s,RSTART+1,RLENGTH-1)==n) names_n=1
+          s=substr(s,RSTART+RLENGTH)
+        }
+        if (names_n && !seen[cur]++) print cur
+      }
+    }
+  ' "$f"
+}
+
+# Non-blocking lint (#309): a ticket that states a dependency in PROSE ("depends on #N", "blocked by
+# #N", "blocks #N") but carries NO canonical bold marker (`**Depends on:**` / `**Blocks:**`) anywhere
+# in its block. Such a prose-only edge is invisible to the pre-spawn dependency gate
+# (govern::ticket_deps), so the dependent stays freely selectable — the exact #308/#306/#307 miss that
+# a supervisor had to flag by hand. Prints one warning line per offending ticket (empty when clean);
+# advisory only — the operator canonicalizes to the bold marker; never gates selection. Conservative:
+# a block with ANY bold marker is suppressed (a second, differently-targeted prose edge is not
+# re-flagged), trading recall for near-zero false positives. Reads $1 (def TICKETS_FILE).
+govern::prose_dep_warnings() { # [tickets-file] -> "#N: prose dependency '<phrase>' has no marker" lines
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  awk '
+    function flush() {
+      if (cur != "" && prose != "" && !marker)
+        print "#" cur ": prose dependency \x27" prose "\x27 has no **Depends on:**/**Blocks:** marker"
+    }
+    match($0, /^##[[:space:]]+#[0-9]+/) {
+      flush()
+      cur=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", cur)
+      prose=""; marker=0; next
+    }
+    cur != "" {
+      low=tolower($0)
+      # a canonical bold marker anywhere in the block suppresses the warning for the whole block.
+      if (low ~ /\*\*depends on/ || low ~ /\*\*blocks/) { marker=1; next }
+      # informal phrase: a dep verb directly followed by whitespace + #N (records the first only).
+      if (prose=="" && match(low, /(depends on|blocked by|blocks)[ \t]+#[0-9]+/))
+        prose=substr($0, RSTART, RLENGTH)
+    }
+    END { flush() }
   ' "$f"
 }
 
@@ -1317,6 +1456,66 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   return 1
 }
 
+# ── autostash-pop-safe `pull --rebase` for the shared main checkout (#377) ──────────────────────
+# Three call sites run `git -c rebase.autoStash=true pull --rebase origin main` in the SHARED main
+# checkout: govern-bookkeep.sh's pre-edit origin sync (step 0) and its push-CAS retry loop (step 4),
+# plus commit_meta_to_main's push loop. #370 added autostash so a co-tenant Claude session's UNRELATED
+# dirty tracked files (e.g. .claude/context/** WIP) never block the rebase. That handles a
+# NON-overlapping dirty tree. But when origin/main advances a file the co-tenant is CONCURRENTLY
+# editing (SAME file+region — e.g. a merged spawn-worker.sh change vs the flows-feature WIP), the
+# rebase itself succeeds (it only replays OUR append-only meta diffs) yet the autostash POP hits a real
+# content conflict. Critically, git reports that pop conflict as a mere WARNING and STILL EXITS 0
+# ("Applying autostash resulted in conflicts. Your changes are safe in the stash … Successfully
+# rebased and updated refs/heads/main." — verified git 2.50), while leaving the SHARED index with
+# UNMERGED entries and the autostash PRESERVED. So the old `pull --rebase … || { rebase --abort; }`
+# fallback NEVER fires (rc 0) and `rebase --abort` would be a no-op anyway (the rebase already
+# completed; the pop is a separate step). Every later `git add`/`git commit`/`git pull` in the shared
+# checkout then fails "you have unmerged files" → the checkout is WEDGED (#377, incident 2026-07-17:
+# a merge collided with co-tenant flows WIP → several tickets false-FAILED and got parked).
+#
+# This wrapper runs that exact command but NEVER leaves the shared checkout wedged, distinguishing:
+#   • fast-forward / clean rebase / clean autostash pop  → return 0 (fully synced)
+#   • GENUINE rebase CONTENT conflict on a meta file (rc  → rebase left in progress; abort (restores
+#     ≠0, both sides edited tickets.md/escalations.md)      the autostash), return 1 — caller logs
+#                                                            reconcile-manually, exactly as before
+#   • conflicted autostash POP (rc 0, unmerged index, a   → the rebase SUCCEEDED, so local main IS
+#     freshly-preserved stash)                              already on origin/main; only the pop wedged
+#                                                            the tree. Reset tracked files to the
+#                                                            post-rebase HEAD and leave the co-tenant
+#                                                            WIP UNTOUCHED in the preserved stash for
+#                                                            THEM to reconcile (we never hand-merge
+#                                                            someone else's code), warn, return 0.
+# The `reset --hard HEAD` is provably non-destructive here: it runs ONLY after confirming a NEW stash
+# entry holds the co-tenant delta (autostash never stashes untracked files, which reset --hard also
+# never removes). If that stash is somehow absent, it does NOT reset — it fails closed (return 1) so
+# un-stashed work is never discarded. Never force-pushes. Call from anywhere (uses `git -C`).
+govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine-conflict-or-unsafe
+  local d="$1" pre_stash post_stash unmerged
+  pre_stash="$(git -C "$d" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+  if ! git -C "$d" -c rebase.autoStash=true pull --rebase origin main >/dev/null 2>&1; then
+    # rc ≠ 0 → the rebase itself failed (genuine content conflict, left in progress). Fail closed
+    # exactly like the pre-#377 fallback: abort (this also restores the autostash) and signal caller.
+    git -C "$d" rebase --abort >/dev/null 2>&1 || true
+    return 1
+  fi
+  # rc 0. The rebase completed — but a conflicted autostash pop is only a warning (still rc 0), so
+  # inspect the index directly. No unmerged entries → clean pop (or nothing was stashed) → synced.
+  unmerged="$(git -C "$d" ls-files --unmerged 2>/dev/null | head -1)"
+  [[ -z "$unmerged" ]] && return 0
+  # Unmerged after a SUCCESSFUL rebase ⟹ the autostash pop conflicted. Confirm a freshly-preserved
+  # stash holds the co-tenant delta before touching the tree — only then is the reset non-destructive.
+  post_stash="$(git -C "$d" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+  if [[ -n "$post_stash" && "$post_stash" != "$pre_stash" ]]; then
+    git -C "$d" reset -q --hard HEAD >/dev/null 2>&1 || true
+    govern::log "pull_rebase_autostash: origin advanced a file a co-tenant is concurrently editing; the autostash pop conflicted. Local main IS synced to origin/main; the co-tenant's uncommitted WIP is preserved in \`git stash\` (top entry) — recover it with 'git stash pop' and resolve the conflict. The governor did NOT touch or merge it (#377)."
+    return 0
+  fi
+  # Unmerged index but no recoverable stash (should be unreachable: an autostash pop is the only way
+  # `pull --rebase` yields rc 0 + unmerged, and that always leaves the stash). Do NOT reset --hard —
+  # un-stashed work could be lost. Fail closed so the caller logs reconcile-manually.
+  return 1
+}
+
 # ── commit a tracked meta/runtime file to main (ported from harness #111 via #112) ──────────────
 # Stage ONE tracked meta/runtime file, commit it (pathspec-scoped — never sweeps up unrelated staged
 # changes), and publish to origin/main, keeping local main == origin/main. Used by the WRITER of a
@@ -1328,6 +1527,15 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
 # #105 ff-only/no-force invariant that test-no-force-push.sh locks). Guarded + non-fatal — no-op
 # outside a git repo or when there's nothing to commit; commits locally but skips the push under
 # GOVERN_NO_PUSH=1 or with no origin (tests / offline). Always returns 0.
+# #370: the retry-loop's `pull --rebase` runs with `-c rebase.autoStash=true` so a co-tenant
+# session's unrelated dirty tracked files (e.g. .claude/context/** WIP) never block it — git
+# transiently stashes/restores them byte-identically around the rebase. A genuine content conflict
+# on $rel itself still fails the rebase (autostash only covers UNRELATED dirty files) and falls
+# through to the abort + break, unchanged.
+# #377: the rebase is done through govern::pull_rebase_autostash so an OVERLAPPING-same-file autostash
+# POP conflict (origin advanced a file a co-tenant is editing) can NEVER wedge the shared index — that
+# case is rc 0 but leaves unmerged entries, which the helper detects and recovers (co-tenant WIP parked
+# in the preserved stash). A genuine content conflict on $rel still returns 1 → abort + break, unchanged.
 # Usage: govern::commit_meta_to_main <repo-dir> <relpath> <msg>
 govern::commit_meta_to_main() {
   local d="$1" rel="$2" msg="$3" _a
@@ -1339,7 +1547,7 @@ govern::commit_meta_to_main() {
     if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
       for _a in 1 2 3 4 5; do
         git push origin HEAD:main >/dev/null 2>&1 && break
-        git pull --rebase origin main >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1 || true; break; }
+        govern::pull_rebase_autostash "$d" || break
       done
     fi )
   return 0
