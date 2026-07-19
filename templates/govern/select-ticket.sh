@@ -30,6 +30,14 @@ while IFS=$'\t' read -r na_n _; do
   [[ -n "$na_n" ]] && exclude+="${na_n},"
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 
+# #314: drop tickets that edit a file with an OPEN sync-port manual-port escalation — selecting
+# one this run risks colliding with that in-progress port's `sync-auto-*` branch/worktree (the
+# #309 collision). They stay in tickets.md (selectable once the sync-port escalation resolves);
+# the loop logs the why (this script's stderr is suppressed).
+while IFS=$'\t' read -r sp_n _; do
+  [[ -n "$sp_n" ]] && exclude+="${sp_n},"
+done < <(govern::sync_port_collision_tickets "$TICKETS_FILE" "$ESCALATIONS_FILE")
+
 # Parse tickets into "sev num" rows. sev: 1=High 2=Medium 3=Low 4=unknown.
 rows=()
 current=""; sev=4

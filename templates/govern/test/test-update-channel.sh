@@ -114,6 +114,25 @@ n1=$(grep -c 'session-snapshot' <<<"$merged")
 n2=$(grep -c 'session-snapshot' <<<"$merged2")
 assert_eq "$n1" "$n2" "6. idempotent (no duplicate stanzas on re-run)"
 
+# ── 6b. a NEWLY-introduced hook lands on an install whose event already has SOME harness hooks ──
+# Regression: the old whole-event marker test skipped SessionStart entirely if ANY marker matched, so
+# validations-pending-hook.sh (added after an install already carried session-snapshot.sh) never
+# appended. Per-hook checking must add the missing hook WITHOUT duplicating the sibling already there.
+W3b="$ROOT/ws3b"; mkdir -p "$W3b/.claude"
+cat > "$W3b/.claude/settings.json" <<'EOF'
+{ "hooks": { "SessionStart": [ { "matcher": "*", "hooks": [
+  { "type": "command", "command": "bash SOMEROOT/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
+  { "type": "command", "command": "bash SOMEROOT/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
+] } ] } }
+EOF
+bash "$SCAFFOLD" --workspace-dir "$W3b" --templates "$TEMPLATES" \
+   --pm npm --org testorg --repos "alpha::echo alpha" --merge-allowlist "" \
+   --worktree-base "$W3b.wt" --component settings-merge >>/tmp/scaf-w3.log 2>&1
+merged3="$(cat "$W3b/.claude/settings.json")"
+assert_contains "$merged3" "validations-pending-hook.sh" "6b. newly-introduced SessionStart hook appended despite an existing sibling"
+assert_eq "$(grep -c 'session-snapshot' <<<"$merged3")" "1" "6b. pre-existing sibling hook not duplicated"
+assert_contains "$merged3" "router-posture-reminder.sh" "6b. an entirely-missing event is still wired"
+
 # ── 7. relocations.txt hit → --verify prints stale-relocated warning ───────
 W4="$ROOT/ws4"
 cp -R "$W1" "$W4"

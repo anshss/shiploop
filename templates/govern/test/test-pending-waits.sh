@@ -61,6 +61,45 @@ deps="$(govern::ticket_deps 1 "$HT/tickets.md" | tr '\n' ',')"
 assert_eq "$deps" "2," "ticket_deps parses '**Depends on:** #2' for #1 (no #12 bleed)"
 assert_eq "$(govern::ticket_deps 2 "$HT/tickets.md" | tr '\n' ',')" "" "ticket #2 declares no deps"
 
+# #309 — implicit deps from a blocker's `**Blocks:** #N, #M` line: a blocker declares the edge once,
+# and each named dependent inherits it WITHOUT its own `**Depends on:**` marker.
+BT="$(mktemp -d)"
+cat > "$BT/tickets.md" <<'EOF'
+# Tickets
+---
+## #6 — dependent, no marker of its own
+**Severity:** Low — x.
+body6
+---
+## #7 — also blocked by #8, no marker
+**Severity:** Low — y.
+body7
+---
+## #8 — the blocker, declares the edge for both
+**Severity:** Low — z.
+**Blocks:** #6, #7
+body8
+---
+## #60 — digit-boundary decoy (must NOT match #6)
+**Severity:** Low — b.
+body60
+---
+## #9 — declares its own dep the classic way
+**Severity:** Low — a.
+**Depends on:** #8
+body9
+---
+## #11 — prose 'blocks' decoy, NOT the bold marker
+**Severity:** Low — this ticket blocks #6 in prose but carries no bold marker, so must NOT link.
+body11
+EOF
+assert_eq "$(govern::ticket_deps 6 "$BT/tickets.md" | tr '\n' ',')" "8," "ticket_deps: #6 inherits #8 via '**Blocks:** #6, #7' (bold marker only, prose #11 ignored)"
+assert_eq "$(govern::ticket_deps 7 "$BT/tickets.md" | tr '\n' ',')" "8," "ticket_deps: #7 inherits #8 via the same Blocks line"
+assert_eq "$(govern::ticket_deps 8 "$BT/tickets.md" | tr '\n' ',')" "" "ticket_deps: blocker #8 has no deps of its own (its Blocks names dependents, not blockers)"
+assert_eq "$(govern::ticket_deps 60 "$BT/tickets.md" | tr '\n' ',')" "" "ticket_deps: #60 does NOT match #8's '#6' (exact numeric compare, no digit-boundary bleed)"
+assert_eq "$(govern::ticket_deps 9 "$BT/tickets.md" | tr '\n' ',')" "8," "ticket_deps: declared '**Depends on:** #8' still works alongside Blocks propagation"
+rm -rf "$BT"
+
 # csv_remove
 assert_eq "$(govern::csv_remove "1,3,5" 3)" "1,5" "csv_remove drops the middle element"
 assert_eq "$(govern::csv_remove "7" 7)" "" "csv_remove empties a singleton"
