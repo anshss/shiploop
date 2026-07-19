@@ -1,9 +1,39 @@
 # Changelog
 
-## 1.10.0 — 2026-07-17
+## 1.10.0 — 2026-07-19
 
 The validation-sink relocation release: the governor-owned validation sink moved out of the
-co-tenant `.claude/context/` namespace to a dedicated `.claude/shiploop/validation/`.
+co-tenant `.claude/context/` namespace to a dedicated `.claude/shiploop/validation/`, plus a
+hand-port of the live-forward governor mechanisms from the reference instance.
+
+### Added
+
+- **Live-forward governor mechanisms ported from the reference instance** (#387 hand-port). The
+  automated porter escalated because the drift is bidirectional — the templates are ahead on some
+  files while the reference instance carries forward-improvements interwoven in the same files — so
+  this is a surgical per-mechanism port: additive, genericized, and scoped to the listed mechanisms
+  only (the template-only `harness_repo_slugs`/`is_harness_repo`/`harness_pr_verify` are preserved).
+  - **Single `GOVERN_PROTECTED_PATTERNS` SSOT** in `common.sh` — self-apply and improve-triage now
+    source it instead of each carrying its own list. Adds `_ndjson_validate`, and the escalations
+    parser now requires the `— ` title separator and jq-validates every emitted object, so a `### #N`
+    body reference no longer starts a spurious entry.
+  - **`govern::sync_port_collision_tickets`** — excludes tickets touching a file that has an OPEN
+    sync-port escalation; wired into `select-ticket.sh`.
+  - **Implicit ticket dependencies** — `ticket_deps` now honors a blocker's `**Blocks:** #N` line,
+    plus `govern::prose_dep_warnings`; wired into `lint-tickets.sh`.
+  - **`govern::pull_rebase_autostash`** — recovers the rc-0-but-unmerged overlapping autostash-pop
+    wedge; call sites switched in `commit_meta_to_main` and `govern-bookkeep.sh` (pre-edit sync +
+    push-CAS retry).
+  - **Co-tenant-safe commits** — `preflight-main.sh` and `escalations-apply-answers.sh` commit ONLY
+    governor paths via pathspec, never a bare `git commit` that could sweep co-tenant staged WIP.
+  - **`scaffold.sh` settings-merge is now per-hook** — each hook is checked and appended
+    individually per event, so a newly-introduced hook (e.g. `validations-pending-hook.sh`) lands on
+    an existing install even when a sibling hook is already wired (previously the whole event was
+    skipped). Still idempotent.
+  - `spawn-worker.sh` PR footer prefix → "🤖 shipped by".
+  - Coupled tests ported alongside: `test-escalation-body-ref`, `test-lint-prose-deps`,
+    `test-bookkeep-overlap-autostash-pop`, `test-select-ticket`, `test-pending-waits`,
+    `test-update-channel`.
 
 ### Changed
 
