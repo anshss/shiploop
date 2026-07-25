@@ -167,30 +167,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #18 — Add reasoning effort as a first-class sizing knob (GOVERN_WORKER_EFFORT + ticket Effort: field)
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: shiploop/templates/govern/spawn-worker.sh + scripts/govern/spawn-worker.sh (model/effort assembly, ~lines 60-80 dry-run block and ~285-315 live block); shiploop/templates/govern/file-ticket.sh + scripts/govern/file-ticket.sh (flag parsing, ~lines 36-66); queue/tickets.md + shiploop/templates/seed/tickets.md ("Optional per-ticket fields" section, ~lines 22-31)
-
-Observed: model tier and reasoning effort are INDEPENDENT controls, but shiploop only ever sets the model (`--model "$model"` at spawn-worker.sh:410). Every worker therefore runs at the session-default effort, and there is no rung on the ladder between "sonnet" and "opus at ~3.5x the price on the dominant cacheRead line". Raising effort is far cheaper than raising tier, so the correct escalation ladder raises effort BEFORE tier — impossible today because the knob does not exist.
-
-Fix direction:
-(1) Add `GOVERN_WORKER_EFFORT` (values: low|medium|high|xhigh|max; default preserves today's behavior when unset — i.e. pass no effort flag at all rather than inventing a default).
-(2) Add an `**Effort:**` optional per-ticket field, parsed exactly like the existing `**Model:**` field (case-insensitive, markdown-emphasis-tolerant, anchored to the ticket's leading field block — mirror the existing extraction at spawn-worker.sh:38-41). Unknown values are dropped with a warning, fail-safe, same as Model:.
-(3) Add `--effort <tier>` to file-ticket.sh alongside the existing `--model`/`--flow`/`--flow-op` flags.
-(4) Document `Effort:` in the "Optional per-ticket fields" block of BOTH queue/tickets.md and shiploop/templates/seed/tickets.md, next to the existing Model: entry.
-(5) Log the resolved effort in the same log line that already reports the resolved model and its source.
-
-IMPORTANT: verify how the installed `claude` CLI actually accepts a reasoning-effort argument before wiring it (check `claude --help`). If the CLI exposes no such flag in this environment, implement the field + plumbing but make the spawn a no-op pass-through and say so explicitly in the PR description rather than inventing a flag that does not exist.
-
-Done when: GOVERN_WORKER_EFFORT and a ticket `Effort:` field both resolve and are logged with their source; `--effort` files a ticket carrying the field; both tickets.md files document it; unknown values fail safe; default behavior is unchanged when nothing is set; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S1
-
----
-
 ## #19 — Log the sizing DECISION (model/effort/attempt) alongside the cost already recorded, and fix null capture
 
 **Severity:** Medium
