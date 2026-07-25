@@ -66,6 +66,8 @@ One incidental note: one background research agent's output was flagged by the h
 
 ## 2026-07-25 06:25 — run run-20260725-053951 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 06:25:** 4 safe proposal(s) → ticket **#36**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 No `ExitPlanMode` tool is available in this session, so I'll deliver the required GOVERN-IMPROVE output directly (findings saved to `/Users/anshs/.claude/plans/govern-improve-you-are-reviewing-piped-moth.md`).
 
 I checked `governor/improvements.md` first — the same #9/#11/#30 friction was already reviewed once today (05:53 run) and produced three not-yet-ticketed proposals (open-ticket digest for the reviewer, a dedup-before-filing check in `govern-improve-triage.sh`, and a same-`Where:`-file lint). Re-proposing those would itself be the anti-pattern under review, so this covers only gaps those don't close, verified directly against the code:
