@@ -467,6 +467,11 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 # none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers.
 strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && strict_mcp=""
 
+# Disable slash commands: workers never invoke /skills or /slashes, so loading the full
+# command surface wastes baseline context. ~2,600 tokens saved per turn. Set GOVERN_WORKER_SLASH_COMMANDS=1
+# to restore (e.g., if worker prompt instructs slash-command invocation).
+disable_slash_cmds="--disable-slash-commands"; [[ "${GOVERN_WORKER_SLASH_COMMANDS:-0}" == "1" ]] && disable_slash_cmds=""
+
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
 effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
@@ -574,7 +579,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
-    $strict_mcp \
+    $strict_mcp $disable_slash_cmds \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
