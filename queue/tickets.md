@@ -189,3 +189,20 @@ Done when: the hub worker-prompt.md carries the router-posture section with the 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W1
 
 ---
+
+## #16 — Add a per-attempt token budget kill switch for workers (only wall-clock exists today)
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: shiploop/templates/govern/spawn-worker.sh (hub) + scripts/govern/spawn-worker.sh (workspace); knob documented alongside GOVERN_WORKER_TIMEOUT
+
+Observed: the only ceiling on a worker is `GOVERN_WORKER_TIMEOUT` (default 3600s wall clock, spawn-worker.sh ~line 321). There is NO token ceiling. A worker that wanders can burn 22M+ tokens before the wall clock stops it (governor/ticket-history.jsonl: tickets #3 and #6 each ~22M tokens / ~$9.7). This is also the missing safety rail that would make cheap-tier-first sizing safe: without a bounded probe, a haiku attempt that is out of its depth costs a full session before anyone finds out.
+
+Fix direction: add `GOVERN_WORKER_MAX_TOKENS` (suggest a conservative default, and 0 = unlimited to preserve current behavior for anyone who wants it). The worker is launched at spawn-worker.sh ~line 406 as `claude -p ... ` with output teed to a per-run JSONL; that JSONL carries cumulative usage. Monitor it (same supervision loop that already enforces the wall-clock timeout and kills the process tree) and terminate the attempt when cumulative tokens exceed the budget. Record the termination reason distinctly from a wall-clock timeout — `budget-exceeded` must be a distinguishable outcome, because ticket #(S3, evidence-based escalation) needs to tell "ran out of budget while still exploring" apart from other failures in order to escalate the right axis.
+
+Done when: GOVERN_WORKER_MAX_TOKENS is honored and documented; exceeding it kills the worker process tree exactly like the existing timeout path; the outcome is recorded with a distinct `budget-exceeded` reason in the worker report and state.jsonl; default preserves existing behavior for anyone who does not set it; `bash -n` passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W2
+
+---
