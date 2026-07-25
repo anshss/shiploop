@@ -39,7 +39,7 @@ Given that design, in scope for a security report:
 
 - Anything that causes the governor to **auto-merge a PR it should not** — e.g. a PR from an author who is not the governor's own login, a PR from a cross-owner fork, a PR whose head branch does not match the governor's branch pattern. The three-factor guard lives in `templates/govern/lib/common.sh` (`govern::pr_automerge_allowed`, merged in PR #32); a way around it is in scope.
 - Anything that causes the governor or a worker to **execute code from an untrusted source** — a crafted ticket, PR body, or CI payload that ends up as an argument to `bash -c`, a template substitution, or a shell interpolation the harness performs.
-- Anything that causes the governor to **spend beyond its documented bounds** without operator action — bypassing `GOVERN_MAX_TICKETS`, `GOVERN_MAX_RUNTIME`, `GOVERN_WORKER_TIMEOUT`, or `GOVERN_MAX_BAD_STREAK`.
+- Anything that causes the governor to **spend beyond its documented bounds** without operator action — bypassing `GOVERN_MAX_TICKETS`, `GOVERN_MAX_RUNTIME`, `GOVERN_WORKER_TIMEOUT`, `GOVERN_WORKER_MAX_TOKENS`, or `GOVERN_MAX_BAD_STREAK`.
 - Anything that lets a workspace file (ticket, PR body, worker report) **exfiltrate secrets** the operator did not intend to expose — the governor reads `governor/preferences.md`, worker reports, ticket bodies; a channel from any of those to the outside world through the governor's own actions is in scope.
 - Escaping the throwaway worktree in a way the harness's own machinery (worktree registry, session cleanup, port isolation) is meant to prevent.
 - Command injection, path traversal, or shell metacharacter handling in any script under `scaffold.sh`, `templates/`, `install.sh`, or a template hook.
