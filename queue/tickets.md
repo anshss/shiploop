@@ -425,27 +425,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #27 — Supervisor re-sends the full run history on every pass — make it incremental
-
-**Severity:** Low
-**Model:** sonnet
-
-Where: shiploop/templates/govern/govern-supervise.sh + scripts/govern/govern-supervise.sh (context assembly, ~lines 15-24)
-
-Observed: the supervisor is fed `recent="$(cat "$RUNDIR/state.jsonl")"` — the FULL run history — plus up to GOVERN_SUPERVISOR_BLOCKS_LINES (default 500) lines of open ticket blocks plus 40 lines of escalations, on EVERY pass. At the default GOVERN_SUPERVISOR_EVERY=5, a 20-ticket run fires the supervisor 4 times and re-sends the same (and steadily growing) text each time. queue/tickets.md alone is currently ~146 lines and sits entirely under the 500-line cap, so it is fed whole every pass.
-
-Note the full-history behavior was a DELIBERATE fix — the code comment says "give the supervisor the FULL run history (not tail -8 — it was blind to most of the run)". So this ticket is NOT "go back to tailing". The supervisor must not lose visibility.
-
-Fix direction: make the supervisor's context incremental without reintroducing blindness — e.g. pass the previous pass's own summary/verdict plus only the state.jsonl entries added since that pass, so each call sees an accurate cumulative picture without re-sending raw history it has already reviewed. The prior verdict carries forward the earlier context in compressed form.
-
-Also consider trimming the open-ticket blocks to the ones actually relevant to the current run rather than the whole queue, if that can be done without hiding an ordering risk from the supervisor (surfacing ordering risks across the whole queue is part of its job — verify before narrowing).
-
-Done when: a supervisor pass no longer re-sends run history it has already reviewed; cumulative visibility is preserved (the supervisor can still reason about the whole run, via the carried-forward summary); the regression the full-history fix was made to prevent does not return — state explicitly in the PR how that is guaranteed; `bash -n` passes; hub and workspace copies stay in sync.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component X1
-
----
-
 ## #28 — --dry-run leaves a real ticket claim lock behind, blocking the next live run
 
 **Severity:** Medium
