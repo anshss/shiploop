@@ -16,13 +16,20 @@
 # and can never be clobbered.
 #
 # Usage:
-#   scripts/govern/file-ticket.sh [--model haiku|sonnet|opus] "Short title" [Severity] < body.md
+#   scripts/govern/file-ticket.sh [--model haiku|sonnet|opus] [--effort low|medium|high|xhigh|max] \
+#     "Short title" [Severity] < body.md
 #   printf 'Where: ...\nObserved: ...\nDone when: ...\n' | scripts/govern/file-ticket.sh "Title" Low
 #
 # --model pins the model the governor uses for THIS ticket's FIRST-attempt worker (any retry
 # escalates to GOVERN_WORKER_MODEL unconditionally). The brain filing the ticket decides —
 # haiku for mechanical/single-file work, sonnet for standard search+edit, opus for
 # judgment-heavy tickets. Unknown values are dropped with a warning (fail-safe).
+#
+# --effort pins the reasoning effort for THIS ticket's FIRST-attempt worker (same
+# first-attempt-only / retry-escalates-away rule as --model, via the ticket's Effort: field —
+# see spawn-worker.sh). Raising effort is far cheaper than raising model tier, so it's the
+# correct first rung on the escalation ladder. Unknown values are dropped with a warning
+# (fail-safe). Absent → no Effort: field is emitted, so the governor passes no --effort flag.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -34,11 +41,13 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
 model_field=""
+effort_field=""
 flow_field=""
 flow_op_field=""
-# --model, --flow, --flow-op may appear in any order before the title. --flow <id[,id…]> tags this
-# ticket as a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the
-# registry. --flow-op remove marks it a KILL removal ticket (bookkeep tombstones the flow on resolve).
+# --model, --effort, --flow, --flow-op may appear in any order before the title. --flow <id[,id…]>
+# tags this ticket as a flow-registry validation; spawn-worker injects the flow block(s) and
+# bookkeep stamps the registry. --flow-op remove marks it a KILL removal ticket (bookkeep
+# tombstones the flow on resolve).
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --model)
@@ -46,6 +55,13 @@ while [[ "${1:-}" == --* ]]; do
         haiku|sonnet|opus) model_field="$2" ;;
         "") govern::die "--model requires a value (haiku|sonnet|opus)" ;;
         *) govern::log "file-ticket: unknown model tier '$2' — ignoring (allowlist: haiku|sonnet|opus)" ;;
+      esac
+      shift 2 ;;
+    --effort)
+      case "${2:-}" in
+        low|medium|high|xhigh|max) effort_field="$2" ;;
+        "") govern::die "--effort requires a value (low|medium|high|xhigh|max)" ;;
+        *) govern::log "file-ticket: unknown effort tier '$2' — ignoring (allowlist: low|medium|high|xhigh|max)" ;;
       esac
       shift 2 ;;
     --flow)
@@ -75,6 +91,12 @@ body="$(cat)"
 model_block=""
 if [[ -n "$model_field" ]]; then
   model_block="**Model:** $model_field
+"
+fi
+# Effort: field (parallel to Model: — an INDEPENDENT knob, NOT a reuse of the model plumbing).
+# Emitted in the same leading field block so spawn-worker's anchored latch can read it.
+if [[ -n "$effort_field" ]]; then
+  model_block="${model_block}**Effort:** $effort_field
 "
 fi
 # Flow: field (parallel to Model: — NOT a reuse of the model plumbing). Emitted in the same leading
