@@ -29,6 +29,15 @@ the top one, then deletes it on resolve. Keep entries in the shape below so the 
   first-shot bet, never a retry ceiling. Unknown values are ignored (fail-safe). File with
   `scripts/govern/file-ticket.sh --model sonnet "..."`.
 
+- **`Effort:`** — pin the reasoning effort the governor uses for THIS ticket's worker (first attempt
+  only). Values: `low` · `medium` · `high` · `xhigh` · `max`. An INDEPENDENT knob from `Model:` —
+  raising effort is far cheaper than raising model tier, so it's the correct first rung on the
+  escalation ladder before reaching for a bigger model. If absent, the governor uses
+  `GOVERN_WORKER_EFFORT`; if that's also unset, no `--effort` flag is passed at all (the worker runs
+  at the CLI's session-default effort — unchanged from before this field existed). Same
+  first-attempt-only / retry-escalates-away rule as `Model:`. Unknown values are ignored (fail-safe).
+  File with `scripts/govern/file-ticket.sh --effort high "..."`.
+
 ---
 
 ## #1 — Example ticket (delete me)
