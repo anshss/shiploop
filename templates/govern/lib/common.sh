@@ -1248,13 +1248,15 @@ govern::pr_state() { # repo pr -> STATE|""
   gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
 }
 
-# NOTE (#116) — if you ever need to RETARGET an open PR's base branch here (e.g. a dependency-reorder
-# in select-ticket.sh, or a base reconciliation after preflight-main.sh moves origin/main under an
-# in-flight PR), do NOT use `gh pr edit --base`. On these repos it resolves the PR through gh's GraphQL
-# `projectCards` query, which now hard-fails with `GraphQL: Projects (classic) is being deprecated …
-# (repository.pullRequest.projectCards)` and leaves the base UNCHANGED — silently, since the rest of
-# the edit still succeeds. Use the REST endpoint, which takes no projectCards and applies reliably:
+# NOTE (#116) — if you ever need to MUTATE an open PR here (retarget its base branch after a
+# dependency-reorder in select-ticket.sh or a preflight-main.sh base reconciliation; rewrite a body),
+# do NOT use `gh pr edit` at all. It resolves the PR through gh's GraphQL `projectCards` query, which
+# now hard-fails with `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+# `--base` fails SILENTLY (base left UNCHANGED, rest of the edit still succeeds); `--body`/`--title`
+# fail LOUDLY with the same error and apply nothing. Use the REST endpoint, which takes no
+# projectCards and applies reliably:
 #     gh api -X PATCH "repos/$(govern::repo_slug "$repo")/pulls/$pr" -f "base=$new_base"
+#     gh api -X PATCH "repos/$(govern::repo_slug "$repo")/pulls/$pr" -F body=@body.md
 # (A `govern::retarget_pr_base` helper implementing exactly this was removed 2026-07-06 as unused dead
 # code — no caller ever needed it; re-add it with a stub test the day a real caller does.)
 
