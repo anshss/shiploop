@@ -692,3 +692,26 @@ Done when: each safe proposal above is implemented via a harness PR or explicitl
 Ref: governor/improvements.md block "2026-07-25 12:12 — run run-20260725-111730-97043 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
+
+## #51 — Harness self-improvement: promote safe proposals from run-20260725-120551-43436
+
+**Severity:** Low
+
+⚠ possible duplicate of #9
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-120551-43436. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `scripts/govern/lint-tickets.sh`: add a non-blocking WARN pass (alongside the existing duplicate-heading check) that validates every `**Depends on:** #N` / `**Blocks:** #N` / `Ref: #N` pointer resolves to a `## #N` heading still present in `queue/tickets.md` — why: #36 and #39 (this run's own promoted tickets) both propose "add `Depends on: #35` to #33 and #34," but #33/#34 no longer exist in the open queue; nothing today would have caught either proposal referencing a closed ticket, so the same stale-reference mistake will keep recurring silently.
+- `scripts/govern/file-ticket.sh`: extend the existing title-word-overlap duplicate check (which only compares the new ticket's title against other `## #N` headings) to also compare its `Where:`/target-file text against every open ticket's `Where:` field, and when two open tickets name overlapping files, auto-emit `**Depends on:** #<older>` into the new ticket's body instead of only the cosmetic `⚠ possible duplicate of #M` marker — why: #9, #11, and #38 all touch `common.sh`/`lint-tickets.sh`/`file-ticket.sh`, the exact files #35's hub-sync will overwrite, and none declares a dependency on #35; the file-overlap check that exists today (`common.sh:826-857`) is scoped only to sync-port escalations, not general open-ticket-vs-open-ticket collisions, so this class of risk is invisible outside that one path.
+- `scripts/govern/govern-improve-triage.sh`: implement the dedup-before-filing check that #30, #39, and #42 have each already proposed and none has landed — before filing a new "promote safe proposals from run-X" ticket, check whether an open ticket already carries the same auto-promotion marker and append the new bullets to it instead of minting a new `## #N` — why: this is now empirically the highest-friction gap in the harness — it has produced 9 open duplicate tickets (#9, #10, #11, #12, #36, #39, #42, #47, #50) across 9 runs, and the duplicate-title advisory that would flag it at filing time (`file-ticket.sh`'s `⚠ possible duplicate of #M`) is confirmed firing correctly (visible on #47 and #50) but is purely cosmetic — nothing consumes it to actually merge or block, so it decorates the exact problem it detects without fixing it.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 12:17 — run run-20260725-120551-43436 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
