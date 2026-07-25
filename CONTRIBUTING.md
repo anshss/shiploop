@@ -70,6 +70,28 @@ Meaning:
 
 Follow this idiom for any new test that shells out to a mechanism script. A test that inherits the parent's TTY or does not `wait` will race the runner and produce flakes that only reproduce on CI.
 
+### Never simulate a missing tool with a hardcoded PATH
+
+To test a "tool not installed → fail open" branch, it is tempting to write `PATH="/usr/bin:/bin"` and
+assume the tool is gone. Do not. CI runs on an Ubuntu runner whose `/usr/bin` holds far more than a
+macOS `/usr/bin` — `gh`, for instance, is pre-installed there. The stub then silently keeps the tool
+on `PATH`, the test stops exercising the branch it names, and the failure only appears on CI.
+
+Dropping the offending directory instead is also wrong: on Ubuntu, `gh` shares `/usr/bin` with
+`dirname`, `date`, and `mkdir`, which the script under test needs before it ever looks for `gh`.
+
+Derive the `PATH` from the ambient environment: mirror every directory that actually contains the
+tool into a shadow directory that symlinks all its *other* entries, and substitute it. The tool
+disappears wherever it happens to live; everything else stays reachable. See
+`test-preflight-base-ci.sh` for the worked version — collect with a glob and link in one batched `ln`
+call (destination directory last), which is portable to both GNU and BSD `ln`. Note that
+`find … -exec ln -sf {} "$dir/" +` does **not** work: `{}` must be the final argument before `+`.
+
+The general rule behind both idioms: **a local pass on macOS is not evidence of a CI pass on Linux.**
+When a test encodes an assumption about the machine — where a binary lives, which flags a coreutil
+accepts (`stat`, `sed`, `date` are the classic GNU/BSD splits) — verify it against the runner's
+environment rather than your own, and prefer deriving the fact at runtime over hardcoding it.
+
 ## Porting discipline (for changes coming FROM a production fleet)
 
 Most fixes here originated on a production workspace and were ported back. The three rules that keep the templates re-installable everywhere:
