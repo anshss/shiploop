@@ -592,29 +592,6 @@ Ref: governor/improvements.md block "2026-07-25 11:47 — run run-20260725-11293
 
 ---
 
-## #49 — Check the base branch is CI-green before dispatching workers — a red baseline fails every worker in the wave
-
-**Severity:** High
-**Model:** sonnet
-
-Where: shiploop/templates/govern/run-loop.sh — the run-start preflight block (the same once-per-run region #90 established), before any worker is spawned
-
-Observed: MEASURED today. Ticket #46 was dispatched while `main` was CI-red. Its change touched exactly one markdown file and could not possibly have failed the suite, but its PR (shiploop#91) inherited the broken baseline, went red, and the ticket was recorded `failed` — after a full worker session. The worker did correct work and was charged for discovering an unrelated pre-existing breakage.
-
-Under parallel execution (now the DEFAULT as of v1.11.1, cap 4), this scales: a red baseline means every concurrent worker in the wave opens a PR that cannot go green, so a whole fan-out is wasted rather than one ticket. The governor already polls CI *after* a PR exists (await-ci.sh, up to 30 min per PR), so it currently discovers the problem at the most expensive possible moment — after N workers have each done a full session.
-
-A `gh run list --branch main --limit 1` costs one API call and nothing in tokens.
-
-Fix direction: in the run-start preflight (once per run, not once per driver — reuse the #90 seam), query the base branch's latest CI conclusion. If it is a FAILURE, do not dispatch: abort the run with a clear message naming the failing run URL, or park with an escalation. Fail OPEN, not closed, on anything ambiguous — no `gh` auth, no CI configured, no runs yet, an in-progress run, or an API error must all proceed exactly as today. This check exists to catch an unambiguous red, never to block a fleet whose CI is simply absent (many repos have no checks at all — the harness already has a documented "green-or-no-checks" merge policy and this must be consistent with it).
-
-Add a knob to skip it (e.g. GOVERN_SKIP_BASE_CHECK=1) for operators who intentionally work on a red baseline — for example, when the ticket being worked IS the fix for the red CI. Consider auto-detecting that case: if the only eligible ticket names the failing area, proceeding is correct.
-
-Done when: a run whose base branch is unambiguously CI-red refuses to dispatch workers and reports the failing run URL; absent/ambiguous/in-progress CI proceeds unchanged (fail-open); a knob overrides; the check runs once per run, not once per parallel driver; a test under templates/govern/test/ covers red-blocks, no-checks-proceeds, and api-error-proceeds; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy is refreshed separately through `/shiploop:update`.
-
-Ref: session 2026-07-25 — ticket #46 failed solely because main was red at the time of dispatch (main went red at a3331a3 / v1.11.1, fixed at 17c0b58).
-
----
-
 ## #50 — Harness self-improvement: promote safe proposals from run-20260725-111730-97043
 
 **Severity:** Low
