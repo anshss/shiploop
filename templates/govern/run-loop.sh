@@ -126,8 +126,13 @@ TARGET=""; [[ "${#TARGETS[@]}" -eq 1 ]] && TARGET="${TARGETS[0]}"
 #               with `--serial` always available to opt back out for a single run.
 # The carve-out is EXACTLY ONE named ticket: there is nothing to fan out, so it stays on the
 # sequential driver (no orchestrator process in the way) regardless of this knob.
-PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-1}"; PARALLEL_DEFAULT="${PARALLEL_DEFAULT//[^0-9]/}"
-PARALLEL_DEFAULT="${PARALLEL_DEFAULT:-1}"
+# The fallback is 4, not 1, and that is load-bearing: `/shiploop:update` PRESERVES a workspace's
+# scripts/lib/workspace.sh, so an EXISTING fleet can never pick up a new default from the template.
+# This fallback is the only path that reaches them — a workspace whose workspace.sh predates the
+# GOVERN_PARALLEL_DEFAULT knob gets parallel-by-default on upgrade. A workspace that explicitly sets
+# the knob (including to 1) always wins over this, and `--serial` opts out for any single run.
+PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"; PARALLEL_DEFAULT="${PARALLEL_DEFAULT//[^0-9]/}"
+PARALLEL_DEFAULT="${PARALLEL_DEFAULT:-4}"
 if [[ "$SERIAL" -eq 0 && "$PARALLEL" -eq 0 && "${#TARGETS[@]}" -ne 1 && "$PARALLEL_DEFAULT" -gt 1 ]]; then
   PARALLEL=1
 fi

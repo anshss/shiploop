@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.11.1 — 2026-07-25
+
+**Behavior change on upgrade — read this before updating.** Parallel backlog execution is now
+genuinely the default. A workspace that has never set `GOVERN_PARALLEL_DEFAULT` goes from **one**
+worker to **four concurrent** workers on its next plain `run-loop.sh` / `/govern` run. That
+multiplies how much is in flight at once — it does not make any single ticket cheaper. If you are
+rate-limited, or want a smaller blast radius, set `GOVERN_PARALLEL_DEFAULT=1` in
+`scripts/lib/workspace.sh`, or pass `--serial` for a single run.
+
+### Fixed
+
+- **`GOVERN_PARALLEL_DEFAULT` was never actually wired, so 1.11.0 shipped serial.** The 1.11.0 notes
+  stated twice that parallel execution was the default. That was wrong: `run-loop.sh` fell back to
+  `1`, the seed template set `1`, and `--parallel=1` is documented as identical to `--serial`. Every
+  1.11.0 install — new or upgraded — still worked one ticket at a time unless the operator passed
+  `--parallel` by hand. The headline behavior of that release was inert. This release makes the
+  claim true.
+
+  The fallback in `run-loop.sh` (not just the seed template) is the load-bearing part:
+  `/shiploop:update` deliberately **preserves** a workspace's `scripts/lib/workspace.sh`, so an
+  already-installed fleet can never pick up a new default from a template bump. The fallback is the
+  only path that reaches them.
+
+### Precedence (unchanged)
+
+An explicit `GOVERN_PARALLEL_DEFAULT` always wins over the fallback — including `=1`, which remains
+the way to say "sequential, permanently". `--serial` opts out of any single run, and `--parallel=N`
+still beats the env knob. Naming exactly one ticket stays sequential; there is nothing to fan out.
+
+### Note on a reversed invariant
+
+`test-run-loop-multi-target.sh` previously asserted that an unset knob stayed sequential, on the
+principle that *"a template bump must never change an existing workspace's run shape."* That
+assertion has been deliberately rewritten rather than removed, and the reasoning recorded inline.
+The trade is explicit: silent-upgrade safety was given up so that already-installed fleets actually
+receive parallel execution. Per-run and per-workspace opt-outs are preserved.
+
+### Still not in this release
+
+Parallel workers do **not** yet avoid collisions — two tickets touching the same file can be worked
+concurrently and produce conflicting branches. Nor is model/effort right-sizing automatic: an
+unpinned ticket still runs at `GOVERN_WORKER_MODEL` (default `opus`), and `GOVERN_WORKER_EFFORT` is
+inert unless set by hand. Both are tracked and land in 1.12.0.
+
 ## 1.11.0 — 2026-07-25
 
 The token-efficiency release: the harness now applies its own orchestration doctrine to the
