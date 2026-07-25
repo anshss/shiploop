@@ -34,6 +34,9 @@
 #                       backlog run's ceiling is N × GOVERN_MAX_TICKETS (it still always ends).
 #   --serial         → opt back OUT of parallel: one ticket at a time, over the whole backlog.
 #                       `--parallel=1` / `GOVERN_PARALLEL=1` mean the same thing.
+#   --orchestrated   → INTERNAL, set by the orchestrator on each child it spawns: "the run-start
+#                       reconcile already ran once for this run — skip it". Never pass it by hand;
+#                       a driver run with it reconciles nothing (see the RECONCILE block).
 #
 # Concurrency precedence (highest wins):
 #   1. --serial                     → sequential (always wins; nothing overrides an explicit opt-out)
@@ -79,10 +82,13 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 
-MODE=live; TARGETS=(); EXCLUDE_INIT=""; PARALLEL=0; PARALLEL_N=""; SERIAL=0
+MODE=live; TARGETS=(); EXCLUDE_INIT=""; PARALLEL=0; PARALLEL_N=""; SERIAL=0; ORCHESTRATED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)      MODE=dry;;
+    # INTERNAL (set only by govern::_parallel_spawn, never by a human): "an orchestrator already ran
+    # this run's run-start reconcile — don't repeat it". See the RECONCILE block below.
+    --orchestrated) ORCHESTRATED=1;;
     --exclude)      shift; EXCLUDE_INIT="${EXCLUDE_INIT:+$EXCLUDE_INIT,}${1//[^0-9,]/}";;
     --exclude=*)    EXCLUDE_INIT="${EXCLUDE_INIT:+$EXCLUDE_INIT,}${1#--exclude=}"; EXCLUDE_INIT="${EXCLUDE_INIT//[^0-9,]/}";;
     --parallel)     PARALLEL=1;;
@@ -617,12 +623,33 @@ fi
 # run-start preflight (#71) and the per-ticket cross-driver re-verify (#108) operate on the repo root.
 META_DIR="$(govern::meta_root)"
 
+# ── run-start reconcile: ONCE PER RUN, never once per driver ────────────────────────────────
+# The four run-start steps below (escalations-apply-answers → escalations-emit-pending →
+# preflight-main → externalize-low-tickets) plus the NA-skip streak bookkeeping are WHOLE-RUN state
+# reconciliation against the SINGLE shared meta checkout: they fetch/rebase/push main, rewrite
+# escalations.md / pending-escalations.json / tickets.md, and file GitHub issues. Nothing serializes
+# them — the bookkeep lock only covers tickets.md edits — so when the orchestrator fanned out N full
+# backlog drivers, all N re-ran the same git work against the same checkout concurrently (N-1 of
+# them pure waste, and a real interleaving hazard: two `git pull --rebase` + `git push` racing in one
+# worktree). GOVERN_PARALLEL_STAGGER_S only narrowed the window, it never closed it.
+#
+# The orchestrator ALREADY runs this block itself, before it spawns anything (it is the same
+# top-of-script path), and it holds the single-run lock while doing so. So the correct shape is:
+# orchestrator reconciles once → children skip it via the internal --orchestrated flag. One reconcile
+# per run is both correct and cheaper. Everything AFTER this block (waits refresh, issue de-dup,
+# selection) stays per-driver: those compute each driver's own exclusion set and take no git action.
+RECONCILE=1
+if [[ "$ORCHESTRATED" -eq 1 ]]; then
+  RECONCILE=0
+  govern::log "run-start reconcile: skipped — the orchestrator already ran it once for this run"
+fi
+
 # #62: close the escalation lifecycle BEFORE selecting tickets — apply any operator answers the
 # relay recorded into escalations.md since the last run. "do-the-work" un-parks (the ticket
 # becomes selectable again this run); "defer" migrates the ticket to tickets-parked.md; a
 # "make this a rule" answer grows preferences.md. Without this, answers stay inert file text and
 # parked decisions never migrate (the gap #62 fixes). Live only; dry-run logs intent.
-if [[ "$MODE" == "live" ]]; then
+if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
   "$DIR/escalations-apply-answers.sh" >&2 || govern::log "escalations-apply-answers failed (non-fatal) — continuing"
   # #3/#337: regenerate governor/pending-escalations.json at run-START (not only run-end) against the
   # cleaned escalations.md, so a stale/ghost snapshot left by a crashed run or a manual resolution
@@ -630,7 +657,7 @@ if [[ "$MODE" == "live" ]]; then
   # BEFORE anything reads it. escalations.md ## Open is the source of truth, not this cached JSON.
   "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
     || govern::log "run-start pending-escalations regen failed (non-fatal)"
-else
+elif [[ "$RECONCILE" -eq 1 ]]; then
   govern::log "[dry] would apply recorded escalation answers (un-park / migrate-to-parked / preferences) from escalations.md"
   govern::log "[dry] would regenerate governor/pending-escalations.json at run-start from escalations.md ## Open (#3/#337)"
 fi
@@ -642,10 +669,10 @@ fi
 # preflight-main.sh auto-reconciles (ff / push / rebase+push); it returns non-zero ONLY when main
 # truly diverged and couldn't be reconciled — then we HALT with one clear message instead of
 # silently cascading. Live only (dry-run logs intent).
-if [[ "$MODE" == "live" ]]; then
+if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
   "$DIR/preflight-main.sh" "$META_DIR" \
     || govern::die "run-start preflight: could NOT reconcile the meta-repo main checkout with origin/main — see the SPECIFIC reason logged just above (an uncommitted runtime artifact to commit/stash, a genuine rebase conflict, or a rejected push), not necessarily a divergence. Until reconciled, the harness lane would cut PRs off a stale base (#71). Resolve it — e.g. cd '$META_DIR' && git status && git pull --rebase origin main && git push — then re-run."
-else
+elif [[ "$RECONCILE" -eq 1 ]]; then
   govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
 fi
 
@@ -655,7 +682,7 @@ fi
 # self-skips cleanly when GOVERN_EXTERNALIZE_REPO/SUBREPO are unset, so this is a no-op for workspaces
 # that haven't opted in. Runs BEFORE selection so an externalized ticket is never also picked up by a
 # worker the same run. Non-fatal: a failure logs and continues — it must never stall the loop.
-if [[ "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
+if [[ "$RECONCILE" -eq 1 && "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
   if [[ "$MODE" == "live" ]]; then
     "$DIR/externalize-low-tickets.sh" >&2 || govern::log "externalization pass failed (non-fatal) — continuing"
   else
@@ -678,7 +705,11 @@ while IFS=$'\t' read -r na_n na_reason; do
   [[ -n "$na_n" ]] || continue
   NA_SET+="$na_n,"
   govern::log "auto-skipping #$na_n — body marked '$na_reason' (not govern-automatable; handle interactively) — not selecting, no worker burned (#92)"
-  if [[ "$MODE" == "live" ]]; then
+  # The streak counter + its one-time nudge are per-RUN state, so only the reconciling driver may
+  # touch them: N fan-out children each bumping would inflate the streak ~N× per run and race the
+  # nudge's has_open_escalation guard into filing duplicates. Children still LOG the skip and
+  # still exclude the ticket — only the shared bookkeeping is orchestrator-only.
+  if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
     na_count="$(govern::na_skip_bump "$na_n" 2>/dev/null || echo 0)"
     if [[ "${na_count:-0}" -ge "$NA_NUDGE_AFTER" ]] && ! govern::has_open_escalation "$na_n"; then
       govern::log "#$na_n auto-skipped $na_count consecutive runs ('$na_reason') — filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
@@ -692,7 +723,7 @@ while IFS=$'\t' read -r na_n na_reason; do
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 # #120: reset the consecutive-skip streak for any ticket no longer NA (resolved / un-marked) so a
 # stale count can never fire a spurious nudge. NA_SET is comma-wrapped (",N,N,") — "," resets all.
-[[ "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
+[[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
 
 # Pre-run issue de-dup: NEVER let the internal governor work a ticket that is ALREADY a public GitHub
 # issue. Issues on GOVERN_EXTERNALIZE_REPO are seeded for OUTSIDE contributors, not internal members —
@@ -817,7 +848,11 @@ govern::_parallel_reap_one() {
 # rule, including any future default); clearing the env keeps the child's own mode log honest.
 govern::_parallel_spawn() {
   local lbl="$1" dry="$2"; shift 2
-  GOVERN_ALLOW_CONCURRENT=1 GOVERN_PARALLEL='' bash "$DIR/run-loop.sh" "$@" --serial $dry >&2 &
+  # `--orchestrated`: THIS process already ran the run-start reconcile (escalations-apply →
+  # emit-pending → preflight-main → externalize) once, under the single-run lock, before it got
+  # here. Children must not repeat it — N drivers fetching/rebasing/pushing the SAME meta checkout
+  # concurrently is wasted git work and a real interleaving hazard that the stagger only narrowed.
+  GOVERN_ALLOW_CONCURRENT=1 GOVERN_PARALLEL='' bash "$DIR/run-loop.sh" "$@" --serial --orchestrated $dry >&2 &
   PARALLEL_PIDS+=("$!"); PARALLEL_TIX+=("$lbl")
   govern::log "parallel: spawned $lbl (pid $!) — ${#PARALLEL_PIDS[@]}/$PARALLEL_N driver(s) running"
 }
@@ -853,10 +888,12 @@ govern::_parallel_run() {
     fi
     govern::log "parallel mode: backlog pull across $spawned concurrent full driver(s) (cap $PARALLEL_N) — each grinds the eligible backlog, contending on the per-ticket claim lock, until it is empty. Per-driver bounds apply: max $MAX_TICKETS tickets, bad-streak $MAX_BAD_STREAK, runtime ${MAX_RUNTIME}s."
     for (( i=0; i<spawned; i++ )); do
-      # Stagger the launches: N drivers starting in the same instant all run the run-start preflight
-      # (escalations-apply → preflight-main → externalize) against the SAME meta checkout at once.
-      # A couple of seconds apart costs nothing on a run measured in minutes and keeps that git work
-      # from piling up. GOVERN_PARALLEL_STAGGER_S=0 disables it.
+      # Stagger the launches. This USED to be the only thing standing between N drivers and N
+      # concurrent run-start preflights against the same meta checkout — a window it narrowed but
+      # never closed; `--orchestrated` above now removes that work from children entirely.
+      # The stagger stays for what remains genuinely concurrent: N drivers hitting the selector +
+      # per-ticket claim locks + worktree creation in the same instant. A couple of seconds apart
+      # costs nothing on a run measured in minutes. GOVERN_PARALLEL_STAGGER_S=0 disables it.
       [[ "$i" -gt 0 && "${GOVERN_PARALLEL_STAGGER_S:-2}" -gt 0 ]] && sleep "${GOVERN_PARALLEL_STAGGER_S:-2}"
       govern::_parallel_spawn "backlog-driver-$((i+1))" "$dry_flag"
     done
