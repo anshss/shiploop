@@ -1,29 +1,53 @@
 #!/usr/bin/env bash
 # Governor v2 — pure-bash driver. Spends ~zero Claude context itself; Claude is invoked only
 # in fresh, bounded sessions: the per-ticket worker (spawn-worker) and the periodic supervisor.
-# Usage: run-loop.sh [--dry-run] [--exclude N,N,...] [<ticket-number> [<ticket-number> ...]]
-#   no args          → work the whole eligible backlog sequentially
+# Usage: run-loop.sh [--dry-run] [--exclude N,N,...] [--parallel[=N]|--serial] [<ticket-number> ...]
+#   no args          → work the whole eligible backlog. Sequentially, or N tickets at a time when
+#                       the workspace sets GOVERN_PARALLEL_DEFAULT=N (see the concurrency block)
 #   <number>         → work that one ticket only
-#   <N> <N> <N> ...  → work EXACTLY that ticket SET, sequentially, in the driver's normal
-#                       severity order within the set (a ticket not found / not eligible is
-#                       skipped with a logged reason, never silently). Duplicates are folded.
+#   <N> <N> <N> ...  → work EXACTLY that ticket SET, in the driver's normal severity order
+#                       within the set (a ticket not found / not eligible is skipped with a
+#                       logged reason, never silently). Duplicates are folded.
 #                       Every numeric arg used to OVERWRITE a single $TARGET, so
 #                       `run-loop.sh 152 153 154 155` silently kept only #155 and reported
 #                       success for a one-ticket run — the other three were never touched.
 #   --dry-run        → worker runs plan-mode; merge + bookkeep are skipped (logged)
 #   --exclude N,N    → skip these ticket numbers (e.g. a parallel govern session owns them)
-#   --parallel[=N]   → work the ticket SET (or, with no explicit targets, the top-N eligible
-#                       backlog tickets) CONCURRENTLY instead of sequentially. This process
-#                       becomes an ORCHESTRATOR: it spawns one child `run-loop.sh <ticket>`
-#                       per ticket (each with GOVERN_ALLOW_CONCURRENT=1), bounded to N running
-#                       at once, waits for all, and logs one aggregate resolved/parked/failed/
-#                       timed-out tally. N defaults to the target-set size when targets are
-#                       given, else 4. GOVERN_PARALLEL=N is the env equivalent; an explicit
-#                       `--parallel=N` wins over it. It composes the SAME machinery a manual
-#                       "launch N single-ticket drivers with GOVERN_ALLOW_CONCURRENT=1" recipe
-#                       always used — the per-ticket claim lock + the bookkeep lock (below) are
-#                       what make concurrent drivers exactly-once safe; the orchestrator adds
-#                       nothing new to that safety model, it just drives the fan-out for you.
+#   --parallel[=N]   → work tickets CONCURRENTLY, up to N at once. This process becomes an
+#                       ORCHESTRATOR (each child gets GOVERN_ALLOW_CONCURRENT=1 + --serial); it
+#                       waits for all of them and logs one aggregate resolved/parked/failed/
+#                       timed-out tally, folding every child's per-ticket rows into this run's
+#                       state.jsonl. Two shapes:
+#                         · explicit ticket SET → one single-ticket child per named ticket.
+#                         · NO targets (backlog) → N FULL backlog drivers, each running the
+#                           ordinary sequential loop and contending on the per-ticket claim lock.
+#                           Each keeps pulling the next eligible ticket until the backlog is dry,
+#                           so a backlog run still grinds the WHOLE backlog, N at a time — and
+#                           every backlog mechanism (dependency gate, #60 streak, supervisor
+#                           cadence + its attemptNext queue, bad-streak, MAX_TICKETS) keeps
+#                           working, because it lives in that loop. See the orchestrator block.
+#                       It composes the SAME machinery a manual "launch N drivers with
+#                       GOVERN_ALLOW_CONCURRENT=1" recipe always used — the per-ticket claim lock
+#                       + the bookkeep lock (below) are what make concurrent drivers exactly-once
+#                       safe; the orchestrator adds nothing new to that safety model, it just
+#                       drives the fan-out for you. NOTE: the hard bounds are PER DRIVER, so a
+#                       backlog run's ceiling is N × GOVERN_MAX_TICKETS (it still always ends).
+#   --serial         → opt back OUT of parallel: one ticket at a time, over the whole backlog.
+#                       `--parallel=1` / `GOVERN_PARALLEL=1` mean the same thing.
+#
+# Concurrency precedence (highest wins):
+#   1. --serial                     → sequential (always wins; nothing overrides an explicit opt-out)
+#   2. --parallel=N                 → parallel, cap N (flag beats env, like every other flag here)
+#   3. --parallel (bare)            → parallel, cap = GOVERN_PARALLEL, else GOVERN_PARALLEL_DEFAULT,
+#                                     else 4
+#   4. GOVERN_PARALLEL=N (env only) → parallel, cap N
+#   5. nothing given                → the WORKSPACE default: GOVERN_PARALLEL_DEFAULT (scripts/lib/
+#      workspace.sh). Unset or 1 = sequential (so bumping the templates never changes an existing
+#      workspace's behavior); N > 1 = parallel at cap N. With several tickets named the cap is the
+#      target-set size. Naming EXACTLY ONE ticket stays sequential either way — there is nothing to
+#      fan out, and a cap-1 orchestrator is just overhead.
+#   A resolved cap of 1 (from any source) collapses to the sequential driver rather than an
+#   orchestrator-of-one, so `--parallel=1` grinds the whole backlog one ticket at a time.
 #
 # GOVERN_ALLOW_CONCURRENT=1 → run alongside another driver (parallel sessions on disjoint
 #   tickets, #41): skips the single-run lock; safety comes from the per-ticket claim lock
@@ -51,7 +75,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 
-MODE=live; TARGETS=(); EXCLUDE_INIT=""; PARALLEL=0; PARALLEL_N=""
+MODE=live; TARGETS=(); EXCLUDE_INIT=""; PARALLEL=0; PARALLEL_N=""; SERIAL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)      MODE=dry;;
@@ -59,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --exclude=*)    EXCLUDE_INIT="${EXCLUDE_INIT:+$EXCLUDE_INIT,}${1#--exclude=}"; EXCLUDE_INIT="${EXCLUDE_INIT//[^0-9,]/}";;
     --parallel)     PARALLEL=1;;
     --parallel=*)   PARALLEL=1; PARALLEL_N="${1#--parallel=}"; PARALLEL_N="${PARALLEL_N//[^0-9]/}";;
+    --serial|--no-parallel) SERIAL=1;;
     # Ticket SET fix: collect EVERY numeric arg into TARGETS instead of overwriting a single
     # TARGET — `run-loop.sh 152 153 154 155` previously kept only the LAST number (155) and
     # silently worked one ticket while the run reported success. A repeated number is folded
@@ -83,12 +108,34 @@ fi
 # always got; TARGET itself now only feeds log/summary strings that read naturally for the
 # single-ticket case.
 TARGET=""; [[ "${#TARGETS[@]}" -eq 1 ]] && TARGET="${TARGETS[0]}"
-# Resolve the parallel concurrency cap once TARGETS is final: target-set size when targets were
-# given (run the whole requested set at once), else a sane default cap of 4 for a backlog pull.
-if [[ "$PARALLEL" -eq 1 && -z "$PARALLEL_N" ]]; then
-  if [[ "${#TARGETS[@]}" -gt 0 ]]; then PARALLEL_N="${#TARGETS[@]}"; else PARALLEL_N=4; fi
+# GOVERN_PARALLEL_DEFAULT — the per-workspace DEFAULT concurrency, set in scripts/lib/workspace.sh
+# (or the env). This is the knob that decides whether a plain `run-loop.sh` fans out at all:
+#   unset / 1 → sequential, byte-identical to the pre-flag behavior. A workspace that bumps its
+#               templates therefore never changes run shape until it opts in — the harness contract.
+#   N > 1     → parallel by default at cap N (a fleet that wants fan-out sets this once, e.g. 4),
+#               with `--serial` always available to opt back out for a single run.
+# The carve-out is EXACTLY ONE named ticket: there is nothing to fan out, so it stays on the
+# sequential driver (no orchestrator process in the way) regardless of this knob.
+PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-1}"; PARALLEL_DEFAULT="${PARALLEL_DEFAULT//[^0-9]/}"
+PARALLEL_DEFAULT="${PARALLEL_DEFAULT:-1}"
+if [[ "$SERIAL" -eq 0 && "$PARALLEL" -eq 0 && "${#TARGETS[@]}" -ne 1 && "$PARALLEL_DEFAULT" -gt 1 ]]; then
+  PARALLEL=1
 fi
-[[ "$PARALLEL" -eq 1 && ( -z "$PARALLEL_N" || "$PARALLEL_N" -lt 1 ) ]] && PARALLEL_N=1
+# Resolve the concurrency cap once TARGETS is final: the target-set size when targets were given
+# (run the whole requested set at once); else the workspace default; else 4 — that last case is a
+# bare `--parallel` on a workspace that never set the knob, where "the operator explicitly asked to
+# fan out" must not resolve to a cap of 1 (which would collapse straight back to sequential).
+if [[ "$PARALLEL" -eq 1 && -z "$PARALLEL_N" ]]; then
+  if   [[ "${#TARGETS[@]}" -gt 0 ]];    then PARALLEL_N="${#TARGETS[@]}"
+  elif [[ "$PARALLEL_DEFAULT" -gt 1 ]]; then PARALLEL_N="$PARALLEL_DEFAULT"
+  else                                       PARALLEL_N=4
+  fi
+fi
+# --serial, --parallel=1 and GOVERN_PARALLEL=1 all mean the SAME thing: one ticket at a time over
+# the WHOLE backlog. Collapse them onto the sequential driver instead of an orchestrator with a cap
+# of 1 — an orchestrator-of-one would spawn a child per ticket for no concurrency at all, and (in
+# backlog mode) is a pointless process layer around the very loop it wraps.
+if [[ "$SERIAL" -eq 1 || ( "$PARALLEL" -eq 1 && "${PARALLEL_N:-1}" -le 1 ) ]]; then PARALLEL=0; PARALLEL_N=1; fi
 # Human-readable target descriptor for logs/summary: "" (backlog) · " (single ticket #N)" ·
 # " (target set: #A #B #C · 3)". Called at run-start AND at write_summary time (run-end), so it
 # reads TARGETS live rather than caching a string — harmless since TARGETS is only ever drained
@@ -551,6 +598,15 @@ govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKET
 if [[ "${#TARGETS[@]}" -gt 0 ]]; then
   govern::log "targets: $(printf '#%s ' "${TARGETS[@]}" | sed 's/ $//') (${#TARGETS[@]})"
 fi
+# Announce the RESOLVED concurrency mode unconditionally, before anything can short-circuit (an
+# empty backlog, a target that turns out ineligible). Parallel became the default, so "which mode
+# am I actually in, and at what cap" must never be something the operator has to infer from whether
+# later fan-out lines happened to appear.
+if [[ "$PARALLEL" -eq 1 ]]; then
+  govern::log "concurrency: parallel — up to $PARALLEL_N ticket(s) at once (default; --serial or --parallel=1 for one-at-a-time)"
+else
+  govern::log "concurrency: serial — one ticket at a time (--parallel[=N] to fan out)"
+fi
 
 # Meta-repo checkout root that owns the queue/ folder (== origin/main for the harness lane). Resolved
 # via the git toplevel (NOT dirname "$TICKETS_FILE", which is now the queue/ subfolder) so the
@@ -670,72 +726,132 @@ else
   govern::log "[dry] would re-check governor/pending-waits.json + defer tickets whose blocker is unresolved (#119)"
 fi
 
-# --parallel orchestrator. Composes the SAME machinery a manual "launch N single-ticket drivers,
-# each with GOVERN_ALLOW_CONCURRENT=1" recipe always used — the per-ticket claim lock + the
-# bookkeep lock (both documented above) are what make concurrent drivers exactly-once safe; this
-# function adds nothing new to that safety model, it only drives the fan-out/wait/aggregate a
-# human would otherwise do across N terminals. Backlog-mode ticket picking reuses select-ticket.sh
-# so it honors the SAME severity order + escalation/NA exclusion + $excludes the sequential path
-# below would have used. Reaps children FIFO (oldest first) with a plain `wait <pid>` — no `wait
-# -n` — so a pid is never waited on twice and this works on any bash new enough for arrays.
+# ── --parallel orchestrator ──────────────────────────────────────────────────────────────────────
+# Composes the SAME machinery a manual "launch N drivers, each with GOVERN_ALLOW_CONCURRENT=1"
+# recipe always used — the per-ticket claim lock + the bookkeep lock (both documented above) are
+# what make concurrent drivers exactly-once safe; this adds nothing new to that safety model, it
+# only drives the fan-out/wait/aggregate a human would otherwise do across N terminals.
+#
+# TWO shapes, because they answer different questions:
+#   • explicit ticket SET → ONE single-ticket child per named ticket. The operator named them, so
+#     each child gets the same explicit-target bypasses the sequential set path gives them.
+#   • BACKLOG pull (the default) → N FULL backlog drivers, each running the ordinary sequential
+#     loop. NOT one child per ticket: every backlog mechanism — the dependency gate, the
+#     cross-driver re-verify, the #60 failure-streak auto-escalation, the periodic supervisor
+#     cadence, the supervisor's in-memory attemptNext priority queue, the bad-streak breaker,
+#     MAX_TICKETS/MAX_RUNTIME — lives in that loop and is SKIPPED or never reached by a child
+#     handed a single explicit ticket (a one-ticket child looks exactly like `run-loop.sh <N>`,
+#     which deliberately bypasses those gates). Since parallel is now the DEFAULT, a shape that
+#     quietly drops them would disable them for every unattended run. Full drivers also give
+#     refill for free: each keeps pulling the next eligible ticket until the backlog is dry, so a
+#     mid-run-filed ticket is picked up exactly as it would be sequentially.
+#
+# Reaps children FIFO (oldest first) with a plain `wait <pid>` — no `wait -n` — so a pid is never
+# waited on twice and this works on any bash new enough for arrays.
 PARALLEL_PIDS=(); PARALLEL_TIX=(); PARALLEL_RC=0
 PARALLEL_TRES=0; PARALLEL_TPARK=0; PARALLEL_TFAIL=0; PARALLEL_TTIME=0; PARALLEL_TINTR=0
+PARALLEL_TICKETS=0
 govern::_parallel_reap_one() {
-  local pid="${PARALLEL_PIDS[0]}" tk="${PARALLEL_TIX[0]}" rd st
+  local pid="${PARALLEL_PIDS[0]}" lbl="${PARALLEL_TIX[0]}" rd st rows=0
   PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}"); PARALLEL_TIX=("${PARALLEL_TIX[@]:1}")
   if wait "$pid"; then :; else PARALLEL_RC=1; fi
   rd="$(ls -d "$LOG_ROOT"/run-*-"$pid" 2>/dev/null | head -1 || true)"
   if [[ -n "$rd" && -f "$rd/state.jsonl" ]]; then
-    st="$(tail -1 "$rd/state.jsonl" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)"
-    case "$st" in
-      resolved)    PARALLEL_TRES=$((PARALLEL_TRES+1));;
-      parked)      PARALLEL_TPARK=$((PARALLEL_TPARK+1));;
-      failed)      PARALLEL_TFAIL=$((PARALLEL_TFAIL+1));;
-      timeout)     PARALLEL_TTIME=$((PARALLEL_TTIME+1));;
-      interrupted) PARALLEL_TINTR=$((PARALLEL_TINTR+1));;
-      *) govern::log "parallel: child #$tk (pid $pid) left an unrecognized status '${st:-<empty>}' — not tallied, see $rd";;
-    esac
-    govern::log "parallel: child #$tk done (pid $pid, status ${st:-unknown}) → $rd"
+    # Fold the child's per-ticket rows into THIS run's state.jsonl. A full-backlog child records one
+    # row per ticket it worked, so the orchestrator's run dir stays the single place to read what a
+    # run did — otherwise "the run's outcomes" would be scattered across N child run dirs and every
+    # reader (summary, an operator, a test) would have to know the fan-out shape to find them.
+    cat "$rd/state.jsonl" >> "$STATE" 2>/dev/null || true
+    while IFS= read -r st; do
+      [[ -n "$st" ]] || continue
+      rows=$((rows+1))
+      case "$st" in
+        resolved)    PARALLEL_TRES=$((PARALLEL_TRES+1));;
+        parked)      PARALLEL_TPARK=$((PARALLEL_TPARK+1));;
+        failed)      PARALLEL_TFAIL=$((PARALLEL_TFAIL+1));;
+        timeout)     PARALLEL_TTIME=$((PARALLEL_TTIME+1));;
+        interrupted) PARALLEL_TINTR=$((PARALLEL_TINTR+1));;
+        *) rows=$((rows-1)); govern::log "parallel: driver $lbl (pid $pid) left an unrecognized status '$st' — not tallied, see $rd";;
+      esac
+    done < <(jq -r '.status // empty' "$rd/state.jsonl" 2>/dev/null || true)
+    PARALLEL_TICKETS=$((PARALLEL_TICKETS+rows))
+    # rows=0 is NORMAL and not a failure: a backlog driver whose siblings had already claimed every
+    # eligible ticket exits cleanly having worked none.
+    govern::log "parallel: driver $lbl done (pid $pid, $rows ticket(s)) → $rd"
   else
     PARALLEL_RC=1
-    govern::log "parallel: child #$tk done (pid $pid) — could not locate its run dir/state under $LOG_ROOT; treating as failed for the tally, see the child's own log above"
-    PARALLEL_TFAIL=$((PARALLEL_TFAIL+1))
+    govern::log "parallel: driver $lbl done (pid $pid) — could not locate its run dir/state under $LOG_ROOT; treating as failed for the tally, see the child's own log above"
+    PARALLEL_TFAIL=$((PARALLEL_TFAIL+1)); PARALLEL_TICKETS=$((PARALLEL_TICKETS+1))
   fi
 }
+# Spawn one child driver. $1 = label for logs, $2 = "" or "--dry-run", $3… = extra argv (a ticket
+# number for set mode; nothing for a full backlog driver).
+#
+# `--serial` + a CLEARED GOVERN_PARALLEL on the child are BOTH load-bearing, not belt-and-braces
+# paranoia: a child inherits this process's environment, so under `GOVERN_PARALLEL=4 run-loop.sh`
+# (env-driven parallel mode) the child would itself resolve to parallel mode, become an
+# orchestrator, and spawn a grandchild — which inherits the same env, forever. That is an unbounded
+# fork bomb, reachable today. `--serial` is the primary guard (it wins over every other precedence
+# rule, including any future default); clearing the env keeps the child's own mode log honest.
+govern::_parallel_spawn() {
+  local lbl="$1" dry="$2"; shift 2
+  GOVERN_ALLOW_CONCURRENT=1 GOVERN_PARALLEL='' bash "$DIR/run-loop.sh" "$@" --serial $dry >&2 &
+  PARALLEL_PIDS+=("$!"); PARALLEL_TIX+=("$lbl")
+  govern::log "parallel: spawned $lbl (pid $!) — ${#PARALLEL_PIDS[@]}/$PARALLEL_N driver(s) running"
+}
 govern::_parallel_run() {
-  local -a plist=()
-  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
-    plist=("${TARGETS[@]}")
-  else
-    local pexcl="$excludes" pn i
-    for (( i=0; i<PARALLEL_N; i++ )); do
-      pn="$("$DIR/select-ticket.sh" "$pexcl" 2>/dev/null || true)"
-      [[ -n "$pn" ]] || break
-      plist+=("$pn"); pexcl="${pexcl:+$pexcl,}$pn"
-    done
-  fi
-  if [[ "${#plist[@]}" -eq 0 ]]; then
-    govern::log "--parallel: nothing eligible — no target set given and no eligible backlog ticket found; not spawning anything"
-    return 0
-  fi
-  govern::log "parallel mode: ${#plist[@]} ticket(s) ($(printf '#%s ' "${plist[@]}" | sed 's/ $//')) across up to $PARALLEL_N concurrent driver(s)"
   # A plain string (not an array) here on purpose: bash 3.2 (macOS's /bin/bash) throws "unbound
   # variable" under `set -u` for a bare `"${emptyarray[@]}"` expansion — a real portability trap,
   # not a hypothetical one (hit it live while testing this). dry_flag is always either empty or
-  # the single literal word `--dry-run` (no spaces/globs), so plain unquoted word-splitting below
-  # is safe and sidesteps the bug entirely.
+  # the single literal word `--dry-run` (no spaces/globs), so plain unquoted word-splitting inside
+  # _parallel_spawn is safe and sidesteps the bug entirely.
   local dry_flag=""; [[ "$MODE" == "dry" ]] && dry_flag="--dry-run"
-  local t
-  for t in "${plist[@]}"; do
-    while [[ "${#PARALLEL_PIDS[@]}" -ge "$PARALLEL_N" ]]; do govern::_parallel_reap_one; done
-    GOVERN_ALLOW_CONCURRENT=1 bash "$DIR/run-loop.sh" "$t" $dry_flag >&2 &
-    PARALLEL_PIDS+=("$!"); PARALLEL_TIX+=("$t")
-  done
+  local spawned=0 t pn pexcl i
+  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+    govern::log "parallel mode: ${#TARGETS[@]} ticket(s) ($(printf '#%s ' "${TARGETS[@]}" | sed 's/ $//')) across up to $PARALLEL_N concurrent driver(s)"
+    for t in "${TARGETS[@]}"; do
+      while [[ "${#PARALLEL_PIDS[@]}" -ge "$PARALLEL_N" ]]; do govern::_parallel_reap_one; done
+      govern::_parallel_spawn "#$t" "$dry_flag" "$t"; spawned=$((spawned+1))
+    done
+  else
+    # SIZE the fleet before spawning it: probe the eligible backlog with the same selector the
+    # drivers will use, up to PARALLEL_N times, and start one driver per eligible ticket found.
+    # Without this, a 1-ticket backlog would still spawn 4 drivers — 3 of which do a full run-start
+    # preflight only to find nothing to claim. The probe is advisory only (it takes no claim); the
+    # drivers re-select for themselves and contend on the per-ticket claim lock as usual.
+    pexcl="$excludes"
+    for (( i=0; i<PARALLEL_N; i++ )); do
+      pn="$("$DIR/select-ticket.sh" "$pexcl" 2>/dev/null || true)"
+      [[ -n "$pn" ]] || break
+      pexcl="${pexcl:+$pexcl,}$pn"; spawned=$((spawned+1))
+    done
+    if [[ "$spawned" -eq 0 ]]; then
+      govern::log "parallel: nothing eligible — no target set given and no eligible backlog ticket found; not spawning anything"
+      return 0
+    fi
+    govern::log "parallel mode: backlog pull across $spawned concurrent full driver(s) (cap $PARALLEL_N) — each grinds the eligible backlog, contending on the per-ticket claim lock, until it is empty. Per-driver bounds apply: max $MAX_TICKETS tickets, bad-streak $MAX_BAD_STREAK, runtime ${MAX_RUNTIME}s."
+    for (( i=0; i<spawned; i++ )); do
+      # Stagger the launches: N drivers starting in the same instant all run the run-start preflight
+      # (escalations-apply → preflight-main → externalize) against the SAME meta checkout at once.
+      # A couple of seconds apart costs nothing on a run measured in minutes and keeps that git work
+      # from piling up. GOVERN_PARALLEL_STAGGER_S=0 disables it.
+      [[ "$i" -gt 0 && "${GOVERN_PARALLEL_STAGGER_S:-2}" -gt 0 ]] && sleep "${GOVERN_PARALLEL_STAGGER_S:-2}"
+      govern::_parallel_spawn "backlog-driver-$((i+1))" "$dry_flag"
+    done
+  fi
   while [[ "${#PARALLEL_PIDS[@]}" -gt 0 ]]; do govern::_parallel_reap_one; done
   nres="$PARALLEL_TRES"; npark="$PARALLEL_TPARK"; nfail="$PARALLEL_TFAIL"
   ntimeout="$PARALLEL_TTIME"; nintr="$PARALLEL_TINTR"
-  done_count=$(( PARALLEL_TRES + PARALLEL_TPARK + PARALLEL_TFAIL + PARALLEL_TTIME + PARALLEL_TINTR ))
-  govern::log "parallel run done: processed $done_count/${#plist[@]} → resolved $nres · parked $npark · failed $nfail · timed-out $ntimeout · interrupted $nintr"
+  done_count="$PARALLEL_TICKETS"
+  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+    govern::log "parallel run done: processed $done_count/$spawned → resolved $nres · parked $npark · failed $nfail · timed-out $ntimeout · interrupted $nintr"
+  else
+    govern::log "parallel run done: $spawned driver(s) processed $done_count ticket(s) → resolved $nres · parked $npark · failed $nfail · timed-out $ntimeout · interrupted $nintr"
+  fi
+  # Emit the SAME canonical DONE line the sequential path ends on. Parallel is the default now, so
+  # anything that reads a run's outcome — an operator eyeballing the tail, a log grep, a test —
+  # must not have to know which mode ran to find the tally.
+  govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | parallel cap=$PARALLEL_N drivers=$spawned"
   return "$PARALLEL_RC"
 }
 if [[ "$PARALLEL" -eq 1 ]]; then

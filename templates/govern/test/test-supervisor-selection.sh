@@ -4,6 +4,11 @@
 #   (2) an `attemptNext` recommendation pulls a lower-priority ticket to the FRONT of selection;
 #   (3) supervisor concerns are surfaced into pending-escalations.json at run-end.
 # Stubbed Claude (worker + supervisor) + gh; sandboxed, no network.
+# Runs with `--serial` deliberately: this pins a strict SELECTION ORDER (1,3,2), and the supervisor's
+# attemptNext queue is per-driver in-memory state that orders picks WITHIN one sequential loop. Under
+# the parallel default there is no global pick order to assert (N drivers claim tickets at once), so
+# asserting one would be a coin flip. The behavior under test is unchanged — it is the sequential
+# loop each parallel driver runs.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -83,7 +88,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_SUPERVISOR_EVERY=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 2>&1)"
 
 # (1) NOT-automatable #4 auto-skipped + logged, never worked.
 assert_contains "$out" "auto-skipping #4" "bold NOT-automatable #4 is auto-skipped + logged (#92)"

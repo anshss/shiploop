@@ -7,6 +7,12 @@
 #   (C) run-start wait re-exclusion: a seeded wait whose PR is OPEN re-excludes its ticket and the
 #       entry persists; flip the PR to MERGED and the wait clears so the ticket is worked.
 # Stubbed Claude (worker + supervisor) + gh; sandboxed, no network.
+# Drives the loop with `--serial`: (B) asserts that a deferred ticket is still in tickets.md at
+# run-END, which is a within-one-driver property — the deferral is an in-memory exclusion. Under the
+# parallel default a SIBLING driver legitimately re-evaluates the gate after the blocker resolves and
+# picks the dependent up in the same run (the blocker really did land, which is exactly what the gate
+# waits for), so the "still deferred at run-end" shape is timing-dependent there. The gate itself is
+# unchanged — it is the sequential loop each parallel driver runs.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -177,7 +183,7 @@ run_loop() { # <tmpdir>  → prints loop stdout+stderr; env vars after set on ca
     GOVERN_CLAUDE_BIN="$T/bin/claude" \
     GOVERN_NO_PUSH=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
     "$@" \
-    bash "$RL" 2>&1
+    bash "$RL" --serial 2>&1
 }
 
 # ── (B) pre-spawn dependency gate ────────────────────────────────────────────
