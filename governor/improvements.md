@@ -139,3 +139,12 @@ Investigation complete. Here's the harness-improvement proposal for this run:
 - `governor/README.md`: document that a re-selected ticket with an already-open PR is adopted via `govern::find_pr` without spawning a new worker and is re-fed through `await-ci.sh` on the next run — why: this auto-retry-on-reselection behavior isn't documented, so an operator seeing "failed, worktree preserved" might intervene (e.g. delete the worktree) in a way that breaks that adoption path.
 
 None of these touch safety rails (hard-stops, run bounds, permission gate, merge allowlist).
+
+## 2026-07-25 12:12 — run run-20260725-111729-96725 (resolved/parked/failed observed)
+
+This run itself was clean (ticket #23 resolved/merged). The friction is a harness gap: `govern-improve-triage.sh` has no dedup against already-open promotion tickets, and I confirmed 8 near-duplicate "Harness self-improvement: promote safe proposals" tickets currently sit open in `queue/tickets.md` (#9, #10, #11, #12, #36, #39, #42, #47) — a fix for this has already been self-proposed by the harness three separate times and never applied.
+
+- `scripts/govern/govern-improve-triage.sh`: before calling `file-ticket.sh` (line 117), search `queue/tickets.md` for an already-open ticket whose heading matches `^## #\d+ — Harness self-improvement: promote safe proposals` (or carries the block's AUTO-PROMOTED marker); if one exists, append this run's safe bullets into that ticket's existing body instead of filing a new numbered ticket — why: this exact fix has been self-proposed three times (tickets #36, #39, #42) and never applied, directly causing the 8-ticket pile-up.
+- `scripts/govern/govern-improve.sh`: include a compact open-ticket digest (number, title, severity, `Where:` target) in the reviewer's context when assembling a new run's proposals — why: confirmed absent from the script; its absence is why proposals keep restating already-filed fixes (#38 restating #30; #36/#39/#42 each re-proposing the same dedup fix).
+
+No rail-touching items found.
