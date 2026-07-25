@@ -79,6 +79,29 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 - Additive prod migration auto-applies **only if** `GOVERN_MIGRATE_CMD` is configured (else it parks
   for a manual apply — it never merges code ahead of a schema it needs and forgets).
 
+## Right-sizing + retry escalation (which model runs, and what a retry changes)
+- A ticket's `Model:` (`haiku|sonnet|opus`) and `Effort:` (`low|medium|high|xhigh|max`) fields are the
+  brain-decided sizing for its **first** attempt. `GOVERN_WORKER_MODEL` / `GOVERN_WORKER_EFFORT` are
+  the workspace floors, used when a ticket says nothing (an unknown value is dropped fail-safe).
+- A **retry** classifies *why* the prior attempt failed and escalates the axis that actually failed —
+  it no longer always jumps to `GOVERN_WORKER_MODEL`, which used to re-bet the top tier on failures
+  where the model was never the problem:
+
+  | failure signature (from the outcome ledger + the driver) | response |
+  |---|---|
+  | gh/network/auth outage, transient drop, CI state unverifiable | retry **identically** — nothing escalates |
+  | red CI (usually a portability/env bug, not a thinking bug) | **same tier**, same effort |
+  | burned the per-worker token budget while still exploring | scope underestimated → **raise the tier** |
+  | opened a PR that never landed (a coherent but wrong fix) | judgment → **raise effort**, and the tier |
+  | anything else, incl. a wall-clock timeout or no evidence | fallback: escalate to `GOVERN_WORKER_MODEL` |
+
+- Effort is the cheaper knob, so it moves first; the tier moves only when it is below the floor. An
+  escalation never **down**-grades below the tier the first attempt used — only a positively
+  identified infra/CI cause may keep a sub-floor tier. Every decision is logged as
+  `worker #N sizing: model=… effort=… retry-class=… — <reason>`.
+- `GOVERN_RETRY_CLASSIFY=0` — kill switch: pins every retry back to the old
+  always-escalate-to-`GOVERN_WORKER_MODEL` behavior.
+
 ## Hard bounds (a run always ends; tune via env)
 - `GOVERN_MAX_TICKETS` (20) — stop after N tickets this run (caps a tickets-beget-tickets loop).
 - `GOVERN_MAX_BAD_STREAK` (4) — stop after N **consecutive** parked/failed.
@@ -94,6 +117,35 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
   preserved and a re-run resumes it, exactly like a timeout.
 - `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
+
+## Locality batching (`GOVERN_BATCH_MAX`, default `1` = off)
+
+Exploration is the dominant cost of a resolved ticket (~98% cacheRead): three tickets that all touch
+`scripts/govern/` mean three workers each paying full discovery cost on the same code — three repo
+loads, three `CLAUDE.md` reads, three architecture explorations. `GOVERN_BATCH_MAX=N` lets ONE worker
+take up to N tickets from the **same area** so that discovery is paid once.
+
+- **Key.** The leaf directory name of the dominant path token on the ticket's `Files:` line (a
+  measured file list, preferred) or its `Where:` line. Depth-1 is deliberate: a hub/workspace mirror
+  pair (`templates/govern/run-loop.sh` ↔ `scripts/govern/run-loop.sh`) *is* the same area. A ticket
+  that names no path is **unlocalized** and is never batched on a guess.
+- **Grouping.** Eligible tickets are partitioned into **disjoint** groups in severity order, capped at
+  N. Groups are disjoint by construction, which also makes `--parallel` safer: concurrent drivers can
+  no longer be handed two tickets that edit the same file.
+- **One worker → one branch → one PR** per group, with per-ticket commits.
+- **Dependencies.** Two tickets in a dependency relation — declared (`**Depends on:**`) or implicit
+  (the other side's `**Blocks:**`) — are **never** co-batched, so a group can't be worked out of order.
+  Each batched ticket also re-passes the pre-spawn dependency gate individually.
+- **Locking.** Every ticket in a group is claim-locked by the driver for the whole run, so the
+  exactly-once guarantee is unchanged. A contended candidate is simply left out of the group.
+- **Partial failure is per-ticket.** The worker returns a `tickets` array of `{ticket,status,note}`.
+  A batched ticket is bookkept (and its block deleted) **only** on an explicit `resolved` entry —
+  any other status, a missing entry, or an unparseable report leaves it in `tickets.md` for a later
+  run. A group's verdict can never mark an unfixed ticket resolved.
+
+Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for the
+token saving. Hence the conservative default of `1` (one ticket per worker — today's behavior). Only
+applies to a **backlog** pull; an explicit ticket set is dispatched exactly as named.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
