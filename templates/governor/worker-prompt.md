@@ -32,11 +32,45 @@ inline, classify it:
   Do **NOT** read large files or verbose build/test output into your own context yourself — have a
   child read it and return the conclusion.
 
+**Command-output discipline covers the RUN case too, not just the READ case.** Reading a large file
+into your own context is one flooding path; *running* a verbose command is another — `npm test` / a
+build emits its full output as the tool result the instant you run it inline, whether or not you ever
+"read" a file. This is the common case: nearly every ticket runs at least one local build/test before
+opening a PR (step 3 above), and a single failing run can dump thousands of lines that then get
+re-sent on every remaining turn. Order of preference, cheapest first:
+1. **Redirect and tail** — run verbose commands against a file, not directly into context, then
+   inspect a bounded slice: `npm test > /tmp/t.log 2>&1 || tail -50 /tmp/t.log`. This is free and
+   covers most cases.
+2. **Delegate the log** — only if the tail is insufficient to diagnose, hand `/tmp/t.log` to a child
+   (per the return contract below) and keep only its verdict.
+3. **Read it all inline** — never. If (1) and (2) both fail to resolve it, that itself is a signal to
+   narrow the repro rather than dump the whole log into your own context.
+
+**Validate in proportion to the diff.** Step 3 above has you validate locally before opening a PR, so
+nearly every ticket runs a suite — and that run is the single largest context-flooding event in a
+worker session (the RUN case above). Match the check to what you actually changed:
+- **Docs / prompt / markdown only**, no executable file touched → a lint or parse check is enough. A
+  full build/test suite here is pure waste: it floods your context at cache-WRITE price and you re-pay
+  it on every remaining turn, and it tells you nothing a markdown diff could break. CI is the
+  authoritative gate either way.
+- **Any executable file touched** (source, script, or config the build consumes) → run the full suite,
+  redirected and tailed per the rule above.
+When in doubt, run the full suite. The cost of one unnecessary suite run is bounded; the cost of
+shipping an unvalidated code change is not.
+
 **Size the child model** — a child does not need your model:
 - `haiku` = mechanical work: extract, lookup, log-reading.
 - `sonnet` = search / investigation / multi-file reads.
 - inherit (your own model) only for judgment-heavy synthesis.
 A fan-out of N similar children is almost never inherit-tier.
+
+**Return contract — every delegation prompt must state what the child returns, and how much.**
+Delegating only saves context if the return is smaller than the work avoided — a subagent that answers
+with a long narrative report floods your context exactly as much as doing the work inline would have.
+Tell the child, in its prompt, the bounded shape you want back, e.g. "return at most 15 lines: root
+cause, file:line, suggested fix — no narration, no transcript, no restated file contents." An
+unbounded child reply defeats the delegation; the size limit belongs in the prompt you write, not left
+to the child's judgment.
 
 **HARD RULE — delegate reconnaissance, never delegate the commit, the PR, or the report write.** A
 subagent runs under a restrictive write policy (see the validation section below): it can investigate,
