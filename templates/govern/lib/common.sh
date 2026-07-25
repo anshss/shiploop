@@ -50,6 +50,10 @@ PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
 # merges" advice (in-memory skipThisRun #57 evaporated at run-end) so a blocked ticket stays skipped
 # across runs until its blocker lands. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
 PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.json}"
+# Cross-run per-ticket outcome ledger (#60), one JSON object per attempt. Per-machine runtime state
+# — gitignored. Defined here (not only in run-loop) because spawn-worker's retry classifier (retry-class)
+# reads the SAME file to recover the prior attempt's failure signature.
+TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
 # Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
@@ -1799,6 +1803,100 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
     | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.output_tokens//0)+(.cache_read_input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
     | awk '{s+=$1} END{print s+0}')"
   echo "${total:-0}"
+}
+
+# ── evidence-based retry escalation (retry-class) ───────────────────────────────────
+# Before this, EVERY retry escalated to GOVERN_WORKER_MODEL (default opus) and discarded the
+# ticket's `Model:`/`Effort:` fields, on the reasoning that "a cheap bet that didn't land shouldn't
+# be re-bet". That reasoning only holds when the MODEL TIER was the axis that failed. The most
+# expensive real failure in this workspace was a Linux-vs-macOS PORTABILITY bug that burned BOTH
+# attempts at the top tier — re-betting the tier there is pure waste. So: classify the failure
+# signature, then escalate the axis that actually failed.
+#
+#   class      | evidence                                            | response
+#   -----------|-----------------------------------------------------|--------------------------
+#   infra      | gh/network/auth outage, transient drop, CI state     | retry IDENTICALLY — do not
+#              | unverifiable (driver-declared)                      | escalate at all
+#   ci         | this dispatch IS the CI-fix re-dispatch, or the      | SAME tier; the failing axis
+#              | prior attempt died on red CI (driver-tagged)        | is portability/env, not tier
+#   budget     | prior attempt burned its token budget (#16)         | scope underestimated → raise
+#              |                                                     | TIER
+#   judgment   | prior attempt opened a PR that did not land — a      | judgment failure → raise
+#              | coherent but wrong fix                              | EFFORT and TIER
+#   unknown    | anything else (incl. wall-clock timeout, no history) | TODAY's behavior — escalate
+#              |                                                     | to GOVERN_WORKER_MODEL
+#
+# Unrecognized signature → `unknown` → the pre-classifier fallback, unchanged. The ONLY classes allowed to
+# keep a tier BELOW GOVERN_WORKER_MODEL on a retry are infra/ci, which positively identify a
+# non-model cause — that preserves the "a retry never silently down-grades" invariant.
+
+govern::model_rank() { # tier -> 1..3 (0 = unknown/unrankable)
+  case "${1:-}" in haiku) echo 1 ;; sonnet) echo 2 ;; opus) echo 3 ;; *) echo 0 ;; esac
+}
+govern::model_max() { # a b -> the HIGHER-ranked of the two (b wins ties and unrankable a)
+  local ra rb; ra="$(govern::model_rank "${1:-}")"; rb="$(govern::model_rank "${2:-}")"
+  if [[ "$ra" -gt "$rb" ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi
+}
+govern::effort_bump() { # effort -> the next rung UP the reasoning-effort ladder
+  # Raising effort is far cheaper than raising tier, so it is the first rung of the escalation
+  # ladder. An UNSET effort has no rung to step from (#18 deliberately invents no default), so an
+  # escalation from unset lands on the ladder's first EXPLICIT rung, `high`. An unrecognized value
+  # is left untouched (fail-safe — the caller's allowlist drops it anyway).
+  case "${1:-}" in
+    "") echo high ;;
+    low) echo medium ;; medium) echo high ;; high) echo xhigh ;; xhigh|max) echo max ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+govern::retry_class() { # N -> "<class>\t<reason>" (tab-separated; class ∈ infra|ci|budget|judgment|unknown)
+  local n="${1:-}" hist last st rc nrepos
+  # Kill switch: GOVERN_RETRY_CLASSIFY=0 pins every retry to `unknown`, i.e. the exact pre-classifier
+  # escalate-to-GOVERN_WORKER_MODEL rail. One env var reverts the whole policy.
+  if [[ "${GOVERN_RETRY_CLASSIFY:-1}" == "0" ]]; then
+    printf 'unknown\tclassifier disabled (GOVERN_RETRY_CLASSIFY=0) — using the pre-classifier escalation\n'; return 0
+  fi
+  # 1. Driver-declared class wins — run-loop knows things the ledger cannot show (e.g. it is
+  #    re-dispatching THIS ticket right now because the last worker died on a transport drop).
+  #    An unrecognized value is IGNORED (never trusted) and falls through to the evidence path.
+  case "${GOVERN_RETRY_CLASS:-}" in
+    infra|ci|budget|judgment)
+      printf '%s\t%s\n' "$GOVERN_RETRY_CLASS" "declared by the driver (GOVERN_RETRY_CLASS=$GOVERN_RETRY_CLASS)"; return 0 ;;
+  esac
+  # 2. This spawn IS the CI-fix re-dispatch. (injecting the failing CI log into the
+  #    worker prompt is owned separately; this classifier owns ONLY the escalation policy — the
+  #    seam between them is this one env var.)
+  if [[ -n "${GOVERN_FIX_CI:-}" ]]; then
+    printf 'ci\tCI-fix re-dispatch for %s (GOVERN_FIX_CI set) — the failing axis is CI/portability, not model tier\n' "$GOVERN_FIX_CI"
+    return 0
+  fi
+  # 3. Evidence: the ticket's LAST recorded cross-run outcome.
+  hist="${GOVERN_HISTORY_FILE:-$TICKET_HISTORY_FILE}"
+  if [[ -s "$hist" ]] && command -v jq >/dev/null 2>&1 && [[ "$n" =~ ^[0-9]+$ ]]; then
+    last="$(jq -sc --argjson t "$n" '[ .[] | select(.ticket == $t) ] | last // empty' "$hist" 2>/dev/null || true)"
+  fi
+  if [[ -n "${last:-}" ]]; then
+    st="$(printf '%s' "$last" | jq -r '.status // ""' 2>/dev/null || echo "")"
+    rc="$(printf '%s' "$last" | jq -r '.retryClass // ""' 2>/dev/null || echo "")"
+    nrepos="$(printf '%s' "$last" | jq -r '(.repos // []) | length' 2>/dev/null || echo 0)"
+    # 3a. The driver tagged the recorded outcome (e.g. "parked because CI stayed red") — authoritative.
+    case "$rc" in
+      infra|ci|budget|judgment)
+        printf '%s\t%s\n' "$rc" "prior attempt recorded $st, tagged retryClass=$rc by the driver"; return 0 ;;
+    esac
+    case "$st" in
+      budget-exceeded)
+        printf 'budget\tprior attempt burned its token budget while still exploring (#16) — scope was underestimated\n'; return 0 ;;
+      failed|parked)
+        if [[ "${nrepos:-0}" -gt 0 ]]; then
+          printf 'judgment\tprior attempt opened a PR that did not land (%s) — a coherent but wrong fix\n' "$st"; return 0
+        fi
+        printf 'unknown\tprior attempt recorded %s with no PR — signature unrecognized\n' "$st"; return 0 ;;
+      *)
+        printf 'unknown\tprior attempt recorded %s — signature unrecognized\n' "${st:-<none>}"; return 0 ;;
+    esac
+  fi
+  printf 'unknown\tno recorded evidence for a prior attempt\n'
 }
 
 # ── tolerant worker-report extraction (#66) ─────────────────────────────────

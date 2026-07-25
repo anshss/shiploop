@@ -72,6 +72,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
   GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
   GOVERN_LOG_ROOT="$T/logs" \
+  GOVERN_HISTORY_FILE="$T/history.jsonl" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
@@ -89,4 +90,9 @@ assert_eq "$commits" "0" "no resolve commit for a PR whose CI was never verified
 merged_attempted="$(grep -c 'should never happen for unverifiable CI' <<<"$out" || true)"
 assert_eq "$merged_attempted" "0" "gh pr merge was NEVER invoked on unverifiable CI (fail closed)"
 assert_contains "$(cat "$T/governor/escalations.md")" "could not be verified" "escalation filed for the unverified PR"
+# The driver TAGS the failure signature it observed onto the cross-run history row: a gh error is an
+# infra signature, so the next attempt re-bets the ticket's own sizing instead of escalating a tier
+# that never failed (see govern::retry_class).
+assert_eq "$(jq -r 'select(.ticket==1) | .retryClass // ""' "$T/history.jsonl" 2>/dev/null)" "infra" \
+  "unverifiable CI stamps an infra retry signature onto the history row"
 assert_done

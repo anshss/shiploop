@@ -298,7 +298,7 @@ govern::log "TokenJam run id: $TJ_RUN_ID (every worker tagged tokenjam.run_id=$T
 STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
-HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
+HISTORY="$TICKET_HISTORY_FILE"   # common.sh (spawn-worker's retry-class retry classifier reads the same ledger)
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
 TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
                     # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
@@ -365,6 +365,14 @@ record() { # ticket status note
   base="$(jq -nc --argjson t "$1" --arg run "$(basename "$RUNDIR")" --arg st "$2" --argjson ts "$(date +%s)" \
     '{ticket:$t, run:$run, status:$st, ts:$ts}' 2>/dev/null \
     || printf '{"ticket":%s,"run":"%s","status":"%s","ts":%s}' "$1" "$(basename "$RUNDIR")" "$2" "$(date +%s)")"
+  # retry-class: stamp the FAILURE SIGNATURE the driver observed (set by the branches that know it — e.g. a
+  # park because CI stayed red is a `ci` signature, not a model-tier failure). spawn-worker's retry
+  # classifier reads this back on the NEXT attempt and escalates the axis that actually failed
+  # instead of always jumping to GOVERN_WORKER_MODEL. Absent → the classifier falls back to the
+  # status alone, and an unrecognized status escalates exactly as it did before the classifier.
+  if [[ -n "${RETRY_CLASS_HINT:-}" ]]; then
+    base="$(jq -c --arg rc "$RETRY_CLASS_HINT" '. + {retryClass:$rc}' <<<"$base" 2>/dev/null || printf '%s' "$base")"
+  fi
   extra="$(history_enrich "$1" 2>/dev/null || echo '{}')"
   printf '%s\n' "$(jq -c --argjson e "$extra" '. + $e' <<<"$base" 2>/dev/null || printf '%s' "$base")" \
     >> "$HISTORY" 2>/dev/null || true
@@ -1088,6 +1096,7 @@ while :; do
   fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
   CUR_TICKET="$N"; CUR_TICKET_MERGED=""   # #151: mark in-flight so an abnormal abort/interrupt surfaces #N (+ any merged-but-unbookkept PR)
+  RETRY_CLASS_HINT=""                     # retry-class: per-ticket failure signature the driver observes (see record())
 
   # --- resume: if a prior (crashed) run already opened a PR for this ticket, don't re-spawn ---
   resumed=""; cf=0
@@ -1180,7 +1189,9 @@ while :; do
     ierr="$(printf '%s' "$report" | jq -r '.infra.error // "infra/auth outage"' 2>/dev/null || echo 'infra/auth outage')"
     govern::log "#$N hit an INFRA/auth outage ($ierr) — pausing ${GOVERN_INFRA_RETRY_PAUSE:-20}s, retrying once before halting (#90)"
     sleep "${GOVERN_INFRA_RETRY_PAUSE:-20}"
-    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
+    # retry-class: declare the failure signature to the retry — an auth/transport outage is NOT a sizing
+    # failure, so this re-dispatch re-bets the ticket's OWN Model:/Effort: instead of escalating.
+    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
@@ -1195,7 +1206,9 @@ while :; do
   if [[ "$status" == "interrupted" && "$MODE" == "live" && -z "$resumed" && "${GOVERN_INTERRUPT_RETRY:-1}" == "1" ]]; then
     ierr="$(printf '%s' "$report" | jq -r '.interrupted.error // "connection closed mid-response"' 2>/dev/null || echo 'connection closed mid-response')"
     govern::log "#$N was INTERRUPTED ($ierr) — transient drop (e.g. laptop sleep); auto-retrying once from the preserved worktree before recording interrupted (#34)"
-    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
+    # retry-class: same as the infra retry — a transient connection drop is an ENVIRONMENT artifact, so the
+    # resume re-bets the ticket's own sizing rather than escalating a tier that never failed.
+    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
@@ -1359,6 +1372,10 @@ while :; do
               # isn't orphaned.
               govern::log "CI still red on $prepo#$pnum after fixes → #$N failed"
               pr_summary="$pr_summary $prepo#$pnum(CI-red-left-open)"
+              # retry-class: the axis that failed is CI (commonly a portability/env bug — workers verify on
+              # macOS while CI runs Linux), NOT the model tier. Tag it so the NEXT attempt
+              # re-bets the SAME tier instead of burning a top-tier retry on a `stat -f` bug.
+              RETRY_CLASS_HINT="ci"
               [[ "$status" == "resolved" ]] && status="failed" ;;
             unmergeable)
               # Merge FAILED (conflict / failing required check) even after a rebase-onto-origin
@@ -1373,6 +1390,9 @@ while :; do
               # checks are green, so we FAIL CLOSED: leave the PR open + park, never merge blind (#34b).
               govern::log "CI state unverifiable on $prepo#$pnum (gh could not confirm CI) — PR left open; parking (ticket NOT deleted) [ci-state-unverifiable]"
               pr_summary="$pr_summary $prepo#$pnum(ci-unverifiable-left-open)"
+              # retry-class: a gh network/auth/5xx error is an INFRA signature — the worker's sizing was
+              # never in question, so a retry must not escalate the tier at all.
+              RETRY_CLASS_HINT="infra"
               report="$(printf '%s' "$report" | jq -c --arg p "$prepo#$pnum" '.escalation={reason:("PR "+$p+" was NOT merged because its CI state could not be verified (gh error — network / auth / rate-limit / GitHub 5xx). Failing closed rather than merging without a confirmed-green CI."),question:("confirm "+$p+" CI is green, then merge; or investigate the gh/GitHub API failure"),options:[]}')"
               [[ "$status" == "resolved" ]] && status="parked" ;;
             external-blocked)
