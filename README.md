@@ -133,6 +133,7 @@ Everything lives in one file — `scripts/lib/workspace.sh`. Advanced lanes ship
 | `GOVERN_AUTONOMY` | `pr-only` | Trust-ladder rung (`observe` / `pr-only` / `auto`); absent = `auto` for pre-knob installs |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_WORKER_MODEL` | `opus` | Fleet-wide worker default; per-ticket `Model:` line overrides first attempts |
+| `GOVERN_PARALLEL_DEFAULT` | `1` | Tickets a plain `run-loop.sh` works at once — `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB — additive migrations merge instead of parking |
 | `GOVERN_PUBLIC_REPOS` | auto-detect | Public repos get neutral `sl-<hex>` branches, no ticket ids on PRs |

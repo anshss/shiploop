@@ -11,9 +11,36 @@ allowed-tools: Bash, Read
 
 Launch the governor — a **pure-bash driver** (`scripts/govern/run-loop.sh`) so this session's context
 stays flat (near-zero parent cost). Claude runs only in fresh, bounded sub-sessions: the per-ticket
-**worker** and a periodic **supervisor**. `$ARGUMENTS`: empty = whole eligible backlog · a number =
-one ticket · `--dry-run` = prove it, ship nothing · `--exclude N,N` = skip tickets a parallel govern
-session owns.
+**worker** and a periodic **supervisor**.
+
+`$ARGUMENTS`:
+
+| Argument | Effect |
+|---|---|
+| *(empty)* | The whole eligible backlog — one ticket at a time, or N at a time if this workspace set `GOVERN_PARALLEL_DEFAULT=N` |
+| `<N>` | That one ticket only — always sequential (nothing to fan out) |
+| `<N> <N> <N>` | Exactly that ticket set, in severity order |
+| `--parallel[=N]` | Work up to N tickets concurrently; bare `--parallel` uses the workspace default cap (else 4) |
+| `--serial` | Force one ticket at a time over the whole backlog (`--parallel=1` is identical) |
+| `--dry-run` | Prove it, ship nothing |
+| `--exclude N,N` | Skip these tickets (e.g. another govern session owns them) |
+
+**Concurrency.** The default is **sequential**; set `GOVERN_PARALLEL_DEFAULT=N` in
+`scripts/lib/workspace.sh` to make a plain `run-loop.sh` fan out (4 is a sensible fleet setting), or
+pass `--parallel[=N]` per run. In parallel mode the driver becomes an orchestrator: for a backlog
+pull it spawns **N full backlog drivers**, each grinding the queue until it is empty and contending
+on the per-ticket claim lock — literally the "launch N terminals" recipe, automated. Because each
+child is an ordinary sequential driver, every backlog mechanism keeps working inside it (dependency
+gate, #60 failure streak, periodic supervisor, bad-streak breaker). For an explicit ticket set it
+spawns one single-ticket child per named ticket instead. Safety is unchanged — the per-ticket claim
+lock + the bookkeep lock are what make concurrent drivers exactly-once safe; the orchestrator adds
+nothing to that model. Note the hard bounds are **per driver**, so a parallel backlog run's ceiling
+is N × `GOVERN_MAX_TICKETS` (it still always ends), and N concurrent workers cost N× the spend.
+
+Precedence, highest first: `--serial` › `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` ›
+`GOVERN_PARALLEL_DEFAULT` (unset or 1 = sequential; the target-set size caps it when several tickets
+are named). A resolved cap of 1 from any source means `--serial`, i.e. the whole backlog one ticket
+at a time — never "one ticket then quit".
 
 Run from the **main checkout** of the meta-repo (not a worktree), in a **plain terminal** — NOT from
 inside an interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env
@@ -96,7 +123,9 @@ Relay its log lines to the operator as they appear. The driver does everything �
   the reason; don't take over.
 
 ## Policy (enforced by the scripts, not by you)
-- Sequential; auto-merge only `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is
+- Sequential by default; `GOVERN_PARALLEL_DEFAULT=N` (or `--parallel[=N]`) fans out into N concurrent
+  backlog drivers, `--serial` forces one-at-a-time. Auto-merge only
+  `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is
   PR-only. The `GOVERN_AUTONOMY` trust-ladder rung gates this: `observe`/`pr-only` never auto-merge at
   all (PRs are left open); only `auto` merges. See the Trust ladder section above.
 - Hard-stops (destructive git; prod data / destructive schema / secrets) and doctrine gaps → worker

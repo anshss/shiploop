@@ -37,6 +37,39 @@ hand-port of the live-forward governor mechanisms from the reference instance.
 
 ### Changed
 
+- **`--parallel` backlog mode now fans out into N FULL backlog drivers, plus a `--serial` flag and a
+  `GOVERN_PARALLEL_DEFAULT` workspace knob.** Previously a `--parallel` backlog pull picked the top-N
+  eligible tickets, ran one single-ticket child per ticket, and exited — so it worked at most N
+  tickets per run, and each child (being handed one explicit ticket) took the same bypasses
+  `run-loop.sh <N>` deliberately takes: the dependency gate (#119), the cross-driver re-verify, the
+  #60 failure-streak auto-escalation, the periodic supervisor cadence and its `attemptNext` priority
+  queue were all skipped or never reached. A backlog pull now spawns N children that each run the
+  ordinary sequential loop over the whole queue, contending on the per-ticket claim lock — the
+  "launch N terminals" recipe, automated — so every one of those mechanisms keeps working, and the
+  run grinds the WHOLE backlog N at a time instead of stopping after N tickets. An explicit ticket
+  SET still fans out one single-ticket child per named ticket (unchanged).
+  - `--serial` (alias `--no-parallel`) forces one-at-a-time. A resolved cap of 1 from ANY source
+    (`--parallel=1`, `GOVERN_PARALLEL=1`, the knob) now collapses to the sequential driver instead of
+    an orchestrator-of-one, which in backlog mode would have pulled a single ticket and quit.
+  - `GOVERN_PARALLEL_DEFAULT` (new, `scripts/lib/workspace.sh`, **default `1` = sequential**) sets
+    the concurrency of a plain `run-loop.sh` with no flags. Existing workspaces are unaffected until
+    they set it; `N > 1` costs N× the spend, so it is a deliberate opt-in. Precedence is `--serial` ›
+    `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` › `GOVERN_PARALLEL_DEFAULT`.
+  - **Fork-bomb fix:** children are now spawned with `--serial` and a cleared `GOVERN_PARALLEL`.
+    Under `GOVERN_PARALLEL=4 run-loop.sh` a child inherited the env, resolved to parallel mode for
+    its own ticket, became an orchestrator and spawned a grandchild — unbounded, and reachable on the
+    shipped code.
+  - The orchestrator now folds every child's `state.jsonl` rows into its OWN run dir and emits the
+    same canonical `DONE — resolved=… parked=…` line the sequential path ends on, so a run dir stays
+    the single place to read what a run did regardless of fan-out shape.
+  - Backlog fan-out is sized to the eligible ticket count (never 4 drivers for a 1-ticket queue) and
+    launches are staggered by `GOVERN_PARALLEL_STAGGER_S` (default 2s) so N drivers don't run the
+    run-start git preflight against the same meta checkout in the same instant.
+  - Coverage: `test-run-loop-multi-target.sh` gains the full precedence matrix, the "5 tickets at cap
+    2 → all 5 processed" whole-backlog proof, and the full-driver fan-out assertion.
+  - Note the hard bounds (`GOVERN_MAX_TICKETS`, `GOVERN_MAX_BAD_STREAK`, `GOVERN_MAX_RUNTIME`) are
+    PER DRIVER, so a parallel backlog run's ceiling is N × `GOVERN_MAX_TICKETS`. It still always ends.
+
 - **Validation sink relocated to `.claude/shiploop/validation/`.** The flow registry
   (`flows.md`), its evidence tree (`evidence/`), and the #252 promoted validation summaries now all
   live under `.claude/shiploop/validation/` instead of the root-level `validation/` + the co-tenant
