@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Exploration is the dominant cost of a
+  resolved ticket — roughly 98% of a worker's tokens are cache reads of code it had to discover. Three
+  tickets that all touch `scripts/govern/` therefore mean three workers each paying full discovery
+  cost on the same code: three repo loads, three `CLAUDE.md` reads, three architecture explorations.
+  `GOVERN_BATCH_MAX=N` lets one worker take up to N tickets from the same area so discovery is paid
+  once. On the dominant cost term this approaches an N× saving for a group.
+
+  It also makes `--parallel` **safer**, not just cheaper. Concurrent drivers were previously selected
+  by severity alone, with no regard for whether two tickets edit the same file — so two workers could
+  race the same file and produce conflicting branches. Groups are disjoint by construction, which
+  removes that race.
+
+  - **Locality key** = the leaf directory name of the dominant path token on the ticket's `Files:`
+    line (a measured file list, preferred when present) or its `Where:` line. Depth-1 is deliberate:
+    a hub/workspace mirror pair — `templates/govern/run-loop.sh` and `scripts/govern/run-loop.sh` —
+    *is* the same area, and grouping them is the intent. A ticket that names no path is unlocalized
+    and is never batched on a guess.
+  - **One worker → one branch → one PR** per group, with per-ticket commits.
+  - **Dependency-safe.** Two tickets in a dependency relation — declared via `**Depends on:**` or
+    implied by the other side's `**Blocks:**` — are never co-batched, so a group cannot be worked out
+    of order. Each batched ticket also re-passes the pre-spawn dependency gate individually.
+  - **Locking is unchanged.** Every ticket in a group is claim-locked by the driver for the whole run,
+    so the exactly-once guarantee holds per ticket. A candidate another driver already claimed is left
+    out of the group rather than collapsing the batch — under `--parallel`, all-or-nothing claiming
+    would mean batching almost never happens.
+  - **Partial failure stays per-ticket.** The worker returns a `tickets` array of
+    `{ticket, status, note}`. A batched ticket is bookkept — which *deletes its block* — only on an
+    explicit `resolved` entry. Any other status, a missing entry, an empty array, or an unparseable
+    report leaves it in `tickets.md` for a later run. A group verdict can never mark an unfixed ticket
+    resolved.
+
+  Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for
+  the token saving. So the aggressiveness is an explicit operator knob rather than a hard-coded
+  policy, and the default of `1` preserves today's behavior exactly — one ticket per worker. Applies
+  only to a backlog pull; an explicit ticket set is dispatched exactly as named.
+
 ## 1.11.1 — 2026-07-25
 
 **Behavior change on upgrade — read this before updating.** Parallel backlog execution is now
