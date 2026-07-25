@@ -1277,10 +1277,14 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
       cur=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", cur)
       inblk=(cur==n); next
     }
-    # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block.
+    # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block. Anchored to the
+    # START of the line (optionally bold-wrapped, colon required right after "on") so PROSE
+    # elsewhere in the body — e.g. "Depends on the `budget-exceeded` outcome ... Coordinate with
+    # ticket #13 and ticket #10" — is never mistaken for the marker and never contributes its own
+    # #N mentions as false dependencies (#29). Only #N on the MARKER line itself is harvested.
     inblk {
       low=tolower($0)
-      if (low ~ /depends[ \t]+on/) {
+      if (low ~ /^[[:space:]]*\*{0,2}depends[ \t]+on:\*{0,2}/) {
         s=$0
         while (match(s,/#[0-9]+/)) {
           d=substr(s,RSTART+1,RLENGTH-1); if (!seen[d]++) print d
