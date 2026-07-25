@@ -40,6 +40,27 @@
   policy, and the default of `1` preserves today's behavior exactly — one ticket per worker. Applies
   only to a backlog pull; an explicit ticket set is dispatched exactly as named.
 
+- **Base-branch CI preflight (`GOVERN_SKIP_BASE_CHECK`, default `0` = check).** The run-start
+  preflight now reads the base branch's latest CI conclusion (`gh run list --branch <base> --limit 1`,
+  one API call per repo, no tokens) before any worker is spawned, and refuses to dispatch when it is
+  unambiguously red — naming the failing run URL.
+
+  Measured motivation: a ticket dispatched onto a red `main` opened a PR that inherited the broken
+  baseline, went red, and was recorded `failed` — after a full worker session — even though its change
+  (one markdown file) could not have failed the suite. Under `--parallel` this scales: a red baseline
+  means *every* concurrent worker in the wave opens a PR that cannot go green. The governor already
+  polls CI after a PR exists, so without this check the problem surfaces at the most expensive
+  possible moment.
+
+  - **Fails OPEN by design.** `gh` missing or unauthenticated, no CI configured, no runs yet, an
+    in-progress/queued run, or an API error all proceed exactly as before. Only a *completed* run with
+    `conclusion=failure` blocks. A repo with no checks at all stays fully dispatchable — consistent
+    with the existing green-or-no-checks merge policy.
+  - **Once per run, not once per driver.** Runs on the existing run-start reconcile seam, which a
+    `--parallel` child driver has disabled, so a wave does not repeat it per child.
+  - `GOVERN_SKIP_BASE_CHECK=1` opts out — e.g. when the work being dispatched *is* the fix for the
+    red baseline. `GOVERN_BASE_BRANCH` overrides the branch name (default `main`).
+
 ## 1.11.1 — 2026-07-25
 
 **Behavior change on upgrade — read this before updating.** Parallel backlog execution is now
