@@ -37,6 +37,14 @@ lock + the bookkeep lock are what make concurrent drivers exactly-once safe; the
 nothing to that model. Note the hard bounds are **per driver**, so a parallel backlog run's ceiling
 is N × `GOVERN_MAX_TICKETS` (it still always ends), and N concurrent workers cost N× the spend.
 
+The **run-start reconcile** (apply escalation answers → regenerate `pending-escalations.json` →
+`preflight-main.sh` → externalization lane → NA-skip streak bookkeeping) is explicitly *not* per
+driver: it is whole-run state reconciliation against the one shared meta checkout, and
+`preflight-main.sh` fetches / rebases / pushes it. The orchestrator runs it once, before it spawns
+anything and while it holds the single-run lock; each child is handed the internal `--orchestrated`
+flag and skips it (logging one auditable `run-start reconcile: skipped` line). Never pass
+`--orchestrated` by hand — a driver run with it reconciles nothing.
+
 Precedence, highest first: `--serial` › `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` ›
 `GOVERN_PARALLEL_DEFAULT` (unset or 1 = sequential; the target-set size caps it when several tickets
 are named). A resolved cap of 1 from any source means `--serial`, i.e. the whole backlog one ticket
