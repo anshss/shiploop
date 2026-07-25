@@ -167,29 +167,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #15 — Worker prompt: make the worker a router (delegate reconnaissance to cheap subagents)
-
-**Severity:** High
-**Model:** sonnet
-
-Where: shiploop/templates/governor/worker-prompt.md (hub, canonical) and governor/worker-prompt.md (workspace copy — keep both in sync)
-
-Observed: shiploop's token-saving thesis is applied to the wrong session. The OPERATOR session has a ROUTER POSTURE hook (scripts/router-posture-reminder.sh), a delegation rule in root CLAUDE.md, and a model-sizing guide. The WORKER session — which is 98% of all token spend — has none of it. `governor/worker-prompt.md` mentions subagents exactly 5 times (lines ~97-103) and every one is a WARNING about what a subagent cannot do (write the validation REPORT.md), never an instruction to delegate. Workers run at `--permission-mode bypassPermissions` with full tool access, so they CAN spawn subagents; they are simply never told to.
-
-Measured consequence (governor/ticket-history.jsonl): a resolved ticket is a ~22M-token session that is 98% cacheRead — i.e. ~200+ turns of a context that grows all session as the single monolithic agent explores, edits, builds, tests and PRs in one context. Starting prompt is only ~7k tokens, so the cost is turn count x accumulated context, not prompt size.
-
-Fix direction: add a ROUTER POSTURE section to the worker prompt, adapted from scripts/router-posture-reminder.sh:35-49:
-- Classify each sub-task: trivial (one edit / one command / known one-file lookup) -> do inline; heavier (multi-file investigation, codebase sweep, diagnosis, reading a long log or build output) -> delegate to a subagent and keep only the verdict.
-- HARD RULE, preserving the existing constraint at worker-prompt.md:97-103: **delegate reconnaissance, never delegate the commit, the PR, or the report write.** A subagent runs under a restrictive policy and cannot write the report; the worker must persist any structured text a subagent returns.
-- Size the child model: haiku = mechanical/extract/lookup/log-reading; sonnet = search/investigation/multi-file reads; inherit only for judgment-heavy synthesis. A fan-out of N similar children is almost never inherit-tier.
-- Do NOT read large files into the worker's own context; have a child read and return the conclusion.
-
-Done when: the hub worker-prompt.md carries the router-posture section with the delegate-reconnaissance/never-delegate-writes rule and child model-sizing guidance; the workspace copy governor/worker-prompt.md carries the identical section; the existing subagent-cannot-write-the-report constraint is preserved and explicitly reconciled with the new delegation guidance (they must not read as contradictory).
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W1
-
----
-
 ## #16 — Add a per-attempt token budget kill switch for workers (only wall-clock exists today)
 
 **Severity:** Medium
@@ -466,5 +443,97 @@ Also consider trimming the open-ticket blocks to the ones actually relevant to t
 Done when: a supervisor pass no longer re-sends run history it has already reviewed; cumulative visibility is preserved (the supervisor can still reason about the whole run, via the carried-forward summary); the regression the full-history fix was made to prevent does not return — state explicitly in the PR how that is guaranteed; `bash -n` passes; hub and workspace copies stay in sync.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component X1
+
+---
+
+## #28 — --dry-run leaves a real ticket claim lock behind, blocking the next live run
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: shiploop/templates/govern/run-loop.sh (+ scripts/govern/run-loop.sh) — the ticket claim-lock acquisition path, and whatever releases it on exit
+
+Observed: `bash scripts/govern/run-loop.sh 14 --dry-run` acquired a REAL per-ticket claim lock at governor/.locks/ticket-14 (holder file containing its pid) and never released it on exit. The subsequent LIVE run for the same ticket then aborted with "#14 already claimed by another driver — skipping" and did no work — even though the dry-run process (pid 63313) had already exited. Confirmed by inspection: governor/.locks/ticket-14/holder contained 63313, and `ps -p 63313` showed the process dead, while a genuinely-live sibling worker's lock (ticket-15, holder 66563) was correctly held by a running process.
+
+Two distinct defects:
+(1) A `--dry-run` must be side-effect-free. It reports what it WOULD do (the log line is literally "[dry] would ..."), so it must not take a real claim lock that outlives it. Either skip claim acquisition entirely in dry mode, or acquire-and-release before exit.
+(2) The stale-lock reclaim did not fire for a lock whose holder pid is provably dead. run-loop.sh advertises a "stale-reclaimed" concurrency mode, but here a dead holder still blocked a fresh run, forcing a manual `rm -rf governor/.locks/ticket-14`. A dead-pid holder should be reclaimed automatically — note the operator is explicitly warned NOT to delete locks by hand (#183), so the automatic path has to work or that warning traps them.
+
+Fix direction: (a) in dry mode, do not acquire the per-ticket claim lock (or release it before exit, including on early exit paths — use a trap). (b) In the claim path, when the lock exists, check whether the holder pid is still alive; if it is dead, reclaim it and log "stale-reclaimed" rather than skipping the ticket. Preserve the #183 safety property: NEVER reclaim a lock whose holder is alive.
+
+Done when: `run-loop.sh <N> --dry-run` leaves no governor/.locks/ticket-<N> behind (verify with ls after a dry run); a lock whose holder pid is dead is automatically reclaimed by the next run with a clear log line; a lock whose holder is ALIVE is still respected and still skips; a test under templates/govern/test/ covers dead-holder reclaim and live-holder respect; bash -n passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 — hit while dry-running ticket #14 before launching the token-efficiency fan-out; cost one no-op govern run and a manual lock removal.
+
+---
+
+## #29 — govern::ticket_deps harvests ticket numbers from PROSE, creating false dependencies
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: scripts/govern/lib/common.sh (govern::ticket_deps, ~line 1270) + shiploop/templates/govern/lib/common.sh; gate consumer run-loop.sh:684
+
+Observed: while filing the token-efficiency ticket set, `govern::ticket_deps 22` returned `16 13 10` when ticket #22 declares only `**Depends on:** #16`. The extra numbers came from PROSE in the body: "Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (...)". The likely mechanism is that the body ALSO contains the sentence "Depends on the `budget-exceeded` outcome introduced by the token-budget ticket" — a prose sentence beginning with the literal phrase "Depends on" — which the scan appears to treat as a dependency declaration and then harvest nearby `#N` references from.
+
+Impact: a ticket that merely MENTIONS other tickets can become hard-gated on them by the #119 pre-spawn gate (run-loop.sh:684). That silently defers work, and in the worst case two tickets that reference each other in prose could deadlock. This is the INVERSE of the defect tickets #9/#11 already cover (they add a lint for prose deps that were never DECLARED); this one is undeclared prose becoming a REAL dependency. Both should be considered together — the parser is too loose in one direction and unenforced in the other.
+
+Note: in this instance the over-gating was benign/conservative (#22 genuinely does coordinate with #13 and #10, so waiting is safe) and was deliberately left in place. The defect is that it happened by accident rather than by declaration.
+
+Fix direction: anchor the `Depends on:` scan strictly — require the marker at the START of a line (optionally bold-wrapped) and harvest `#N` only from THAT line, not from following prose. Confirm the exact current matching behavior first (this was observed, not root-caused, during a bookkeeping pass). Add a test under templates/govern/test/ with a ticket whose body contains both a real `**Depends on:** #K` line and unrelated prose `#N` mentions, asserting only #K is returned.
+
+Done when: prose `#N` mentions never become dependencies; a properly declared `**Depends on:**` line still parses (including multiple comma-separated numbers); the `**Blocks:**` implicit-blocker path is unaffected; a regression test covers prose-vs-declaration; bash -n passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 token-efficiency filing — observed on ticket #22 (deps resolved to 16 13 10 against a single declared #16).
+
+---
+
+## #30 — Tickets #9 and #11 duplicate each other — same Depends-on work proposed twice
+
+**Severity:** Low
+**Model:** haiku
+
+Where: queue/tickets.md — open tickets #9 and #11
+
+Observed: #9 and #11 were both auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) after two different govern runs (run-20260711-033250 and run-20260711-033248), and they propose substantially the SAME work:
+  - both propose documenting `**Depends on:** #K` as a first-class optional per-ticket field in queue/tickets.md
+  - both propose adding a `--depends-on N[,M...]` flag to scripts/govern/file-ticket.sh
+  - both propose a lint pass flagging prose dependency language with no declared `Depends on:` line
+#11 additionally carries two proposals #9 does not (a supervisor `orderingRisks` schema field, and having the dependency gate confirm the dependency's PR actually MERGED rather than just that the ticket entry was deleted).
+
+Impact: two workers can be dispatched to implement the same three changes, wasting a full session each and producing conflicting PRs on the same files (queue/tickets.md, file-ticket.sh, lint-tickets.sh). This becomes materially more likely now that the governor runs tickets in parallel by default.
+
+Root cause worth noting: the auto-triage promoter appears to have no dedup against ALREADY-OPEN promoted tickets, so the same recurring proposal gets re-promoted on each run that surfaces it. That de-dup gap may deserve its own fix beyond merging these two entries.
+
+Fix direction: merge #9 and #11 into a single ticket that carries the union of their proposals (keeping #11's two extra items), and delete the other. Then consider whether govern-improve-triage.sh should dedup a proposal against open tickets before promoting it.
+
+Done when: only one open ticket covers the Depends-on documentation + `--depends-on` flag + dependency lint work, with #11's two additional proposals preserved; the redundant entry is deleted with a commit message naming the merge; a decision is recorded (ticket or CLAUDE.md note) on whether triage-time dedup is worth adding.
+
+Ref: session 2026-07-25 — spotted while deduping the token-efficiency ticket set against the existing queue.
+
+---
+
+## #31 — Nothing verifies a ticket's 'Done when' criteria before bookkeeping marks it resolved and deletes it
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/govern/govern-bookkeep.sh + shiploop/templates/govern/govern-bookkeep.sh (the resolve/delete path); worker report schema in spawn-worker.sh / governor/worker-prompt.md
+
+Observed: ticket #15 (worker-as-router prompt section) declared in its "Done when" that BOTH the hub template `shiploop/templates/governor/worker-prompt.md` AND the workspace copy `governor/worker-prompt.md` must carry the identical ROUTER POSTURE section. The worker updated ONLY the hub copy (merged as shiploop#82). The workspace copy was left with zero occurrences of the section — verified by `grep -c "ROUTER POSTURE" governor/worker-prompt.md` returning 0. Despite the unmet criterion the run reported `resolved=1`, the PR auto-merged, and bookkeeping DELETED #15 from queue/tickets.md.
+
+Impact is not cosmetic: `governor/worker-prompt.md` is the file this workspace's OWN governor workers actually load (WORKER_PROMPT_FILE resolves to $GOVERNOR_DIR/worker-prompt.md, lib/common.sh:29). So the single highest-leverage token-saving change in the current work set silently did not take effect locally — it only benefits future fleets that pull the hub template. The ticket is gone from the queue, so nothing would ever have re-surfaced it.
+
+Root cause: "resolved" is currently defined operationally as "the worker opened a PR and CI went green", with NO check that the ticket's own stated acceptance criteria were met. The `Done when:` field is written for a human/LLM reader and is never machine-verified nor even re-presented for confirmation before deletion. Under parallel execution (now the default) more tickets close unattended, so this failure mode gets systematically more likely and less observable.
+
+Fix direction: require the worker's structured report to include an explicit per-criterion self-assessment against the ticket's `Done when:` clauses (each clause: met / not-met / not-applicable, with a one-line evidence pointer), and have bookkeeping REFUSE to delete a ticket that reports any clause not-met — parking it with an escalation instead. This deliberately does not attempt to machine-parse arbitrary prose criteria; it makes the worker assert compliance clause-by-clause and makes a false assertion an auditable lie in the report rather than a silent omission.
+
+Consider additionally: a cheap independent verifier pass (haiku) that re-reads the ticket's Done-when against the actual diff before the resolve is committed. Weigh cost against value — the whole point of this work set is to REDUCE spend, so a verifier must be cheap and must not run on every ticket if a self-assessment suffices.
+
+Related: this class of gap is why the hub<->workspace sync clauses appear in nearly every ticket in the #14-#30 set; a worker that satisfies only one side of a two-copy requirement will keep producing this exact silent drift.
+
+Done when: a worker report carries a per-clause Done-when self-assessment; bookkeeping refuses to delete a ticket with any not-met clause and parks it with an escalation naming the clause; the refusal path is covered by a test under templates/govern/test/; the immediate #15 regression (workspace copy missing ROUTER POSTURE) is confirmed fixed separately; bash -n passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 — caught while verifying shiploop#82; workspace copy lacked the section the ticket required, yet the ticket was resolved and deleted.
 
 ---
