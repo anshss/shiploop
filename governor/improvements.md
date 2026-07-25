@@ -163,6 +163,8 @@ Both `ExitPlanMode` and `AskUserQuestion` are unavailable in this session, so th
 
 ## 2026-07-25 12:17 — run run-20260725-120551-43436 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 12:17:** 3 safe proposal(s) → ticket **#51**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Plan mode's exit tool isn't wired up in this context, so I'll deliver the actual GOVERN-IMPROVE output directly, per the task's own format contract.
 
 - `scripts/govern/lint-tickets.sh`: add a non-blocking WARN pass (alongside the existing duplicate-heading check) that validates every `**Depends on:** #N` / `**Blocks:** #N` / `Ref: #N` pointer resolves to a `## #N` heading still present in `queue/tickets.md` — why: #36 and #39 (this run's own promoted tickets) both propose "add `Depends on: #35` to #33 and #34," but #33/#34 no longer exist in the open queue; nothing today would have caught either proposal referencing a closed ticket, so the same stale-reference mistake will keep recurring silently.
