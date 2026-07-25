@@ -647,3 +647,27 @@ Done when: the worker prompt carries command-output discipline covering the RUN 
 Ref: session 2026-07-25 — operator raised subagent-reply flooding; verified ROUTER POSTURE covers the read path but not the run path, and specifies no return contract.
 
 ---
+
+## #47 — Harness self-improvement: promote safe proposals from run-20260725-112937-10735
+
+**Severity:** Low
+
+⚠ possible duplicate of #9
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-112937-10735. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `governor/worker-prompt.md`: Add an explicit instruction to check CI baseline before declaring `resolved` — compare the PR's failing checks against `gh run list --branch main --limit 3` (or equivalent) to determine whether a red check predates the worker's own change — why: ticket #46's worker rediscovered this exact lesson after the fact, but the harness discarded it before it reached CLAUDE.md; teaching it up front prevents every future worker from rediscovering it and wasting CI-fix cycles on unrelated upstream breakage.
+- `scripts/govern/run-loop.sh` (resolved→failed CI-red downgrade path) / `scripts/govern/govern-bookkeep.sh`: persist any `lessonPatch` a worker returned even when the ticket gets CI-downgraded to failed (e.g. append to `governor/improvements.md`), instead of silently dropping it because `govern-bookkeep.sh` only runs in the `status=="resolved"` branch — why: this run is direct proof a genuinely useful lesson was generated and then lost; without this fix the harness keeps losing valid lessons every time a resolved ticket gets downgraded.
+- `scripts/govern/run-loop.sh` (`merge_pr_for_ticket` CI-fix redispatch): before spending the single `GOVERN_CI_FIX_TRIES` retry, check whether `origin/main`'s own latest CI run is already red (baseline-red); if so, skip the fix-dispatch and record a distinct note like `CI-red-baseline-preexisting` instead of `CI-red-left-open` — why: if CI was already broken on main, the CI-fix worker is doomed by construction, burning the one retry and mislabeling the failure as the ticket's fault — exactly the scenario #46's worker diagnosed on its own.
+- `governor/README.md`: document that a re-selected ticket with an already-open PR is adopted via `govern::find_pr` without spawning a new worker and is re-fed through `await-ci.sh` on the next run — why: this auto-retry-on-reselection behavior isn't documented, so an operator seeing "failed, worktree preserved" might intervene (e.g. delete the worktree) in a way that breaks that adoption path.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 11:47 — run run-20260725-112937-10735 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
