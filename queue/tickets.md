@@ -166,3 +166,26 @@ Done when: `bash scripts/govern/run-loop.sh --dry-run` reports parallel mode wit
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C1
 
 ---
+
+## #15 — Worker prompt: make the worker a router (delegate reconnaissance to cheap subagents)
+
+**Severity:** High
+**Model:** sonnet
+
+Where: shiploop/templates/governor/worker-prompt.md (hub, canonical) and governor/worker-prompt.md (workspace copy — keep both in sync)
+
+Observed: shiploop's token-saving thesis is applied to the wrong session. The OPERATOR session has a ROUTER POSTURE hook (scripts/router-posture-reminder.sh), a delegation rule in root CLAUDE.md, and a model-sizing guide. The WORKER session — which is 98% of all token spend — has none of it. `governor/worker-prompt.md` mentions subagents exactly 5 times (lines ~97-103) and every one is a WARNING about what a subagent cannot do (write the validation REPORT.md), never an instruction to delegate. Workers run at `--permission-mode bypassPermissions` with full tool access, so they CAN spawn subagents; they are simply never told to.
+
+Measured consequence (governor/ticket-history.jsonl): a resolved ticket is a ~22M-token session that is 98% cacheRead — i.e. ~200+ turns of a context that grows all session as the single monolithic agent explores, edits, builds, tests and PRs in one context. Starting prompt is only ~7k tokens, so the cost is turn count x accumulated context, not prompt size.
+
+Fix direction: add a ROUTER POSTURE section to the worker prompt, adapted from scripts/router-posture-reminder.sh:35-49:
+- Classify each sub-task: trivial (one edit / one command / known one-file lookup) -> do inline; heavier (multi-file investigation, codebase sweep, diagnosis, reading a long log or build output) -> delegate to a subagent and keep only the verdict.
+- HARD RULE, preserving the existing constraint at worker-prompt.md:97-103: **delegate reconnaissance, never delegate the commit, the PR, or the report write.** A subagent runs under a restrictive policy and cannot write the report; the worker must persist any structured text a subagent returns.
+- Size the child model: haiku = mechanical/extract/lookup/log-reading; sonnet = search/investigation/multi-file reads; inherit only for judgment-heavy synthesis. A fan-out of N similar children is almost never inherit-tier.
+- Do NOT read large files into the worker's own context; have a child read and return the conclusion.
+
+Done when: the hub worker-prompt.md carries the router-posture section with the delegate-reconnaissance/never-delegate-writes rule and child model-sizing guidance; the workspace copy governor/worker-prompt.md carries the identical section; the existing subagent-cannot-write-the-report constraint is preserved and explicitly reconciled with the new delegation guidance (they must not read as contradictory).
+
+Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W1
+
+---
