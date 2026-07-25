@@ -20,12 +20,17 @@ dollars. Improvements below are described in tokens and turns for that reason.
 
 ### Added
 
-- **Locality batching** (#92). Eligible tickets are partitioned into disjoint groups by the files
-  they touch, and one worker handles a whole group. `--parallel=N` now means N *groups*, not N
-  tickets. Two effects: concurrent workers can no longer collide on the same file and produce
-  conflicting branches, and a group pays discovery — repo layout, conventions, the ~15k-token
-  session-start cache write — **once** instead of once per ticket. `GOVERN_BATCH_MAX` controls group
-  size; `1` restores one-ticket-per-worker.
+- **Locality batching** (#92), **opt-in**. When enabled, eligible tickets are partitioned into
+  disjoint groups by the files they touch and one worker handles a whole group, so `--parallel=N`
+  means N *groups* rather than N tickets. Two effects: concurrent workers stop colliding on the same
+  file, and a group pays discovery — repo layout, conventions, the ~15k-token session-start cache
+  write — **once** instead of once per ticket.
+
+  **It is OFF by default.** `GOVERN_BATCH_MAX` defaults to `1`, which is exactly the previous
+  one-ticket-per-worker behavior; set it above 1 in `scripts/lib/workspace.sh` to enable grouping.
+  The conservative default is deliberate: grouping keys off a locality heuristic that has not yet
+  been exercised on a real backlog, and a bad key would put unrelated work in one worker. Raise it
+  once you have watched it group a run you can inspect.
 - **Base-branch CI guard** (#95). The run-start preflight refuses to dispatch workers onto an
   unambiguously CI-red base branch. Measured motivation: two tickets in one wave each burned a full
   worker session producing correct code that could never go green, because the base was red at
