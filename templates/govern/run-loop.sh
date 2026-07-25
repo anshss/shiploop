@@ -169,6 +169,13 @@ SUP_EVERY="${GOVERN_SUPERVISOR_EVERY:-5}"
 MAX_TICKETS="${GOVERN_MAX_TICKETS:-20}"
 MAX_BAD_STREAK="${GOVERN_MAX_BAD_STREAK:-4}"
 MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-0}"   # 0 = no runtime cap (default)
+# #23 locality batching. Max tickets handed to ONE worker as a locality group. 1 = today's behavior
+# (one ticket per worker) and is the DELIBERATELY CONSERVATIVE default: batching and parallelism pull
+# against each other — past a point, bigger groups trade wall-clock for the token saving — so the
+# aggressiveness is an explicit operator knob, not a hard-coded policy. Only ever applies to a BACKLOG
+# pull; an explicit ticket set is dispatched exactly as the operator named it.
+BATCH_MAX="${GOVERN_BATCH_MAX:-1}"; BATCH_MAX="${BATCH_MAX//[^0-9]/}"; [[ -n "$BATCH_MAX" ]] || BATCH_MAX=1
+[[ "$BATCH_MAX" -ge 1 ]] || BATCH_MAX=1
 START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
 # #151: abnormal-abort + in-flight-ticket tracking. ABORTED/ABORT_RC are set by on_exit when the run
 # ends on a non-zero exit that is NOT a handled interrupt or infra halt (e.g. `set -e` fired on an
@@ -206,6 +213,16 @@ export GOVERN_RUN_DIR="$RUNDIR"
 #                             removes the manual clear entirely: a live holder is never reclaimable.
 # The run ALWAYS logs which concurrency mode it took (PARALLEL / SINGLE-RUN acquired / stale-reclaimed).
 LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"; TOOK_LOCK=0; CUR_CLAIM=""
+# #23: the co-batched tickets of the in-flight locality group, and the claim locks held for them.
+# BATCH never includes the primary #N (whose claim is CUR_CLAIM). Every ticket in BATCH is one this
+# driver successfully claimed — the group holds a claim on every ticket in it, so the exactly-once
+# guarantee the per-ticket claim lock gives a single ticket holds identically for a group.
+BATCH=(); BATCH_CLAIMS=()
+release_batch_claims() {
+  local l
+  for l in ${BATCH_CLAIMS[@]+"${BATCH_CLAIMS[@]}"}; do govern::lock_release "$l"; done
+  BATCH_CLAIMS=()
+}
 govern::_lock_holder() { [[ -f "$LOCK/holder" ]] && cat "$LOCK/holder" 2>/dev/null || true; }
 govern::_lock_holder_pid() { govern::_lock_holder | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p'; }
 govern::_stamp_lock() { printf 'run=%s pid=%s started=%s\n' "${RUNDIR##*/}" "$$" "$START_EPOCH" > "$LOCK/holder" 2>/dev/null || true; }
@@ -337,6 +354,11 @@ record() { # ticket status note
   # ENVIRONMENT artifact, not ticket difficulty; recording it would falsely auto-escalate a
   # perfectly-good ticket as a #60 systemic blocker.
   case "$2" in infra|interrupted) return 0;; esac
+  # #23: same exemption, opt-in via a 4th arg, for a ticket that was CO-BATCHED into another ticket's
+  # worker and simply didn't get finished. It never had a worker of its own, so it is not evidence of
+  # ticket difficulty — recording it would let two unlucky batches auto-escalate a perfectly good
+  # ticket as a #60 systemic blocker. It still lands in this run's STATE above, for the summary.
+  [[ "${4:-}" == "no-history" ]] && return 0
   # #272: fold in ROI fields (tokens/cost/churn) so govern-health can surface park rate + churn
   # classes + tokens-per-ticket from ONE durable file, with no worker.jsonl spelunking.
   local base extra
@@ -370,10 +392,11 @@ wt_path() { echo "$WORKTREE_BASE/ticket-$1"; }
 # Honors any GOVERN_* env the caller sets on the call (bash exports a call-prefix assignment into the
 # function's child processes), so the GOVERN_FIX_CI / GOVERN_RESOLVE_CONFLICT re-dispatches work too.
 WORKER_PID=""; SPAWN_OUT=""
-spawn_worker_tracked() { # ticket -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
-  local n="$1"
+spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
+  local n="$1"; shift
   SPAWN_OUT="$(mktemp)"
-  "$DIR/spawn-worker.sh" "$n" >"$SPAWN_OUT" &
+  # #23: extra args are the co-batched tickets of #n's locality group (empty for a plain single spawn).
+  "$DIR/spawn-worker.sh" "$n" "$@" >"$SPAWN_OUT" &
   WORKER_PID=$!
   wait "$WORKER_PID" || true
   WORKER_PID=""
@@ -605,6 +628,7 @@ on_exit() {
     rm -f "$TJ_RUN_ID_FILE" 2>/dev/null || true
   fi
   [[ -n "$CUR_CLAIM" ]] && govern::lock_release "$CUR_CLAIM"   # free the in-flight ticket for a re-run (#41)
+  release_batch_claims                                         # …and every co-batched ticket's claim (#23)
   # #183: the single-run lock dir now holds a `holder` file, so `rm -rf` (not rmdir, which fails on a
   # non-empty dir). Only this run's own lock is removed (TOOK_LOCK=1) — a PARALLEL driver never took it.
   if [[ "$TOOK_LOCK" -eq 1 ]]; then rm -rf "$LOCK" 2>/dev/null || true; fi
@@ -889,11 +913,16 @@ govern::_parallel_run() {
     # Without this, a 1-ticket backlog would still spawn 4 drivers — 3 of which do a full run-start
     # preflight only to find nothing to claim. The probe is advisory only (it takes no claim); the
     # drivers re-select for themselves and contend on the per-ticket claim lock as usual.
-    pexcl="$excludes"
-    for (( i=0; i<PARALLEL_N; i++ )); do
+    # #23: with locality batching on, one driver consumes up to GOVERN_BATCH_MAX tickets per worker,
+    # so the fleet is sized in GROUPS, not tickets — `--parallel=N` means N groups. Probe up to
+    # N × BATCH_MAX tickets and start ceil(found / BATCH_MAX) drivers. At the default BATCH_MAX=1 this
+    # is arithmetically identical to the previous one-driver-per-ticket sizing.
+    pexcl="$excludes"; local found=0
+    for (( i=0; i<PARALLEL_N*BATCH_MAX; i++ )); do
       pn="$("$DIR/select-ticket.sh" "$pexcl" 2>/dev/null || true)"
       [[ -n "$pn" ]] || break
-      pexcl="${pexcl:+$pexcl,}$pn"; spawned=$((spawned+1))
+      pexcl="${pexcl:+$pexcl,}$pn"; found=$((found+1))
+      spawned=$(( (found + BATCH_MAX - 1) / BATCH_MAX ))
     done
     if [[ "$spawned" -eq 0 ]]; then
       govern::log "parallel: nothing eligible — no target set given and no eligible backlog ticket found; not spawning anything"
@@ -1090,8 +1119,58 @@ while :; do
     govern::log "#$N failed $cf consecutive runs — auto-escalating as a systemic blocker; not re-spawning (#60)"
     report="$(jq -nc --argjson c "$cf" '{status:"parked",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{title:("systemic blocker — " + ($c|tostring) + " consecutive failed runs"),reason:("systemic blocker — failed " + ($c|tostring) + " consecutive runs; needs operator / root-cause, not another auto-retry"),question:"inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)",options:[]}}')"
   else
-    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    # #23 LOCALITY BATCHING — grow #N into a locality group before spawning. Exploration is the
+    # dominant cost of a resolved ticket (~98% cacheRead), so three tickets in the same directory
+    # handled by one worker pay discovery ONCE instead of three times. Only on a BACKLOG pull, only
+    # when the operator raised GOVERN_BATCH_MAX above its conservative default of 1, and never on the
+    # resume / #60-auto-escalate paths above (neither spawns a worker).
+    #
+    # Candidates come from the SAME selector the loop itself uses, probed with a growing exclude list
+    # — so every eligibility filter (open escalation, not-automatable, already-an-issue, cross-run
+    # waits) is inherited for free rather than re-implemented. Each candidate must additionally:
+    #   • share #N's locality key and pass govern::locality_groups' dependency-safety rule, AND
+    #   • have no unmet **Depends on:** — the same pre-spawn gate #N itself just passed, applied per
+    #     candidate so batching can never sneak a dependency-blocked ticket past it, AND
+    #   • be claimable — we take its per-ticket claim lock here and hold it for the whole group.
+    # A candidate that fails any of these is simply not batched; #N proceeds with whatever group it
+    # got (possibly alone). Claiming greedily rather than all-or-nothing is deliberate: under
+    # --parallel several drivers probe the same backlog, so one contended candidate must not collapse
+    # the whole batch back to a single ticket. The invariant that matters — this driver holds a claim
+    # on EVERY ticket it dispatches — holds either way.
+    if [[ "$BATCH_MAX" -gt 1 && "${#TARGETS[@]}" -eq 0 ]]; then
+      bexcl="$excludes,$N"; bcand=""
+      for (( bi=0; bi<BATCH_MAX*3; bi++ )); do
+        bn="$("$DIR/select-ticket.sh" "$bexcl" 2>/dev/null || true)"
+        [[ -n "$bn" ]] || break
+        bexcl="$bexcl,$bn"; bcand="${bcand:+$bcand,}$bn"
+      done
+      if [[ -n "$bcand" ]]; then
+        # locality_groups is authoritative for "may these share a worker?" — feed it #N first so the
+        # group it returns for #N is exactly the candidate set that passed locality + dep safety.
+        bgroup="$(govern::locality_groups "$BATCH_MAX" "$N,$bcand" "$TICKETS_FILE" 2>/dev/null | head -1 || true)"
+        for bt in ${bgroup//,/ }; do
+          [[ "$bt" != "$N" ]] || continue
+          # Same dependency gate #N passed — re-applied per batched ticket (#119).
+          bunmet=""
+          while IFS= read -r bk; do
+            [[ "$bk" =~ ^[0-9]+$ ]] || continue
+            grep -qE "^##[[:space:]]+#$bk([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null && bunmet="${bunmet:+$bunmet, }#$bk"
+          done < <(govern::ticket_deps "$bt" "$TICKETS_FILE")
+          [[ -z "$bunmet" ]] || { govern::log "batch: #$bt depends on unresolved $bunmet — not batching it (#119)"; continue; }
+          if govern::lock_try "$GOVERNOR_DIR/.locks/ticket-$bt"; then
+            BATCH+=("$bt"); BATCH_CLAIMS+=("$GOVERNOR_DIR/.locks/ticket-$bt")
+          else
+            govern::log "batch: #$bt already claimed by another driver — not batching it"
+          fi
+        done
+      fi
+      [[ "${#BATCH[@]}" -eq 0 ]] \
+        || govern::log "batch: #$N + $(printf '#%s ' "${BATCH[@]}")— one worker, one PR, locality '$(govern::ticket_locality "$N" "$TICKETS_FILE" 2>/dev/null || true)' (GOVERN_BATCH_MAX=$BATCH_MAX)"
+    fi
+    GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
+    # Heartbeat every batched ticket's claim alongside the primary's (same rationale as below).
+    for bl in ${BATCH_CLAIMS[@]+"${BATCH_CLAIMS[@]}"}; do govern::lock_heartbeat "$bl"; done
     # Heartbeat the claim lock so its "age" measures time since the last phase completion, not
     # since acquire — a real ticket can legitimately run > the default stale window (worker +
     # await-ci + CI-fix re-dispatch + conflict-resolve). The pid-liveness check in lock_try is
@@ -1112,7 +1191,7 @@ while :; do
     sleep "${GOVERN_INFRA_RETRY_PAUSE:-20}"
     # retry-class: declare the failure signature to the retry — an auth/transport outage is NOT a sizing
     # failure, so this re-dispatch re-bets the ticket's OWN Model:/Effort: instead of escalating.
-    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
@@ -1129,7 +1208,7 @@ while :; do
     govern::log "#$N was INTERRUPTED ($ierr) — transient drop (e.g. laptop sleep); auto-retrying once from the preserved worktree before recording interrupted (#34)"
     # retry-class: same as the infra retry — a transient connection drop is an ENVIRONMENT artifact, so the
     # resume re-bets the ticket's own sizing rather than escalating a tier that never failed.
-    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" 2>/dev/null || true
+    GOVERN_RETRY_CLASS=infra GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
     status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
   fi
@@ -1484,6 +1563,8 @@ while :; do
       record "$N" infra "infra/auth outage — not a ticket fault; worktree preserved: $(wt_path "$N")"
       slim_worktree "$N"
       [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
+      release_batch_claims; BATCH=()   # #23: an infra halt breaks the loop before the per-ticket
+                                       # mapping below, so free the group's claims here too.
       govern::log "INFRA HALT — workers cannot authenticate / reach the API ($INFRA_HALT_ERR). Re-authenticate (\`claude login\`) or restore connectivity, then re-run. #$N and the remaining backlog were NOT recorded as failed (#90)."
       break
       ;;
@@ -1535,8 +1616,66 @@ while :; do
       ;;
   esac
 
-  # release this ticket's claim now its outcome is recorded (#41)
+  # #23 PER-TICKET OUTCOME MAPPING for a locality group. Constraint (c): a group that partially fails
+  # must NOT collapse to one verdict — bookkeeping DELETES a ticket it marks resolved, so a batched
+  # ticket the worker never actually fixed would vanish unfixed. Each batched ticket is therefore
+  # bookkept ONLY on an explicit `resolved` entry in the report's `tickets` array. Every other
+  # value — and a ticket ABSENT from the array, or an unparseable report — records `failed` and
+  # LEAVES THE BLOCK IN tickets.md, so a later run simply re-selects it. Fail-closed by construction.
+  # The primary #N is deliberately NOT re-processed here: it already went through the full case above
+  # (PR discovery, CI await, merge, migration, verify, bookkeep) — this loop covers only the extras,
+  # which ride #N's single group PR.
+  #
+  # SECOND precondition on top of the explicit `resolved`: the group must actually have produced a PR.
+  # Doctrine defines "resolved" as "PR opened", and a batched ticket rides the primary's single group
+  # PR — so with no PR there is nothing for a `resolved` claim to point at (the shape you get from a
+  # timeout / budget-exceeded / interrupted worker, whose synthesized report has no `tickets` array
+  # either). Checked once for the whole group. This does NOT collapse the group to one verdict: a
+  # primary that PARKED while its PR is open still lets a genuinely-landed batched ticket resolve.
+  bpr=0
+  if [[ "${#BATCH[@]}" -gt 0 ]]; then
+    bpr="$(printf '%s' "$report" | jq -r '
+      if ((.pr.url // "") != "") or ((.pr.number // null) != null) or (((.prs // []) | length) > 0)
+      then 1 else 0 end' 2>/dev/null || echo 0)"
+    [[ "$bpr" == "1" ]] || govern::log "batch: the group produced no PR — every batched ticket stays in tickets.md"
+  fi
+  for bt in ${BATCH[@]+"${BATCH[@]}"}; do
+    bstat="$(govern::batch_ticket_status "$report" "$bt" 2>/dev/null || true)"
+    bnote="$(govern::batch_ticket_note "$report" "$bt" 2>/dev/null || true)"
+    [[ "$bstat" == "resolved" && "$bpr" != "1" ]] && bstat="no-pr"
+    case "$bstat" in
+      resolved)
+        if [[ "$MODE" == "dry" ]]; then govern::log "[dry] would bookkeep batched #$bt"
+        else printf '%s' "$report" | "$DIR/govern-bookkeep.sh" "$bt" >&2 || govern::log "bookkeep failed #$bt"; fi
+        record "$bt" resolved "batched with #$N${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}${bnote:+ — $bnote}"
+        govern::log "#$bt RESOLVED (batched with #$N)"
+        nres=$((nres+1)); done_count=$((done_count+1))
+        ;;
+      parked)
+        if [[ "$MODE" == "live" ]]; then
+          govern::file_open_escalation "$bt" "batched with #$N — ${bnote:0:60}" \
+            "${bnote:-worker parked this ticket while resolving locality group #$N}" \
+            "review the group PR, then decide how to finish #$bt" "" 2>/dev/null \
+            || govern::log "could not file escalation for batched #$bt"
+        fi
+        record "$bt" parked "batched with #$N${bnote:+ — $bnote}"
+        govern::log "#$bt PARKED (batched with #$N) — left in tickets.md"
+        excludes="$excludes,$bt"; npark=$((npark+1)); done_count=$((done_count+1))
+        ;;
+      *)
+        # `no-history`: this ticket never had a worker of its own, so a batch miss must not count
+        # toward the #60 consecutive-failure auto-escalation. It is NOT counted against bad_streak
+        # either — the primary's own outcome is what the circuit breaker reads.
+        record "$bt" failed "batched with #$N; no explicit per-ticket 'resolved' in the report${bstat:+ (reported '$bstat')}${bnote:+ — $bnote} — left in tickets.md for a later run" no-history
+        govern::log "#$bt NOT resolved in batch with #$N${bstat:+ (reported '$bstat')} — left in tickets.md, will be re-selected"
+        excludes="$excludes,$bt"; nfail=$((nfail+1)); done_count=$((done_count+1))
+        ;;
+    esac
+  done
+
+  # release this ticket's claim now its outcome is recorded (#41), and every batched ticket's (#23)
   [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
+  release_batch_claims; BATCH=()
   # #151: #N reached a recorded terminal outcome (resolved/parked/failed/timeout) above — clear the
   # in-flight marker so a later CLEAN break (circuit-breaker / MAX_TICKETS / supervisor-halt) is not
   # wrongly reported as having a half-resolved ticket in flight.

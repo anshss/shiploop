@@ -118,6 +118,35 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   preserved and a re-run resumes it, exactly like a timeout.
 - `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
 
+## Locality batching (`GOVERN_BATCH_MAX`, default `1` = off)
+
+Exploration is the dominant cost of a resolved ticket (~98% cacheRead): three tickets that all touch
+`scripts/govern/` mean three workers each paying full discovery cost on the same code — three repo
+loads, three `CLAUDE.md` reads, three architecture explorations. `GOVERN_BATCH_MAX=N` lets ONE worker
+take up to N tickets from the **same area** so that discovery is paid once.
+
+- **Key.** The leaf directory name of the dominant path token on the ticket's `Files:` line (a
+  measured file list, preferred) or its `Where:` line. Depth-1 is deliberate: a hub/workspace mirror
+  pair (`templates/govern/run-loop.sh` ↔ `scripts/govern/run-loop.sh`) *is* the same area. A ticket
+  that names no path is **unlocalized** and is never batched on a guess.
+- **Grouping.** Eligible tickets are partitioned into **disjoint** groups in severity order, capped at
+  N. Groups are disjoint by construction, which also makes `--parallel` safer: concurrent drivers can
+  no longer be handed two tickets that edit the same file.
+- **One worker → one branch → one PR** per group, with per-ticket commits.
+- **Dependencies.** Two tickets in a dependency relation — declared (`**Depends on:**`) or implicit
+  (the other side's `**Blocks:**`) — are **never** co-batched, so a group can't be worked out of order.
+  Each batched ticket also re-passes the pre-spawn dependency gate individually.
+- **Locking.** Every ticket in a group is claim-locked by the driver for the whole run, so the
+  exactly-once guarantee is unchanged. A contended candidate is simply left out of the group.
+- **Partial failure is per-ticket.** The worker returns a `tickets` array of `{ticket,status,note}`.
+  A batched ticket is bookkept (and its block deleted) **only** on an explicit `resolved` entry —
+  any other status, a missing entry, or an unparseable report leaves it in `tickets.md` for a later
+  run. A group's verdict can never mark an unfixed ticket resolved.
+
+Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for the
+token saving. Hence the conservative default of `1` (one ticket per worker — today's behavior). Only
+applies to a **backlog** pull; an explicit ticket set is dispatched exactly as named.
+
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
   are kept** on disk (uncommitted work survives) + their path is logged. A timeout is a *pause*, not
