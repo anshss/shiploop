@@ -1739,20 +1739,85 @@ govern::commit_meta_to_main() {
 # "(ConnectionRefused)" and "401 Invalid authentication credentials".
 GOVERN_INFRA_ERROR_RE='401[^A-Za-z0-9]*(Invalid authentication|Unauthorized)|Invalid authentication credentials|invalid x-api-key|authentication_error|OAuth token (has )?expired|token (has )?expired|Unable to connect to API|FailedToOpenSocket|Connection ?Refused|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|getaddrinfo (ENOTFOUND|EAI_AGAIN)|Could not resolve host|network is unreachable'
 
+# ── worker-stream reading (binary/NUL-hole safe) ────────────────────────────
+# EVERY read of a worker.jsonl must go through this helper instead of a bare `grep`.
+# A worker.jsonl can legitimately end up with a BINARY prefix: a ticket can be spawned more than
+# once against the same run-scoped log dir (an in-run infra/interrupted auto-retry, a GOVERN_FIX_CI
+# or GOVERN_RESOLVE_CONFLICT re-dispatch), and each spawn reopened the same path with a truncating
+# `>` — if the previous attempt's fd was still open at a high offset, its next write landed PAST a
+# hole and the file gained a multi-hundred-KB run of NUL bytes at the head. Plain `grep` then
+# classifies the whole file as BINARY and prints NOTHING, silently reporting "no match" for a stream
+# that DOES carry the line. Observed for real (a 707KB worker.jsonl whose 28 JSON lines sat behind a
+# ~680KB NUL hole): the final `result` event was present and intact, yet history enrichment recorded
+# tokens/costUsd as null. The same silence would also disable the token-budget kill switch, the
+# infra/interrupted classifiers, and the report-from-stream fallback. `-a` (supported by both BSD/
+# macOS and GNU grep) forces text semantics; LC_ALL=C stops an invalid multibyte sequence from
+# bailing out. Args after the file are passed to grep verbatim (flags, then the pattern).
+govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines (rc 1 = no match)
+  local jsonl="${1:-}"; shift || true
+  [[ -n "$jsonl" && -f "$jsonl" ]] || return 1
+  LC_ALL=C grep -a "$@" "$jsonl" 2>/dev/null
+}
+
+# Extract ONE worker attempt's token usage + cost from its stream. Two sources, in priority order:
+#   result            — the final `"type":"result"` event: authoritative tokens AND total_cost_usd.
+#   assistant-partial — there is no result event because the worker was HARD-KILLED before it could
+#                       emit one (wall-clock timeout, token budget, a stop signal). Sum the per-turn
+#                       `.message.usage` carried on every `"type":"assistant"` event instead. This
+#                       recovers the TOKENS truthfully; costUsd stays null because the stream carries
+#                       no per-turn price and inventing one would fabricate data. Killed/failed
+#                       attempts are exactly the rows a sizing loop needs most (they are what proves
+#                       a tier was too cheap), so they must not come back empty.
+#   none              — nothing readable (no stream, or no usage anywhere in it).
+# Always echoes ONE valid JSON object: {tokens:{input,output,cacheRead,cacheCreation,total}|null,
+# costUsd:<number|null>, usageSource:"result"|"assistant-partial"|"none"}. Never fails.
+govern::stream_usage() { # worker-jsonl -> usage JSON
+  local jsonl="${1:-}" res toks='null' cost='null' src='none' tot sum
+  if [[ -n "$jsonl" && -s "$jsonl" ]]; then
+    res="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 || true)"
+    if [[ -n "$res" ]]; then
+      toks="$(printf '%s' "$res" | jq -c '(.usage // {}) as $u
+        | {input:($u.input_tokens//0), output:($u.output_tokens//0),
+           cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
+        | .total = (.input + .output + .cacheRead + .cacheCreation)' 2>/dev/null || echo null)"
+      cost="$(printf '%s' "$res" | jq -c '.total_cost_usd // null' 2>/dev/null || echo null)"
+      # A result event that carries NO usage at all (total 0) is not data — fall through to the
+      # per-turn sum rather than recording a confident zero.
+      tot="$(printf '%s' "$toks" | jq -r 'if type=="object" then (.total // 0) else 0 end' 2>/dev/null || echo 0)"
+      if [[ "${tot:-0}" -gt 0 ]]; then src='result'; else toks='null'; fi
+    fi
+    if [[ "$toks" == "null" ]]; then
+      # Same per-turn accounting govern::cumulative_tokens uses for the live budget watchdog, kept
+      # as a 4-way breakdown so a recovered row has the SAME shape as a result-sourced one.
+      sum="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } \
+        | { jq -r '(.message.usage // {})
+              | [(.input_tokens//0),(.output_tokens//0),(.cache_read_input_tokens//0),(.cache_creation_input_tokens//0)]
+              | @tsv' 2>/dev/null || true; } \
+        | awk -F'\t' 'NF>=4 { i+=$1; o+=$2; r+=$3; c+=$4; n++ }
+            END { if (n>0 && (i+o+r+c)>0) printf "{\"input\":%d,\"output\":%d,\"cacheRead\":%d,\"cacheCreation\":%d,\"total\":%d}", i,o,r,c,(i+o+r+c) }')"
+      if [[ -n "$sum" ]]; then toks="$sum"; src='assistant-partial'; fi
+    fi
+  fi
+  jq -nc --argjson t "$toks" --argjson c "$cost" --arg s "$src" \
+    '{tokens:$t, costUsd:$c, usageSource:$s}' 2>/dev/null \
+    || printf '{"tokens":null,"costUsd":null,"usageSource":"none"}'
+}
+
 # Print a short human signature of an infra/auth outage if the worker's stream ($1 = worker.jsonl)
 # shows one in its final (error) result event or an explicit "API Error:" line; print nothing
 # otherwise. Always returns 0 — the caller branches on whether the output is non-empty.
 govern::infra_error_signature() { # worker-jsonl -> signature|""
   local jsonl="${1:-}" msg
   [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
-  # Authoritative: the LAST result event, only when it ended in an error.
-  msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 \
+  # Authoritative: the LAST result event, only when it ended in an error. Read via
+  # govern::stream_grep so a NUL-holed stream can never silently classify an outage as a failure.
+  msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 \
         | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
   if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INFRA_ERROR_RE"; then
     printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
   fi
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
-  msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
+  msg="$(govern::stream_grep "$jsonl" -oiE 'API Error:[^"]*' | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
   return 0
 }
@@ -1776,13 +1841,13 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   local jsonl="${1:-}" msg
   [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
   # Authoritative: the LAST result event, only when it ended in an error.
-  msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 \
+  msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 \
         | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
   if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INTERRUPTED_ERROR_RE"; then
     printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
   fi
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
-  msg="$(grep -oiE 'API Error:[^"]*' "$jsonl" 2>/dev/null | grep -iE "$GOVERN_INTERRUPTED_ERROR_RE" | tail -1 || true)"
+  msg="$(govern::stream_grep "$jsonl" -oiE 'API Error:[^"]*' | grep -iE "$GOVERN_INTERRUPTED_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
   return 0
 }
@@ -1799,7 +1864,9 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
 govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if none/unreadable)
   local jsonl="${1:-}" total
   [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
-  total="$(grep '"type":"assistant"' "$jsonl" 2>/dev/null \
+  # govern::stream_grep, not bare grep: a NUL-holed stream would otherwise read as 0 tokens forever
+  # and the budget kill switch would never fire.
+  total="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } \
     | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.output_tokens//0)+(.cache_read_input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
     | awk '{s+=$1} END{print s+0}')"
   echo "${total:-0}"
