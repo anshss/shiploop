@@ -94,6 +94,8 @@ Adding/removing a sub-repo is a one-file edit there.
 
 ## Anti-patterns (load-bearing)
 
+> **A per-worker counter is not automatically "N× looser" under a fan-out — do the arithmetic before scaling it.** A cadence expressed as "every K events, per driver" keeps its GLOBAL rate under an N-way fan-out: N drivers each firing every K of their OWN events still totals ≈ T/K firings over T events. Scaling the per-driver cadence down by the fan-out (K/N per child), the intuitive fix, therefore OVER-fires by ≈N× on a long run. What a fan-out actually loses is the per-driver TAIL — each driver ends holding 1..K-1 uncounted events, so a SHORT run (T < N×K) fires zero times where the sequential equivalent fired several. Fix the tail (flush once per driver at end-of-loop), not the rate. Corollary for any per-driver review/audit step: it only ever sees its own slice, so if "someone must see the whole run" matters, add ONE pass in the orchestrator over the AGGREGATED state after reaping — scoped to run-END it needs no shared machinery, because the verdict fields that steer a selection loop (defer-this-run, attempt-next, halt) are all moot once that loop has finished.
+
 - **Never mutate an open PR with `gh pr edit`.** It resolves the PR through gh's GraphQL `projectCards` query, which now hard-fails on these repos (`GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`). `--base` fails SILENTLY (base left unchanged, the rest of the edit reports success); `--body`/`--title` fail LOUDLY and apply nothing. Use the REST endpoint, which takes no projectCards:
   ```
   gh api -X PATCH "repos/<org>/<repo>/pulls/<N>" -F body=@body.md

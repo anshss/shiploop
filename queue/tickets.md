@@ -438,20 +438,6 @@ Done when: a parallel backlog run performs the run-start reconcile exactly once 
 
 ---
 
-## #34 — Supervisor cadence is per-driver under parallel, so the effective global cadence is N× looser
-
-**Severity:** Medium
-
-Where: scripts/govern/run-loop.sh (+ hub template) — the supervisor block gated on `since_review >= SUP_EVERY` inside the sequential loop; GOVERN_SUPERVISOR_EVERY in scripts/lib/workspace.sh.
-
-Observed: the supervisor fires every GOVERN_SUPERVISOR_EVERY (5) resolved tickets WITHIN one driver, plus on anomaly. With 4 concurrent backlog drivers, each accumulates its own since_review, so a 12-ticket run spread 3-per-driver fires the periodic supervisor ZERO times (only the anomaly path can trigger it) where a sequential run of the same 12 would have fired it twice. Nothing is broken — the anomaly trigger still works and each driver's own review is faithful — but the intended review rhythm silently loosens by roughly the fan-out factor, and no supervisor ever sees the run as a WHOLE (each reviews only its own slice of history).
-
-Fix direction: either (a) scale the per-driver cadence by the fan-out — the orchestrator passes GOVERN_SUPERVISOR_EVERY=ceil(SUP_EVERY/N) to each child, cheap and needs no new machinery; or (b) run a pool-level supervisor in the orchestrator on every SUP_EVERY reaped resolved children, reading the aggregated $RUNDIR/state.jsonl the orchestrator now maintains — more faithful (it sees the whole run) but needs the verdict-handling block (halt / concerns / skipThisRun / attemptNext) lifted out of the sequential loop into a shared helper. Note attemptNext is in-memory per driver and cannot be honored from the orchestrator without a persisted priority file.
-
-Done when: a parallel run of K tickets fires the supervisor a comparable number of times to a sequential run of K; the choice (a) or (b) is documented in commands/govern.md; a test asserts the cadence under a 2-driver fan-out; hub and workspace copies stay identical.
-
----
-
 ## #35 — Workspace govern lib + test dir lag the hub — /shiploop:update bump is due
 
 **Severity:** Medium
@@ -541,5 +527,33 @@ Fix direction: implement each proposal above as a normal harness PR (a PR on the
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
 Ref: governor/improvements.md block "2026-07-25 06:41 — run run-20260725-060424 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
+
+## #40 — --parallel orchestrator exits before every run-end block (self-improve, escalations emit, health, sync-port)
+
+**Severity:** Medium
+
+Where: scripts/govern/run-loop.sh (+ hub template shiploop/templates/govern/run-loop.sh) — `if [[ "$PARALLEL" -eq 1 ]]; then govern::_parallel_run; exit $?; fi`, immediately before the sequential `while :; do ... done` loop.
+
+Observed: the orchestrator returns from govern::_parallel_run and `exit`s, so EVERY run-end block below the loop is skipped for the orchestrator's own run: the self-improvement review (govern-improve.sh) + improve-triage, the opt-in self-apply, the authoritative #337 pending-escalations emit (which is the #62 operator hand-off the launching /govern relay reads), the run-end govern-health ROI emit, and the sync-port auto-trigger. Children each run their own copies against their own run dirs, so the work is not entirely lost — but it is now N-way: N children each write governor/pending-escalations.json (last-writer-wins, so the operator hand-off reflects one arbitrary child's slice rather than the run), N children each fire sync-port at their own run-end, and the aggregated run id the operator sees in the log never gets an improvements block at all. With GOVERN_PARALLEL_DEFAULT>1 this is the DEFAULT run shape, so the self-improvement channel silently degrades exactly where it is most needed.
+
+Fix direction: (a) suppress the run-end blocks in children (an env flag the orchestrator sets, e.g. GOVERN_CHILD_DRIVER=1) and run them ONCE in the orchestrator over the aggregated $RUNDIR/state.jsonl — the same shape the whole-run supervisor pool review already uses; or (b) keep children as-is but have the orchestrator re-emit pending-escalations + health last, so the operator hand-off is at least run-scoped. (a) is more faithful and matches how the pool supervisor pass was done.
+
+Done when: a --parallel backlog run produces exactly ONE improvements block, ONE pending-escalations emit and ONE sync-port trigger for the aggregated run; a test asserts the counts under a 2-driver fan-out; hub and workspace copies stay identical.
+
+---
+
+## #41 — test-wrap-in-place.sh SIGINT section flakes under concurrent load
+
+**Severity:** Low
+
+Where: shiploop/templates/govern/test/test-wrap-in-place.sh (+ the workspace copy scripts/govern/test/), section 5 ("wrap exits nonzero after SIGINT" / "trap restored layout byte-identical" / "residue after SIGINT rollback" / "repo HEAD intact after SIGINT").
+
+Observed: all four section-5 assertions failed once during a full-suite run executed while three other govern suites were running concurrently on the same machine, and passed on a re-run of the identical tree on an idle machine (and passed on a pristine HEAD worktree under the same load). The section sends SIGINT to a backgrounded scaffold and then asserts on the rollback; under CPU contention the signal evidently lands before the trap is armed (or before the work it rolls back has happened), so the assertions see an un-rolled-back / not-yet-started state rather than a real defect. CI runs the suite serially on a dedicated runner, so this has not been seen there — but it makes a local full-suite run an unreliable pre-PR gate, which is exactly when a developer runs it alongside other work.
+
+Fix direction: make the SIGINT delivery deterministic instead of time-based — have the scaffold under test touch a sentinel file once its trap is armed and the wrap has started, and poll for that sentinel (bounded) before sending the signal, rather than sleeping a fixed interval. Keep the existing timeout as a backstop.
+
+Done when: the section passes reliably with the suite running under artificial CPU load (e.g. several concurrent runs); no fixed sleep remains between the background launch and the kill.
 
 ---
