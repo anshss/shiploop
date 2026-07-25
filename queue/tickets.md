@@ -167,26 +167,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #17 — Worker prompt hygiene: move {{TICKET_BLOCK}} last, drop duplicate CLAUDE.md read, dedupe repeated rules
-
-**Severity:** Low
-**Model:** haiku
-
-Where: shiploop/templates/governor/worker-prompt.md + governor/worker-prompt.md (keep in sync); prompt assembly at shiploop/templates/govern/spawn-worker.sh:92-99 and scripts/govern/spawn-worker.sh:92-99
-
-Observed: three small, independent inefficiencies in the worker prompt.
-(1) `{{TICKET_BLOCK}}` sits at LINE 6 of the 197-line worker-prompt.md, and spawn-worker.sh:94 substitutes the ticket text into that position. Prompt caching works on prefixes, so putting the one per-ticket-varying string at the very top means ~4,800 of the ~5,000 boilerplate words sit downstream of it and can never form a shared cached prefix across tickets. NOTE: the realistic saving is small (within a session the boilerplate is cached after turn one regardless) — this is a correctness/tidiness fix, not a major lever. Do not over-claim it in the PR.
-(2) The root CLAUDE.md is ALREADY auto-loaded into the worker's context (the worker's cwd is a worktree of the meta-repo root, so CLAUDE.md is standard project memory), yet worker-prompt.md:9 additionally instructs the worker to `Read` the root CLAUDE.md — a second, tool-call-billed read of content already present.
-(3) Duplicated instructions: "validate locally before a PR" appears in both worker-prompt.md:12 and governor/preferences.md:16, and both are concatenated into the same prompt (spawn-worker.sh:96-99). The `ticket-<N>` branch-naming rule is restated at worker-prompt.md:16,19,87,112,163 plus preferences.md:40.
-
-Fix direction: (1) move the `{{TICKET_BLOCK}}` placeholder to the END of worker-prompt.md so the stable boilerplate forms a cacheable prefix — verify the prompt still reads coherently (the ticket is now context at the bottom, so any earlier prose that says "the ticket above" must be reworded). (2) Change worker-prompt.md:9 to instruct reading only the relevant SUB-REPO CLAUDE.md, noting the root one is already loaded. (3) Collapse the duplicated validate-locally and branch-naming statements to one authoritative mention each.
-
-Done when: {{TICKET_BLOCK}} is the last section of worker-prompt.md and the surrounding prose reads correctly with the ticket at the bottom; the redundant root-CLAUDE.md read instruction is gone; validate-locally and the branch rule each appear once; spawn-worker.sh substitution still produces a well-formed prompt (verify with `bash scripts/govern/spawn-worker.sh --dry-run` or equivalent); hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W3
-
----
-
 ## #18 — Add reasoning effort as a first-class sizing knob (GOVERN_WORKER_EFFORT + ticket Effort: field)
 
 **Severity:** Medium
