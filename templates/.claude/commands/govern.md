@@ -90,7 +90,24 @@ Relay its log lines to the operator as they appear. The driver does everything �
   **parks** → escalation.
 - Additive prod migrations auto-apply only if `GOVERN_MIGRATE_CMD` is configured (else park for manual
   apply); destructive migrations always park.
-- Supervisor every `GOVERN_SUPERVISOR_EVERY` (default 5) resolved tickets + on anomaly.
+- Supervisor every `GOVERN_SUPERVISOR_EVERY` (default 5) resolved tickets + on anomaly. The cadence is
+  **per driver**, plus two out-of-loop passes (`GOVERN_SUPERVISOR_FLUSH=0` disables both):
+  - a **run-tail flush** — one pass at end-of-loop when a driver still holds 1..`SUP_EVERY`-1
+    unreviewed resolves, so its last few tickets are never skipped;
+  - a **whole-run pool review** — one pass in the `--parallel` orchestrator over the aggregated
+    `state.jsonl` after all children are reaped, so some supervisor always sees the run as a whole
+    (each child's own passes only ever see that child's slice).
+
+  **Why not scale the per-driver cadence by the fan-out?** Because the per-driver cadence is not
+  globally looser in the steady state: N drivers each firing every `SUP_EVERY` of their *own* resolves
+  still totals ≈ K/`SUP_EVERY` passes over K tickets, so dividing the cadence by N would over-fire by
+  ~N× on a long run. What parallel actually loses is the per-driver **tail** — with `SUP_EVERY=5`, a
+  12-ticket backlog split 3-per-driver across 4 drivers reaches the periodic pass zero times, where
+  the same 12 run sequentially fire it twice. The tail flush restores that rhythm at ~1 extra pass per
+  driver, and the pool review adds the whole-run view a pool-level supervisor was wanted for — without
+  lifting the in-loop verdict handling out, since at run-end only `concerns` are still actionable
+  (`skipThisRun` / `attemptNext` / `waitForMerge` / `halt` all steer a selection loop that has already
+  finished, and `attemptNext`'s priority queue is per-process in-memory state regardless).
 - Single-run lock (`governor/.govern.lock`); resumable — resolved tickets are deleted from
   `queue/tickets.md`, parked ones are skipped via `escalations.md`, an existing `ticket-<N>` PR is reused,
   so a re-run continues cleanly.
