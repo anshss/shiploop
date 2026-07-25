@@ -37,6 +37,26 @@ hand-port of the live-forward governor mechanisms from the reference instance.
 
 ### Changed
 
+- **A parallel run performs the run-start reconcile exactly once, not once per driver.** The run-start
+  block — `escalations-apply-answers.sh` → `escalations-emit-pending.sh` → `preflight-main.sh` →
+  `externalize-low-tickets.sh`, plus the NA-skip streak bookkeeping — is whole-run state
+  reconciliation against the **one** shared meta checkout, and `preflight-main.sh` does
+  `git fetch` / `pull --rebase` / `push` on it. Since parallel became the default, the orchestrator ran
+  that block and then spawned N full backlog drivers that each re-ran all of it against the same
+  checkout, concurrently: nothing serialized them (the bookkeep lock only covers `tickets.md` edits),
+  and `GOVERN_PARALLEL_STAGGER_S` only narrowed the collision window. The orchestrator already
+  reconciles once while holding the single-run lock, so each child is now spawned with a new
+  **internal `--orchestrated` flag** and skips the block, logging one auditable
+  `run-start reconcile: skipped` line. One reconcile per run is both correct and cheaper; a
+  `--serial` / top-level driver is unaffected (it still reconciles itself), and the stagger stays for
+  what remains genuinely concurrent (selector + claim locks + worktree creation). Never pass
+  `--orchestrated` by hand — a driver run with it reconciles nothing. New test
+  `templates/govern/test/test-parallel-run-start-reconcile.sh` locks it against a **real**
+  origin-backed checkout: one `preflight: published` line + one skip line per child + `origin/main`
+  actually reconciled on a 2-driver fan-out, the serial baseline still reconciling, and — under an
+  enter/exit-recording preflight stub — exactly one entry and **zero overlaps** across a 3-wide
+  fan-out (pre-fix: one entry per driver, with a recorded overlap).
+
 - **The supervisor no longer skips a driver's tail, and a parallel run now gets one whole-run review.**
   `GOVERN_SUPERVISOR_EVERY` counts resolved tickets *per driver* (`since_review` is a shell variable in
   each driver process), so a driver that ends holding 1..`SUP_EVERY`-1 unreviewed resolves never
