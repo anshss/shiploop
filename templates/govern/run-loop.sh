@@ -69,6 +69,8 @@
 #                                  plus ONE whole-run pass in the --parallel orchestrator over the
 #                                  aggregated state.jsonl. 0 = periodic + anomaly only.
 #   GOVERN_WORKER_TIMEOUT  (3600)  per-worker wall-clock cap (enforced in spawn-worker)
+#   GOVERN_SKIP_BASE_CHECK (0)     1 = skip the run-start base-branch CI check (#49) — e.g. when
+#                                  the ticket being worked IS the fix for a red baseline.
 #
 # Progress preservation (acts like a human reopening sessions — never throws away work):
 #   - only a cleanly RESOLVED ticket's worktree is torn down; failed/parked/timed-out worktrees
@@ -711,6 +713,21 @@ if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
     || govern::die "run-start preflight: could NOT reconcile the meta-repo main checkout with origin/main — see the SPECIFIC reason logged just above (an uncommitted runtime artifact to commit/stash, a genuine rebase conflict, or a rejected push), not necessarily a divergence. Until reconciled, the harness lane would cut PRs off a stale base (#71). Resolve it — e.g. cd '$META_DIR' && git status && git pull --rebase origin main && git push — then re-run."
 elif [[ "$RECONCILE" -eq 1 ]]; then
   govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
+fi
+
+# #49: run-start preflight — refuse to dispatch this run's whole wave of workers onto an
+# unambiguously CI-red base branch. Measured: ticket #46 was dispatched while main was red; its
+# PR inherited the broken baseline and was recorded 'failed' after a full worker session — under
+# --parallel (the default) a red baseline fails EVERY concurrent worker in the wave, not just one.
+# Cheap (one `gh run list` per repo, no tokens), so check it here rather than discover it via
+# await-ci.sh after N workers have each opened a PR. Fail-open by design (see preflight-base-ci.sh):
+# gh missing/unauthenticated, no CI configured, no runs yet, an in-progress run, or an API error all
+# proceed unchanged. GOVERN_SKIP_BASE_CHECK=1 opts out (e.g. the ticket being worked IS the CI fix).
+if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
+  "$DIR/preflight-base-ci.sh" \
+    || govern::die "run-start preflight: base branch CI is RED — see the failing run URL logged just above (#49). Fix it first (or dispatch the ticket that fixes it), or set GOVERN_SKIP_BASE_CHECK=1 to proceed anyway."
+elif [[ "$RECONCILE" -eq 1 ]]; then
+  govern::log "[dry] would check the base branch's latest CI conclusion before dispatching workers, and refuse to proceed on an unambiguous red (#49)"
 fi
 
 # Externalization lane (OPT-IN): once per run, file each OPEN Low-severity OSS-repo ticket as a public
