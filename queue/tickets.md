@@ -489,3 +489,24 @@ Done when: `run-loop.sh <N> --dry-run` leaves no governor/.locks/ticket-<N> behi
 Ref: session 2026-07-25 — hit while dry-running ticket #14 before launching the token-efficiency fan-out; cost one no-op govern run and a manual lock removal.
 
 ---
+
+## #29 — govern::ticket_deps harvests ticket numbers from PROSE, creating false dependencies
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: scripts/govern/lib/common.sh (govern::ticket_deps, ~line 1270) + shiploop/templates/govern/lib/common.sh; gate consumer run-loop.sh:684
+
+Observed: while filing the token-efficiency ticket set, `govern::ticket_deps 22` returned `16 13 10` when ticket #22 declares only `**Depends on:** #16`. The extra numbers came from PROSE in the body: "Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (...)". The likely mechanism is that the body ALSO contains the sentence "Depends on the `budget-exceeded` outcome introduced by the token-budget ticket" — a prose sentence beginning with the literal phrase "Depends on" — which the scan appears to treat as a dependency declaration and then harvest nearby `#N` references from.
+
+Impact: a ticket that merely MENTIONS other tickets can become hard-gated on them by the #119 pre-spawn gate (run-loop.sh:684). That silently defers work, and in the worst case two tickets that reference each other in prose could deadlock. This is the INVERSE of the defect tickets #9/#11 already cover (they add a lint for prose deps that were never DECLARED); this one is undeclared prose becoming a REAL dependency. Both should be considered together — the parser is too loose in one direction and unenforced in the other.
+
+Note: in this instance the over-gating was benign/conservative (#22 genuinely does coordinate with #13 and #10, so waiting is safe) and was deliberately left in place. The defect is that it happened by accident rather than by declaration.
+
+Fix direction: anchor the `Depends on:` scan strictly — require the marker at the START of a line (optionally bold-wrapped) and harvest `#N` only from THAT line, not from following prose. Confirm the exact current matching behavior first (this was observed, not root-caused, during a bookkeeping pass). Add a test under templates/govern/test/ with a ticket whose body contains both a real `**Depends on:** #K` line and unrelated prose `#N` mentions, asserting only #K is returned.
+
+Done when: prose `#N` mentions never become dependencies; a properly declared `**Depends on:**` line still parses (including multiple comma-separated numbers); the `**Blocks:**` implicit-blocker path is unaffected; a regression test covers prose-vs-declaration; bash -n passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 token-efficiency filing — observed on ticket #22 (deps resolved to 16 13 10 against a single declared #16).
+
+---
