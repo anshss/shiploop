@@ -363,27 +363,6 @@ Ref: session 2026-07-25 — hit while dry-running ticket #14 before launching th
 
 ---
 
-## #29 — govern::ticket_deps harvests ticket numbers from PROSE, creating false dependencies
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: scripts/govern/lib/common.sh (govern::ticket_deps, ~line 1270) + shiploop/templates/govern/lib/common.sh; gate consumer run-loop.sh:684
-
-Observed: while filing the token-efficiency ticket set, `govern::ticket_deps 22` returned `16 13 10` when ticket #22 declares only `**Depends on:** #16`. The extra numbers came from PROSE in the body: "Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (...)". The likely mechanism is that the body ALSO contains the sentence "Depends on the `budget-exceeded` outcome introduced by the token-budget ticket" — a prose sentence beginning with the literal phrase "Depends on" — which the scan appears to treat as a dependency declaration and then harvest nearby `#N` references from.
-
-Impact: a ticket that merely MENTIONS other tickets can become hard-gated on them by the #119 pre-spawn gate (run-loop.sh:684). That silently defers work, and in the worst case two tickets that reference each other in prose could deadlock. This is the INVERSE of the defect tickets #9/#11 already cover (they add a lint for prose deps that were never DECLARED); this one is undeclared prose becoming a REAL dependency. Both should be considered together — the parser is too loose in one direction and unenforced in the other.
-
-Note: in this instance the over-gating was benign/conservative (#22 genuinely does coordinate with #13 and #10, so waiting is safe) and was deliberately left in place. The defect is that it happened by accident rather than by declaration.
-
-Fix direction: anchor the `Depends on:` scan strictly — require the marker at the START of a line (optionally bold-wrapped) and harvest `#N` only from THAT line, not from following prose. Confirm the exact current matching behavior first (this was observed, not root-caused, during a bookkeeping pass). Add a test under templates/govern/test/ with a ticket whose body contains both a real `**Depends on:** #K` line and unrelated prose `#N` mentions, asserting only #K is returned.
-
-Done when: prose `#N` mentions never become dependencies; a properly declared `**Depends on:**` line still parses (including multiple comma-separated numbers); the `**Blocks:**` implicit-blocker path is unaffected; a regression test covers prose-vs-declaration; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency filing — observed on ticket #22 (deps resolved to 16 13 10 against a single declared #16).
-
----
-
 ## #30 — Tickets #9 and #11 duplicate each other — same Depends-on work proposed twice
 
 **Severity:** Low
@@ -508,5 +487,37 @@ Fix direction: implement each proposal above as a normal harness PR (a PR on the
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
 Ref: governor/improvements.md block "2026-07-25 06:25 — run run-20260725-053951 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
+
+## #37 — govern test suite fails spuriously when run from inside a live governor session
+
+**Severity:** Medium
+
+Where: shiploop/templates/govern/test/test-spawn-worker-sweep.sh (+ templates/govern/test/assert.sh as the shared fix site).
+
+Observed: a worker validating a hub change locally ran the full suite in a freshly scaffolded throwaway workspace and got passed=106 failed=1 skipped=5 total=112. The single failure was test-spawn-worker-sweep, with 4 assertions failing on 'sweep fires once after a cleanly-resolved worker' etc. Root cause is environmental, not a regression: the governor exports GOVERN_ALLOW_CONCURRENT=1 into every worker's environment, the test inherits it, and spawn-worker.sh then correctly logs 'post-worker orphan sweep SKIPPED — GOVERN_ALLOW_CONCURRENT=1 (time-window sweep is single-run-only) [#239]'. Running the same test with the variable unset does not help — it then blocks indefinitely on the live run's single-run lock. The same suite is green on PR CI (clean env).
+
+Impact: every worker that follows doctrine and validates locally before opening a PR burns cycles diagnosing a phantom failure, and — worse — learns to discount a red test in that file, which would mask a real #239/#3001 regression.
+
+Fix direction: make the test hermetic against inherited harness env. Cleanest is in the shared harness (assert.sh / mk_ws_stub): scrub or neutralize inherited GOVERN_* variables so a test's environment is defined by the test, not by whoever spawned it — with test-spawn-worker-sweep explicitly forcing GOVERN_ALLOW_CONCURRENT=0 and pointing the single-run lock at its own temp dir so it neither skips the sweep nor contends with a live run. Audit the other tests for the same inheritance exposure while there.
+
+Done when: test-spawn-worker-sweep passes both inside a live governor session (GOVERN_ALLOW_CONCURRENT=1 exported) and in a clean env; it never blocks on a real run's single-run lock; no other test in the suite changes behavior based on inherited GOVERN_* env; bash -n passes; hub-first — land in shiploop/templates/** only.
+
+---
+
+## #38 — Rescope the prose-dependency-lint tickets — the lint already ships in the hub, only the --depends-on flag is missing
+
+**Severity:** Low
+
+Where: queue/tickets.md #9 / #11 (and #30, which already notes #9 and #11 duplicate each other) vs. shiploop/templates/govern/lib/common.sh + templates/govern/lint-tickets.sh.
+
+Observed: while fixing the ticket_deps prose-harvesting defect, checked what #9/#11 actually still need. The hub ALREADY implements the core ask: govern::prose_dep_warnings exists in templates/govern/lib/common.sh (flags a ticket that states a dependency in prose but carries no canonical **Depends on:**/**Blocks:** marker), it is wired into templates/govern/lint-tickets.sh, and templates/govern/test/test-lint-prose-deps.sh covers it and passes. The workspace copy is simply stale — `grep -c prose_dep_warnings scripts/govern/lib/common.sh` returns 0 while the hub returns a hit. Verified genuinely-unbuilt residue: neither the hub nor the workspace file-ticket.sh has a --depends-on flag (`grep -c depends-on` = 0 in both).
+
+Impact: #9 and #11 both budget a full worker for work that is ~80% already shipped upstream. That worker will rediscover the existing helper mid-run, or worse, re-implement a second copy of it under a different name.
+
+Fix direction: refresh the workspace's scripts/govern from the hub through the /shiploop:update channel, then rescope #9/#11 (per #30, collapse them into one) down to the genuinely-missing pieces: the file-ticket.sh --depends-on N[,M...] flag that emits a normalized `**Depends on:** #N` line, and documenting `**Depends on:**` / `**Blocks:**` as first-class per-ticket fields in the queue/tickets.md header. This is also a concrete instance of what #24 (deterministic pre-gate for already-fixed-upstream tickets) is trying to automate.
+
+Done when: the workspace copy carries prose_dep_warnings; #9/#11 are collapsed and rescoped to the --depends-on flag plus the field documentation, or closed if that is filed elsewhere.
 
 ---
