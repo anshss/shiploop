@@ -29,6 +29,30 @@ events in `-p` stream-json, so you cannot confirm it ran from the transcript alo
 today. Only tested in `-p` mode — may work interactively. Re-test on CLI upgrades before assuming it's
 still broken; the delivery path below is proven and would work the moment this is fixed.
 
+### 2026-07-26 — reading token usage out of `stream-json`: three traps that silently corrupt the numbers
+
+Hit all three while measuring the fleet. Anything that analyses `logs/govern/**/worker*.jsonl` (the #45
+benchmark especially) must handle them or it will report confidently wrong figures.
+
+1. **Every real API turn is logged as 1–3 duplicate `"type":"assistant"` lines** — one per content block
+   (thinking / tool_use / text) — each carrying the *identical, non-incremental* usage snapshot. Summing
+   raw lines inflates context totals ~1.7x. **Dedupe by `message.id` first.**
+2. **`usage.output_tokens` on `assistant` events is NOT a per-turn total.** Even after correct dedup it
+   came out **38x low** (1,313 vs 49,908 authoritative) on a verified session — while the same dedup
+   reproduced `input_tokens`/`cache_read`/`cache_creation` EXACTLY. Read output tokens and cost only from
+   the terminal `{"type":"result",...}` event (`result.usage.output_tokens`, `result.total_cost_usd`).
+   This one error made a first pass report median session output as 81 tokens; the truth is ~17,448.
+3. **Fixture stubs are indistinguishable by shape alone.** Test fake-`claude` stubs emit round-number
+   usage (`input:100, output:50, cache_*:0`) and pass a naive "has an assistant turn" filter. **Filter on
+   a genuine `msg_...` `message.id`** — stubs have none. Of 262 files in the tree, only **35** are real
+   sessions (see #57).
+
+Also: a prefix's true cost share is `Σ(prefix_i × turns_i) / Σ(session_total_i)` — it is RE-READ every
+turn. Measuring turn-1 `cache_creation` alone counts only the one-time cache write and understates it by
+~100x (0.23% vs the real **23.4%**). Caveat: `prefix_i × turns_i` assumes every turn re-reads the full
+prefix, which breaks on short/compacted sessions (one 6-turn session computes to a nonsensical 142.9%) —
+trust the aggregate, not per-session ratios.
+
 ### 2026-07-26 — `--settings` + `--setting-sources user` = clean hook isolation for workers
 
 Verified working shape for giving a headless worker EXACTLY the hooks you choose, with zero project-hook
