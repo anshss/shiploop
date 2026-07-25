@@ -8,6 +8,18 @@ source "$DIR/lib/common.sh"
 govern::require jq
 
 N="${1:?ticket number required}"
+shift
+# #23 locality batching: any EXTRA ticket numbers after $1 are co-batched into this ONE worker —
+# they share $N's worktree, branch and PR, and their outcomes come back per-ticket in the report's
+# `tickets` array. $N stays the PRIMARY: the worktree slug, the branch, the model/effort/flow latches
+# and the run-scoped log dir are all keyed on it, so a plain single-ticket spawn is byte-identical to
+# before. The run-loop only ever passes extras it already holds the per-ticket CLAIM LOCK for.
+BATCH=()
+for _b in "$@"; do
+  _b="${_b//[^0-9]/}"
+  [[ -n "$_b" && "$_b" != "$N" ]] || continue
+  BATCH+=("$_b")
+done
 slug="ticket-$N"
 # #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set by run-loop),
 # so a re-run never reads a PRIOR run's worker.jsonl. Standalone invocation falls back to the flat
@@ -65,34 +77,99 @@ TICKET_FLOW="$(printf '%s' "$block" \
   | tr ',' ' ' | tr -s ' ' | sed -E 's/^ +//; s/ +$//')"
 export TICKET_FLOW
 
+# ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
+# ONE resolver, called by BOTH the dry-run observation seam and the live spawn — previously the two
+# paths carried copy-pasted resolution logic that could drift apart. Sets the globals
+# `model`/`model_source`/`effort`/`effort_source`/`retry_class`/`retry_reason`. Emits NO log lines
+# (the caller logs the decision once) so the dry-run seam stays a pure, quiet observation.
+#
+# First attempt: the brain-decided per-ticket `Model:`/`Effort:` fields win (allowlisted; an unknown
+# value is dropped fail-safe), else the GOVERN_WORKER_MODEL / GOVERN_WORKER_EFFORT floors.
+#
+# Retry: classify WHY the last attempt failed (govern::retry_class) and escalate the axis that
+# actually failed, instead of always jumping to GOVERN_WORKER_MODEL. See the table in lib/common.sh.
+resolve_sizing() {
+  local base_model base_effort escalated_model
+  retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
+
+  # Baseline = what the FIRST attempt would have used.
+  base_model="${GOVERN_WORKER_MODEL:-opus}"; model_source="GOVERN_WORKER_MODEL"
+  case "${TICKET_MODEL:-}" in
+    "") ;;
+    haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field" ;;
+    *) model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
+  esac
+  base_effort="${GOVERN_WORKER_EFFORT:-}"; effort_source="GOVERN_WORKER_EFFORT"
+  [[ -z "$base_effort" ]] && effort_source="none (unset)"
+  case "${TICKET_EFFORT:-}" in
+    "") ;;
+    low|medium|high|xhigh|max) base_effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field" ;;
+    *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
+  esac
+  model="$base_model"; effort="$base_effort"
+  [[ "${MODEL_IS_RETRY:-0}" -eq 1 ]] || return 0   # first attempt: the baseline IS the answer
+
+  IFS=$'\t' read -r retry_class retry_reason < <(govern::retry_class "$N") || true
+  [[ -n "${retry_class:-}" ]] || { retry_class="unknown"; retry_reason="classifier produced no verdict"; }
+  # Raising the tier means "at least the workspace floor" — never BELOW the tier this ticket already
+  # asked for, so an escalation can't accidentally down-grade a `Model: opus` ticket.
+  escalated_model="$(govern::model_max "$base_model" "${GOVERN_WORKER_MODEL:-opus}")"
+  case "$retry_class" in
+    infra|ci)
+      # POSITIVELY identified non-model cause (transport outage / red CI on a portability-or-env
+      # bug). Re-bet the SAME sizing: the tier was never the problem, and escalating it is the waste
+      # the classifier exists to stop. The only path allowed to keep a sub-floor tier on a retry.
+      model_source="$model_source (retry class=$retry_class — same tier, not escalated) [retry-class]"
+      effort_source="$effort_source (retry class=$retry_class — unchanged) [retry-class]"
+      ;;
+    budget)
+      # Ran out of room while still exploring → the SCOPE was underestimated, not the judgment.
+      # Raise TIER only; compounding an effort raise on top just multiplies the spend.
+      model="$escalated_model"
+      model_source="escalated from $base_model (retry class=budget — scope underestimated) [retry-class]"
+      effort_source="$effort_source (retry class=budget — tier raised, effort unchanged) [retry-class]"
+      ;;
+    judgment)
+      # A coherent but WRONG fix → a judgment failure. Effort is the cheaper knob, so it always
+      # moves; the tier moves too, but only when it is actually below the floor (when the prior
+      # attempt already ran at the floor, judgment was marginal rather than absent and the effort
+      # rung is the whole escalation).
+      effort="$(govern::effort_bump "$base_effort")"
+      model="$escalated_model"
+      effort_source="escalated from ${base_effort:-<unset>} (retry class=judgment) [retry-class]"
+      if [[ "$model" == "$base_model" ]]; then
+        model_source="$model_source (retry class=judgment — already at the floor tier; effort raised instead) [retry-class]"
+      else
+        model_source="escalated from $base_model (retry class=judgment) [retry-class]"
+      fi
+      ;;
+    *)
+      # UNRECOGNIZED signature → exactly the pre-classifier behavior: discard the ticket's brain-decided
+      # fields and escalate to the workspace floor. Fail-safe by construction.
+      model="${GOVERN_WORKER_MODEL:-opus}"
+      effort="${GOVERN_WORKER_EFFORT:-}"
+      model_source="GOVERN_WORKER_MODEL (retry — ticket Model: '${TICKET_MODEL:-}' skipped)"
+      effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
+      if [[ -n "${TICKET_EFFORT:-}" ]]; then
+        effort_source="${effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
+      fi
+      ;;
+  esac
+  # Explicit: under `set -e` a function whose LAST command is a false test would abort the spawn.
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
 # evidence harness and any operator who wants to probe what would be run — no auth, no cost,
 # no side effects. Not part of the normal run path.
 if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
-  dr_model="${GOVERN_WORKER_MODEL:-opus}"
-  dr_source="GOVERN_WORKER_MODEL"
-  if [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-    case "$TICKET_MODEL" in
-      haiku|sonnet|opus) dr_model="$TICKET_MODEL"; dr_source="ticket-Model-field" ;;
-      *) dr_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
-    esac
-  elif [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-    dr_source="GOVERN_WORKER_MODEL (retry — ticket Model: '$TICKET_MODEL' skipped)"
-  fi
-  # #18: mirror the model resolution above, but the "unset" default is NO flag at all (empty
-  # string), not an invented tier — preserves today's session-default behavior when nothing is set.
-  dr_effort="${GOVERN_WORKER_EFFORT:-}"
-  dr_effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$dr_effort" ]] && dr_effort_source="none (unset)"
-  if [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-    case "$TICKET_EFFORT" in
-      low|medium|high|xhigh|max) dr_effort="$TICKET_EFFORT"; dr_effort_source="ticket-Effort-field" ;;
-      *) dr_effort_source="${dr_effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
-    esac
-  elif [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-    dr_effort_source="${dr_effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
-  fi
+  # Same resolver the live spawn uses — the dry-run seam can never drift from the real
+  # decision, and `retry_class`/`retry_reason` make the escalation policy directly observable.
+  resolve_sizing
+  dr_model="$model"; dr_source="$model_source"
+  dr_effort="$effort"; dr_effort_source="$effort_source"
   dr_mode="${GOVERN_MODE:-live}"
   dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
   [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
@@ -108,10 +185,30 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
+    --arg rclass "$retry_class" \
+    --arg rreason "$retry_reason" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
   exit 0
+fi
+
+# 1b. #23: fold each co-batched ticket's block into $block so {{TICKET_BLOCK}} carries the WHOLE group
+# (and the flow-staleness path scan below sees the group's paths too). Done AFTER the Model/Effort/Flow
+# latches so those still read $N's leading field block only, and after the dry-run seam so its output
+# is unchanged. A batched number that is no longer in tickets.md (a concurrent driver resolved it) is
+# dropped here rather than failing the spawn — the run-loop's per-ticket outcome mapping then simply
+# finds no entry for it and leaves it in the queue.
+if [[ "${#BATCH[@]}" -gt 0 ]]; then
+  _kept=()
+  for _b in "${BATCH[@]}"; do
+    _bblock="$(govern::ticket_block "$_b" "$TICKETS_FILE" 2>/dev/null || true)"
+    [[ -n "$_bblock" ]] || { govern::log "spawn #$N: batched #$_b not in $TICKETS_FILE — dropping from the group"; continue; }
+    _kept+=("$_b"); block="$block
+
+$_bblock"
+  done
+  BATCH=(${_kept[@]+"${_kept[@]}"})
 fi
 
 # 2. Assemble the prompt: template (with {{TICKET_BLOCK}}/{{REPORT_PATH}} filled) + doctrine.
@@ -122,6 +219,42 @@ prompt="$prompt
 
 ## Operator doctrine
 $(cat "$PREFERENCES_FILE")"
+
+# #23: batch addendum. Appended AFTER the template and the doctrine so it overrides their "resolve
+# EXACTLY ONE ticket" / single-object report contract (last instruction wins). The per-ticket
+# `tickets` array is load-bearing: the governor bookkeeps (and DELETES) a batched ticket ONLY when
+# this array explicitly says that ticket resolved. Anything else — a different status, or the ticket
+# missing from the array — leaves it in the queue for a later run. That fail-closed default is why a
+# partially-failed group can never mark unfixed tickets resolved.
+if [[ "${#BATCH[@]}" -gt 0 ]]; then
+  _grp="$(printf '#%s, ' "$N" "${BATCH[@]}")"; _grp="${_grp%, }"
+  prompt="$prompt
+
+## ⚠ LOCALITY BATCH — you are resolving ${#BATCH[@]} EXTRA ticket(s), not one (overrides \"EXACTLY ONE ticket\")
+These tickets were grouped because they touch the SAME area of the codebase, so ONE worker explores it
+once instead of N workers each paying full discovery cost. **The ticket blocks above are ALL of them:
+$_grp** — #$N is the primary.
+
+Rules for a batch:
+1. **Explore once, fix all.** Read the area once, then work each ticket in turn. Ticket blocks appear
+   in the order you should work them.
+2. **ONE branch and ONE PR for the whole group** — the primary's branch (\`ticket-$N\`, or the neutral
+   token if the public-repo hygiene section below applies). Do NOT open a PR per ticket. Use separate
+   commits per ticket so the PR stays reviewable, and describe every ticket in the PR body.
+3. **A ticket you could NOT finish is not a failure of the group.** Finish the ones you can, and report
+   the rest honestly. Never stretch one ticket's fix to \"cover\" another.
+4. **REQUIRED — per-ticket outcomes.** Your report JSON MUST carry a top-level \`tickets\` array with
+   ONE entry for EVERY ticket in the group ($_grp), even the ones you did not finish:
+
+   \"tickets\": [{\"ticket\": $N, \"status\": \"resolved|parked|failed\", \"note\": \"one line: what landed, or why not\"}, ...]
+
+   A ticket you omit, or mark anything other than \`resolved\`, STAYS IN THE QUEUE for a later run —
+   which is the correct, safe outcome. Do NOT mark a ticket \`resolved\` unless its fix is actually in
+   the PR. The top-level \`status\` field still describes the group as a whole (use \`resolved\` if the
+   PR is open with at least one ticket fixed); the \`tickets\` array is what bookkeeping acts on.
+5. Everything else — \`pr\`/\`prs\`, \`newTickets\`, \`crossRefs\`, \`migration\`, \`validation\`,
+   \`escalation\`, the PR footer, park rules — is unchanged and applies to the group."
+fi
 
 # Trust-ladder + viral-footer PR instructions. Both are appended to the worker prompt so the worker
 # opens the PR the way this workspace's knobs dictate:
@@ -313,51 +446,20 @@ mode="${GOVERN_MODE:-live}"
 # (destructive git / prod-data) still gate the dangerous actions via self-park.
 permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] && permflag="plan"
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
-model="${GOVERN_WORKER_MODEL:-opus}"
 
-# Per-ticket brain-decided model routing. Honor a `Model:` line inside the ticket block ONLY when
-# THIS is the ticket's FIRST attempt — any retry unconditionally escalates to GOVERN_WORKER_MODEL,
-# because a cheap-tier bet that didn't land the first time shouldn't be re-bet on retry. The brain
-# that filed/triaged the ticket recorded the model; the harness carries no severity/task-type
-# heuristic of its own. Unknown / absent value → keep GOVERN_WORKER_MODEL (fail safe, current
-# behavior preserved for the entire existing backlog). Extend the allowlist below if a new tier
-# ships. `MODEL_IS_RETRY` (below) latched BEFORE worktree/new.sh created a fresh worktree, so this
-# always reflects the STATE-BEFORE-spawn.
-if [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-  case "$TICKET_MODEL" in
-    haiku|sonnet|opus)
-      govern::log "worker #$N model=$TICKET_MODEL per ticket Model: field (first attempt; brain-decided)"
-      model="$TICKET_MODEL"
-      ;;
-    *)
-      govern::log "worker #$N: ignoring unknown Model: '$TICKET_MODEL' from ticket — using GOVERN_WORKER_MODEL=$model (fail-safe)"
-      ;;
-  esac
-elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-  govern::log "worker #$N: retry detected (preserved worktree) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
-fi
-
-# #18: reasoning effort — an INDEPENDENT knob from model tier: raising effort is far cheaper than
-# raising tier, so it's the correct first rung on the escalation ladder. Unset (no GOVERN_WORKER_EFFORT
-# and no ticket Effort:) means NO --effort flag is passed at all — preserves today's session-default
-# behavior exactly; there is no invented default. GOVERN_WORKER_EFFORT sets a workspace-wide floor; a
-# per-ticket `Effort:` field overrides it on the ticket's FIRST attempt only (same retry-escalates-away
-# rule as Model:, via the same MODEL_IS_RETRY signal — a failed cheap bet isn't re-bet on retry).
-effort="${GOVERN_WORKER_EFFORT:-}"
-effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
-if [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-  case "$TICKET_EFFORT" in
-    low|medium|high|xhigh|max)
-      govern::log "worker #$N effort=$TICKET_EFFORT per ticket Effort: field (first attempt; brain-decided)"
-      effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field"
-      ;;
-    *)
-      govern::log "worker #$N: ignoring unknown Effort: '$TICKET_EFFORT' from ticket — using ${effort:-<none>} (fail-safe)"
-      ;;
-  esac
-elif [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-  govern::log "worker #$N: retry detected (preserved worktree) — using ${effort:-<none>} (ignoring ticket Effort: $TICKET_EFFORT)"
-fi
+# Per-ticket brain-decided model + effort routing, and — on a retry — the retry-class evidence-based
+# escalation. All of it lives in resolve_sizing() (defined above, shared with the dry-run seam):
+#   - FIRST attempt: the ticket's `Model:`/`Effort:` fields win (the brain that triaged the ticket
+#     recorded them; the harness carries no heuristic of its own), else the GOVERN_WORKER_* floors.
+#     An unknown value is dropped fail-safe. `MODEL_IS_RETRY` was latched BEFORE worktree/new.sh
+#     created a fresh worktree, so it always reflects the STATE-BEFORE-spawn.
+#   - RETRY: the failure signature of the PRIOR attempt decides which axis escalates — an
+#     infra/CI-portability failure re-bets the SAME tier, a budget blow-out raises the tier, a
+#     coherent-but-wrong fix raises effort (and tier), and an UNRECOGNIZED signature falls back to
+#     exactly the pre-classifier escalate-to-GOVERN_WORKER_MODEL behavior.
+resolve_sizing
+# The decision AND its reason, in one line — this is the audit trail for every retry escalation.
+govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
@@ -365,12 +467,61 @@ fi
 # none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers.
 strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && strict_mcp=""
 
+# Disable slash commands: workers never invoke /skills or /slashes, so loading the full
+# command surface wastes baseline context. ~2,600 tokens saved per turn. Set GOVERN_WORKER_SLASH_COMMANDS=1
+# to restore (e.g., if worker prompt instructs slash-command invocation).
+disable_slash_cmds="--disable-slash-commands"; [[ "${GOVERN_WORKER_SLASH_COMMANDS:-0}" == "1" ]] && disable_slash_cmds=""
+
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
 effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
+
+# #19: PER-ATTEMPT LEDGER. One ticket can be spawned MORE THAN ONCE against the same (run-scoped) log
+# dir: an in-run infra/interrupted auto-retry, a GOVERN_FIX_CI re-dispatch, a GOVERN_RESOLVE_CONFLICT
+# re-dispatch. Each spawn used to just reopen worker.jsonl with a truncating `>`, which lost the prior
+# attempt's usage AND (when the prior attempt's fd was still open at a high offset) left a NUL hole at
+# the head of the file that made every later `grep` read the stream as binary and match nothing.
+# So: (a) number this attempt from the ledger's existing row count, (b) ROTATE the previous attempt's
+# stream aside — the redirect below then creates a brand-new inode, so a stale fd can never corrupt
+# the live file and the killed attempt's stream survives for forensics, and (c) after the worker exits,
+# append one append-only row carrying this attempt's sizing DECISION (model/effort/attempt) and its
+# MEASURED usage. run-loop's history enrichment reads this ledger, so ticket-history.jsonl records the
+# decision beside the cost and a killed attempt's spend is never silently dropped.
+attempts_file="$logdir/attempts.jsonl"
+attempt=1
+if [[ -s "$attempts_file" ]]; then
+  attempt=$(( $(awk 'END{print NR+0}' "$attempts_file" 2>/dev/null || echo 0) + 1 ))
+fi
+if [[ -f "$jsonl" ]]; then
+  # attempt>1 → this run's previous attempt (numbered). attempt==1 with a stream already present →
+  # a stream left by an EARLIER standalone invocation in the flat log dir; park it under a neutral name.
+  if [[ "$attempt" -gt 1 ]]; then rotated="$logdir/worker.attempt$((attempt-1)).jsonl"
+  else rotated="$logdir/worker.prior.jsonl"; fi
+  mv -f "$jsonl" "$rotated" 2>/dev/null || rm -f "$jsonl" 2>/dev/null || true
+fi
+
+# Append this attempt's row. Called on EVERY exit path (clean return and the INT/TERM/EXIT teardown),
+# because the attempts a stop signal kills are exactly the expensive ones worth accounting for.
+# Idempotent (a `written` latch) and best-effort — it never changes the worker's reported outcome.
+attempt_row_written=0
+record_attempt() { # status -> appends one ledger row
+  [[ "$attempt_row_written" -eq 0 ]] || return 0
+  attempt_row_written=1
+  local st="${1:-unknown}" usage
+  usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
+  jq -nc --argjson a "$attempt" --arg m "$model" --arg ms "$model_source" \
+     --arg e "$effort" --arg es "$effort_source" --arg tm "${TICKET_MODEL:-}" \
+     --argjson retry "$MODEL_IS_RETRY" --arg mode "$mode" --arg st "$st" \
+     --argjson u "$usage" --argjson ts "$(date +%s)" \
+     '{attempt:$a, model:$m, modelSource:$ms,
+       effort:(if $e == "" then null else $e end), effortSource:$es,
+       ticketModel:(if $tm == "" then null else $tm end), isRetry:($retry == 1),
+       mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
+  return 0
+}
 
 # #16: per-attempt cumulative TOKEN cap — wall-clock was the only ceiling before this; a worker that
 # wanders can burn tens of millions of tokens before $to fires (tickets #3/#6: ~22M tokens/~$9.7
@@ -438,15 +589,22 @@ govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 # tree (group kill + pid-walk) in one sweep. The EXIT trap covers a clean return (cpid already gone →
 # fast no-op) and an abrupt one; the INT/TERM trap covers run-loop forwarding a stop signal to us
 # (run-loop SIGTERMs this process on its own stop), so the kill cascades driver → spawn-worker → tree.
-cpid=""; wd=""; twd=""
+cpid=""; wd=""; twd=""; _spawn_signalled=0
 spawn_worker_cleanup() {
   [[ -n "${wd:-}" ]] && { kill "$wd" 2>/dev/null || true; govern::_kill_tree_walk "$wd" TERM; }
   [[ -n "${twd:-}" ]] && { kill "$twd" 2>/dev/null || true; govern::_kill_tree_walk "$twd" TERM; }
   [[ -n "${cpid:-}" ]] && govern::kill_tree "$cpid" "${GOVERN_KILL_GRACE_S:-10}"
+  # #19: account for an attempt torn down BEFORE it could reach the normal record_attempt call below —
+  # those are the expensive rows a sizing loop most needs. The tree is already dead here, so the stream
+  # has stopped growing and its per-turn usage is final. Latched, so the normal exit path (which
+  # already recorded the real status) makes this a no-op. The status distinguishes a forwarded stop
+  # signal from any other early exit, so neither is mislabelled.
+  if [[ "${_spawn_signalled:-0}" -eq 1 ]]; then record_attempt "killed-by-signal"
+  else record_attempt "aborted-before-verdict"; fi
   return 0   # EXIT-trap body must end 0 — its last status would otherwise become the script's exit code
 }
 trap 'spawn_worker_cleanup' EXIT
-trap 'govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree [#242]"; spawn_worker_cleanup; exit 143' INT TERM
+trap '_spawn_signalled=1; govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree [#242]"; spawn_worker_cleanup; exit 143' INT TERM
 
 set +e
 # --setting-sources user: drop the PROJECT .claude/settings.json hooks so a worker does NOT
@@ -472,7 +630,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
-    $strict_mcp \
+    $strict_mcp $disable_slash_cmds \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
@@ -528,7 +686,9 @@ if [[ -s "$report_path" ]]; then
   report="$(govern::extract_report < "$report_path" || true)"
 fi
 if [[ -z "$report" ]]; then
-  result_msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
+  # govern::stream_grep (not bare grep): a NUL-holed stream would otherwise hide a perfectly good
+  # report and get the attempt synthesized as `failed` (#19).
+  result_msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
   [[ -n "$result_msg" ]] && report="$(printf '%s' "$result_msg" | govern::extract_report || true)"
 fi
 
@@ -591,4 +751,10 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
       '{status:"failed",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("resume from "+$wt+" or re-run the ticket"),options:[]}}')"
   fi
 fi
+
+# #19: the outcome is now known — append this attempt's decision + measured usage to the ledger.
+# `status` comes from the report itself, so a killed attempt records `timeout`/`budget-exceeded` and
+# a genuine failure records `failed`, each with the tokens it actually burned.
+record_attempt "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
+
 printf '%s\n' "$report"
