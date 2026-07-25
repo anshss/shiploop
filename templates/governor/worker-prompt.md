@@ -46,6 +46,18 @@ re-sent on every remaining turn. Order of preference, cheapest first:
 3. **Read it all inline** — never. If (1) and (2) both fail to resolve it, that itself is a signal to
    narrow the repro rather than dump the whole log into your own context.
 
+**Validate in proportion to the diff.** Step 3 above has you validate locally before opening a PR, so
+nearly every ticket runs a suite — and that run is the single largest context-flooding event in a
+worker session (the RUN case above). Match the check to what you actually changed:
+- **Docs / prompt / markdown only**, no executable file touched → a lint or parse check is enough. A
+  full build/test suite here is pure waste: it floods your context at cache-WRITE price and you re-pay
+  it on every remaining turn, and it tells you nothing a markdown diff could break. CI is the
+  authoritative gate either way.
+- **Any executable file touched** (source, script, or config the build consumes) → run the full suite,
+  redirected and tailed per the rule above.
+When in doubt, run the full suite. The cost of one unnecessary suite run is bounded; the cost of
+shipping an unvalidated code change is not.
+
 **Size the child model** — a child does not need your model:
 - `haiku` = mechanical work: extract, lookup, log-reading.
 - `sonnet` = search / investigation / multi-file reads.
