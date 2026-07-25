@@ -178,7 +178,7 @@ Observed: the only ceiling on a worker is `GOVERN_WORKER_TIMEOUT` (default 3600s
 
 Fix direction: add `GOVERN_WORKER_MAX_TOKENS` (suggest a conservative default, and 0 = unlimited to preserve current behavior for anyone who wants it). The worker is launched at spawn-worker.sh ~line 406 as `claude -p ... ` with output teed to a per-run JSONL; that JSONL carries cumulative usage. Monitor it (same supervision loop that already enforces the wall-clock timeout and kills the process tree) and terminate the attempt when cumulative tokens exceed the budget. Record the termination reason distinctly from a wall-clock timeout — `budget-exceeded` must be a distinguishable outcome, because ticket #(S3, evidence-based escalation) needs to tell "ran out of budget while still exploring" apart from other failures in order to escalate the right axis.
 
-Done when: GOVERN_WORKER_MAX_TOKENS is honored and documented; exceeding it kills the worker process tree exactly like the existing timeout path; the outcome is recorded with a distinct `budget-exceeded` reason in the worker report and state.jsonl; default preserves existing behavior for anyone who does not set it; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: GOVERN_WORKER_MAX_TOKENS is honored and documented; exceeding it kills the worker process tree exactly like the existing timeout path; the outcome is recorded with a distinct `budget-exceeded` reason in the worker report and state.jsonl; default preserves existing behavior for anyone who does not set it; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W2
 
@@ -198,7 +198,7 @@ Observed: three small, independent inefficiencies in the worker prompt.
 
 Fix direction: (1) move the `{{TICKET_BLOCK}}` placeholder to the END of worker-prompt.md so the stable boilerplate forms a cacheable prefix — verify the prompt still reads coherently (the ticket is now context at the bottom, so any earlier prose that says "the ticket above" must be reworded). (2) Change worker-prompt.md:9 to instruct reading only the relevant SUB-REPO CLAUDE.md, noting the root one is already loaded. (3) Collapse the duplicated validate-locally and branch-naming statements to one authoritative mention each.
 
-Done when: {{TICKET_BLOCK}} is the last section of worker-prompt.md and the surrounding prose reads correctly with the ticket at the bottom; the redundant root-CLAUDE.md read instruction is gone; validate-locally and the branch rule each appear once; spawn-worker.sh substitution still produces a well-formed prompt (verify with `bash scripts/govern/spawn-worker.sh --dry-run` or equivalent); hub and workspace copies stay in sync.
+Done when: {{TICKET_BLOCK}} is the last section of worker-prompt.md and the surrounding prose reads correctly with the ticket at the bottom; the redundant root-CLAUDE.md read instruction is gone; validate-locally and the branch rule each appear once; spawn-worker.sh substitution still produces a well-formed prompt (verify with `bash scripts/govern/spawn-worker.sh --dry-run` or equivalent); hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W3
 
@@ -222,7 +222,7 @@ Fix direction:
 
 IMPORTANT: verify how the installed `claude` CLI actually accepts a reasoning-effort argument before wiring it (check `claude --help`). If the CLI exposes no such flag in this environment, implement the field + plumbing but make the spawn a no-op pass-through and say so explicitly in the PR description rather than inventing a flag that does not exist.
 
-Done when: GOVERN_WORKER_EFFORT and a ticket `Effort:` field both resolve and are logged with their source; `--effort` files a ticket carrying the field; both tickets.md files document it; unknown values fail safe; default behavior is unchanged when nothing is set; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: GOVERN_WORKER_EFFORT and a ticket `Effort:` field both resolve and are logged with their source; `--effort` files a ticket carrying the field; both tickets.md files document it; unknown values fail safe; default behavior is unchanged when nothing is set; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S1
 
@@ -243,7 +243,7 @@ Second defect: `costUsd` and `tokens` are NULL on 2 of the 6 existing rows — i
 
 Fix direction: (1) add `model`, `effort`, and `attempt` (1-based) to each ticket-history row, sourced from the same values spawn-worker.sh already resolves and logs. (2) Diagnose and fix the null-capture path so failed/parked attempts record usage too — determine why the resolved rows captured usage and the failed ones did not, and close that gap rather than defaulting the field. (3) Keep govern-health.sh's existing jq consumers working (they use `select(.tokens != null)` so extra fields are safe, but re-run it to confirm). (4) Optionally surface a per-model breakdown in govern-health.sh output.
 
-Done when: new ticket-history rows carry model/effort/attempt; a failed attempt records usage rather than null; `bash scripts/govern/govern-health.sh` still runs and reports; existing historical rows (which lack the new fields) do not break any consumer; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: new ticket-history rows carry model/effort/attempt; a failed attempt records usage rather than null; `bash scripts/govern/govern-health.sh` still runs and reports; existing historical rows (which lack the new fields) do not break any consumer; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S5
 
@@ -264,7 +264,7 @@ Guard: the notes are an untrusted prior-attempt artifact, not instructions — t
 
 Coordinate with ticket #13 (which injects failing-CI-log excerpts on retry) — both add retry-time context to the same prompt path; keep them composable rather than conflicting, and if #13 has already landed, extend its block rather than adding a competing one.
 
-Done when: a worker records findings to the scratchpad during a run; a retry prompt contains the previous attempt's notes under an explicit untrusted-evidence framing; the file lives in the preserved worktree and is git-ignored so it never lands in a PR; first attempts are unaffected; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: a worker records findings to the scratchpad during a run; a retry prompt contains the previous attempt's notes under an explicit untrusted-evidence framing; the file lives in the preserved worktree and is git-ignored so it never lands in a PR; first attempts are unaffected; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S4
 
@@ -301,7 +301,7 @@ Cache the scout's verdict onto the run so a retry does not re-scout from scratch
 
 Guard: scout output is untrusted model output feeding a dispatch decision — validate the JSON shape and clamp to known enum values; on any parse failure or timeout, fall back to today's behavior (GOVERN_WORKER_MODEL) and log the fallback loudly. Never let a malformed scout silently downgrade a hard ticket to haiku.
 
-Done when: the scout runs pre-dispatch and emits validated JSON; the scoring function selects model+effort deterministically from it and is unit-testable in isolation (add a test under templates/govern/test/); an explicit ticket Model:/Effort: overrides the scout; malformed/absent scout output falls back safely and loudly; the chosen tier and the scope class are logged; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: the scout runs pre-dispatch and emits validated JSON; the scoring function selects model+effort deterministically from it and is unit-testable in isolation (add a test under templates/govern/test/); an explicit ticket Model:/Effort: overrides the scout; malformed/absent scout output falls back safely and loudly; the chosen tier and the scope class are logged; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S2
 
@@ -331,7 +331,7 @@ Escalation must also raise EFFORT before TIER where the classifier indicates jud
 
 Safety: this touches a governor retry rail. Preserve the existing invariant that a retry never silently DOWN-grades below the tier its first attempt used unless the classifier positively identifies an infra/portability cause. Keep the current behavior as the fallback whenever the signature is unrecognized — an unknown failure escalates exactly as it does today.
 
-Done when: the classifier categorizes a failed attempt from its recorded outcome + logs; each category maps to the documented response; an unrecognized signature falls back to today's escalate-to-GOVERN_WORKER_MODEL behavior; the decision and its reason are logged; a test under templates/govern/test/ covers each branch; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: the classifier categorizes a failed attempt from its recorded outcome + logs; each category maps to the documented response; an unrecognized signature falls back to today's escalate-to-GOVERN_WORKER_MODEL behavior; the decision and its reason are logged; a test under templates/govern/test/ covers each branch; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S3
 
@@ -356,7 +356,7 @@ Batching and parallelism pull against each other — past a point, bigger groups
 
 Hard constraints: (a) the existing per-ticket claim lock and bookkeep lock semantics must still hold — a group claims all its tickets or none; (b) the `**Depends on:**` gate (govern::ticket_deps, lib/common.sh:1270) must still be enforced, and two tickets in a dependency relationship must NOT be silently co-batched in a way that violates ordering — either co-batch them in dependency order within the single worker, or keep them in separate groups; (c) a group that partially fails must report per-ticket outcomes, not collapse to one verdict, or bookkeeping will mark unfixed tickets resolved.
 
-Done when: eligible tickets are partitioned into disjoint locality groups; one worker handles a group and reports per-ticket outcomes; GOVERN_BATCH_MAX controls group size with 1 preserving today's behavior; dependency-related tickets are never co-batched out of order; claim/bookkeep locking is preserved for every ticket in a group; a test under templates/govern/test/ covers the partitioning and the per-ticket outcome mapping; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: eligible tickets are partitioned into disjoint locality groups; one worker handles a group and reports per-ticket outcomes; GOVERN_BATCH_MAX controls group size with 1 preserving today's behavior; dependency-related tickets are never co-batched out of order; claim/bookkeep locking is preserved for every ticket in a group; a test under templates/govern/test/ covers the partitioning and the per-ticket outcome mapping; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C2
 
@@ -379,7 +379,7 @@ Fix direction: add a cheap deterministic pre-dispatch check.
 
 Scope note: (a) has the clear ROI and a concrete, already-documented rule behind it. If (b) cannot be made safe and narrow, implement (a) alone and explicitly decline (b) in the PR description — that is an acceptable outcome for this ticket.
 
-Done when: a ticket whose target file is behind its hub template is detected pre-dispatch and surfaced rather than worked from scratch; the check is deterministic (no LLM call); it cannot mark a ticket resolved on its own; false-positive behavior is fail-open (when unsure, spawn the worker as today); `bash -n` passes; hub and workspace copies stay in sync.
+Done when: a ticket whose target file is behind its hub template is detected pre-dispatch and surfaced rather than worked from scratch; the check is deterministic (no LLM call); it cannot mark a ticket resolved on its own; false-positive behavior is fail-open (when unsure, spawn the worker as today); `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C3
 
@@ -400,7 +400,7 @@ Freshness: stamp the digest with the repo HEAD it was generated from and regener
 
 Size discipline: this content is injected into every worker prompt, so it is a standing per-ticket cost. Keep it tight (a page, not a dump) — the point is to replace exploration, not to relocate it into the prompt. If the digest cannot be kept small, it is not worth injecting; say so rather than shipping a bloated one.
 
-Done when: a digest can be generated per repo and is stamped with its source commit; it is injected into the worker prompt; a stale digest is detected and regenerated or flagged; the digest is size-bounded; generation uses a cheap tier; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: a digest can be generated per repo and is stamped with its source commit; it is injected into the worker prompt; a stale digest is detected and regenerated or flagged; the digest is size-bounded; generation uses a cheap tier; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component T1
 
@@ -419,7 +419,7 @@ Fix direction: for the ticket's `Where:` paths, find the most relevant prior com
 
 Bounds: cap the injected diff size hard (a large diff costs more than the exploration it saves). If no good precedent exists, inject nothing — an irrelevant precedent is worse than none because it anchors the worker on the wrong pattern. Frame the block as evidence to consider, not as a template to copy blindly: the precedent may itself have been superseded.
 
-Done when: a relevant prior commit is located deterministically for a ticket's target paths and injected as a size-bounded excerpt; no precedent found means no block injected; the block is framed as non-authoritative evidence; injection is skippable via a knob; `bash -n` passes; hub and workspace copies stay in sync.
+Done when: a relevant prior commit is located deterministically for a ticket's target paths and injected as a size-bounded excerpt; no precedent found means no block injected; the block is framed as non-authoritative evidence; injection is skippable via a knob; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component T2
 
@@ -440,7 +440,7 @@ Two distinct defects:
 
 Fix direction: (a) in dry mode, do not acquire the per-ticket claim lock (or release it before exit, including on early exit paths — use a trap). (b) In the claim path, when the lock exists, check whether the holder pid is still alive; if it is dead, reclaim it and log "stale-reclaimed" rather than skipping the ticket. Preserve the #183 safety property: NEVER reclaim a lock whose holder is alive.
 
-Done when: `run-loop.sh <N> --dry-run` leaves no governor/.locks/ticket-<N> behind (verify with ls after a dry run); a lock whose holder pid is dead is automatically reclaimed by the next run with a clear log line; a lock whose holder is ALIVE is still respected and still skips; a test under templates/govern/test/ covers dead-holder reclaim and live-holder respect; bash -n passes; hub and workspace copies stay in sync.
+Done when: `run-loop.sh <N> --dry-run` leaves no governor/.locks/ticket-<N> behind (verify with ls after a dry run); a lock whose holder pid is dead is automatically reclaimed by the next run with a clear log line; a lock whose holder is ALIVE is still respected and still skips; a test under templates/govern/test/ covers dead-holder reclaim and live-holder respect; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 — hit while dry-running ticket #14 before launching the token-efficiency fan-out; cost one no-op govern run and a manual lock removal.
 
@@ -461,7 +461,7 @@ Note: in this instance the over-gating was benign/conservative (#22 genuinely do
 
 Fix direction: anchor the `Depends on:` scan strictly — require the marker at the START of a line (optionally bold-wrapped) and harvest `#N` only from THAT line, not from following prose. Confirm the exact current matching behavior first (this was observed, not root-caused, during a bookkeeping pass). Add a test under templates/govern/test/ with a ticket whose body contains both a real `**Depends on:** #K` line and unrelated prose `#N` mentions, asserting only #K is returned.
 
-Done when: prose `#N` mentions never become dependencies; a properly declared `**Depends on:**` line still parses (including multiple comma-separated numbers); the `**Blocks:**` implicit-blocker path is unaffected; a regression test covers prose-vs-declaration; bash -n passes; hub and workspace copies stay in sync.
+Done when: prose `#N` mentions never become dependencies; a properly declared `**Depends on:**` line still parses (including multiple comma-separated numbers); the `**Blocks:**` implicit-blocker path is unaffected; a regression test covers prose-vs-declaration; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency filing — observed on ticket #22 (deps resolved to 16 13 10 against a single declared #16).
 
@@ -494,24 +494,24 @@ Ref: session 2026-07-25 — spotted while deduping the token-efficiency ticket s
 
 ## #31 — Nothing verifies a ticket's 'Done when' criteria before bookkeeping marks it resolved and deletes it
 
-**Severity:** High
+**Severity:** Medium
 **Model:** sonnet
 
 Where: scripts/govern/govern-bookkeep.sh + shiploop/templates/govern/govern-bookkeep.sh (the resolve/delete path); worker report schema in spawn-worker.sh / governor/worker-prompt.md
 
-Observed: ticket #15 (worker-as-router prompt section) declared in its "Done when" that BOTH the hub template `shiploop/templates/governor/worker-prompt.md` AND the workspace copy `governor/worker-prompt.md` must carry the identical ROUTER POSTURE section. The worker updated ONLY the hub copy (merged as shiploop#82). The workspace copy was left with zero occurrences of the section — verified by `grep -c "ROUTER POSTURE" governor/worker-prompt.md` returning 0. Despite the unmet criterion the run reported `resolved=1`, the PR auto-merged, and bookkeeping DELETED #15 from queue/tickets.md.
+Observed: "resolved" is currently defined operationally as "the worker opened a PR and CI went green", with NO check that the ticket's own stated acceptance criteria were met. The `Done when:` field is written for a human/LLM reader and is never machine-verified, nor even re-presented for confirmation, before the ticket is DELETED from queue/tickets.md. Once deleted, an unmet criterion can never resurface — the ticket is gone.
 
-Impact is not cosmetic: `governor/worker-prompt.md` is the file this workspace's OWN governor workers actually load (WORKER_PROMPT_FILE resolves to $GOVERNOR_DIR/worker-prompt.md, lib/common.sh:29). So the single highest-leverage token-saving change in the current work set silently did not take effect locally — it only benefits future fleets that pull the hub template. The ticket is gone from the queue, so nothing would ever have re-surfaced it.
+CORRECTION on this ticket's original filing: it was first filed citing #15 and #27 as confirmed instances, on the grounds that each updated only the hub template `shiploop/templates/**` and not the workspace copy. That was a MIS-DIAGNOSIS by the filer. Harness work in this workspace is hub-first by design: the workspace copy is refreshed through the `/shiploop:update` channel, NOT hand-edited in the same PR. Both workers followed the documented convention correctly; the offending "hub and workspace copies stay in sync" clause in those tickets' Done-when was itself mis-specified (it has since been corrected across the #14-#31 set). So this ticket currently has NO confirmed instance of a worker falsely asserting completion.
 
-Root cause: "resolved" is currently defined operationally as "the worker opened a PR and CI went green", with NO check that the ticket's own stated acceptance criteria were met. The `Done when:` field is written for a human/LLM reader and is never machine-verified nor even re-presented for confirmation before deletion. Under parallel execution (now the default) more tickets close unattended, so this failure mode gets systematically more likely and less observable.
+It is filed anyway because the structural gap is real and independent of that bad example: nothing anywhere compares the delivered diff against the ticket's stated criteria before the ticket is destroyed. Severity is Medium rather than High precisely because the motivating evidence did not survive scrutiny — treat "does this actually happen?" as the first question to answer, and if a survey of recent resolutions finds no real instance, DECLINE this ticket in the PR description rather than building machinery for a hypothetical.
+
+Note the second-order lesson worth capturing either way: a mis-specified `Done when` clause is indistinguishable, from the outside, from a worker that ignored a correct one. Whatever is built here should make that distinction visible rather than assuming the ticket text is always right.
 
 Fix direction: require the worker's structured report to include an explicit per-criterion self-assessment against the ticket's `Done when:` clauses (each clause: met / not-met / not-applicable, with a one-line evidence pointer), and have bookkeeping REFUSE to delete a ticket that reports any clause not-met — parking it with an escalation instead. This deliberately does not attempt to machine-parse arbitrary prose criteria; it makes the worker assert compliance clause-by-clause and makes a false assertion an auditable lie in the report rather than a silent omission.
 
 Consider additionally: a cheap independent verifier pass (haiku) that re-reads the ticket's Done-when against the actual diff before the resolve is committed. Weigh cost against value — the whole point of this work set is to REDUCE spend, so a verifier must be cheap and must not run on every ticket if a self-assessment suffices.
 
-Related: this class of gap is why the hub<->workspace sync clauses appear in nearly every ticket in the #14-#30 set; a worker that satisfies only one side of a two-copy requirement will keep producing this exact silent drift.
-
-Done when: a worker report carries a per-clause Done-when self-assessment; bookkeeping refuses to delete a ticket with any not-met clause and parks it with an escalation naming the clause; the refusal path is covered by a test under templates/govern/test/; the immediate #15 regression (workspace copy missing ROUTER POSTURE) is confirmed fixed separately; bash -n passes; hub and workspace copies stay in sync.
+Done when: EITHER this ticket is declined in its PR description with evidence that no real instance of a falsely-asserted completion exists in the recent resolution history — an acceptable and expected outcome — OR: a worker report carries a per-clause Done-when self-assessment; bookkeeping refuses to delete a ticket with any not-met clause and parks it with an escalation naming the clause; the refusal path is covered by a test under templates/govern/test/; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 — caught while verifying shiploop#82; workspace copy lacked the section the ticket required, yet the ticket was resolved and deleted.
 
