@@ -175,6 +175,8 @@ Plan mode's exit tool isn't wired up in this context, so I'll deliver the actual
 
 ## 2026-07-25 12:23 — run run-20260725-111845-99416 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 12:23:** 2 safe proposal(s) → ticket **#53**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Plan mode isn't actually wired up in this context (ExitPlanMode isn't available), so I'll deliver the GOVERN-IMPROVE result directly as required by the task's output format.
 
 - `scripts/govern/govern-improve-triage.sh`: before filing a new "Harness self-improvement: promote safe proposals from run X" ticket, scan `queue/tickets.md` for an already-open ticket whose title matches `^Harness self-improvement: promote safe proposals` and append this run's safe-proposal bullets to it instead of calling `file-ticket.sh` again — why: this gap has already produced 10 near-duplicate tickets (#9, #10, #11, #12, #36, #39, #42, #47, #50, #51), each triggering a separate full worker dispatch on largely the same proposals; the fix was already specified in ticket #42's own body (and independently in #30/#38) but has no owner because it keeps getting buried under a fresh "promote safe proposals" ticket instead of ever being selected.
