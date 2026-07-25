@@ -667,3 +667,28 @@ Done when: a run whose base branch is unambiguously CI-red refuses to dispatch w
 Ref: session 2026-07-25 — ticket #46 failed solely because main was red at the time of dispatch (main went red at a3331a3 / v1.11.1, fixed at 17c0b58).
 
 ---
+
+## #50 — Harness self-improvement: promote safe proposals from run-20260725-111730-97043
+
+**Severity:** Low
+
+⚠ possible duplicate of #9
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-111730-97043. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `scripts/govern/spawn-worker.sh`: add a `GOVERN_FIX_CI` handling block (mirroring the existing `GOVERN_RESOLVE_CONFLICT` block at spawn-worker.sh:239-261) that injects the PR number, an excerpt of the actually-failing CI job's log, and "a prior attempt already implemented this — your job is ONLY to fix the failing check" framing — this run's #19 worker had to rediscover the existing-PR-with-red-CI situation entirely from scratch, burning budget and hitting a stray `cd templates/govern/test: no such file or directory`. This exact gap is already named as open tickets #10/#13 in `scripts/govern/test/test-ticket-deps-prose.sh:31`; this run is a live, reproduced instance of it.
+- `scripts/govern/run-loop.sh` (~line 1279, the CI-red downgrade branch `[[ "$status" == "resolved" ]] && status="failed"`): apply `.lessonPatch` even when status gets downgraded to `failed`/`parked`. Today `govern-bookkeep.sh` (the only place a `lessonPatch` gets written into CLAUDE.md) is invoked only from the `resolved)` branch at run-loop.sh:1385, so ticket #19's fully-diagnosed anti-pattern lesson ("attribute CI red against the base commit's own run, not yours") was silently dropped despite being captured in the worker's own report.json.
+- `scripts/govern/run-loop.sh` (~line 285, the `excludes` variable): the "already-worked-this-run" exclude tracking is a plain per-process shell variable, not synchronized across parallel child drivers. Under the default `GOVERN_PARALLEL_DEFAULT=4` (run-loop.sh:134), a killed-before-verdict ticket can be double-processed, producing duplicate `timeout` entries — the actual root cause behind `test-budget-exceeded-classification`/`test-timeout-classification` failing in CI. Make the exclusion atomic (shared lock-guarded file all children re-read) instead of relying on each child's local variable.
+- `scripts/govern/config-check.sh`: add a drift check between this workspace's `scripts/govern/test/*.sh` and the hub's `templates/govern/test/*.sh`. The hub's copy of the two failing tests already pins `--serial` as a band-aid for the race above; this workspace's copy doesn't have that pin yet, which is exactly why CI (built fresh from hub templates) failed while local verification (this workspace's stale copy) passed.
+- `governor/worker-prompt.md` or root `CLAUDE.md`: add a one-line note on the `templates/govern/` vs `scripts/govern/` split (templates/ = canonical distributable copy synced via sync-templates.sh; scripts/ = this repo's own live/dogfood copy — run tests from scripts/, never `cd` into templates/ directly) — this run's worker guessed the wrong path and hit a dead end.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 12:12 — run run-20260725-111730-97043 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
