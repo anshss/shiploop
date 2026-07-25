@@ -1,5 +1,83 @@
 # Changelog
 
+## 1.12.0 — 2026-07-25
+
+The cost-and-throughput release. v1.11.x shipped the *mechanism* for parallel execution; this one
+ships the things that make a parallel run actually cheaper and safer — non-colliding workers,
+bounded context growth, and a refusal to waste a whole fan-out on a broken baseline.
+
+Everything here was sized against measured telemetry rather than argument. The two numbers that
+drove the priorities:
+
+- **Cache *writes* are ~32% of cost on ~4.8% of tokens** — writes price roughly 12.5x reads. Anything
+  that keeps junk out of context is therefore paid for twice: once at write price immediately, and
+  again on every subsequent turn at read price.
+- **~16,500 new tokens are cached per turn**, against an average re-read context of ~130k tokens per
+  turn. Context growth, not prompt size, is what a long worker session actually spends.
+
+A note on units: on a subscription plan the binding constraint is **quota and wall-clock**, not
+dollars. Improvements below are described in tokens and turns for that reason.
+
+### Added
+
+- **Locality batching** (#92). Eligible tickets are partitioned into disjoint groups by the files
+  they touch, and one worker handles a whole group. `--parallel=N` now means N *groups*, not N
+  tickets. Two effects: concurrent workers can no longer collide on the same file and produce
+  conflicting branches, and a group pays discovery — repo layout, conventions, the ~15k-token
+  session-start cache write — **once** instead of once per ticket. `GOVERN_BATCH_MAX` controls group
+  size; `1` restores one-ticket-per-worker.
+- **Base-branch CI guard** (#95). The run-start preflight refuses to dispatch workers onto an
+  unambiguously CI-red base branch. Measured motivation: two tickets in one wave each burned a full
+  worker session producing correct code that could never go green, because the base was red at
+  dispatch — under parallel-by-default a red baseline wastes the *entire* fan-out, not one ticket.
+  Fail-**open** by design: absent CI, no auth, in-progress runs, and API errors all proceed exactly
+  as before, so a fleet with no checks is unaffected. `GOVERN_SKIP_BASE_CHECK=1` opts out — for
+  example when the ticket being worked *is* the CI fix.
+- **Sizing decision recorded beside the cost** (#93). `ticket-history.jsonl` rows now carry `model`,
+  `effort`, and `attempt` alongside the tokens and cost already logged, and usage is no longer lost
+  on killed attempts. Previously you could see what a ticket cost but not which tier produced it,
+  which made the data unlearnable — failures, the rows most worth studying, were also the ones
+  most often missing usage.
+
+### Changed
+
+- **Worker context discipline** (#91). Three additions to the worker prompt, all targeting context
+  growth: verbose commands are redirected and inspected in bounded slices rather than dumping full
+  build/test output into context; every delegated subagent must be given an explicit **return
+  contract** (an unbounded child reply defeats the delegation it was supposed to pay for); and local
+  validation is scaled to the diff, so a docs-only change no longer triggers a full suite run whose
+  output floods the session. The read path was already covered in v1.11.0 — the *run* path, which is
+  the common case, was not.
+- **Evidence-based retry escalation** (#94). A failed attempt is classified by failure signature
+  instead of unconditionally re-betting at `GOVERN_WORKER_MODEL`. A CI failure caused by
+  environment/portability retries at the **same** tier with the failing log injected; running out of
+  token budget while still exploring means scope was underestimated and escalates; infrastructure
+  errors retry identically without escalating at all. An unrecognized signature falls back to the
+  previous escalate-always behavior.
+- **Workers no longer load the slash-command surface** (#96). Measured: a worker's baseline context
+  was ~33,000 tokens before its ticket prompt or any file read; `--disable-slash-commands` brings
+  that to ~30,400 — roughly 2,600 tokens off *every turn*. Honest sizing: this is a ~2% lever, worth
+  taking because it is a one-flag change with an opt-out (`GOVERN_WORKER_SLASH_COMMANDS=1`), not
+  because it is transformative.
+
+  Recorded so nobody retries them: `--allowedTools` does **not** shrink the prefix (it gates
+  permission, not loading), and `--bare` fails without explicitly re-provided context and also skips
+  hooks and LSP, so it is not a drop-in.
+
+### Upgrade notes
+
+Parallel execution remains the default from v1.11.1 (`GOVERN_PARALLEL_DEFAULT`, fallback 4), and
+`--serial` still opts out per run. With locality batching, that default now fans out over disjoint
+groups, so concurrent workers are substantially less likely to conflict than in v1.11.1.
+
+### Still not here
+
+Automatic model/effort right-sizing remains unbuilt — an unpinned ticket still runs at
+`GOVERN_WORKER_MODEL` (default `opus`), and `GOVERN_WORKER_EFFORT` is inert unless set. A scout pass
+that measures ticket scope and selects both knobs is tracked but deliberately not in this release:
+tier selection mostly shifts list-price cost between models, and on a subscription plan its effect
+on the binding constraint — quota — is far smaller than the raw price spread suggests.
+
 ## Unreleased
 
 ### Added
