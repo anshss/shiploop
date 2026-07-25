@@ -8,6 +8,18 @@ source "$DIR/lib/common.sh"
 govern::require jq
 
 N="${1:?ticket number required}"
+shift
+# #23 locality batching: any EXTRA ticket numbers after $1 are co-batched into this ONE worker —
+# they share $N's worktree, branch and PR, and their outcomes come back per-ticket in the report's
+# `tickets` array. $N stays the PRIMARY: the worktree slug, the branch, the model/effort/flow latches
+# and the run-scoped log dir are all keyed on it, so a plain single-ticket spawn is byte-identical to
+# before. The run-loop only ever passes extras it already holds the per-ticket CLAIM LOCK for.
+BATCH=()
+for _b in "$@"; do
+  _b="${_b//[^0-9]/}"
+  [[ -n "$_b" && "$_b" != "$N" ]] || continue
+  BATCH+=("$_b")
+done
 slug="ticket-$N"
 # #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set by run-loop),
 # so a re-run never reads a PRIOR run's worker.jsonl. Standalone invocation falls back to the flat
@@ -114,6 +126,24 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
+# 1b. #23: fold each co-batched ticket's block into $block so {{TICKET_BLOCK}} carries the WHOLE group
+# (and the flow-staleness path scan below sees the group's paths too). Done AFTER the Model/Effort/Flow
+# latches so those still read $N's leading field block only, and after the dry-run seam so its output
+# is unchanged. A batched number that is no longer in tickets.md (a concurrent driver resolved it) is
+# dropped here rather than failing the spawn — the run-loop's per-ticket outcome mapping then simply
+# finds no entry for it and leaves it in the queue.
+if [[ "${#BATCH[@]}" -gt 0 ]]; then
+  _kept=()
+  for _b in "${BATCH[@]}"; do
+    _bblock="$(govern::ticket_block "$_b" "$TICKETS_FILE" 2>/dev/null || true)"
+    [[ -n "$_bblock" ]] || { govern::log "spawn #$N: batched #$_b not in $TICKETS_FILE — dropping from the group"; continue; }
+    _kept+=("$_b"); block="$block
+
+$_bblock"
+  done
+  BATCH=(${_kept[@]+"${_kept[@]}"})
+fi
+
 # 2. Assemble the prompt: template (with {{TICKET_BLOCK}}/{{REPORT_PATH}} filled) + doctrine.
 template="$(cat "$WORKER_PROMPT_FILE")"
 prompt="${template//\{\{TICKET_BLOCK\}\}/$block}"
@@ -122,6 +152,42 @@ prompt="$prompt
 
 ## Operator doctrine
 $(cat "$PREFERENCES_FILE")"
+
+# #23: batch addendum. Appended AFTER the template and the doctrine so it overrides their "resolve
+# EXACTLY ONE ticket" / single-object report contract (last instruction wins). The per-ticket
+# `tickets` array is load-bearing: the governor bookkeeps (and DELETES) a batched ticket ONLY when
+# this array explicitly says that ticket resolved. Anything else — a different status, or the ticket
+# missing from the array — leaves it in the queue for a later run. That fail-closed default is why a
+# partially-failed group can never mark unfixed tickets resolved.
+if [[ "${#BATCH[@]}" -gt 0 ]]; then
+  _grp="$(printf '#%s, ' "$N" "${BATCH[@]}")"; _grp="${_grp%, }"
+  prompt="$prompt
+
+## ⚠ LOCALITY BATCH — you are resolving ${#BATCH[@]} EXTRA ticket(s), not one (overrides \"EXACTLY ONE ticket\")
+These tickets were grouped because they touch the SAME area of the codebase, so ONE worker explores it
+once instead of N workers each paying full discovery cost. **The ticket blocks above are ALL of them:
+$_grp** — #$N is the primary.
+
+Rules for a batch:
+1. **Explore once, fix all.** Read the area once, then work each ticket in turn. Ticket blocks appear
+   in the order you should work them.
+2. **ONE branch and ONE PR for the whole group** — the primary's branch (\`ticket-$N\`, or the neutral
+   token if the public-repo hygiene section below applies). Do NOT open a PR per ticket. Use separate
+   commits per ticket so the PR stays reviewable, and describe every ticket in the PR body.
+3. **A ticket you could NOT finish is not a failure of the group.** Finish the ones you can, and report
+   the rest honestly. Never stretch one ticket's fix to \"cover\" another.
+4. **REQUIRED — per-ticket outcomes.** Your report JSON MUST carry a top-level \`tickets\` array with
+   ONE entry for EVERY ticket in the group ($_grp), even the ones you did not finish:
+
+   \"tickets\": [{\"ticket\": $N, \"status\": \"resolved|parked|failed\", \"note\": \"one line: what landed, or why not\"}, ...]
+
+   A ticket you omit, or mark anything other than \`resolved\`, STAYS IN THE QUEUE for a later run —
+   which is the correct, safe outcome. Do NOT mark a ticket \`resolved\` unless its fix is actually in
+   the PR. The top-level \`status\` field still describes the group as a whole (use \`resolved\` if the
+   PR is open with at least one ticket fixed); the \`tickets\` array is what bookkeeping acts on.
+5. Everything else — \`pr\`/\`prs\`, \`newTickets\`, \`crossRefs\`, \`migration\`, \`validation\`,
+   \`escalation\`, the PR footer, park rules — is unchanged and applies to the group."
+fi
 
 # Trust-ladder + viral-footer PR instructions. Both are appended to the worker prompt so the worker
 # opens the PR the way this workspace's knobs dictate:
