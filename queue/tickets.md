@@ -145,28 +145,6 @@ Ref: PR anshss/shiploop#76 history (2 red runs, fix commit b72c82e); learnings f
 
 ---
 
-## #14 — Port --parallel from hub to workspace run-loop.sh and make N=4 the default
-
-**Severity:** High
-**Model:** sonnet
-
-Where: scripts/govern/run-loop.sh (workspace copy) + shiploop/templates/govern/run-loop.sh (hub) + .claude/commands/govern.md + shiploop/commands/govern.md
-
-Observed: `--parallel[=N]` is fully implemented in the HUB template `shiploop/templates/govern/run-loop.sh` (flag parse ~line 60-105; orchestrator `govern::_parallel_run` ~line 695-732; FIFO reaper `govern::_parallel_reap_one` ~line 678-693; per-ticket claim locks + bookkeep lock provide the safety model). It is ENTIRELY ABSENT from the workspace copy `scripts/govern/run-loop.sh` — 1299 lines vs the hub's 1497, and `grep -c parallel` finds no flag parsing at all. This is workspace<-hub drift (the anti-pattern named at the top of root CLAUDE.md). Consequence: the operator has been hand-launching 4 concurrent `run-loop.sh` processes in separate terminals to get fan-out (evidence: logs/govern/run-20260711-0332{47,48,50,51} launched within 4 seconds of each other), which is exactly what `--parallel` automates.
-
-Additionally `--parallel` is undocumented in BOTH `/govern` command files — it appears only in shiploop/SKILL.md:97 — so a user reading the slash command never discovers it.
-
-Fix direction:
-(1) Port the `--parallel` orchestrator from `shiploop/templates/govern/run-loop.sh` down into `scripts/govern/run-loop.sh`. Prefer a straight port of the hub diff over re-deriving it (root CLAUDE.md anti-pattern: check whether the hub is already ahead and port its diff down).
-(2) Make parallel the DEFAULT with N=4 when no explicit `--parallel`/`GOVERN_PARALLEL` is given and no single ticket target was named. Provide `--serial` (or `--parallel=1`) to opt back into one-at-a-time. Keep `--parallel=N` > `GOVERN_PARALLEL` > default precedence exactly as the hub documents it.
-(3) Document the flag, the new default, and `--serial` in BOTH `.claude/commands/govern.md` and `shiploop/commands/govern.md` (the `$ARGUMENTS` section that currently lists only empty / a number / --dry-run / --exclude).
-
-Done when: `bash scripts/govern/run-loop.sh --dry-run` reports parallel mode with a cap of 4 by default; `--serial` forces sequential; `--parallel=N` and GOVERN_PARALLEL still behave per the hub's documented precedence; both govern.md command files document all three; `bash -n` passes on every touched script; hub and workspace copies do not drift further apart (apply the same doc change to the hub command file).
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C1
-
----
-
 ## #19 — Log the sizing DECISION (model/effort/attempt) alongside the cost already recorded, and fix null capture
 
 **Severity:** Medium
@@ -464,5 +442,49 @@ Where: scripts/govern/govern-health.sh (workspace) + templates/govern/govern-hea
 Observed: ticket #16 added a `budget-exceeded` outcome status (distinct from `timeout`) to state.jsonl / ticket-history.jsonl, and wired it into run-loop.sh's own DONE summary + streak logic, but govern-health.sh's ROI dashboard only buckets `timeout` (and `failed`) — a budget-exceeded ticket is simply omitted from that specific breakdown (not miscounted, just invisible there).
 Fix direction: add a `budget-exceeded` bucket alongside the existing `timeout` bucket in the jq status-count object and the human-readable summary line, mirroring how `timeout` is already surfaced.
 Done when: govern-health.sh's status breakdown and human summary both surface a budget-exceeded count; a test under templates/govern/test/ covers it; bash -n passes; hub and workspace copies stay in sync.
+
+---
+
+## #33 — Parallel drivers each re-run the run-start preflight against the same meta checkout
+
+**Severity:** Medium
+
+Where: scripts/govern/run-loop.sh (+ shiploop/templates/govern/run-loop.sh), the run-start block between `govern::log "run $RUNDIR"` and the orchestrator (escalations-apply-answers.sh, escalations-emit-pending.sh, preflight-main.sh, externalize-low-tickets.sh, govern::waits_refresh).
+
+Observed: with GOVERN_PARALLEL_DEFAULT=4 the orchestrator spawns 4 full backlog drivers, and EACH child independently re-runs the whole run-start preflight — including preflight-main.sh, which does git fetch / rebase / push against the SAME meta checkout. Nothing serializes that: the bookkeep lock only covers tickets.md edits. This predates the change (the operator's hand-launched 4-terminal recipe had the identical property, and the hub's --parallel already spawned N children) but it is now on the DEFAULT path for every run, so the exposure went from occasional to routine. Mitigated only by GOVERN_PARALLEL_STAGGER_S (default 2s between launches), which reduces the collision window rather than removing it.
+
+Fix direction: hoist the run-start preflight into the ORCHESTRATOR (run it once, before spawning) and have children skip it via an internal flag — the orchestrator already holds the single-run lock, so one reconcile per run is both correct and cheaper. Alternative if children must keep running it: serialize the preflight under a dedicated lock (a `govern::lock_try "$GOVERNOR_DIR/.locks/preflight"` around preflight-main + escalations-apply) so at most one child touches git at a time.
+
+Done when: a parallel backlog run performs the run-start reconcile exactly once (or provably serialized); a test spawns 2+ concurrent drivers against a meta checkout and asserts no interleaved git failure and a single reconcile log line; bash -n clean; hub and workspace copies stay identical.
+
+---
+
+## #34 — Supervisor cadence is per-driver under parallel, so the effective global cadence is N× looser
+
+**Severity:** Medium
+
+Where: scripts/govern/run-loop.sh (+ hub template) — the supervisor block gated on `since_review >= SUP_EVERY` inside the sequential loop; GOVERN_SUPERVISOR_EVERY in scripts/lib/workspace.sh.
+
+Observed: the supervisor fires every GOVERN_SUPERVISOR_EVERY (5) resolved tickets WITHIN one driver, plus on anomaly. With 4 concurrent backlog drivers, each accumulates its own since_review, so a 12-ticket run spread 3-per-driver fires the periodic supervisor ZERO times (only the anomaly path can trigger it) where a sequential run of the same 12 would have fired it twice. Nothing is broken — the anomaly trigger still works and each driver's own review is faithful — but the intended review rhythm silently loosens by roughly the fan-out factor, and no supervisor ever sees the run as a WHOLE (each reviews only its own slice of history).
+
+Fix direction: either (a) scale the per-driver cadence by the fan-out — the orchestrator passes GOVERN_SUPERVISOR_EVERY=ceil(SUP_EVERY/N) to each child, cheap and needs no new machinery; or (b) run a pool-level supervisor in the orchestrator on every SUP_EVERY reaped resolved children, reading the aggregated $RUNDIR/state.jsonl the orchestrator now maintains — more faithful (it sees the whole run) but needs the verdict-handling block (halt / concerns / skipThisRun / attemptNext) lifted out of the sequential loop into a shared helper. Note attemptNext is in-memory per driver and cannot be honored from the orchestrator without a persisted priority file.
+
+Done when: a parallel run of K tickets fires the supervisor a comparable number of times to a sequential run of K; the choice (a) or (b) is documented in commands/govern.md; a test asserts the cadence under a 2-driver fan-out; hub and workspace copies stay identical.
+
+---
+
+## #35 — Workspace govern lib + test dir lag the hub — /shiploop:update bump is due
+
+**Severity:** Medium
+
+Where: scripts/govern/lib/common.sh, scripts/govern/*.sh, scripts/govern/test/ vs shiploop/templates/govern/**.
+
+Observed: found while porting run-loop.sh down. The workspace is behind the hub on more than the one file this ticket covered: (1) scripts/govern/lib/common.sh lacks the hub's implicit-dependency support — `govern::ticket_deps` does not honor a blocker's `**Blocks:** #N, #M` line, so the hub's own test-pending-waits.sh section for it fails against the workspace lib (confirmed empirically: copying the hub test over made 2 assertions fail on the workspace copy, and they pass in the template tree); (2) the workspace is missing hub mechanism scripts govern-validations.sh, run-validation.sh, validations-pending-apply.sh — run-loop.sh's durable-validation adoption block is guarded on `-f` so it is a silent no-op here; (3) the workspace test dir is missing ~9 hub tests (test-valjob, test-valpending-emit, test-valpending-apply-race, test-govern-validations-listing, test-file-ticket-dup-flag, test-lint-prose-deps, test-escalation-body-ref, test-bookkeep-overlap-autostash-pop, test-flows-stamp-terminal).
+
+This is the workspace<-hub drift anti-pattern at the top of root CLAUDE.md, one level up from a single file: the whole harness needs a component bump, not a hand-port per ticket. Blind-copying individual hub files is NOT safe (a hub test can exercise a hub-only lib feature and fail) — the components must move together.
+
+Fix direction: run /shiploop:update (scaffold.sh --component per component) to bump govern lib + mechanism scripts + tests together, then run the full suite. Do NOT hand-port file-by-file. Note scripts/lib/workspace.sh is preserved by design and must keep this fleet's GOVERN_PARALLEL_DEFAULT=4.
+
+Done when: `diff -r scripts/govern shiploop/templates/govern` shows no unexplained drift (workspace-specific files documented); the full govern suite is green in the workspace after the bump; the harness-version stamp matches the hub VERSION.
 
 ---
