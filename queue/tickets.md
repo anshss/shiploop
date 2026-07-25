@@ -592,29 +592,6 @@ Ref: governor/improvements.md block "2026-07-25 11:47 — run run-20260725-11293
 
 ---
 
-## #48 — Workers load the full slash-command surface they never use — pass --disable-slash-commands
-
-**Severity:** Medium
-**Model:** haiku
-
-Where: shiploop/templates/govern/spawn-worker.sh — the `claude -p` invocation (~line 470-476, alongside the existing --strict-mcp-config / --setting-sources flags)
-
-Observed: MEASURED, not inferred. A worker's baseline context — before the ticket prompt, before reading any file — is ~33,000 tokens (measured empirically: `claude -p "..." --strict-mcp-config --setting-sources user --model haiku` reports cache_creation 15,314 + cache_read 17,703). Adding `--disable-slash-commands` brings that to ~30,400, a saving of ~2,600 tokens.
-
-That prefix is re-read on EVERY turn. Per TokenJam telemetry over 30 days, average context re-read per turn is ~130k tokens across 110,146 turns, so ~2,600 tokens is ~2% of a turn's re-read, paid on every turn of every worker. It also avoids a proportional slice of cache-WRITE cost, which telemetry shows is 32% of total spend on only 4.8% of tokens (writes price ~12.5x reads).
-
-Honest sizing: this is a ~2% lever, not a large one. It is worth doing because it is a one-flag change with near-zero risk, not because it is transformative. Do NOT let the PR description overstate it.
-
-Verified non-levers, recorded so nobody re-tries them: `--allowedTools` does NOT reduce the prefix (measured 34,253 vs 33,017 baseline — it gates permission, not what loads). `--bare` errors out without explicitly re-provided context (`is_error: true`, all-zero usage) and additionally skips hooks and LSP, so it is NOT a drop-in and would need its own scoped investigation.
-
-Fix direction: pass `--disable-slash-commands` on the worker spawn, behind a knob (e.g. GOVERN_WORKER_SLASH_COMMANDS=1 to restore) so an operator whose worker prompt genuinely invokes a skill can opt back in. BEFORE enabling by default, verify the worker prompt and operator doctrine never instruct a worker to invoke a slash command / skill — grep governor/worker-prompt.md and governor/preferences.md for `/` command invocations. If any exist, either rewrite them to use Bash/git/gh directly or leave the flag opt-in and say so in the PR.
-
-Done when: workers spawn with --disable-slash-commands by default; a knob restores the old behavior; the worker prompt is confirmed not to depend on slash commands; a before/after baseline measurement is recorded in the PR description; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy is refreshed separately through `/shiploop:update`.
-
-Ref: session 2026-07-25 — measured directly against the installed claude CLI while auditing worker prefix size; prompted by a sibling fleet's finding that workers load tools/skills/plugins they cannot use.
-
----
-
 ## #49 — Check the base branch is CI-green before dispatching workers — a red baseline fails every worker in the wave
 
 **Severity:** High
