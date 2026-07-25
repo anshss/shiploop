@@ -37,6 +37,30 @@ hand-port of the live-forward governor mechanisms from the reference instance.
 
 ### Changed
 
+- **The supervisor no longer skips a driver's tail, and a parallel run now gets one whole-run review.**
+  `GOVERN_SUPERVISOR_EVERY` counts resolved tickets *per driver* (`since_review` is a shell variable in
+  each driver process), so a driver that ends holding 1..`SUP_EVERY`-1 unreviewed resolves never
+  reviewed them. Sequentially that tail is a rounding error; under `--parallel` it was the whole run —
+  a 12-ticket backlog split 3-per-driver across 4 drivers reached the periodic pass **zero** times,
+  where the same 12 worked sequentially fired it twice, and no supervisor ever saw the run as a whole
+  (each child reviews only its own run dir). Two out-of-loop passes close both gaps:
+  - a **run-tail flush** — one pass per driver at end-of-loop when `since_review > 0` (skipped on an
+    infra/auth halt);
+  - a **whole-run pool review** — one pass in the `--parallel` orchestrator over the *aggregated*
+    `state.jsonl`, after every child is reaped.
+
+  Both are **on by default** — this is a defect fix to an always-on mechanism, not a new lane, so a
+  bump does change the review rhythm (and adds roughly one supervisor call per driver plus one per
+  parallel run). **`GOVERN_SUPERVISOR_FLUSH=0` restores the previous periodic-only behaviour.** The
+  per-driver cadence itself is deliberately unchanged: N drivers each firing every `SUP_EVERY` of their
+  own resolves already totals ≈ K/`SUP_EVERY` passes over K tickets, so scaling the cadence down by the
+  fan-out would over-fire by ~N× on a long run. Neither out-of-loop pass needs the in-loop verdict
+  handling lifted out — at run-end only `concerns` are still actionable, since `skipThisRun` /
+  `attemptNext` / `waitForMerge` / `halt` all steer a selection loop that has already finished. New
+  test `templates/govern/test/test-supervisor-cadence-parallel.sh` pins the counts (sequential 6 @
+  `SUP_EVERY=5` → 2 passes; the same 6 across a 2-driver fan-out → 3, split-independently) and the
+  `GOVERN_SUPERVISOR_FLUSH=0` opt-out. Rationale documented in `commands/govern.md`.
+
 - **`--parallel` backlog mode now fans out into N FULL backlog drivers, plus a `--serial` flag and a
   `GOVERN_PARALLEL_DEFAULT` workspace knob.** Previously a `--parallel` backlog pull picked the top-N
   eligible tickets, ran one single-ticket child per ticket, and exited — so it worked at most N

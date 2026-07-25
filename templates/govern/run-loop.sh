@@ -60,7 +60,11 @@
 #   GOVERN_MAX_BAD_STREAK  (4)     stop after this many CONSECUTIVE parked/failed
 #   GOVERN_MAX_RUNTIME     (0)     stop starting new tickets after this many seconds; 0 = no cap (default).
 #                                  (MAX_TICKETS + per-worker timeout + bad-streak still bound the run.)
-#   GOVERN_SUPERVISOR_EVERY(5)     supervisor review cadence (+ on anomaly)
+#   GOVERN_SUPERVISOR_EVERY(5)     supervisor review cadence, per driver (+ on anomaly)
+#   GOVERN_SUPERVISOR_FLUSH(1)     1 = also review the tail the periodic cadence never reaches: one
+#                                  flush per driver at end-of-loop when it holds unreviewed resolves,
+#                                  plus ONE whole-run pass in the --parallel orchestrator over the
+#                                  aggregated state.jsonl. 0 = periodic + anomaly only.
 #   GOVERN_WORKER_TIMEOUT  (3600)  per-worker wall-clock cap (enforced in spawn-worker)
 #
 # Progress preservation (acts like a human reopening sessions — never throws away work):
@@ -726,6 +730,24 @@ else
   govern::log "[dry] would re-check governor/pending-waits.json + defer tickets whose blocker is unresolved (#119)"
 fi
 
+# ── out-of-loop supervisor pass (shared by the run-tail flush and the whole-run pool review) ─────
+# Runs ONE supervisor review over $1 (a run dir) and records its concerns into $REVIEW under label $2.
+# Only `concerns` are acted on here, deliberately: skipThisRun / attemptNext / waitForMerge / halt all
+# steer the ticket-SELECTION loop, and both callers run only once that loop is over — so this does NOT
+# need the in-loop verdict-handling block lifted out (and `attemptNext`, whose priority queue is
+# per-process in-memory state, could not be honoured from the orchestrator anyway).
+govern::_supervise_final() {
+  local rd="$1"
+  local label="$2"
+  local verdict concerns
+  verdict="$("$DIR/govern-supervise.sh" "$rd" 2>/dev/null || echo '{"verdict":"ok"}')"
+  concerns="$(printf '%s' "$verdict" | jq -r '(.concerns // [])|join("; ")' 2>/dev/null || true)"
+  if [[ -n "$concerns" ]]; then
+    printf -- '- %s: %s\n' "$label" "$concerns" >> "$REVIEW"
+    govern::log "supervisor ($label) concerns: $concerns"
+  fi
+}
+
 # ── --parallel orchestrator ──────────────────────────────────────────────────────────────────────
 # Composes the SAME machinery a manual "launch N drivers, each with GOVERN_ALLOW_CONCURRENT=1"
 # recipe always used — the per-ticket claim lock + the bookkeep lock (both documented above) are
@@ -840,6 +862,15 @@ govern::_parallel_run() {
     done
   fi
   while [[ "${#PARALLEL_PIDS[@]}" -gt 0 ]]; do govern::_parallel_reap_one; done
+  # The ONE whole-run supervisor pass. Every child's periodic supervisor only ever sees that child's
+  # OWN run dir, i.e. its own slice of history — so without this, no supervisor ever reviews the run
+  # as a WHOLE. This runs over the orchestrator's AGGREGATED state.jsonl (each child's per-ticket rows
+  # were folded in at reap), and being scoped to run-END it needs no lifted verdict-handling (see
+  # govern::_supervise_final). Skipped when nothing resolved, or via GOVERN_SUPERVISOR_FLUSH=0.
+  if [[ "${GOVERN_SUPERVISOR_FLUSH:-1}" == "1" && "$PARALLEL_TRES" -gt 0 ]]; then
+    govern::log "supervisor review (whole-run pool: $spawned driver(s), $PARALLEL_TRES resolved)"
+    govern::_supervise_final "$RUNDIR" "whole-run"
+  fi
   nres="$PARALLEL_TRES"; npark="$PARALLEL_TPARK"; nfail="$PARALLEL_TFAIL"
   ntimeout="$PARALLEL_TTIME"; nintr="$PARALLEL_TINTR"
   done_count="$PARALLEL_TICKETS"
@@ -1555,6 +1586,23 @@ while :; do
   # whole set (single or multi) is exhausted. Same one-ticket-then-stop result for a lone
   # target as before, just via the general termination path instead of a special case.
 done
+
+# Supervisor TAIL FLUSH — review the resolved tickets the periodic pass never got to.
+# The in-loop supervisor only fires on a multiple of $SUP_EVERY, so a driver that ends holding
+# 1..SUP_EVERY-1 unreviewed resolves never reviews them at all. Sequentially that tail is a rounding
+# error; under --parallel it is the WHOLE run: a 12-ticket backlog spread over 4 drivers gives each
+# driver 3 resolves, so with SUP_EVERY=5 the periodic pass fires ZERO times where the same 12 worked
+# sequentially would have fired twice. One flush per driver restores that rhythm.
+# Why not instead scale the cadence by the fan-out (SUP_EVERY/N per child)? Because the per-driver
+# cadence is NOT globally looser in the steady state — N drivers each firing every SUP_EVERY of their
+# OWN resolves still totals K/SUP_EVERY passes over K tickets. Only the per-driver TAIL is lost.
+# Dividing the cadence would therefore over-fire by ~N× on any long run. See commands/govern.md.
+# GOVERN_SUPERVISOR_FLUSH=0 opts out. Skipped on an infra/auth halt (the API is unreachable anyway).
+if [[ "${GOVERN_SUPERVISOR_FLUSH:-1}" == "1" && "$since_review" -gt 0 && "${INFRA_HALT:-0}" -eq 0 ]]; then
+  govern::log "supervisor review (run-tail flush, since_review=$since_review)"
+  govern::_supervise_final "$RUNDIR" "run tail"
+  since_review=0
+fi
 
 # #337: the AUTHORITATIVE run-end pending-escalations.json emit is DEFERRED to AFTER the run-end
 # escalation writers (self-improve / self-apply). Emitting it here (before self-improve/self-apply
