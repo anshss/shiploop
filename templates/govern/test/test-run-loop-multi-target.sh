@@ -183,8 +183,18 @@ mode_run() { # <args...> → the run's stdout+stderr
   GOVERN_LOCK="$T4/lock" \
   bash "$RL" --dry-run "$@" 2>&1
 }
-assert_contains "$(mode_run)" "concurrency: serial — one ticket at a time" \
-  "NO args + GOVERN_PARALLEL_DEFAULT unset → sequential, exactly as before the flag existed (a template bump must never change an existing workspace's run shape)"
+# DELIBERATE REVERSAL (v1.11.1). This case previously asserted the opposite — that an unset knob
+# stayed sequential, on the principle that "a template bump must never change an existing
+# workspace's run shape". That principle was overridden by an explicit product decision: parallel
+# backlog execution is the point of the harness, and `/shiploop:update` PRESERVES a workspace's
+# scripts/lib/workspace.sh, so an existing fleet can NEVER pick up a new default from the template.
+# The run-loop fallback is the only path that reaches them, so it now defaults to 4.
+# The safety property is preserved where it still matters: an explicit knob (including =1) always
+# wins, and `--serial` opts out of any single run. What is knowingly given up is silent-upgrade
+# safety — an existing fleet goes from one worker to four concurrent workers on upgrade, which
+# multiplies concurrent spend. That trade is documented prominently in the v1.11.1 release notes.
+assert_contains "$(mode_run)" "concurrency: parallel — up to 4 ticket(s) at once" \
+  "NO args + GOVERN_PARALLEL_DEFAULT unset → PARALLEL at cap 4 (v1.11.1: the fallback is the only path that reaches an already-installed fleet, since update preserves workspace.sh)"
 assert_contains "$(GOVERN_PARALLEL_DEFAULT=4 mode_run)" "concurrency: parallel — up to 4 ticket(s) at once" \
   "GOVERN_PARALLEL_DEFAULT=4 makes a plain no-arg run parallel at cap 4 — the one-line fleet opt-in"
 assert_contains "$(GOVERN_PARALLEL_DEFAULT=1 mode_run)" "concurrency: serial — one ticket at a time" \

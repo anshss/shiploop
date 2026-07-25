@@ -74,13 +74,16 @@ GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless worker
 
 # ── Default concurrency (GOVERN_PARALLEL_DEFAULT) ────────────────────────────
 # How many tickets a plain `scripts/govern/run-loop.sh` (no flags, no ticket number) works at once.
-#   1 (default)  one at a time — the original behavior; a template bump never changes your run shape.
-#   N > 1        the driver becomes an orchestrator and runs N full backlog drivers concurrently,
-#                each grinding the queue and contending on the per-ticket claim lock. This is the
-#                "launch N terminals" recipe, automated. 4 is a sensible fleet setting.
-# Per-run overrides always win: `--parallel[=N]` to fan out, `--serial` to force one-at-a-time.
-# Raising this multiplies concurrent headless workers (and their spend) — raise it deliberately.
-export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-1}"
+#   N > 1 (default 4)  the driver becomes an orchestrator and runs N full backlog drivers
+#                concurrently, each grinding the queue and contending on the per-ticket claim lock.
+#                This is the "launch N terminals" recipe, automated — and it is the DEFAULT, because
+#                working the backlog in parallel is the point of the harness.
+#   1            one at a time — set this to opt out permanently.
+# Per-run overrides always win: `--parallel[=N]` to fan out further, `--serial` to force one-at-a-time.
+# NOTE this multiplies CONCURRENT headless workers — N tickets in flight means up to N workers'
+# spend at once. It does not make a single ticket cheaper; it makes the backlog finish sooner.
+# Lower it if you are rate-limited or want a smaller blast radius.
+export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────
 # How much the governor is allowed to do on its own. Flip ONE knob as trust builds — the graduation
