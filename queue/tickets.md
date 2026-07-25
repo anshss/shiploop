@@ -567,3 +567,28 @@ Done when: each safe proposal above is implemented via a harness PR or explicitl
 Ref: governor/improvements.md block "2026-07-25 07:15 — run run-20260725-063340 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
+
+## #44 — GOVERN_PARALLEL_DEFAULT is never set — parallel-by-default is not actually in effect
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/lib/workspace.sh (workspace config sink) + shiploop/templates/seed/workspace.sh (the seed every new fleet is scaffolded from); consumed at scripts/govern/run-loop.sh:129
+
+Observed: v1.11.0 shipped "full-driver parallel backlog mode" (#87) and the operator explicitly chose parallel-on-by-default with N=4. The mechanism, the `--parallel[=N]` / `--serial` flags, and the precedence ladder all landed correctly. But the DEFAULT VALUE was never wired:
+
+  run-loop.sh:129 → PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-1}"
+
+and `GOVERN_PARALLEL_DEFAULT` is set NOWHERE — not in this workspace's scripts/lib/workspace.sh, and not in shiploop/templates/seed/workspace.sh. run-loop.sh itself documents that `--serial`, `--parallel=1` and `GOVERN_PARALLEL=1` all mean the same thing, so the effective default is SERIAL.
+
+Consequence: every workspace on v1.11.0 — this one and every newly scaffolded fleet — still runs one ticket at a time unless the operator passes `--parallel` by hand. The headline behavior change of the release is inert. Note `/shiploop:update` deliberately PRESERVES workspace.sh and never overwrites it, so existing workspaces cannot pick this up from a template bump; the seed fix only helps NEW scaffolds, and existing ones need an explicit migration note.
+
+This is also a confirmed instance of ticket #31 (nothing verifies a ticket's Done-when before it is marked resolved and deleted): #14's Done-when literally read "reports parallel mode with a cap of 4 by default", the run reported resolved=1, the PR auto-merged, and the ticket was deleted. Unlike #31's original (mis-specified) example, this criterion was correct and simply unmet — so #31 now HAS the real instance it was missing, and should be re-weighted accordingly.
+
+Fix direction: (1) add `GOVERN_PARALLEL_DEFAULT` to shiploop/templates/seed/workspace.sh with a documented default (4 per the operator's choice) and an explanatory comment matching the style of the neighbouring GOVERN_* knobs. (2) Add the same line to THIS workspace's scripts/lib/workspace.sh. (3) Because /shiploop:update never overwrites workspace.sh, add a surfaced warning — the existing "new knobs landed in the hub" warning path in the update flow is the natural home — so upgrading fleets are told to add the knob rather than silently staying serial. (4) Consider whether run-loop.sh's own fallback should be 1 or something higher; leaving it 1 is the safe fail-closed choice, but then the seed MUST carry the real default.
+
+Done when: a freshly scaffolded workspace runs parallel with cap 4 by default (verify via `run-loop.sh --dry-run` reporting parallel mode, not serial); this workspace does the same; `/shiploop:update` surfaces the missing knob to an existing workspace instead of leaving it silently serial; the operator can still opt out per-run with `--serial`; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR (workspace.sh itself is the documented exception — it is operator config, never template-overwritten).
+
+Ref: session 2026-07-25 — found while auditing whether model+effort right-sizing is actually in effect after the v1.11.0 converge.
+
+---
