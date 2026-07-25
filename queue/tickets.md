@@ -592,3 +592,33 @@ Done when: a freshly scaffolded workspace runs parallel with cap 4 by default (v
 Ref: session 2026-07-25 — found while auditing whether model+effort right-sizing is actually in effect after the v1.11.0 converge.
 
 ---
+
+## #45 — Benchmark: measure shiploop's real cost reduction vs a regular Claude session on the same work
+
+**Severity:** Medium
+**Model:** opus
+
+Where: new benchmark harness under shiploop/templates/govern/bench/ (or a top-level bench/ in the hub); consumes governor/ticket-history.jsonl and govern-health.sh
+
+Observed: shiploop's core claim is that a project using it spends materially less than one that does not — via right-sized workers, agent orchestration inside the worker, and a compounding CLAUDE.md lesson loop. That claim is currently UNMEASURED. What exists (ticket-history.jsonl + govern-health.sh) reports shiploop's own absolute spend; nothing compares it against the counterfactual of doing the same work in an ordinary interactive Claude session.
+
+Evidence that the claim needs real measurement rather than assertion: over the 2026-07-25 token-efficiency build, 13 recorded tickets cost 181.6M tokens / $102.45, averaging 14.0M / $7.88 — and the per-ticket average ROSE across the session (from $5.68 to $7.88) while the efficiency machinery was being built. Individual tickets ranged $0.34 to $33.66 — a ~100x spread on tiers chosen by hand. None of that tells you whether shiploop is cheaper than the alternative, because there is no control arm.
+
+Fix direction: build a repeatable A/B benchmark.
+- Define a fixed task set (N real tickets of varying difficulty, or a frozen synthetic set committed to the repo so runs are comparable over time).
+- ARM A: shiploop governor — per-ticket right-sized headless worker, worker-as-router delegation, CLAUDE.md lessons available.
+- ARM B: control — a single interactive/headless Claude session doing the same task set end to end, no governor, no per-ticket right-sizing, no lesson injection.
+- Measure per arm: total tokens (split input/output/cacheRead/cacheCreation), wall-clock, tickets completed, and CORRECTNESS (CI green / acceptance criteria met) — a cheaper arm that ships worse work is not a win, so cost-per-SUCCESSFUL-ticket is the headline metric, not cost alone.
+- Control for confounders: same base commit, same task text, same model availability, cache state noted. Run each arm more than once if variance is high (the 100x intra-arm spread above suggests it will be).
+
+Report the result as a committed markdown artifact with the raw numbers, so the claim is auditable rather than marketing. If the benchmark shows shiploop is NOT cheaper for some task class, say so in the artifact — that finding is more valuable than a favorable number, and it tells you where the harness needs work.
+
+Positioning constraint: report in TOKENS and WALL-CLOCK as the primary units. Dollar figures are secondary and must not become a per-ticket price hook — the intended framing is subscription economics, where the marginal cost of a run is near zero and the real currencies are rate limits and time.
+
+Depends on the decision telemetry work (model/effort/attempt logged per ticket) to attribute arm-A costs to tiers; without it the benchmark can compare totals but cannot explain them.
+
+Done when: a committed benchmark harness runs both arms over a fixed task set and emits a comparable report; the report includes cost-per-successful-ticket, not just raw spend; confounders and run count are documented; the result artifact is committed with raw numbers; an unfavourable result is reported honestly rather than suppressed.
+
+Ref: session 2026-07-25 — operator asked for this directly after the v1.11.0 token-efficiency release, noting the reduction claim is still unproven.
+
+---
