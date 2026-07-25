@@ -703,3 +703,25 @@ Fix direction: make the attempted-this-run exclusion CROSS-DRIVER (a run-scoped 
 Done when: hub `main` CI is green; both tests pass on Linux CI without being pinned to --serial; a test covers 'a ticket whose worker was killed is not re-selected by a sibling driver in the same run'; `bash -n` passes; hub-first — land in shiploop/templates/** only.
 
 ---
+
+## #53 — Harness self-improvement: promote safe proposals from run-20260725-111845-99416
+
+**Severity:** Low
+
+⚠ possible duplicate of #9
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-111845-99416. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `scripts/govern/govern-improve-triage.sh`: before filing a new "Harness self-improvement: promote safe proposals from run X" ticket, scan `queue/tickets.md` for an already-open ticket whose title matches `^Harness self-improvement: promote safe proposals` and append this run's safe-proposal bullets to it instead of calling `file-ticket.sh` again — why: this gap has already produced 10 near-duplicate tickets (#9, #10, #11, #12, #36, #39, #42, #47, #50, #51), each triggering a separate full worker dispatch on largely the same proposals; the fix was already specified in ticket #42's own body (and independently in #30/#38) but has no owner because it keeps getting buried under a fresh "promote safe proposals" ticket instead of ever being selected.
+- `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` (same shape as the existing `govern::sync_port_collision_tickets` exclusion added for #314) — why: gives the run loop a visible, repeating nudge toward consolidating the pile every cycle until the triage fix above lands, instead of the duplication silently growing run after run.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 12:23 — run run-20260725-111845-99416 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
