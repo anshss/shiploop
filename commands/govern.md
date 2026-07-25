@@ -37,6 +37,18 @@ lock + the bookkeep lock are what make concurrent drivers exactly-once safe; the
 nothing to that model. Note the hard bounds are **per driver**, so a parallel backlog run's ceiling
 is N × `GOVERN_MAX_TICKETS` (it still always ends), and N concurrent workers cost N× the spend.
 
+**Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Concurrency governs how many workers
+run at once; batching governs how many tickets each one takes. Exploration is the dominant cost of a
+resolved ticket (~98% cache reads), so three tickets in the same directory mean three workers each
+paying full discovery cost on the same code. `GOVERN_BATCH_MAX=N` groups up to N same-area tickets
+into ONE worker, which explores once and opens ONE PR for the group (per-ticket commits). Groups are
+keyed on the leaf directory of the ticket's `Files:`/`Where:` paths, are disjoint by construction —
+which is also what stops two concurrent drivers racing the same file — and never co-batch two tickets
+in a dependency relation. Every ticket in a group is claim-locked, and a batched ticket is bookkept
+only on an explicit per-ticket `resolved` in the worker's `tickets` array; anything else leaves it in
+the queue. Backlog pulls only; an explicit ticket set is dispatched as named. See
+`governor/README.md` for the full semantics.
+
 The **run-start reconcile** (apply escalation answers → regenerate `pending-escalations.json` →
 `preflight-main.sh` → externalization lane → NA-skip streak bookkeeping) is explicitly *not* per
 driver: it is whole-run state reconciliation against the one shared meta checkout, and
