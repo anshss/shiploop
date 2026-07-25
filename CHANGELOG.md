@@ -1,5 +1,81 @@
 # Changelog
 
+## 1.11.0 — 2026-07-25
+
+The token-efficiency release: the harness now applies its own orchestration doctrine to the
+**worker** session — where ~98% of a run's tokens are actually spent — instead of only to the
+operator session. Adds two independent sizing knobs (model tier and reasoning effort), a
+per-attempt token ceiling, and makes parallel backlog execution the default.
+
+Motivating measurement: a resolved ticket was a ~22M-token worker session that was **98% cache
+reads** — i.e. ~200+ turns of a context that grew all session, inside one monolithic agent that
+explored, edited, built, tested and PR'd without delegating anything. The starting prompt was only
+~7k tokens, so cost was turn count × accumulated context, not prompt size or model tier alone.
+
+### Added
+
+- **ROUTER POSTURE in the worker prompt** (#82). The per-ticket worker now delegates reconnaissance
+  — multi-file investigation, sweeps, log reading — to cheap subagents and keeps only the verdict,
+  with explicit child model-sizing guidance (haiku = mechanical/extract/lookup, sonnet =
+  search/investigation, inherit only for judgment). Hard rule: **delegate reconnaissance, never
+  delegate the commit, the PR, or the report write** — reconciled with the pre-existing constraint
+  that a subagent runs under a restrictive policy and cannot persist the evidence report.
+- **Per-attempt token budget** (`GOVERN_WORKER_MAX_TOKENS`, #84). Previously the only ceiling on a
+  worker was a 3600s wall clock, so a wandering attempt could burn tens of millions of tokens before
+  anything stopped it. Exceeding the budget hard-kills the process tree and records a **distinct
+  `budget-exceeded` outcome** — deliberately not `timeout`, because "ran out of room while still
+  exploring" is the signal an escalation policy needs. Default `0` (unlimited) preserves existing
+  behavior.
+- **Reasoning effort as an independent sizing knob** (`GOVERN_WORKER_EFFORT`, ticket `Effort:` field,
+  `file-ticket.sh --effort`, #86). Model tier and reasoning effort are separate controls; the harness
+  previously set only the tier, leaving no rung between "sonnet" and "opus at several times the price
+  on the dominant cache-read line". Raising effort is far cheaper than raising tier, so it is the
+  correct first rung on an escalation ladder. Unset means no flag is passed at all — no invented
+  default.
+- **Full-driver parallel backlog mode** (`--parallel[=N]`, `--serial`, `GOVERN_PARALLEL_DEFAULT`,
+  #87). Children run the **whole backlog loop** rather than a single explicit ticket, which is what
+  keeps the governor's gates alive: a child handed one explicit ticket is indistinguishable from an
+  operator typing `run-loop.sh <N>` and silently inherits every explicit-target bypass — the
+  dependency gate, the cross-driver re-verify, and the failure-streak circuit breaker — and can never
+  reach the periodic supervisor.
+
+### Changed
+
+- **Supervisor reviews run history incrementally** (#83). Each pass previously re-sent the entire
+  `state.jsonl` plus up to 500 lines of open ticket blocks; at the default cadence a 20-ticket run
+  paid that four times over steadily growing input. Now each pass reads only what was appended since
+  its own previous pass, carrying its prior verdict forward as the compressed summary of everything
+  before — lossless, without the re-send.
+- **Supervisor tail flush + one whole-run review under parallel** (#89). With N concurrent drivers
+  each tracking its own review counter, the periodic supervisor's effective global cadence loosened
+  by roughly the fan-out factor — a 12-ticket run split across 4 drivers could fire it zero times
+  where a sequential run fired it twice — and no supervisor ever saw the run as a whole.
+- **Worker prompt hygiene** (#85). The ticket block moved to the end of the prompt so the stable
+  boilerplate forms a cacheable prefix; the redundant instruction to re-`Read` the already-auto-loaded
+  root `CLAUDE.md` was dropped; duplicated validate-locally and branch-naming rules collapsed to one
+  authoritative mention each.
+
+### Fixed
+
+- **Dependency scan anchored to the declared marker line** (#88). `govern::ticket_deps` harvested
+  `#N` references out of ordinary prose, so a ticket that merely *mentioned* other tickets could
+  become hard-gated on them by the pre-spawn dependency gate. Now only the line that actually starts
+  with the `**Depends on:**` marker is read.
+- **Run-start reconcile runs once per run, not once per driver** (#90). With parallel execution on
+  by default, every child driver independently re-ran the whole run-start preflight — including a
+  `git fetch`/rebase/push against the same meta checkout, serialized by nothing (the bookkeep lock
+  covers only `tickets.md` edits). The exposure predates this release — the hand-launched
+  multi-terminal recipe had the identical property — but parallel-by-default moved it from
+  occasional to routine.
+
+### Upgrade notes
+
+- **Parallel execution is now the default.** `GOVERN_PARALLEL_DEFAULT` in `scripts/lib/workspace.sh`
+  sets per-workspace concurrency; `--serial` opts any single run back out. Runs that depend on a
+  strict sequential pick ORDER should pass `--serial` explicitly.
+- `GOVERN_WORKER_MAX_TOKENS` and `GOVERN_WORKER_EFFORT` both default to preserving existing
+  behavior (unlimited / no effort flag), so upgrading changes nothing until you set them.
+
 ## 1.10.0 — 2026-07-19
 
 The validation-sink relocation release: the governor-owned validation sink moved out of the
