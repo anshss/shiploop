@@ -301,6 +301,32 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="$TICKET_HISTORY_FILE"   # common.sh (spawn-worker's retry-class retry classifier reads the same ledger)
+# CROSS-DRIVER attempted set — the run-scoped twin of `$excludes`, which is per-PROCESS in-memory
+# state and therefore invisible to a sibling driver. Under the parallel default (cap 4) the claim
+# lock only keeps two drivers off a ticket WHILE one holds it: a ticket that ends non-resolved
+# (timeout / budget-exceeded / failed / parked) is STILL in tickets.md, its claim is released the
+# moment its outcome is recorded, and a sibling that reaches selection after that release re-picks
+# it and burns a SECOND full worker on a ticket this run has already answered. That is real spend,
+# and it also writes a second state.jsonl/ticket-history row for one ticket in one run — which
+# double-counts the #60 consecutive-failure streak and makes "what did this run do" ambiguous.
+# So: every recorded outcome appends its ticket number here, and each driver folds the file back
+# into its own $excludes before selecting. The path is EXPORTED, so the orchestrator's children
+# inherit the ORCHESTRATOR's file and the set is shared across the whole fan-out; a plain
+# sequential run gets its own file and the fold is a harmless no-op (its $excludes already has it).
+# Append-only single-line writes → O_APPEND is atomic enough; a read that races an append simply
+# picks the number up on the next iteration, and the claim lock still covers the in-flight window.
+# Gated on --orchestrated, NOT on the bare env var: an exported path must only be adopted by a child
+# this run's orchestrator actually spawned. Any OTHER run-loop launched inside a live governor session
+# (a worker running the test suite, an operator's ad-hoc `run-loop.sh <N>`) also inherits the parent's
+# environment — the documented "the test suite inherits the live run's env" hazard — and must get its
+# OWN file rather than silently adopting an unrelated run's answered set.
+if [[ "$ORCHESTRATED" -eq 1 && -n "${GOVERN_RUN_ATTEMPTED_FILE:-}" ]]; then
+  RUN_ATTEMPTED_FILE="$GOVERN_RUN_ATTEMPTED_FILE"
+else
+  RUN_ATTEMPTED_FILE="$RUNDIR/attempted.txt"
+fi
+export GOVERN_RUN_ATTEMPTED_FILE="$RUN_ATTEMPTED_FILE"
+: >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true   # `>>` never truncates a file inherited from a parent
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
 TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
                     # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
@@ -311,24 +337,45 @@ TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (an
 # prioritized pick from ever resurrecting one.
 PRIORITY=""; NA_SET=","
 
-# #272: ROI enrichment for the cross-run history. Reads the just-finished worker's stream-json
-# result event for per-ticket token spend + cost, and classifies churn from the current $report's
-# PR repos (self-referential harness/templates work vs shipped product). Best-effort — every field
-# degrades to null so a missing worker.jsonl or an un-parseable report never blocks the outcome
-# record. Emits a JSON object of the extra fields to merge into the history line.
-history_enrich() { # ticket -> echoes {tokens,costUsd,churn,repos}
-  local n="$1" jsonl toks='null' cost='null' repos='[]' churn='null' res
-  jsonl="$(govern::worker_logdir "$n")/worker.jsonl"
-  if [[ -s "$jsonl" ]]; then
-    res="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 || true)"
-    if [[ -n "$res" ]]; then
-      toks="$(printf '%s' "$res" | jq -c '(.usage // {}) as $u
-        | {input:($u.input_tokens//0), output:($u.output_tokens//0),
-           cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
-        | .total = (.input + .output + .cacheRead + .cacheCreation)' 2>/dev/null || echo null)"
-      cost="$(printf '%s' "$res" | jq -c '.total_cost_usd // null' 2>/dev/null || echo null)"
-    fi
+# #272: ROI enrichment for the cross-run history. Records what the ticket SPENT (tokens + cost), the
+# sizing DECISION that produced that spend (#19: model / effort / attempt), and a churn classification
+# from the current $report's PR repos (self-referential harness/templates work vs shipped product).
+# Best-effort — every field degrades to null so a missing log or an un-parseable report never blocks
+# the outcome record. Emits a JSON object of the extra fields to merge into the history line.
+#
+# #19 — cost WITHOUT the decision is unlearnable: a row saying "$9.66" with no tier can't answer "does
+# this class of ticket actually succeed at sonnet?", so any scope→tier sizing table stays hand-tuned
+# forever. spawn-worker.sh now appends one `attempts.jsonl` row per spawn carrying both, and this reads
+# it. Spend is SUMMED across the run's attempts (an in-run re-dispatch's tokens belong to this ticket
+# too, and the prior attempt's stream is rotated aside so it can't be double-counted); the DECISION
+# fields come from the LAST attempt — the one that produced the outcome being recorded.
+history_enrich() { # ticket -> echoes {tokens,costUsd,model,effort,attempt,usageSource,churn,repos}
+  local n="$1" logdir jsonl attempts_file extra='{}' repos='[]' churn='null'
+  logdir="$(govern::worker_logdir "$n")"
+  jsonl="$logdir/worker.jsonl"; attempts_file="$logdir/attempts.jsonl"
+  if [[ -s "$attempts_file" ]]; then
+    extra="$(jq -sc '
+      ([ .[] | select(.tokens != null) ]) as $wt
+      | { tokens: (if ($wt|length) == 0 then null else
+            ($wt | reduce .[] as $r ({input:0,output:0,cacheRead:0,cacheCreation:0,total:0};
+              {input:        (.input        + ($r.tokens.input        // 0)),
+               output:       (.output       + ($r.tokens.output       // 0)),
+               cacheRead:    (.cacheRead    + ($r.tokens.cacheRead    // 0)),
+               cacheCreation:(.cacheCreation+ ($r.tokens.cacheCreation// 0)),
+               total:        (.total        + ($r.tokens.total        // 0))})) end),
+          costUsd: ([ .[].costUsd | select(. != null) ] | if length == 0 then null else add end),
+          model:       (.[-1].model       // null),
+          effort:      (.[-1].effort      // null),
+          attempt:     (.[-1].attempt     // length),
+          usageSource: (.[-1].usageSource // null) }' "$attempts_file" 2>/dev/null || echo '{}')"
+  else
+    # No ledger — a pre-#19 log dir, or a run that recorded an outcome WITHOUT spawning a worker (a
+    # resumed ticket, or the #60 auto-park that never spawns). Fall back to reading the stream directly;
+    # govern::stream_usage also recovers a killed attempt's tokens from its per-turn usage events, so
+    # a failed/timed-out row is no longer null just because there is no final `result` event.
+    extra="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{}')"
   fi
+  [[ -n "$extra" ]] || extra='{}'
   # PR repos come from the current $report (loop-scope global). churn = has ≥1 PR AND every PR repo
   # is self-referential; false if it shipped ANY product PR; null when there is no PR to classify.
   repos="$(printf '%s' "${report:-}" | jq -c '[ (.pr // empty), (.prs // [])[] ]
@@ -342,12 +389,36 @@ history_enrich() { # ticket -> echoes {tokens,costUsd,churn,repos}
       < <(printf '%s' "$repos" | jq -r '.[]' 2>/dev/null || true)
     if [[ "$nself" -eq "$nrepos" ]]; then churn=true; else churn=false; fi
   fi
-  jq -nc --argjson t "$toks" --argjson c "$cost" --argjson ch "$churn" --argjson rp "$repos" \
-    '{tokens:$t, costUsd:$c, churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
+  # Explicit null defaults first, so a row from an OLD log dir still carries every key (consumers can
+  # then `select(.model != null)` instead of guessing whether the key exists).
+  jq -nc --argjson e "$extra" --argjson ch "$churn" --argjson rp "$repos" \
+    '{tokens:null, costUsd:null, model:null, effort:null, attempt:null, usageSource:null}
+     + $e + {churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
+}
+
+# Fold the CROSS-DRIVER attempted set into this driver's own $excludes. Called once per loop
+# iteration, immediately before selection, so a ticket a SIBLING driver already answered this run is
+# invisible to the selector here — the sequential loop's own bookkeeping is unchanged (it has always
+# appended $N to $excludes itself, so for a single driver every number read back is already present).
+sync_attempted_excludes() {
+  [[ -s "$RUN_ATTEMPTED_FILE" ]] || return 0
+  local a
+  while IFS= read -r a; do
+    [[ "$a" =~ ^[0-9]+$ ]] || continue
+    [[ ",$excludes," == *",$a,"* ]] && continue
+    excludes="${excludes:+$excludes,}$a"
+    govern::log "#$a already answered by another driver this run — skipping (no second worker) [#19]"
+  done < "$RUN_ATTEMPTED_FILE"
+  return 0
 }
 
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
+  # Mark the ticket ANSWERED for the whole run, across every driver (see RUN_ATTEMPTED_FILE above).
+  # Written for EVERY status, including `infra`/`interrupted` which return before the history write:
+  # they are dropped from the CROSS-RUN history on purpose (not the ticket's fault), but within THIS
+  # run they have still consumed a worker, so a sibling must not immediately re-spawn on them either.
+  printf '%s\n' "$1" >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true
   # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
   # #90: NEVER record an infra/auth outage to the cross-run history — it is not the ticket's fault,
   # so it must not count toward #60 auto-escalation or be read back by govern-improve as a hard
@@ -1003,6 +1074,8 @@ while :; do
       break
     fi
   fi
+
+  sync_attempted_excludes   # drop anything a SIBLING driver already answered this run (#19)
 
   if [[ "${#TARGETS[@]}" -gt 0 ]]; then
     # Ticket-SET selection: restrict the normal severity-ordered selector to EXACTLY the

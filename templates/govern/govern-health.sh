@@ -8,6 +8,11 @@
 # self-referential "port into templates" churn with near-zero product value, discovered only by
 # hand. This surfaces that waste class automatically instead of after it has dominated a run.
 #
+# It also breaks spend down BY MODEL (#19): the history rows carry the sizing decision (model /
+# effort / attempt) that produced each cost, so outcomes-per-tier is readable off real runs instead
+# of a hand-tuned scope→tier table. Rows written before that field existed simply have no `model` and
+# drop out of the breakdown; every other metric is unaffected.
+#
 # It also flags STALE escalations (#312): any entry under "## Open" in governor/escalations.md that
 # is still blank on BOTH Answer and Disposition more than GOVERN_ESCALATION_STALE_DAYS (default 3)
 # days after its stamped `Opened` date. Motivated by an escalation sitting fully unanswered across
@@ -147,6 +152,29 @@ def pct($n; $d): if $d > 0 then (100 * $n / $d) else 0 end;
     selfRefTotalCostUsd: ([$tks[].costUsd | select(.!=null)] | add // 0),
     productTotalCostUsd: ([$tkp[].costUsd | select(.!=null)] | add // 0)
   }
+# per-model sizing breakdown (#19). The history rows now carry the sizing DECISION (model/effort/
+# attempt) beside the cost, which is what makes the data learnable: this groups outcomes by the tier
+# that produced them so "does this class of ticket actually succeed at sonnet?" has an answer, instead
+# of a scope→tier table that must stay hand-tuned forever. Grouped over rows that carry a `model`
+# (pre-#19 rows have none → empty array, and every existing consumer is untouched); the token/cost
+# aggregates within each group still only count rows that carry token data.
+| .byModel = (
+    [$rows[] | select(.model != null)] | group_by(.model)
+    | map(. as $g
+      | ([$g[] | select(.tokens != null and (.tokens.total != null))]) as $gt
+      | ([$g[] | select(.status == "resolved")]) as $gr
+      | {
+          model:        $g[0].model,
+          outcomes:     ($g | length),
+          resolved:     ($gr | length),
+          resolvedPct:  pct(($gr | length); ($g | length)),
+          withData:     ($gt | length),
+          totalTokens:  ([$gt[].tokens.total] | add // 0),
+          totalCostUsd: ([$gt[].costUsd | select(. != null)] | add // 0),
+          avgTokens:    (if ($gt|length) > 0 then (([$gt[].tokens.total] | add) / ($gt|length)) else null end),
+          retries:      ([$g[] | select((.attempt // 1) > 1)] | length)
+        })
+    | sort_by(- .totalTokens))
 JQ
 
 # Build the two scoped arrays (as a single JSON with .allTime + .run) then run the reducer on each.
@@ -234,6 +262,21 @@ render() { # metrics-json  header
     fi
   else
     printf '  tokens   : (no token data in scope yet — populated going forward as workers finish)\n'
+  fi
+  # per-model sizing breakdown (#19) — the tier that produced the spend, so the sizing table can be
+  # read off real outcomes. Silent for pre-#19 rows (no `model` field → empty array).
+  local nmodels lbl mm mo mp mt mc mrt
+  nmodels="$(jq -r '.byModel | length' <<<"$m" 2>/dev/null || echo 0)"
+  if [[ "${nmodels:-0}" -gt 0 ]]; then
+    lbl="  by model "
+    while IFS=$'\t' read -r mm mo mp mt mc mrt; do
+      [[ -n "$mm" ]] || continue
+      printf '%s: %-7s %s outcome(s) · %s%% resolved · %s tok ($%s)%s\n' \
+        "$lbl" "$mm" "$mo" "$mp" "$(fmt_tokens "$mt")" "$mc" \
+        "$([[ "${mrt:-0}" -gt 0 ]] && printf ' · %s retry attempt(s)' "$mrt")"
+      lbl="          "
+    done < <(jq -r '.byModel[] | [ .model, .outcomes, (.resolvedPct|.*10|round/10),
+                                   .totalTokens, (.totalCostUsd|.*100|round/100), .retries ] | @tsv' <<<"$m" 2>/dev/null || true)
   fi
   printf '\n'
 }
