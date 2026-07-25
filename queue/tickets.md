@@ -224,36 +224,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #22 — Evidence-based retry escalation: classify the failure signature instead of always jumping to opus
-
-**Severity:** Medium
-**Model:** opus
-
-**Depends on:** #16
-
-Where: shiploop/templates/govern/spawn-worker.sh + scripts/govern/spawn-worker.sh (the retry-escalation block at ~lines 291-313); retry dispatch in run-loop.sh
-
-Observed: every retry unconditionally escalates to `GOVERN_WORKER_MODEL` (default opus) and DISCARDS the ticket's `Model:` field — spawn-worker.sh:299-313, on the stated reasoning that "a cheap-tier bet that didn't land the first time shouldn't be re-bet". That reasoning does not hold for the most common real failure class in this workspace: ticket #13 documents that ticket #5 burned BOTH governor attempts on a Linux-vs-macOS PORTABILITY failure (BSD `stat -f` vs GNU `stat`), where the model tier was never the problem. Re-betting that at opus is pure waste — measured at $3.30 across #5's two failed attempts.
-
-Fix direction: classify the failure signature and escalate the axis that actually failed:
-  | failure signature                              | correct response                                   |
-  | CI failed on portability/env (see #13)         | SAME tier; inject the CI log; retry                |
-  | hit the token budget while still exploring     | scope was underestimated -> raise tier             |
-  | produced a coherent but wrong fix              | judgment failure -> raise tier AND effort          |
-  | gh/network/infra error                         | retry identical; do NOT escalate at all            |
-
-Depends on the `budget-exceeded` outcome introduced by the token-budget ticket, which is what distinguishes "ran out of room while exploring" from other failures. Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (GOVERN_FIX_CI is set by run-loop.sh:275 but never read by spawn-worker.sh, so the CI-fix worker currently gets a plain first-attempt prompt) — this ticket owns the ESCALATION POLICY; #13 and #10 own the CI-context injection. Do not duplicate their work; if they have not landed, keep the classifier's CI branch simple and leave a clear seam.
-
-Escalation must also raise EFFORT before TIER where the classifier indicates judgment was marginal rather than absent, once the effort knob exists.
-
-Safety: this touches a governor retry rail. Preserve the existing invariant that a retry never silently DOWN-grades below the tier its first attempt used unless the classifier positively identifies an infra/portability cause. Keep the current behavior as the fallback whenever the signature is unrecognized — an unknown failure escalates exactly as it does today.
-
-Done when: the classifier categorizes a failed attempt from its recorded outcome + logs; each category maps to the documented response; an unrecognized signature falls back to today's escalate-to-GOVERN_WORKER_MODEL behavior; the decision and its reason are logged; a test under templates/govern/test/ covers each branch; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S3
-
----
-
 ## #24 — Deterministic pre-gate: skip spawning an agent for codemod-able or already-fixed-upstream tickets
 
 **Severity:** Low
@@ -713,5 +683,23 @@ Fix direction: implement each proposal above as a normal harness PR (a PR on the
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
 Ref: governor/improvements.md block "2026-07-25 12:17 — run run-20260725-120551-43436 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
+
+## #52 — Parallel-by-default lets a killed ticket be attempted twice in one run — hub main CI red since v1.11.1
+
+**Severity:** High
+
+Where: shiploop/templates/govern/run-loop.sh (PARALLEL_DEFAULT fallback at ~line 134; the per-driver `excludes` set and the claim-lock release path); shiploop/templates/govern/test/test-timeout-classification.sh + test-budget-exceeded-classification.sh.
+
+Observed: the hub's `main` CI has been RED since the v1.11.1 release commit (a3331a3). Run 30142058515 on that commit: `passed=108 failed=2 skipped=5 total=115`, failing `test-budget-exceeded-classification` and `test-timeout-classification`. Both fail the same way — a kill-before-verdict ticket is recorded TWICE (`expected: [timeout]`, `actual: [timeout\ntimeout]` in both state.jsonl and the cross-run history), i.e. the ticket was attempted twice inside one run. Verified pre-existing and NOT caused by the retry-escalation PR (#94), which shows `passed=109 failed=2 skipped=5 total=116` — the same two failures, +1 test, +1 pass.
+
+Root cause (hypothesis, code-supported): v1.11.1 raised `PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"` in run-loop.sh, so a plain `bash run-loop.sh` now fans out into 4 drivers. Both tests invoke run-loop with NO `--serial`. The 'already attempted this run' exclusion (`excludes`) is per-driver IN-MEMORY state, so once a worker is killed by the wall-clock/token watchdog and its claim lock is released, a sibling driver in the same run can re-select the same ticket. It is timing-dependent: it reproduces reliably on Linux CI and intermittently on macOS under load (it also flakes when two suites run concurrently), which is why it was not caught before the release.
+
+This costs a real worker per occurrence — a killed ticket is exactly the expensive kind to re-attempt — and it keeps hub CI red, which matters because the governor auto-merges this repo on green-or-no-checks: every PR against a red main must now be reasoned about by hand.
+
+Fix direction: make the attempted-this-run exclusion CROSS-DRIVER (a run-scoped file under $RUNDIR that each driver appends to and consults before selecting, alongside the existing claim lock), so a killed/timed-out ticket is not re-selected by a sibling in the same run. Do NOT pin the two tests to `--serial` as the fix — that masks the defect (see the root CLAUDE.md anti-pattern on proving a fan-out shape with the existing tests). If a `--serial` pin is used at all, it must be in addition to the real fix and justified per test.
+
+Done when: hub `main` CI is green; both tests pass on Linux CI without being pinned to --serial; a test covers 'a ticket whose worker was killed is not re-selected by a sibling driver in the same run'; `bash -n` passes; hub-first — land in shiploop/templates/** only.
 
 ---
