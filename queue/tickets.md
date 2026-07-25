@@ -144,3 +144,25 @@ Done when: worker prompt carries the portability + read-CI-log-first instruction
 Ref: PR anshss/shiploop#76 history (2 red runs, fix commit b72c82e); learnings from run-20260711-033247/035801
 
 ---
+
+## #14 — Port --parallel from hub to workspace run-loop.sh and make N=4 the default
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/govern/run-loop.sh (workspace copy) + shiploop/templates/govern/run-loop.sh (hub) + .claude/commands/govern.md + shiploop/commands/govern.md
+
+Observed: `--parallel[=N]` is fully implemented in the HUB template `shiploop/templates/govern/run-loop.sh` (flag parse ~line 60-105; orchestrator `govern::_parallel_run` ~line 695-732; FIFO reaper `govern::_parallel_reap_one` ~line 678-693; per-ticket claim locks + bookkeep lock provide the safety model). It is ENTIRELY ABSENT from the workspace copy `scripts/govern/run-loop.sh` — 1299 lines vs the hub's 1497, and `grep -c parallel` finds no flag parsing at all. This is workspace<-hub drift (the anti-pattern named at the top of root CLAUDE.md). Consequence: the operator has been hand-launching 4 concurrent `run-loop.sh` processes in separate terminals to get fan-out (evidence: logs/govern/run-20260711-0332{47,48,50,51} launched within 4 seconds of each other), which is exactly what `--parallel` automates.
+
+Additionally `--parallel` is undocumented in BOTH `/govern` command files — it appears only in shiploop/SKILL.md:97 — so a user reading the slash command never discovers it.
+
+Fix direction:
+(1) Port the `--parallel` orchestrator from `shiploop/templates/govern/run-loop.sh` down into `scripts/govern/run-loop.sh`. Prefer a straight port of the hub diff over re-deriving it (root CLAUDE.md anti-pattern: check whether the hub is already ahead and port its diff down).
+(2) Make parallel the DEFAULT with N=4 when no explicit `--parallel`/`GOVERN_PARALLEL` is given and no single ticket target was named. Provide `--serial` (or `--parallel=1`) to opt back into one-at-a-time. Keep `--parallel=N` > `GOVERN_PARALLEL` > default precedence exactly as the hub documents it.
+(3) Document the flag, the new default, and `--serial` in BOTH `.claude/commands/govern.md` and `shiploop/commands/govern.md` (the `$ARGUMENTS` section that currently lists only empty / a number / --dry-run / --exclude).
+
+Done when: `bash scripts/govern/run-loop.sh --dry-run` reports parallel mode with a cap of 4 by default; `--serial` forces sequential; `--parallel=N` and GOVERN_PARALLEL still behave per the hub's documented precedence; both govern.md command files document all three; `bash -n` passes on every touched script; hub and workspace copies do not drift further apart (apply the same doc change to the hub command file).
+
+Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C1
+
+---
