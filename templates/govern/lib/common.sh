@@ -1008,6 +1008,35 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
   [[ "$v" == "public" ]]
 }
 
+# Capability probe: does $claude_bin support --exclude-dynamic-system-prompt-sections? This is a
+# NEW claude-code CLI flag (present in 2.1.220+; absent on older builds). This file ships to every
+# fleet as a hub template via /shiploop:update, so trusting a version-string compare (this repo
+# tracks no CLI version anywhere, and version strings drift) would let a routine harness bump pass
+# an unrecognized flag on any fleet still running an older CLI — `claude -p` fails at argument
+# parsing and EVERY worker dies before its first turn, a fleet-wide outage from a harness update.
+# Probe via `--help` instead, and cache the result in a RUN-SCOPED file (same idiom as the
+# repo-visibility cache above) so a long run shells out to `--help` at most ONCE, not once per
+# spawned worker. Test seam: pre-seed _GOVERN_EDP_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_EDP_PROBE_CACHE="${GOVERN_EDP_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-edp-support}"
+govern::claude_supports_exclude_dynamic_prompt() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_EDP_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_EDP_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_EDP_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if "$bin" --help 2>/dev/null | grep -q -- '--exclude-dynamic-system-prompt-sections'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_EDP_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
 # The branch name a worker should use for ticket N on a given repo: neutral `sl-<hex>` on a PUBLIC
 # repo, the classic `ticket-<N>` on a private repo. Used to (a) instruct the worker and (b) recover
 # the expected head for PR discovery.

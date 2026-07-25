@@ -159,6 +159,24 @@ resolve_sizing() {
   return 0
 }
 
+# ── exclude-dynamic-system-prompt-sections gate ─────────────────────────────────────────────────
+# ONE resolver (same shared-by-both-paths shape as resolve_sizing above) so the dry-run observation
+# seam and the live spawn can never drift on whether this NEW, capability-gated flag is included.
+# Sets the global `exclude_dynamic_prompt` (empty, or the flag literal) and always returns 0.
+resolve_exclude_dynamic_prompt() { # <claude_bin>
+  local bin="$1"
+  exclude_dynamic_prompt=""
+  if [[ "${GOVERN_EXCLUDE_DYNAMIC_PROMPT:-1}" == "0" ]]; then
+    return 0   # explicit opt-out wins regardless of what the CLI supports
+  fi
+  if govern::claude_supports_exclude_dynamic_prompt "$bin"; then
+    exclude_dynamic_prompt="--exclude-dynamic-system-prompt-sections"
+  else
+    govern::log "worker #$N: claude CLI ($bin) does not support --exclude-dynamic-system-prompt-sections (older build) — skipping this prompt-cache optimization; upgrade the CLI to regain cross-worker cache reuse"
+  fi
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -174,8 +192,8 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
   [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
   dr_strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && dr_strict_mcp=""
-  dr_exclude_dynamic="--exclude-dynamic-system-prompt-sections"
-  [[ "${GOVERN_EXCLUDE_DYNAMIC_PROMPT:-1}" == "0" ]] && dr_exclude_dynamic=""
+  resolve_exclude_dynamic_prompt "${GOVERN_CLAUDE_BIN:-claude}"
+  dr_exclude_dynamic="$exclude_dynamic_prompt"
   jq -nc \
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
@@ -480,9 +498,12 @@ disable_slash_cmds="--disable-slash-commands"; [[ "${GOVERN_WORKER_SLASH_COMMAND
 # (different worktree path, different ticket) and busting the cache on every spawn defeats
 # cross-worker prompt-cache reuse. Only safe because this spawn passes NO --system-prompt /
 # --append-system-prompt (the flag is silently ignored when either is set — verified against
-# Claude Code 2.1.220). DEFAULT ON; set GOVERN_EXCLUDE_DYNAMIC_PROMPT=0 to disable.
-exclude_dynamic_prompt="--exclude-dynamic-system-prompt-sections"
-[[ "${GOVERN_EXCLUDE_DYNAMIC_PROMPT:-1}" == "0" ]] && exclude_dynamic_prompt=""
+# Claude Code 2.1.220). DEFAULT ON; set GOVERN_EXCLUDE_DYNAMIC_PROMPT=0 to disable. Capability-gated
+# (see resolve_exclude_dynamic_prompt / govern::claude_supports_exclude_dynamic_prompt above/in
+# common.sh): an older CLI on some other fleet doesn't recognize this NEW flag, and this file ships
+# to every fleet as a hub template — passing an unsupported flag would fail EVERY worker at argument
+# parsing, so the flag is only added once a `--help` probe confirms the running CLI supports it.
+resolve_exclude_dynamic_prompt "$claude_bin"
 
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
