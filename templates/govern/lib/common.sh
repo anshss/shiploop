@@ -1248,13 +1248,15 @@ govern::pr_state() { # repo pr -> STATE|""
   gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
 }
 
-# NOTE (#116) — if you ever need to RETARGET an open PR's base branch here (e.g. a dependency-reorder
-# in select-ticket.sh, or a base reconciliation after preflight-main.sh moves origin/main under an
-# in-flight PR), do NOT use `gh pr edit --base`. On these repos it resolves the PR through gh's GraphQL
-# `projectCards` query, which now hard-fails with `GraphQL: Projects (classic) is being deprecated …
-# (repository.pullRequest.projectCards)` and leaves the base UNCHANGED — silently, since the rest of
-# the edit still succeeds. Use the REST endpoint, which takes no projectCards and applies reliably:
+# NOTE (#116) — if you ever need to MUTATE an open PR here (retarget its base branch after a
+# dependency-reorder in select-ticket.sh or a preflight-main.sh base reconciliation; rewrite a body),
+# do NOT use `gh pr edit` at all. It resolves the PR through gh's GraphQL `projectCards` query, which
+# now hard-fails with `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+# `--base` fails SILENTLY (base left UNCHANGED, rest of the edit still succeeds); `--body`/`--title`
+# fail LOUDLY with the same error and apply nothing. Use the REST endpoint, which takes no
+# projectCards and applies reliably:
 #     gh api -X PATCH "repos/$(govern::repo_slug "$repo")/pulls/$pr" -f "base=$new_base"
+#     gh api -X PATCH "repos/$(govern::repo_slug "$repo")/pulls/$pr" -F body=@body.md
 # (A `govern::retarget_pr_base` helper implementing exactly this was removed 2026-07-06 as unused dead
 # code — no caller ever needed it; re-add it with a stub test the day a real caller does.)
 
@@ -1277,10 +1279,19 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
       cur=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", cur)
       inblk=(cur==n); next
     }
-    # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block.
+    # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block. Anchored to the
+    # START of the line (optionally bold-wrapped) with the COLON required — either inside the bold
+    # (`**Depends on:**`) or just after it (`**Depends on**:`) — so PROSE elsewhere in the body,
+    # e.g. "Depends on the `budget-exceeded` outcome ... Coordinate with ticket #13 and ticket
+    # #10", is never mistaken for the marker and never contributes its own #N mentions as false
+    # dependencies (#29). The colon is what does the work there: that prose sentence DOES start its
+    # line, so line-anchoring alone would still have matched it. Only #N on the MARKER line itself
+    # is harvested — never from the lines that follow it. (`\*?\*?` rather than `\*{0,2}`: ERE
+    # interval quantifiers are unsupported by pre-1.3.4 mawk, still the default awk on older
+    # Debian/Ubuntu, where a `{0,2}` would silently match literally and drop every declared dep.)
     inblk {
       low=tolower($0)
-      if (low ~ /depends[ \t]+on/) {
+      if (low ~ /^[[:space:]]*\*?\*?depends[ \t]+on(:\*?\*?|\*?\*?:)/) {
         s=$0
         while (match(s,/#[0-9]+/)) {
           d=substr(s,RSTART+1,RLENGTH-1); if (!seen[d]++) print d
