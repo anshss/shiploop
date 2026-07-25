@@ -95,3 +95,16 @@ I've verified everything against the actual scripts (not just supervisor prose) 
 ```
 
 None of these touch a safety rail, so no OPERATOR DECISION flags needed.
+
+## 2026-07-25 07:15 — run run-20260725-063340 (resolved/parked/failed observed)
+
+**GOVERN-IMPROVE output** (findings saved to `/Users/anshs/.claude/plans/govern-improve-you-are-reviewing-jiggly-journal.md`):
+
+I checked `governor/improvements.md`'s full history before proposing anything — the #9/#11 duplicate, the #33 missing `Depends on: #35`, and the six-tickets-piling-up pattern have each been raised 2-3 times already since 2026-07-11 and never applied. Re-proposing them verbatim would be the exact amplification anti-pattern under review, so I verified *why* they keep recurring instead: I read `scripts/govern/govern-self-apply.sh` in full, and its `ALLOWED` allowlist (`select-ticket.sh await-ci.sh merge-pr.sh spawn-worker.sh run-loop.sh dry-run.sh`) structurally excludes every file these recurring proposals target (`lib/common.sh`, `file-ticket.sh`, `lint-tickets.sh`, `govern-improve.sh`, `govern-improve-triage.sh`, `queue/tickets.md`) — by design, since those are policy/bookkeeping files. That's the real root cause: these fixes were never eligible for auto-apply, and nothing surfaces that fact, so they get re-proposed instead of escalated.
+
+- `governor/improvements.md` (via `govern-improve.sh`'s output contract): tag each proposal bullet `[self-apply-eligible]` or `[policy-file — needs human/ticket]` based on whether its target file is in `govern-self-apply.sh`'s allowlist — why: makes visible at proposal time which fixes are structurally stuck and need a human/ticket, instead of silently re-proposing the same policy-file fix run after run.
+- `scripts/govern/govern-improve-triage.sh`: before filing a new "promote safe proposals from run X" ticket, check for an already-open ticket with the same auto-promotion marker and overlapping target files, and append instead of filing a new one — why: proposed 3 times now (05:53, 06:25, this run) and still unapplied; #9/#10/#11/#12/#36/#39 are the visible cost.
+- `queue/tickets.md`: add `**Depends on:** #35` to ticket #33's field block — a one-line, zero-script, data-only fix an operator can apply directly right now.
+- `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` — why: gives the run loop itself a nudge toward the merge the supervisor has now requested three runs in a row.
+
+**OPERATOR DECISION**: `govern-self-apply.sh`'s allowlist deliberately excludes policy/bookkeeping files from auto-apply — the correct trade-off (those files shouldn't be agent-edited without review), but it's the direct reason the last six runs' top proposals never landed automatically. Not proposing to widen it — only to make "stuck behind the allowlist" visible.
