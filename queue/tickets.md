@@ -512,3 +512,28 @@ Done when: only one open ticket covers the Depends-on documentation + `--depends
 Ref: session 2026-07-25 — spotted while deduping the token-efficiency ticket set against the existing queue.
 
 ---
+
+## #31 — Nothing verifies a ticket's 'Done when' criteria before bookkeeping marks it resolved and deletes it
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/govern/govern-bookkeep.sh + shiploop/templates/govern/govern-bookkeep.sh (the resolve/delete path); worker report schema in spawn-worker.sh / governor/worker-prompt.md
+
+Observed: ticket #15 (worker-as-router prompt section) declared in its "Done when" that BOTH the hub template `shiploop/templates/governor/worker-prompt.md` AND the workspace copy `governor/worker-prompt.md` must carry the identical ROUTER POSTURE section. The worker updated ONLY the hub copy (merged as shiploop#82). The workspace copy was left with zero occurrences of the section — verified by `grep -c "ROUTER POSTURE" governor/worker-prompt.md` returning 0. Despite the unmet criterion the run reported `resolved=1`, the PR auto-merged, and bookkeeping DELETED #15 from queue/tickets.md.
+
+Impact is not cosmetic: `governor/worker-prompt.md` is the file this workspace's OWN governor workers actually load (WORKER_PROMPT_FILE resolves to $GOVERNOR_DIR/worker-prompt.md, lib/common.sh:29). So the single highest-leverage token-saving change in the current work set silently did not take effect locally — it only benefits future fleets that pull the hub template. The ticket is gone from the queue, so nothing would ever have re-surfaced it.
+
+Root cause: "resolved" is currently defined operationally as "the worker opened a PR and CI went green", with NO check that the ticket's own stated acceptance criteria were met. The `Done when:` field is written for a human/LLM reader and is never machine-verified nor even re-presented for confirmation before deletion. Under parallel execution (now the default) more tickets close unattended, so this failure mode gets systematically more likely and less observable.
+
+Fix direction: require the worker's structured report to include an explicit per-criterion self-assessment against the ticket's `Done when:` clauses (each clause: met / not-met / not-applicable, with a one-line evidence pointer), and have bookkeeping REFUSE to delete a ticket that reports any clause not-met — parking it with an escalation instead. This deliberately does not attempt to machine-parse arbitrary prose criteria; it makes the worker assert compliance clause-by-clause and makes a false assertion an auditable lie in the report rather than a silent omission.
+
+Consider additionally: a cheap independent verifier pass (haiku) that re-reads the ticket's Done-when against the actual diff before the resolve is committed. Weigh cost against value — the whole point of this work set is to REDUCE spend, so a verifier must be cheap and must not run on every ticket if a self-assessment suffices.
+
+Related: this class of gap is why the hub<->workspace sync clauses appear in nearly every ticket in the #14-#30 set; a worker that satisfies only one side of a two-copy requirement will keep producing this exact silent drift.
+
+Done when: a worker report carries a per-clause Done-when self-assessment; bookkeeping refuses to delete a ticket with any not-met clause and parks it with an escalation naming the clause; the refusal path is covered by a test under templates/govern/test/; the immediate #15 regression (workspace copy missing ROUTER POSTURE) is confirmed fixed separately; bash -n passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 — caught while verifying shiploop#82; workspace copy lacked the section the ticket required, yet the ticket was resolved and deleted.
+
+---
