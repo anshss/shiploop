@@ -329,3 +329,33 @@ Done when: the scout runs pre-dispatch and emits validated JSON; the scoring fun
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S2
 
 ---
+
+## #22 — Evidence-based retry escalation: classify the failure signature instead of always jumping to opus
+
+**Severity:** Medium
+**Model:** opus
+
+**Depends on:** #16
+
+Where: shiploop/templates/govern/spawn-worker.sh + scripts/govern/spawn-worker.sh (the retry-escalation block at ~lines 291-313); retry dispatch in run-loop.sh
+
+Observed: every retry unconditionally escalates to `GOVERN_WORKER_MODEL` (default opus) and DISCARDS the ticket's `Model:` field — spawn-worker.sh:299-313, on the stated reasoning that "a cheap-tier bet that didn't land the first time shouldn't be re-bet". That reasoning does not hold for the most common real failure class in this workspace: ticket #13 documents that ticket #5 burned BOTH governor attempts on a Linux-vs-macOS PORTABILITY failure (BSD `stat -f` vs GNU `stat`), where the model tier was never the problem. Re-betting that at opus is pure waste — measured at $3.30 across #5's two failed attempts.
+
+Fix direction: classify the failure signature and escalate the axis that actually failed:
+  | failure signature                              | correct response                                   |
+  | CI failed on portability/env (see #13)         | SAME tier; inject the CI log; retry                |
+  | hit the token budget while still exploring     | scope was underestimated -> raise tier             |
+  | produced a coherent but wrong fix              | judgment failure -> raise tier AND effort          |
+  | gh/network/infra error                         | retry identical; do NOT escalate at all            |
+
+Depends on the `budget-exceeded` outcome introduced by the token-budget ticket, which is what distinguishes "ran out of room while exploring" from other failures. Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (GOVERN_FIX_CI is set by run-loop.sh:275 but never read by spawn-worker.sh, so the CI-fix worker currently gets a plain first-attempt prompt) — this ticket owns the ESCALATION POLICY; #13 and #10 own the CI-context injection. Do not duplicate their work; if they have not landed, keep the classifier's CI branch simple and leave a clear seam.
+
+Escalation must also raise EFFORT before TIER where the classifier indicates judgment was marginal rather than absent, once the effort knob exists.
+
+Safety: this touches a governor retry rail. Preserve the existing invariant that a retry never silently DOWN-grades below the tier its first attempt used unless the classifier positively identifies an infra/portability cause. Keep the current behavior as the fallback whenever the signature is unrecognized — an unknown failure escalates exactly as it does today.
+
+Done when: the classifier categorizes a failed attempt from its recorded outcome + logs; each category maps to the documented response; an unrecognized signature falls back to today's escalate-to-GOVERN_WORKER_MODEL behavior; the decision and its reason are logged; a test under templates/govern/test/ covers each branch; `bash -n` passes; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S3
+
+---
