@@ -557,3 +557,25 @@ Fix direction: make the SIGINT delivery deterministic instead of time-based — 
 Done when: the section passes reliably with the suite running under artificial CPU load (e.g. several concurrent runs); no fixed sleep remains between the background launch and the kill.
 
 ---
+
+## #42 — Harness self-improvement: promote safe proposals from run-20260725-063340
+
+**Severity:** Low
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-063340. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `governor/improvements.md` (via `govern-improve.sh`'s output contract): tag each proposal bullet `[self-apply-eligible]` or `[policy-file — needs human/ticket]` based on whether its target file is in `govern-self-apply.sh`'s allowlist — why: makes visible at proposal time which fixes are structurally stuck and need a human/ticket, instead of silently re-proposing the same policy-file fix run after run.
+- `scripts/govern/govern-improve-triage.sh`: before filing a new "promote safe proposals from run X" ticket, check for an already-open ticket with the same auto-promotion marker and overlapping target files, and append instead of filing a new one — why: proposed 3 times now (05:53, 06:25, this run) and still unapplied; #9/#10/#11/#12/#36/#39 are the visible cost.
+- `queue/tickets.md`: add `**Depends on:** #35` to ticket #33's field block — a one-line, zero-script, data-only fix an operator can apply directly right now.
+- `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` — why: gives the run loop itself a nudge toward the merge the supervisor has now requested three runs in a row.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 07:15 — run run-20260725-063340 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
