@@ -87,6 +87,12 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   per-worker timeout + bad-streak still bound the run.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall the loop. `0` = unbounded.
+- `GOVERN_WORKER_MAX_TOKENS` (`0` = unlimited, default) — per-worker cumulative token cap; a wandering
+  worker is killed once it crosses this, same as the wall-clock timeout. Polled every
+  `GOVERN_TOKEN_POLL_S` (20s default) against the live worker JSONL. Recorded as a DISTINCT
+  `budget-exceeded` outcome (not `timeout`) in `state.jsonl` / the cross-run history, so a worker that
+  ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
+  preserved and a re-run resumes it, exactly like a timeout.
 - `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
 
 ## Progress preservation (acts like a human reopening sessions)
