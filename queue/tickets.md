@@ -685,3 +685,71 @@ Done when: `run-loop.sh A B C --parallel` groups A/B/C by locality when GOVERN_B
 Ref: session 2026-07-25 — found while trying to exercise v1.12.0's batching on tickets #24/#25/#26; verified by dry-run that the named-set path ignores GOVERN_BATCH_MAX entirely.
 
 ---
+
+## #56 — govern misclassifies a CLI usage error as a generic ticket failure — no diagnostic signal when a harness bump ships an unsupported flag
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/govern/lib/ (signature/classification helpers — infra_error_signature, interrupted_error_signature, worker_killed, govern::extract_report) + the hub template equivalent under shiploop/templates/govern/lib/.
+
+Observed: Tested against real claude 2.1.220 — running `"$claude_bin" -p x --definitely-not-a-real-flag >"$jsonl" 2>&1` exits 1 and writes a 53-byte file whose only line is plain text: `error: unknown option '--definitely-not-a-real-flag'`. Because the worker spawn redirects `2>&1` into `$jsonl`:
+- govern::extract_report can't parse it (not JSON)
+- stream_grep finds no `"type":"result"`
+- worker_killed is false (rc=1, not >128)
+- neither infra_error_signature nor interrupted_error_signature match
+
+So it falls through to the generic synthesized `failed` report ("no valid report from worker") — the same bucket as an ordinary worker failure, with no distinguishing signal.
+
+Impact: if a harness bump ever ships a CLI flag the fleet's installed `claude` binary doesn't support (version skew, a removed/renamed flag), EVERY worker in the run dies the same way and the operator sees N indistinguishable ticket failures with zero signal pointing at the actual cause (a CLI usage error, not a per-ticket problem). This is exactly the kind of failure that should halt the run loudly instead of quietly burning the entire backlog one ticket at a time.
+
+Fix direction: add a usage-error signature matching a non-JSON first line combined with rc=1 (e.g. `^error: unknown option` / `^error: unknown command` / general "first line isn't JSON and doesn't match an interrupted/infra pattern") and classify it distinctly from the generic failed bucket — then have the run loop halt loudly (not just log another `failed` ticket), since a CLI usage error is a fleet-wide condition, not a per-ticket one.
+
+Done when: a worker run against a CLI invocation that errors with a non-JSON usage-error line and rc=1 is classified with a distinct signature (not the generic "no valid report from worker" failed bucket); the run loop halts/escalates loudly instead of continuing to burn the backlog; a test under templates/govern/test/ covers the usage-error signature; bash -n passes; hub-first — land in shiploop/templates/govern/lib/** and port down via /shiploop:update.
+
+Ref: session 2026-07-26 — confirmed live against claude 2.1.220 by invoking a nonexistent CLI flag and inspecting the resulting jsonl + classification path.
+
+---
+
+## #57 — Ad-hoc test runs polluted logs/govern/ with 204 fixture transcripts — WS_ROOT resolution has no guard against a stubbed claude_bin
+
+**Severity:** High
+**Model:** sonnet
+
+Where: scripts/govern/lib/common.sh (WS_ROOT resolution, ~line 9) + scripts/govern/test/ (the fixture-stub test scripts) + logs/govern/ (the polluted tree itself).
+
+Observed: 204 of 262 files under logs/govern/run-*/ticket-*/worker*.jsonl are test-fixture output, not real worker sessions — 120 match byte-for-byte the canned `printf` strings in fake-`claude` stubs in scripts/govern/test/*.sh (test-spawn-worker.sh:35,82; test-interrupted-classification.sh:44,110,186,274; test-infra-halt.sh:23,46; test-locality-batch.sh:154; test-pr-footer.sh:39; test-worker-log-runscope.sh:43; test-tokenjam-runid.sh:40), and 84 are zero-byte placeholders in the same run-dirs. They use fixture ticket IDs that never existed in the queue (1, 5, 7, 8, 9, 19, 67, 101-104, 201-203, 301-303), spread across 18 run-dirs (4 on 2026-07-11, 14 on 2026-07-25 — ongoing, not historical).
+
+Root cause: common.sh:9 resolves WS_ROOT as a fixed relative path from the sourcing script's location ($GOVERN_LIB_DIR/../../..) rather than via a workspace marker or an explicit override guard. The test-*.sh scripts DO correctly export GOVERN_LOG_ROOT and are hermetic when run through their normal harness — so this pollution came from ad-hoc manual repros that wired a fake-claude stub via PATH without exporting GOVERN_LOG_ROOT/GOVERN_WS_ROOT, letting WS_ROOT silently fall through to the real workspace root.
+
+Impact: corrupts any cost/turn analysis run over the log tree — it caused a real measurement pass to report a bogus 78% "workers never reached a model turn" rate, because the fixture files (many zero-byte or single-line stub output) were indistinguishable from real failed sessions to a naive scan.
+
+Fix direction: make fixture runs structurally unable to write to the real tree — e.g. have spawn-worker.sh/run-loop.sh detect a stubbed/fake claude_bin (or require an explicit opt-in env like GOVERN_ALLOW_REAL_LOG_WRITE) and refuse to write under the real $WS_ROOT/logs unless it's set; or have WS_ROOT resolution require a workspace marker file rather than a fixed relative offset. Also clean up the 204 already-identified polluted files (the fixture-ticket-ID run-dirs above) so the log tree reflects only real worker sessions going forward.
+
+Done when: a fixture/stub claude_bin run cannot write under the real logs/govern/ tree without an explicit opt-in; the 204 identified fixture files are removed from logs/govern/; a test covers "stubbed claude_bin refuses to write to the real log root"; bash -n passes; hub-first where the fix lives in scripts/govern/lib/common.sh's logic — port via shiploop/templates/govern/lib/common.sh and down via /shiploop:update; the log cleanup itself is workspace-local (logs/govern/ has no hub counterpart).
+
+Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; traced every fixture file to its originating test stub by byte-for-byte string match.
+
+---
+
+## #58 — A worker transcript was written with 682,025 leading NUL bytes, masking a complete real session from every text-based analysis
+
+**Severity:** High
+**Model:** sonnet
+**Effort:** high
+
+Where: scripts/govern/spawn-worker.sh (the $jsonl redirect + attempt/retry file handling) + hub template equivalent shiploop/templates/govern/spawn-worker.sh.
+
+Observed: logs/govern/run-20260711-033250/ticket-7/worker.jsonl begins with 682,025 `\x00` (NUL) bytes before valid JSONL content starts. The real content is intact underneath — 10 assistant turns and a genuine result record with num_turns:57, total_cost_usd:$3.54 — so this is not truncation, it's a NUL-padded PREFIX in front of a complete, valid transcript.
+
+Impact: because of the NUL prefix, `grep` (and any other text-mode tool) treats the file as binary and silently skips it — `grep -a` is required to see through it. So the session is invisible to every text-based analysis of the log tree (cost/turn measurement, classification signature scanning, etc.) despite containing a fully valid, resolvable worker report. This is silent data loss: nothing errors, the file is just quietly excluded from every scan that doesn't special-case binary detection. It is also unknown whether the same mechanism can corrupt a transcript that the RUN LOOP ITSELF needs to parse for its own report/classification — if so this isn't just a telemetry gap, it's a correctness bug.
+
+Likely mechanism: a sparse-file write (e.g. a seek-past-end or truncate-then-write pattern) or a concurrent-append interaction between an attempt/retry and the `>"$jsonl" 2>&1` redirect, where a later write lands at a large offset before the actual content is flushed, leaving the gap zero-filled by the filesystem.
+
+Fix direction: audit spawn-worker.sh's jsonl redirect and any retry/attempt logic that reopens or re-truncates the same jsonl path for a seek/append ordering bug; add a guard (e.g. verify the file's first bytes are valid JSON/UTF-8 immediately after each worker exits, or eliminate any code path that can seek before writing) so a future occurrence is caught immediately instead of silently. Confirm whether the run loop's own report-parsing path (govern::extract_report) is vulnerable to the same NUL-prefix pattern, since that would make it a correctness bug, not just a telemetry gap.
+
+Done when: the writer path that can produce a NUL-padded jsonl is identified and fixed (or ruled out, with a detection guard added instead); a test reproduces the seek/append ordering condition (or documents why it can't be reproduced deterministically) and asserts the guard catches it; whether govern::extract_report is or isn't vulnerable to a NUL-prefixed report is confirmed and documented either way; bash -n passes; hub-first — land in shiploop/templates/govern/spawn-worker.sh and port down via /shiploop:update.
+
+Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; confirmed via `grep -a` and byte-offset inspection that the file is a complete, valid, high-cost real session buried under a NUL prefix.
+
+---
