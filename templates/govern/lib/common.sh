@@ -1352,6 +1352,160 @@ govern::prose_dep_warnings() { # [tickets-file] -> "#N: prose dependency '<phras
   ' "$f"
 }
 
+# ── locality batching (#23) ────────────────────────────────────────────────
+# Exploration is the dominant cost term of a resolved ticket (~98% cacheRead): three tickets that all
+# touch the same directory currently mean THREE workers each paying full discovery cost on the same
+# code — three repo loads, three CLAUDE.md reads, three architecture explorations. One worker fixing
+# all three pays that ONCE. Grouping also makes the --parallel fan-out SAFER: today N concurrent
+# drivers are selected purely by severity with no regard for whether they touch the same files, so two
+# workers can race the same file; disjoint locality groups remove that race by construction.
+#
+# The signal is the ticket's declared file scope. `**Files:**` (a measured file list — the forward hook
+# for the scout ticket) is PREFERRED when present because it is machine-produced; `**Where:**` is the
+# prose fallback every ticket already carries. Both are matched the way govern::ticket_deps matches
+# `**Depends on:**`: anchored to the START of a line, bold-wrapping optional, COLON REQUIRED — so a
+# mid-sentence "where" in prose is never mistaken for the marker. (These fields are NOT in the ticket's
+# contiguous leading field block the way Model:/Effort:/Flow: are — a `Where:` paragraph is separated
+# from the heading by a blank line — so the leading-block anchor spawn-worker.sh uses does not apply
+# here.) Only the FIRST marker line is read. Worst case for a spoofed key is one mis-grouped batch,
+# bounded by GOVERN_BATCH_MAX; nothing destructive rides on it.
+#
+# Key = the LEAF DIRECTORY NAME of the dominant path token on that line. Depth-1 is deliberate: a
+# hub/workspace mirror pair (`shiploop/templates/govern/run-loop.sh` and `scripts/govern/run-loop.sh`)
+# IS the same area of the same codebase, and grouping them is the desired behavior, not a collision.
+# Coarseness is bounded by GOVERN_BATCH_MAX (default 1 = off), so the blast radius of a bad key is one
+# smaller-than-configured group, never an unbounded batch.
+govern::ticket_locality() { # N [tickets-file] -> locality key ("" = unlocalized, never batched)
+  local n="$1" f="${2:-$TICKETS_FILE}" block line
+  [[ -f "$f" ]] || return 0
+  block="$(govern::ticket_block "$n" "$f" | tail -n +2)"   # drop the heading (its title may say "where")
+  [[ -n "$block" ]] || return 0
+  # `**Files:**` wins over `**Where:**` when both are present (measured beats prose).
+  line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
+  [[ -n "$line" ]] || line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ww]here(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
+  [[ -n "$line" ]] || return 0
+  printf '%s\n' "$line" | awk '
+    {
+      # Drop shell-variable interpolations ($WORKTREE_BASE/ticket-N) — they name no real repo path.
+      gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, " ")
+      gsub(/[`(),;"]/, " ")
+      n=split($0, tok, /[[:space:]]+/)
+      for (i=1; i<=n; i++) {
+        p=tok[i]
+        sub(/^\.\//, "", p); sub(/[.,;:]+$/, "", p); sub(/\/+$/, "", p)
+        if (p !~ /^[A-Za-z0-9_][A-Za-z0-9._*-]*\//) continue   # must be a path-ish token
+        # Peel the trailing segment when it names a FILE (has a dot) or is a bare glob, leaving a dir.
+        while (1) {
+          slash=0; for (j=length(p); j>0; j--) if (substr(p,j,1)=="/") { slash=j; break }
+          if (!slash) break
+          last=substr(p, slash+1)
+          if (last ~ /\./ || last ~ /\*/ || last=="") { p=substr(p, 1, slash-1) } else break
+        }
+        sub(/\/+$/, "", p)
+        if (p == "" || p ~ /\./ || p ~ /\*/) continue          # nothing dir-like survived
+        # Leaf directory name = the key (see the depth-1 rationale above).
+        leaf=p; slash=0; for (j=length(p); j>0; j--) if (substr(p,j,1)=="/") { slash=j; break }
+        if (slash) leaf=substr(p, slash+1)
+        if (leaf == "") continue
+        leaf=tolower(leaf)
+        if (!(leaf in cnt)) { order[++ord]=leaf }
+        cnt[leaf]++
+      }
+    }
+    END {
+      best=""; bestc=0
+      for (i=1; i<=ord; i++) if (cnt[order[i]] > bestc) { best=order[i]; bestc=cnt[order[i]] }
+      if (best != "") print best
+    }
+  '
+}
+
+# Partition an ORDERED candidate list (the selector hands them over in severity order) into DISJOINT
+# locality groups of at most $1 tickets. Prints one group per line as a comma-separated ticket list,
+# preserving candidate order both between and within groups. Guarantees, in order of importance:
+#   • max <= 1  → every candidate is its own singleton group (today's exact behavior, the default).
+#   • An unlocalized ticket (empty locality key) is ALWAYS a singleton — never batched on a guess.
+#   • Two tickets in a dependency relation (either direction, via govern::ticket_deps) are NEVER
+#     co-batched. Constraint (b) allows co-batching in dependency order instead, but keeping them in
+#     separate groups is the strictly safer half of that choice: it cannot produce an out-of-order
+#     edit inside one worker, and the run-loop's own pre-spawn dependency gate already defers a
+#     dependent whose blocker is unlanded, so nothing is lost.
+# Reads $3 (def TICKETS_FILE).
+govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
+  local max="${1:-1}" csv="${2:-}" f="${3:-$TICKETS_FILE}"
+  max="${max//[^0-9]/}"; [[ -n "$max" ]] || max=1
+  local -a raw=() cand=() keys=() deps=() used=()
+  local i j t nc=0
+  IFS=',' read -r -a raw <<< "$csv" || true
+  for t in ${raw[@]+"${raw[@]}"}; do
+    t="${t//[^0-9]/}"; [[ -n "$t" ]] || continue
+    cand[nc]="$t"
+    # Only pay for the key/dep probes when batching is actually enabled (max<=1 is the default).
+    if [[ "$max" -gt 1 ]]; then
+      keys[nc]="$(govern::ticket_locality "$t" "$f" 2>/dev/null || true)"
+      # Comma-wrapped for O(1) substring membership: ",9,11,"
+      deps[nc]=",$(govern::ticket_deps "$t" "$f" 2>/dev/null | tr '\n' ',' || true)"
+    else
+      keys[nc]=""; deps[nc]=","
+    fi
+    used[nc]=0
+    nc=$((nc+1))
+  done
+  [[ "$nc" -gt 0 ]] || return 0
+  # Is candidate index $1 dependency-related (EITHER direction) to any ticket in group CSV $2?
+  _rel() {
+    local x="$1" g="$2" m k
+    for m in ${g//,/ }; do
+      case "${deps[x]}" in *",$m,"*) return 0;; esac          # x depends on m
+      for (( k=0; k<nc; k++ )); do
+        [[ "${cand[k]}" == "$m" ]] || continue
+        case "${deps[k]}" in *",${cand[x]},"*) return 0;; esac # m depends on x
+        break
+      done
+    done
+    return 1
+  }
+  for (( i=0; i<nc; i++ )); do
+    [[ "${used[i]}" -eq 0 ]] || continue
+    used[i]=1
+    local group="${cand[i]}" size=1
+    if [[ "$max" -gt 1 && -n "${keys[i]}" ]]; then
+      for (( j=i+1; j<nc; j++ )); do
+        [[ "$size" -lt "$max" ]] || break
+        [[ "${used[j]}" -eq 0 ]] || continue
+        [[ "${keys[j]}" == "${keys[i]}" ]] || continue
+        _rel "$j" "$group" && continue   # dependency-related ⇒ leave it for its own group
+        used[j]=1; group="$group,${cand[j]}"; size=$((size+1))
+      done
+    fi
+    printf '%s\n' "$group"
+  done
+  unset -f _rel
+}
+
+# Per-ticket outcome lookup for a BATCHED worker report (#23 constraint (c)): a group that partially
+# fails must report per-ticket outcomes, never collapse to one verdict — otherwise bookkeeping marks
+# unfixed tickets resolved and DELETES them. Reads the report's `tickets` array (one
+# `{ticket,status,note}` per ticket in the group). Prints the status for $2, or "" when the ticket is
+# ABSENT from the array / the report is unparseable — and "" must NEVER be treated as resolved by the
+# caller. That fail-closed default is the whole point of this helper.
+govern::batch_ticket_status() { # report-json ticket -> status|""
+  local report="$1" t="$2"
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$report" | jq -r --arg t "$t" '
+    ((.tickets // []) | map(select((.ticket|tostring) == $t)) | .[0].status // "")
+    | if . == null then "" else . end' 2>/dev/null || true
+}
+
+# Same lookup for the per-ticket note (free-text the worker attaches to each ticket in the group).
+govern::batch_ticket_note() { # report-json ticket -> note|""
+  local report="$1" t="$2"
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$report" | jq -r --arg t "$t" '
+    ((.tickets // []) | map(select((.ticket|tostring) == $t)) | .[0].note // "")
+    | if . == null then "" else . end' 2>/dev/null || true
+}
+
 # Add/merge ONE wait entry (a JSON object carrying at least `.ticket`; optional `.pr`+`.repo` and/or
 # `.dependsOn`) into pending-waits.json, de-duped by ticket number (newest wins). Creates the file if
 # absent. No-op without jq / a ticket field. Live-only side effect — callers gate on MODE.
