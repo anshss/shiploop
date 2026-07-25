@@ -78,3 +78,18 @@ I checked `governor/improvements.md` first — the same #9/#11/#30 friction was 
 - `queue/tickets.md`: add `**Depends on:** #35` to #33 and #34's field blocks (a data-only fix, zero script changes) — the existing `govern::ticket_deps` gate already honors literal "depends on #N" prose today, so this alone stops either from being dispatched before #35 (the hub-sync bump) lands.
 
 None of these touch hard-stops, run bounds, the permission gate, or the merge allowlist — all are additive fields/lints/write-backs.
+
+## 2026-07-25 06:41 — run run-20260725-060424 (resolved/parked/failed observed)
+
+I've verified everything against the actual scripts (not just supervisor prose) and written the full analysis to the plan file at `~/.claude/plans/govern-improve-you-are-reviewing-mellow-globe.md`. The `ExitPlanMode` tool isn't wired up in this environment, so here's the final deliverable directly:
+
+**Key discovery:** both of this run's friction points already have fixes built in the hub template (`shiploop/templates/govern/`) — they just haven't synced into this workspace's `scripts/govern/` copy (1402 vs 1708 lines in `lib/common.sh`, confirmed via `diff`).
+
+```markdown
+- `queue/tickets.md`: add `**Depends on:** #35` to tickets #33 and #34's field blocks now — a zero-script, data-only fix (ticket #36 already proposes this) — why: `govern::ticket_deps`/the #119 pre-spawn gate only honors the literal bold marker, so until this line lands either ticket could be selected and dispatched before #35 (the hub-sync bump) lands, burning a worker session on machinery this workspace's `scripts/govern` copy doesn't have yet.
+- `scripts/govern/lib/common.sh`, `scripts/govern/lint-tickets.sh`, `scripts/govern/file-ticket.sh`: sync these from `shiploop/templates/govern/` (hub→workspace sync, e.g. `/shiploop:update`) — why: the hub template already implements `govern::prose_dep_warnings` (flags prose-only dependency phrasing like "sibling ticket #N" lacking a canonical `**Depends on:**`/`**Blocks:**` marker) and a duplicate-title advisory check in `file-ticket.sh` (flags `⚠ possible duplicate of #M` on >50% title-word overlap with an open ticket) — exactly the two mechanisms that would have caught this run's frictions (#33/#34's undeclared dependency, #38 re-filing #30's merge instruction). The workspace's `common.sh` is missing both blocks entirely — this is sync drift, not a missing feature; the fix already exists in this same repo.
+- `scripts/govern/govern-improve.sh`: append a compact open-ticket digest (number, title, severity, `Where:` target files — no body) from `queue/tickets.md` when assembling this reviewer's context — why: confirmed absent from both the workspace and hub-template copy, so every improve run re-derives friction from scratch with no way to check "is this already tracked?" — the exact gap that let #38 restate #30's #9/#11-merge instruction.
+- `scripts/govern/govern-improve-triage.sh`: before auto-filing a new "promote safe proposals" ticket, check whether an already-open ticket carries the same auto-promotion marker and targets overlapping files/tickets; if so, append the new bullets to that existing ticket's body instead of filing a new `## #N` — confirmed absent from both workspace and hub copy — why: this is the actual mechanism (two runs' reviewers independently auto-promoting overlapping fixes) that produced the #30/#38 duplicate pair.
+```
+
+None of these touch a safety rail, so no OPERATOR DECISION flags needed.
