@@ -150,6 +150,19 @@ real runs. Mechanics:
   forces text semantics; spawn-worker also rotates a prior attempt's stream to
   `worker.attempt<K>.jsonl` so a fresh inode makes the corruption unreachable in the first place.
 
+- **One row per ticket per run, even under the parallel default.** The per-ticket claim lock only keeps
+  a sibling driver off a ticket *while* a worker holds it. A ticket that ends non-resolved (timeout /
+  budget-exceeded / failed / parked) stays in `queue/tickets.md` and frees its claim the moment its
+  outcome is recorded, and the `excludes` list that stops the *same* driver re-picking it is
+  per-process in-memory state a sibling cannot see — so a sibling reaching selection after that
+  release used to re-spawn a second full worker on a question the run had already answered, and write
+  a second `state.jsonl` + history row for it (double-counting the consecutive-failure streak). Each
+  recorded outcome now also appends its ticket number to a run-scoped `attempted.txt`, which every
+  driver folds into its own excludes before selecting; the orchestrator's children share the
+  orchestrator's file, and a driver that skips a ticket this way logs *"already answered by another
+  driver this run"*. Only a child spawned with `--orchestrated` adopts an inherited path, so an
+  unrelated `run-loop.sh` launched inside a live session never picks up another run's set.
+
 Rows written before these fields existed simply lack them; every consumer filters on presence, so old
 history keeps working unchanged.
 

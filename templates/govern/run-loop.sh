@@ -282,6 +282,32 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
+# CROSS-DRIVER attempted set — the run-scoped twin of `$excludes`, which is per-PROCESS in-memory
+# state and therefore invisible to a sibling driver. Under the parallel default (cap 4) the claim
+# lock only keeps two drivers off a ticket WHILE one holds it: a ticket that ends non-resolved
+# (timeout / budget-exceeded / failed / parked) is STILL in tickets.md, its claim is released the
+# moment its outcome is recorded, and a sibling that reaches selection after that release re-picks
+# it and burns a SECOND full worker on a ticket this run has already answered. That is real spend,
+# and it also writes a second state.jsonl/ticket-history row for one ticket in one run — which
+# double-counts the #60 consecutive-failure streak and makes "what did this run do" ambiguous.
+# So: every recorded outcome appends its ticket number here, and each driver folds the file back
+# into its own $excludes before selecting. The path is EXPORTED, so the orchestrator's children
+# inherit the ORCHESTRATOR's file and the set is shared across the whole fan-out; a plain
+# sequential run gets its own file and the fold is a harmless no-op (its $excludes already has it).
+# Append-only single-line writes → O_APPEND is atomic enough; a read that races an append simply
+# picks the number up on the next iteration, and the claim lock still covers the in-flight window.
+# Gated on --orchestrated, NOT on the bare env var: an exported path must only be adopted by a child
+# this run's orchestrator actually spawned. Any OTHER run-loop launched inside a live governor session
+# (a worker running the test suite, an operator's ad-hoc `run-loop.sh <N>`) also inherits the parent's
+# environment — the documented "the test suite inherits the live run's env" hazard — and must get its
+# OWN file rather than silently adopting an unrelated run's answered set.
+if [[ "$ORCHESTRATED" -eq 1 && -n "${GOVERN_RUN_ATTEMPTED_FILE:-}" ]]; then
+  RUN_ATTEMPTED_FILE="$GOVERN_RUN_ATTEMPTED_FILE"
+else
+  RUN_ATTEMPTED_FILE="$RUNDIR/attempted.txt"
+fi
+export GOVERN_RUN_ATTEMPTED_FILE="$RUN_ATTEMPTED_FILE"
+: >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true   # `>>` never truncates a file inherited from a parent
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
 TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
                     # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
@@ -351,8 +377,29 @@ history_enrich() { # ticket -> echoes {tokens,costUsd,model,effort,attempt,usage
      + $e + {churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
 }
 
+# Fold the CROSS-DRIVER attempted set into this driver's own $excludes. Called once per loop
+# iteration, immediately before selection, so a ticket a SIBLING driver already answered this run is
+# invisible to the selector here — the sequential loop's own bookkeeping is unchanged (it has always
+# appended $N to $excludes itself, so for a single driver every number read back is already present).
+sync_attempted_excludes() {
+  [[ -s "$RUN_ATTEMPTED_FILE" ]] || return 0
+  local a
+  while IFS= read -r a; do
+    [[ "$a" =~ ^[0-9]+$ ]] || continue
+    [[ ",$excludes," == *",$a,"* ]] && continue
+    excludes="${excludes:+$excludes,}$a"
+    govern::log "#$a already answered by another driver this run — skipping (no second worker) [#19]"
+  done < "$RUN_ATTEMPTED_FILE"
+  return 0
+}
+
 record() { # ticket status note
   printf '{"ticket":%s,"status":"%s","note":%s}\n' "$1" "$2" "$(jq -Rn --arg s "$3" '$s')" >> "$STATE"
+  # Mark the ticket ANSWERED for the whole run, across every driver (see RUN_ATTEMPTED_FILE above).
+  # Written for EVERY status, including `infra`/`interrupted` which return before the history write:
+  # they are dropped from the CROSS-RUN history on purpose (not the ticket's fault), but within THIS
+  # run they have still consumed a worker, so a sibling must not immediately re-spawn on them either.
+  printf '%s\n' "$1" >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true
   # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
   # #90: NEVER record an infra/auth outage to the cross-run history — it is not the ticket's fault,
   # so it must not count toward #60 auto-escalation or be read back by govern-improve as a hard
@@ -973,6 +1020,8 @@ while :; do
       break
     fi
   fi
+
+  sync_attempted_excludes   # drop anything a SIBLING driver already answered this run (#19)
 
   if [[ "${#TARGETS[@]}" -gt 0 ]]; then
     # Ticket-SET selection: restrict the normal severity-ordered selector to EXACTLY the
