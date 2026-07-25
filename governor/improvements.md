@@ -129,6 +129,8 @@ I've completed the review and written the analysis to the plan file. Since this 
 
 ## 2026-07-25 11:47 — run run-20260725-112937-10735 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 11:47:** 4 safe proposal(s) → ticket **#47**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Investigation complete. Here's the harness-improvement proposal for this run:
 
 - `governor/worker-prompt.md`: Add an explicit instruction to check CI baseline before declaring `resolved` — compare the PR's failing checks against `gh run list --branch main --limit 3` (or equivalent) to determine whether a red check predates the worker's own change — why: ticket #46's worker rediscovered this exact lesson after the fact, but the harness discarded it before it reached CLAUDE.md; teaching it up front prevents every future worker from rediscovering it and wasting CI-fix cycles on unrelated upstream breakage.
