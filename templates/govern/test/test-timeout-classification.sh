@@ -126,7 +126,7 @@ out2="$(PATH="$T/bin:$PATH" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=1 \
-  bash "$RL" </dev/null 2>&1)"
+  bash "$RL" --serial </dev/null 2>&1)"
 
 # locate the run's state.jsonl
 state="$(ls -t "$T"/logs/run-*/state.jsonl | head -1)"
