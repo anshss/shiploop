@@ -77,34 +77,99 @@ TICKET_FLOW="$(printf '%s' "$block" \
   | tr ',' ' ' | tr -s ' ' | sed -E 's/^ +//; s/ +$//')"
 export TICKET_FLOW
 
+# ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
+# ONE resolver, called by BOTH the dry-run observation seam and the live spawn — previously the two
+# paths carried copy-pasted resolution logic that could drift apart. Sets the globals
+# `model`/`model_source`/`effort`/`effort_source`/`retry_class`/`retry_reason`. Emits NO log lines
+# (the caller logs the decision once) so the dry-run seam stays a pure, quiet observation.
+#
+# First attempt: the brain-decided per-ticket `Model:`/`Effort:` fields win (allowlisted; an unknown
+# value is dropped fail-safe), else the GOVERN_WORKER_MODEL / GOVERN_WORKER_EFFORT floors.
+#
+# Retry: classify WHY the last attempt failed (govern::retry_class) and escalate the axis that
+# actually failed, instead of always jumping to GOVERN_WORKER_MODEL. See the table in lib/common.sh.
+resolve_sizing() {
+  local base_model base_effort escalated_model
+  retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
+
+  # Baseline = what the FIRST attempt would have used.
+  base_model="${GOVERN_WORKER_MODEL:-opus}"; model_source="GOVERN_WORKER_MODEL"
+  case "${TICKET_MODEL:-}" in
+    "") ;;
+    haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field" ;;
+    *) model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
+  esac
+  base_effort="${GOVERN_WORKER_EFFORT:-}"; effort_source="GOVERN_WORKER_EFFORT"
+  [[ -z "$base_effort" ]] && effort_source="none (unset)"
+  case "${TICKET_EFFORT:-}" in
+    "") ;;
+    low|medium|high|xhigh|max) base_effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field" ;;
+    *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
+  esac
+  model="$base_model"; effort="$base_effort"
+  [[ "${MODEL_IS_RETRY:-0}" -eq 1 ]] || return 0   # first attempt: the baseline IS the answer
+
+  IFS=$'\t' read -r retry_class retry_reason < <(govern::retry_class "$N") || true
+  [[ -n "${retry_class:-}" ]] || { retry_class="unknown"; retry_reason="classifier produced no verdict"; }
+  # Raising the tier means "at least the workspace floor" — never BELOW the tier this ticket already
+  # asked for, so an escalation can't accidentally down-grade a `Model: opus` ticket.
+  escalated_model="$(govern::model_max "$base_model" "${GOVERN_WORKER_MODEL:-opus}")"
+  case "$retry_class" in
+    infra|ci)
+      # POSITIVELY identified non-model cause (transport outage / red CI on a portability-or-env
+      # bug). Re-bet the SAME sizing: the tier was never the problem, and escalating it is the waste
+      # the classifier exists to stop. The only path allowed to keep a sub-floor tier on a retry.
+      model_source="$model_source (retry class=$retry_class — same tier, not escalated) [retry-class]"
+      effort_source="$effort_source (retry class=$retry_class — unchanged) [retry-class]"
+      ;;
+    budget)
+      # Ran out of room while still exploring → the SCOPE was underestimated, not the judgment.
+      # Raise TIER only; compounding an effort raise on top just multiplies the spend.
+      model="$escalated_model"
+      model_source="escalated from $base_model (retry class=budget — scope underestimated) [retry-class]"
+      effort_source="$effort_source (retry class=budget — tier raised, effort unchanged) [retry-class]"
+      ;;
+    judgment)
+      # A coherent but WRONG fix → a judgment failure. Effort is the cheaper knob, so it always
+      # moves; the tier moves too, but only when it is actually below the floor (when the prior
+      # attempt already ran at the floor, judgment was marginal rather than absent and the effort
+      # rung is the whole escalation).
+      effort="$(govern::effort_bump "$base_effort")"
+      model="$escalated_model"
+      effort_source="escalated from ${base_effort:-<unset>} (retry class=judgment) [retry-class]"
+      if [[ "$model" == "$base_model" ]]; then
+        model_source="$model_source (retry class=judgment — already at the floor tier; effort raised instead) [retry-class]"
+      else
+        model_source="escalated from $base_model (retry class=judgment) [retry-class]"
+      fi
+      ;;
+    *)
+      # UNRECOGNIZED signature → exactly the pre-classifier behavior: discard the ticket's brain-decided
+      # fields and escalate to the workspace floor. Fail-safe by construction.
+      model="${GOVERN_WORKER_MODEL:-opus}"
+      effort="${GOVERN_WORKER_EFFORT:-}"
+      model_source="GOVERN_WORKER_MODEL (retry — ticket Model: '${TICKET_MODEL:-}' skipped)"
+      effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
+      if [[ -n "${TICKET_EFFORT:-}" ]]; then
+        effort_source="${effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
+      fi
+      ;;
+  esac
+  # Explicit: under `set -e` a function whose LAST command is a false test would abort the spawn.
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
 # evidence harness and any operator who wants to probe what would be run — no auth, no cost,
 # no side effects. Not part of the normal run path.
 if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
-  dr_model="${GOVERN_WORKER_MODEL:-opus}"
-  dr_source="GOVERN_WORKER_MODEL"
-  if [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-    case "$TICKET_MODEL" in
-      haiku|sonnet|opus) dr_model="$TICKET_MODEL"; dr_source="ticket-Model-field" ;;
-      *) dr_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
-    esac
-  elif [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-    dr_source="GOVERN_WORKER_MODEL (retry — ticket Model: '$TICKET_MODEL' skipped)"
-  fi
-  # #18: mirror the model resolution above, but the "unset" default is NO flag at all (empty
-  # string), not an invented tier — preserves today's session-default behavior when nothing is set.
-  dr_effort="${GOVERN_WORKER_EFFORT:-}"
-  dr_effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$dr_effort" ]] && dr_effort_source="none (unset)"
-  if [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-    case "$TICKET_EFFORT" in
-      low|medium|high|xhigh|max) dr_effort="$TICKET_EFFORT"; dr_effort_source="ticket-Effort-field" ;;
-      *) dr_effort_source="${dr_effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
-    esac
-  elif [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-    dr_effort_source="${dr_effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
-  fi
+  # Same resolver the live spawn uses — the dry-run seam can never drift from the real
+  # decision, and `retry_class`/`retry_reason` make the escalation policy directly observable.
+  resolve_sizing
+  dr_model="$model"; dr_source="$model_source"
+  dr_effort="$effort"; dr_effort_source="$effort_source"
   dr_mode="${GOVERN_MODE:-live}"
   dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
   [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
@@ -120,9 +185,11 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
+    --arg rclass "$retry_class" \
+    --arg rreason "$retry_reason" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
   exit 0
 fi
 
@@ -379,51 +446,20 @@ mode="${GOVERN_MODE:-live}"
 # (destructive git / prod-data) still gate the dangerous actions via self-park.
 permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] && permflag="plan"
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
-model="${GOVERN_WORKER_MODEL:-opus}"
 
-# Per-ticket brain-decided model routing. Honor a `Model:` line inside the ticket block ONLY when
-# THIS is the ticket's FIRST attempt — any retry unconditionally escalates to GOVERN_WORKER_MODEL,
-# because a cheap-tier bet that didn't land the first time shouldn't be re-bet on retry. The brain
-# that filed/triaged the ticket recorded the model; the harness carries no severity/task-type
-# heuristic of its own. Unknown / absent value → keep GOVERN_WORKER_MODEL (fail safe, current
-# behavior preserved for the entire existing backlog). Extend the allowlist below if a new tier
-# ships. `MODEL_IS_RETRY` (below) latched BEFORE worktree/new.sh created a fresh worktree, so this
-# always reflects the STATE-BEFORE-spawn.
-if [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-  case "$TICKET_MODEL" in
-    haiku|sonnet|opus)
-      govern::log "worker #$N model=$TICKET_MODEL per ticket Model: field (first attempt; brain-decided)"
-      model="$TICKET_MODEL"
-      ;;
-    *)
-      govern::log "worker #$N: ignoring unknown Model: '$TICKET_MODEL' from ticket — using GOVERN_WORKER_MODEL=$model (fail-safe)"
-      ;;
-  esac
-elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-  govern::log "worker #$N: retry detected (preserved worktree) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
-fi
-
-# #18: reasoning effort — an INDEPENDENT knob from model tier: raising effort is far cheaper than
-# raising tier, so it's the correct first rung on the escalation ladder. Unset (no GOVERN_WORKER_EFFORT
-# and no ticket Effort:) means NO --effort flag is passed at all — preserves today's session-default
-# behavior exactly; there is no invented default. GOVERN_WORKER_EFFORT sets a workspace-wide floor; a
-# per-ticket `Effort:` field overrides it on the ticket's FIRST attempt only (same retry-escalates-away
-# rule as Model:, via the same MODEL_IS_RETRY signal — a failed cheap bet isn't re-bet on retry).
-effort="${GOVERN_WORKER_EFFORT:-}"
-effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
-if [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
-  case "$TICKET_EFFORT" in
-    low|medium|high|xhigh|max)
-      govern::log "worker #$N effort=$TICKET_EFFORT per ticket Effort: field (first attempt; brain-decided)"
-      effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field"
-      ;;
-    *)
-      govern::log "worker #$N: ignoring unknown Effort: '$TICKET_EFFORT' from ticket — using ${effort:-<none>} (fail-safe)"
-      ;;
-  esac
-elif [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
-  govern::log "worker #$N: retry detected (preserved worktree) — using ${effort:-<none>} (ignoring ticket Effort: $TICKET_EFFORT)"
-fi
+# Per-ticket brain-decided model + effort routing, and — on a retry — the retry-class evidence-based
+# escalation. All of it lives in resolve_sizing() (defined above, shared with the dry-run seam):
+#   - FIRST attempt: the ticket's `Model:`/`Effort:` fields win (the brain that triaged the ticket
+#     recorded them; the harness carries no heuristic of its own), else the GOVERN_WORKER_* floors.
+#     An unknown value is dropped fail-safe. `MODEL_IS_RETRY` was latched BEFORE worktree/new.sh
+#     created a fresh worktree, so it always reflects the STATE-BEFORE-spawn.
+#   - RETRY: the failure signature of the PRIOR attempt decides which axis escalates — an
+#     infra/CI-portability failure re-bets the SAME tier, a budget blow-out raises the tier, a
+#     coherent-but-wrong fix raises effort (and tier), and an UNRECOGNIZED signature falls back to
+#     exactly the pre-classifier escalate-to-GOVERN_WORKER_MODEL behavior.
+resolve_sizing
+# The decision AND its reason, in one line — this is the audit trail for every retry escalation.
+govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
