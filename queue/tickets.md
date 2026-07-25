@@ -521,3 +521,25 @@ Fix direction: refresh the workspace's scripts/govern from the hub through the /
 Done when: the workspace copy carries prose_dep_warnings; #9/#11 are collapsed and rescoped to the --depends-on flag plus the field documentation, or closed if that is filed elsewhere.
 
 ---
+
+## #39 — Harness self-improvement: promote safe proposals from run-20260725-060424
+
+**Severity:** Low
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-060424. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `queue/tickets.md`: add `**Depends on:** #35` to tickets #33 and #34's field blocks now — a zero-script, data-only fix (ticket #36 already proposes this) — why: `govern::ticket_deps`/the #119 pre-spawn gate only honors the literal bold marker, so until this line lands either ticket could be selected and dispatched before #35 (the hub-sync bump) lands, burning a worker session on machinery this workspace's `scripts/govern` copy doesn't have yet.
+- `scripts/govern/lib/common.sh`, `scripts/govern/lint-tickets.sh`, `scripts/govern/file-ticket.sh`: sync these from `shiploop/templates/govern/` (hub→workspace sync, e.g. `/shiploop:update`) — why: the hub template already implements `govern::prose_dep_warnings` (flags prose-only dependency phrasing like "sibling ticket #N" lacking a canonical `**Depends on:**`/`**Blocks:**` marker) and a duplicate-title advisory check in `file-ticket.sh` (flags `⚠ possible duplicate of #M` on >50% title-word overlap with an open ticket) — exactly the two mechanisms that would have caught this run's frictions (#33/#34's undeclared dependency, #38 re-filing #30's merge instruction). The workspace's `common.sh` is missing both blocks entirely — this is sync drift, not a missing feature; the fix already exists in this same repo.
+- `scripts/govern/govern-improve.sh`: append a compact open-ticket digest (number, title, severity, `Where:` target files — no body) from `queue/tickets.md` when assembling this reviewer's context — why: confirmed absent from both the workspace and hub-template copy, so every improve run re-derives friction from scratch with no way to check "is this already tracked?" — the exact gap that let #38 restate #30's #9/#11-merge instruction.
+- `scripts/govern/govern-improve-triage.sh`: before auto-filing a new "promote safe proposals" ticket, check whether an already-open ticket carries the same auto-promotion marker and targets overlapping files/tickets; if so, append the new bullets to that existing ticket's body instead of filing a new `## #N` — confirmed absent from both workspace and hub copy — why: this is the actual mechanism (two runs' reviewers independently auto-promoting overlapping fixes) that produced the #30/#38 duplicate pair.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 06:41 — run run-20260725-060424 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
