@@ -658,3 +658,28 @@ Done when: each safe proposal above is implemented via a harness PR or explicitl
 Ref: governor/improvements.md block "2026-07-25 12:23 — run run-20260725-111845-99416 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
+
+## #55 — A named ticket SET gets neither locality batching nor the backlog gates — the operator's main workflow is the unprotected path
+
+**Severity:** High
+**Model:** sonnet
+
+Where: shiploop/templates/govern/run-loop.sh — the batching gate (`if [[ "$BATCH_MAX" -gt 1 && "${#TARGETS[@]}" -eq 0 ]]`, ~line 1230) and the --parallel orchestrator's child shape (a child handed ONE explicit ticket).
+
+Observed: the operator's stated primary workflow is "prompt inside the workspace to launch multiple tickets at once" — i.e. `run-loop.sh N N N --parallel` (or /govern with several ticket numbers). That path is the LEAST protected one:
+
+(1) Locality batching (#23/#92) is gated on `${#TARGETS[@]} -eq 0`, so a NAMED set never groups. Verified live: with GOVERN_BATCH_MAX=3 set, `run-loop.sh 24 25 26 --parallel --dry-run` spawned three separate drivers, one per ticket, with no grouping — the same shape as before batching existed. Tickets #25 and #26 both edit spawn-worker.sh, so that dispatch would have put two concurrent workers on the same file: exactly the collision batching was built to prevent.
+
+(2) Per the CLAUDE.md anti-pattern already recorded from #87, a child handed ONE explicit ticket is indistinguishable from an operator typing `run-loop.sh <N>` and therefore takes every explicit-target BYPASS: the #119 dependency gate, the cross-driver re-verify, and the #60 failure-streak circuit breaker. It also never reaches the periodic supervisor.
+
+So the two protections added in v1.12.0 and v1.11.x both engage only on a bare backlog pull, while the workflow the harness is actually marketed for — "address these N tickets" — gets neither. This session is the evidence: every wave was dispatched as named tickets, and the operator (and later the assistant) hand-partitioned by file scope on every single one to avoid collisions, four separate times.
+
+Fix direction: make a named SET behave like a bounded backlog rather than N independent single-ticket runs. Options to weigh in the PR: (a) allow batching when TARGETS is non-empty by partitioning the NAMED set into locality groups (the set is known up front, so grouping is strictly easier than in the backlog case); (b) have the --parallel orchestrator hand each child a FULL-driver run restricted to a subset (`--only`/`--include`) rather than one explicit ticket, so children keep the backlog gates; or (c) both. Preserve the genuine carve-out: exactly ONE named ticket should still stay sequential and unbatched — there is nothing to group and the operator clearly means "just this one".
+
+Whatever shape is chosen, the dependency gate MUST apply to a named set: today naming two tickets where one depends on the other silently ignores the declared `Depends on:`.
+
+Done when: `run-loop.sh A B C --parallel` groups A/B/C by locality when GOVERN_BATCH_MAX>1 and never puts two same-file tickets in concurrent workers; the #119 dependency gate is enforced for named sets; a single named ticket still bypasses grouping; a test under templates/govern/test/ covers named-set grouping and named-set dependency enforcement; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy is refreshed via `/shiploop:update`.
+
+Ref: session 2026-07-25 — found while trying to exercise v1.12.0's batching on tickets #24/#25/#26; verified by dry-run that the named-set path ignores GOVERN_BATCH_MAX entirely.
+
+---
