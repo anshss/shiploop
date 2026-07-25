@@ -110,3 +110,19 @@ I checked `governor/improvements.md`'s full history before proposing anything �
 - `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` — why: gives the run loop itself a nudge toward the merge the supervisor has now requested three runs in a row.
 
 **OPERATOR DECISION**: `govern-self-apply.sh`'s allowlist deliberately excludes policy/bookkeeping files from auto-apply — the correct trade-off (those files shouldn't be agent-edited without review), but it's the direct reason the last six runs' top proposals never landed automatically. Not proposing to widen it — only to make "stuck behind the allowlist" visible.
+
+## 2026-07-25 07:40 — run run-20260725-071539 (resolved/parked/failed observed)
+
+I've completed the review and written the analysis to the plan file. Since this is a read-only GOVERN-IMPROVE proposal task (no ExitPlanMode tool is available in this context), here is the final deliverable per the required output format:
+
+- `scripts/govern/file-ticket.sh`: port the duplicate-detection block from `shiploop/templates/govern/file-ticket.sh:165-188` (title-word-overlap check that appends "⚠ possible duplicate of #M" when a new ticket's title overlaps >50% with an existing open one) into the workspace copy, which has zero dedup logic today — this is the highest-leverage fix and already exists upstream (what #35 proposes; expedite it over #30/#38).
+
+- `scripts/govern/lib/common.sh` + `scripts/govern/lint-tickets.sh`: port `govern::prose_dep_warnings` from the hub's `lib/common.sh` (absent from the workspace copy) and wire it into `lint-tickets.sh` (currently only checks `govern::duplicate_ticket_headings`) — flags tickets that reference another ticket in prose without a canonical `**Depends on:**` field, the exact gap #38 fell into.
+
+- `scripts/govern/govern-improve-triage.sh`: before calling `file-ticket.sh` (line 116), check already-open tickets carrying an `AUTO-PROMOTED`/`AUTO-TRIAGE` marker for title/content overlap with the new proposal, reusing the same helper added to `file-ticket.sh` — today idempotency only checks within a single `improvements.md` block, never against sibling open tickets, which is how #9/#10/#11/#12/#36/#39 accumulated one-per-run.
+
+- `scripts/govern/select-ticket.sh`: call `govern::ticket_deps()` (already implemented in `lib/common.sh:1099-1116`, currently unused by the selector) and skip/defer any ticket whose declared dependency is still open — right now `Depends on:` is parsed but never enforced at selection time.
+
+- `scripts/govern/run-loop.sh`: append the worker's end-of-run `crossRefs.overlaps`/`crossRefs.dependsOn` self-report (per `worker-prompt.md:192-195`) to `governor/decisions-log.md` (currently empty) instead of discarding it after only setting `anomaly=1` — this signal is currently lost after one run.
+
+- **OPERATOR DECISION**: `govern-self-apply.sh`'s `ALLOWED` allowlist structurally excludes `lib/common.sh`, `file-ticket.sh`, `lint-tickets.sh`, `govern-improve.sh`, `govern-improve-triage.sh`, and `queue/tickets.md` from auto-apply. This is why the above fixes have been proposed three times and never applied — but it's the correct rail, since these files control ticket-filing/dedup logic and the queue itself. Trade-off: closing this loop requires an operator to merge the sync ticket manually; not proposing to weaken the allowlist.
