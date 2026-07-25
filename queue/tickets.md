@@ -510,3 +510,28 @@ Done when: prose `#N` mentions never become dependencies; a properly declared `*
 Ref: session 2026-07-25 token-efficiency filing — observed on ticket #22 (deps resolved to 16 13 10 against a single declared #16).
 
 ---
+
+## #30 — Tickets #9 and #11 duplicate each other — same Depends-on work proposed twice
+
+**Severity:** Low
+**Model:** haiku
+
+Where: queue/tickets.md — open tickets #9 and #11
+
+Observed: #9 and #11 were both auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) after two different govern runs (run-20260711-033250 and run-20260711-033248), and they propose substantially the SAME work:
+  - both propose documenting `**Depends on:** #K` as a first-class optional per-ticket field in queue/tickets.md
+  - both propose adding a `--depends-on N[,M...]` flag to scripts/govern/file-ticket.sh
+  - both propose a lint pass flagging prose dependency language with no declared `Depends on:` line
+#11 additionally carries two proposals #9 does not (a supervisor `orderingRisks` schema field, and having the dependency gate confirm the dependency's PR actually MERGED rather than just that the ticket entry was deleted).
+
+Impact: two workers can be dispatched to implement the same three changes, wasting a full session each and producing conflicting PRs on the same files (queue/tickets.md, file-ticket.sh, lint-tickets.sh). This becomes materially more likely now that the governor runs tickets in parallel by default.
+
+Root cause worth noting: the auto-triage promoter appears to have no dedup against ALREADY-OPEN promoted tickets, so the same recurring proposal gets re-promoted on each run that surfaces it. That de-dup gap may deserve its own fix beyond merging these two entries.
+
+Fix direction: merge #9 and #11 into a single ticket that carries the union of their proposals (keeping #11's two extra items), and delete the other. Then consider whether govern-improve-triage.sh should dedup a proposal against open tickets before promoting it.
+
+Done when: only one open ticket covers the Depends-on documentation + `--depends-on` flag + dependency lint work, with #11's two additional proposals preserved; the redundant entry is deleted with a commit message naming the merge; a decision is recorded (ticket or CLAUDE.md note) on whether triage-time dedup is worth adding.
+
+Ref: session 2026-07-25 — spotted while deduping the token-efficiency ticket set against the existing queue.
+
+---
