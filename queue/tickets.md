@@ -711,24 +711,24 @@ Ref: session 2026-07-26 — confirmed live against claude 2.1.220 by invoking a 
 
 ---
 
-## #57 — Ad-hoc test runs polluted logs/govern/ with 204 fixture transcripts — WS_ROOT resolution has no guard against a stubbed claude_bin
+## #57 — Ad-hoc test runs polluted logs/govern/ with 227 fixture transcripts — WS_ROOT resolution has no guard against a stubbed claude_bin
 
 **Severity:** High
 **Model:** sonnet
 
 Where: scripts/govern/lib/common.sh (WS_ROOT resolution, ~line 9) + scripts/govern/test/ (the fixture-stub test scripts) + logs/govern/ (the polluted tree itself).
 
-Observed: 204 of 262 files under logs/govern/run-*/ticket-*/worker*.jsonl are test-fixture output, not real worker sessions — 120 match byte-for-byte the canned `printf` strings in fake-`claude` stubs in scripts/govern/test/*.sh (test-spawn-worker.sh:35,82; test-interrupted-classification.sh:44,110,186,274; test-infra-halt.sh:23,46; test-locality-batch.sh:154; test-pr-footer.sh:39; test-worker-log-runscope.sh:43; test-tokenjam-runid.sh:40), and 84 are zero-byte placeholders in the same run-dirs. They use fixture ticket IDs that never existed in the queue (1, 5, 7, 8, 9, 19, 67, 101-104, 201-203, 301-303), spread across 18 run-dirs (4 on 2026-07-11, 14 on 2026-07-25 — ongoing, not historical).
+Observed: 227 of 262 files under logs/govern/run-*/ticket-*/worker*.jsonl are test-fixture output, not real worker sessions — 120 match byte-for-byte the canned `printf` strings in fake-`claude` stubs in scripts/govern/test/*.sh (test-spawn-worker.sh:35,82; test-interrupted-classification.sh:44,110,186,274; test-infra-halt.sh:23,46; test-locality-batch.sh:154; test-pr-footer.sh:39; test-worker-log-runscope.sh:43; test-tokenjam-runid.sh:40), and 84 are zero-byte placeholders in the same run-dirs. They use fixture ticket IDs that never existed in the queue (1, 5, 7, 8, 9, 19, 67, 101-104, 201-203, 301-303), spread across 18 run-dirs (4 on 2026-07-11, 14 on 2026-07-25 — ongoing, not historical). A later measurement pass found 23 MORE fixture transcripts previously miscounted as real sessions: single-line stubs with round-number usage (`input_tokens:100, output_tokens:50, cache_read:0, cache_creation:0`) and no `message.id`, sourced verbatim from scripts/govern/test/test-budget-exceeded-classification.sh:40,64 and scripts/govern/test/test-history-sizing-fields.sh:54. These 23 sit in the already-identified polluted run-dirs (run-20260725-121346-8620/ticket-7, run-20260725-111730-97043/ticket-7, run-20260725-111729-96725/ticket-7) but had a `"type":"assistant"` line, so a naive scan for that marker counted them as real. The reliable way to tell a real session from a fixture is the presence of a genuine `msg_...` `message.id` — fixtures never carry one. Only 35 of 262 files are real sessions.
 
 Root cause: common.sh:9 resolves WS_ROOT as a fixed relative path from the sourcing script's location ($GOVERN_LIB_DIR/../../..) rather than via a workspace marker or an explicit override guard. The test-*.sh scripts DO correctly export GOVERN_LOG_ROOT and are hermetic when run through their normal harness — so this pollution came from ad-hoc manual repros that wired a fake-claude stub via PATH without exporting GOVERN_LOG_ROOT/GOVERN_WS_ROOT, letting WS_ROOT silently fall through to the real workspace root.
 
-Impact: corrupts any cost/turn analysis run over the log tree — it caused a real measurement pass to report a bogus 78% "workers never reached a model turn" rate, because the fixture files (many zero-byte or single-line stub output) were indistinguishable from real failed sessions to a naive scan.
+Impact: corrupts any cost/turn analysis run over the log tree — it caused a real measurement pass to report a bogus 78% "workers never reached a model turn" rate, because the fixture files (many zero-byte or single-line stub output) were indistinguishable from real failed sessions to a naive scan, and a subset of those single-line stubs (see the 23 above) even carry a `"type":"assistant"` line, so distinguishing fixtures from real sessions requires checking for a genuine `msg_...` message.id, not just the presence of an assistant turn.
 
-Fix direction: make fixture runs structurally unable to write to the real tree — e.g. have spawn-worker.sh/run-loop.sh detect a stubbed/fake claude_bin (or require an explicit opt-in env like GOVERN_ALLOW_REAL_LOG_WRITE) and refuse to write under the real $WS_ROOT/logs unless it's set; or have WS_ROOT resolution require a workspace marker file rather than a fixed relative offset. Also clean up the 204 already-identified polluted files (the fixture-ticket-ID run-dirs above) so the log tree reflects only real worker sessions going forward.
+Fix direction: make fixture runs structurally unable to write to the real tree — e.g. have spawn-worker.sh/run-loop.sh detect a stubbed/fake claude_bin (or require an explicit opt-in env like GOVERN_ALLOW_REAL_LOG_WRITE) and refuse to write under the real $WS_ROOT/logs unless it's set; or have WS_ROOT resolution require a workspace marker file rather than a fixed relative offset. Also clean up the 227 already-identified polluted files (the fixture-ticket-ID run-dirs above) so the log tree reflects only real worker sessions going forward.
 
-Done when: a fixture/stub claude_bin run cannot write under the real logs/govern/ tree without an explicit opt-in; the 204 identified fixture files are removed from logs/govern/; a test covers "stubbed claude_bin refuses to write to the real log root"; bash -n passes; hub-first where the fix lives in scripts/govern/lib/common.sh's logic — port via shiploop/templates/govern/lib/common.sh and down via /shiploop:update; the log cleanup itself is workspace-local (logs/govern/ has no hub counterpart).
+Done when: a fixture/stub claude_bin run cannot write under the real logs/govern/ tree without an explicit opt-in; the 227 identified fixture files are removed from logs/govern/; a test covers "stubbed claude_bin refuses to write to the real log root"; bash -n passes; hub-first where the fix lives in scripts/govern/lib/common.sh's logic — port via shiploop/templates/govern/lib/common.sh and down via /shiploop:update; the log cleanup itself is workspace-local (logs/govern/ has no hub counterpart).
 
-Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; traced every fixture file to its originating test stub by byte-for-byte string match.
+Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; traced every fixture file to its originating test stub by byte-for-byte string match; corrected 204→227 after a later pass caught 23 single-line stubs (test-budget-exceeded-classification.sh, test-history-sizing-fields.sh) that had been miscounted as real sessions for lacking an obviously-fixture shape while still lacking a genuine message.id.
 
 ---
 
@@ -751,5 +751,56 @@ Fix direction: audit spawn-worker.sh's jsonl redirect and any retry/attempt logi
 Done when: the writer path that can produce a NUL-padded jsonl is identified and fixed (or ruled out, with a detection guard added instead); a test reproduces the seek/append ordering condition (or documents why it can't be reproduced deterministically) and asserts the guard catches it; whether govern::extract_report is or isn't vulnerable to a NUL-prefixed report is confirmed and documented either way; bash -n passes; hub-first — land in shiploop/templates/govern/spawn-worker.sh and port down via /shiploop:update.
 
 Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; confirmed via `grep -a` and byte-offset inspection that the file is a complete, valid, high-cost real session buried under a NUL prefix.
+
+---
+
+## #59 — Verify --exclude-dynamic-system-prompt-sections actually pays, or purge it
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: shiploop/templates/govern/spawn-worker.sh, shiploop/templates/govern/lib/common.sh.
+
+Observed: v1.13.0 shipped the `--exclude-dynamic-system-prompt-sections` flag into `templates/govern/spawn-worker.sh` behind a capability probe (`GOVERN_EXCLUDE_DYNAMIC_PROMPT`, default on), but its own keep/purge gate was never run — we shipped an unmeasured lever. Measurement now exists to size it: prefix re-read is 23.4% of total session tokens (aggregate over 35 real sessions), turn-1 loaded context is median 46,591 tokens (band ~36k-53k), and `prefix_i` varies 22k-36k per ticket (CoV 0.24). Important nuance found: turn-1 `cache_read` values recur EXACTLY across unrelated tickets (23,909 appears identically in tickets 27, 18, 44, 13, 15, 16, 14), proving a deterministic shared block ALREADY caches across workers — so the flag's marginal benefit is only over the dynamic sections (cwd, env, memory paths, git status), which may be small.
+
+Fix direction: run two workers concurrently in different worktrees with the flag on vs off, compare the second worker's turn-1 `cache_creation`.
+
+Done when: a committed before/after measurement exists and the flag is either kept with evidence or removed.
+
+Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; the 23,909 cache_read recurrence and the 23.4% prefix figure were derived over the 35 confirmed-real sessions identified while investigating #57.
+
+---
+
+## #60 — Land the v1.13.0 token-efficiency branch
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: shiploop/ sub-repo.
+
+Observed: worktree `token-efficiency` (slot 7, branch `token-efficiency` in the `shiploop` sub-repo) holds three unpushed commits with no PR: `12189b4` (worker-prompt B1 conciseness / B3 delegation floor / C1 subagent return contract, 256→270 lines) and `e3cbd9d` (+ its predecessor) (P2 `--exclude-dynamic-system-prompt-sections` behind a capability probe, C4 `--forward-subagent-text` regression lock, new `test-spawn-exclude-dynamic-prompt.sh`). All tests green. The prompt-side changes are now justified by measurement (median session output 17,448 tokens; ~260 tokens/turn added cost repays against a ~20% output cut plus avoided re-read).
+
+Fix direction: push the branch, open a PR against the shiploop hub, land it, then `npm run worktree:rm -- token-efficiency`.
+
+Done when: PR merged and worktree removed.
+
+Ref: session 2026-07-26 — found while auditing the token-efficiency worktree during a cost/turn measurement pass over logs/govern/.
+
+---
+
+## #61 — Correct or supersede .plans/2026-07-25-shiploop-v1.13.0-token-efficiency.md
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: .plans/2026-07-25-shiploop-v1.13.0-token-efficiency.md.
+
+Observed: the plan doc contains claims that were measured FALSE this session and will mislead a future session that reads it. Specifically: (1) Component C's mechanism is stated as "verified" — `PostToolUse` `updatedToolOutput` is a NO-OP in `claude -p` mode on CLI 2.1.220, so C1's hook half, C2 and C3 are unbuildable today (see learnings.md); (2) W6's "215 of 262 (82%) transcripts have no model turns" is fixture pollution, real production rate is ~0 (see #57); (3) B2 "remove generic self-check phrasing" is a no-op — no generic self-check phrasing exists in `worker-prompt.md`; (4) `--bare` should be added to the "already ruled out" section (biggest prefix lever, but OAuth/keychain are never read so it breaks subscription auth, and it skips hooks). Also worth recording as CONFIRMED: the ~27% prefix estimate measured at 23.4%.
+
+Fix direction: revise the doc in place with measured numbers and a "falsified by measurement" section.
+
+Done when: no claim in the doc contradicts learnings.md or #56-#58.
+
+Ref: session 2026-07-26 — found while re-checking the v1.13.0 token-efficiency plan doc against measurements made this session (see #56, #57, #58, and learnings.md's stream-json usage-accounting entries).
 
 ---
