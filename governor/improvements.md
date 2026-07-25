@@ -151,6 +151,8 @@ No rail-touching items found.
 
 ## 2026-07-25 12:12 — run run-20260725-111730-97043 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 12:12:** 5 safe proposal(s) → ticket **#50**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Both `ExitPlanMode` and `AskUserQuestion` are unavailable in this session, so this is evidently a headless/scripted invocation rather than an interactive plan-mode session — the actual deliverable here is the analysis text itself. Delivering it now, per the GOVERN-IMPROVE output contract:
 
 - `scripts/govern/spawn-worker.sh`: add a `GOVERN_FIX_CI` handling block (mirroring the existing `GOVERN_RESOLVE_CONFLICT` block at spawn-worker.sh:239-261) that injects the PR number, an excerpt of the actually-failing CI job's log, and "a prior attempt already implemented this — your job is ONLY to fix the failing check" framing — this run's #19 worker had to rediscover the existing-PR-with-red-CI situation entirely from scratch, burning budget and hitting a stray `cd templates/govern/test: no such file or directory`. This exact gap is already named as open tickets #10/#13 in `scripts/govern/test/test-ticket-deps-prose.sh:31`; this run is a live, reproduced instance of it.
