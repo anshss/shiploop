@@ -63,6 +63,13 @@ WORKTREE_BASE="${WORKTREE_BASE:-$HOME/Folder/code/worktrees/shiploop.wt}"
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-shiploop}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
+# ── Locality batching (GOVERN_BATCH_MAX) ─────────────────────────────────────
+# Max tickets one worker may take as a same-locality GROUP. 1 = off (the upstream default): one
+# worker per ticket. Above 1, tickets touching the same area are grouped so discovery is paid once
+# and concurrent workers cannot collide on the same file. Set to 3 here to exercise the v1.12.0
+# feature on a real backlog before proposing a higher default for every fleet.
+export GOVERN_BATCH_MAX="${GOVERN_BATCH_MAX:-3}"
+
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────
 # How much the governor is allowed to do on its own. Flip ONE knob as trust builds — the graduation
 # is observe → pr-only → auto (see commands/govern.md + governor/README.md):
