@@ -220,7 +220,7 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # Cross-run, append-only outcome history (#60) — survives across runs so a ticket that fails
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
-excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nintr=0; done_count=0
+excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
 TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
                     # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
 # #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
@@ -403,7 +403,7 @@ consecutive_fails() { # ticket -> count
     [ .[] | select(.ticket == $t) ] | reverse
     | (reduce .[] as $e ({n:0,stop:false};
         if .stop then .
-        elif ($e.status=="failed" or $e.status=="timeout") then {n:(.n+1),stop:false}
+        elif ($e.status=="failed" or $e.status=="timeout" or $e.status=="budget-exceeded") then {n:(.n+1),stop:false}
         else {n:.n,stop:true} end)).n' "$HISTORY" 2>/dev/null || echo 0
 }
 
@@ -439,7 +439,7 @@ write_summary() {
     echo "- **Ended:** $reason"
     echo "- **Ran for:** ${m}m ${s}s"
     echo "- **Mode:** $MODE$(govern::target_set_desc)"
-    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · ↻ interrupted ${nintr:-0}"
+    echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · 💸 budget-exceeded ${nbudget:-0} · ↻ interrupted ${nintr:-0}"
     # Cost transparency: a per-run spend line — tokens (always, when the worker JSONL carried usage)
     # and dollar cost (only when the JSONL carried total_cost_usd), summed AND per ticket. Reads
     # $HISTORY, where record()/history_enrich already folded each worker's stream-json usage +
@@ -1292,6 +1292,17 @@ while :; do
       slim_worktree "$N"
       excludes="$excludes,$N"; ntimeout=$((ntimeout+1)); bad_streak=$((bad_streak+1))
       ;;
+    budget-exceeded)
+      # #16: the worker was HARD-KILLED by GOVERN_WORKER_MAX_TOKENS before it could write a verdict —
+      # same "incomplete, not failed" treatment as `timeout` (mirrors #241 above), but recorded under a
+      # DISTINCT status so it stays visible in state.jsonl + cross-run history for its own axis: a
+      # ticket that keeps burning its token budget without finishing is a DIFFERENT systemic signal
+      # than one that keeps running out the wall clock (e.g. a cheap-tier model in over its depth).
+      record "$N" budget-exceeded "killed mid-run — exceeded GOVERN_WORKER_MAX_TOKENS before verdict; INCOMPLETE, not failed; re-run resumes. worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
+      govern::log "#$N BUDGET-EXCEEDED — killed before verdict (token budget); recorded INCOMPLETE (not failed), worktree PRESERVED at $(wt_path "$N") (re-run resumes) [#16]"
+      slim_worktree "$N"
+      excludes="$excludes,$N"; nbudget=$((nbudget+1)); bad_streak=$((bad_streak+1))
+      ;;
     interrupted)
       # #34: the worker died on a TRANSIENT connection drop mid-response (laptop sleep / network
       # suspend) and the auto-retry above ALSO dropped — NOT a ticket fault and NOT a persistent
@@ -1478,7 +1489,7 @@ if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
   GOVERN_HISTORY_FILE="$HISTORY" "$DIR/govern-health.sh" --run "$(basename "$RUNDIR")" 2>/dev/null \
     | while IFS= read -r _hl; do govern::log "health | $_hl"; done || true
 fi
-govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
+govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout budget-exceeded=$nbudget interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 
 # Auto-trigger sync-port at run-end IFF (a) the mechanism script is present in

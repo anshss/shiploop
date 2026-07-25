@@ -1618,6 +1618,24 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
+# ── in-flight token-budget monitoring (#16) ─────────────────────────────────
+# The only ceiling on a worker used to be wall-clock (GOVERN_WORKER_TIMEOUT) — a worker that wanders
+# could burn tens of millions of tokens before that fired. GOVERN_WORKER_MAX_TOKENS adds a cumulative
+# per-attempt token cap, polled against the LIVE worker.jsonl while the worker is still running. The
+# authoritative cumulative total only lands in the final `"type":"result"` event, which doesn't exist
+# until the process exits — too late for a kill switch — so this sums the per-turn `.message.usage`
+# carried on every `"type":"assistant"` event instead. Best-effort: a partial last line mid-write is
+# tolerated (jq drops the unparsable line; the already-flushed ones still count), and a missing/empty
+# file reads as 0.
+govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if none/unreadable)
+  local jsonl="${1:-}" total
+  [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
+  total="$(grep '"type":"assistant"' "$jsonl" 2>/dev/null \
+    | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.output_tokens//0)+(.cache_read_input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')"
+  echo "${total:-0}"
+}
+
 # ── tolerant worker-report extraction (#66) ─────────────────────────────────
 # The strict contract is "the worker's final message is ONLY a single JSON object", but a worker
 # that DID the work sometimes drifts to "JSON + trailing prose" (or writes prose into report.json).

@@ -109,6 +109,8 @@ Relay its log lines to the operator as they appear. The driver does everything â
   so a re-run continues cleanly.
 - Hard bounds so a run always ends: `GOVERN_MAX_TICKETS` (20), `GOVERN_MAX_BAD_STREAK` (4),
   `GOVERN_MAX_RUNTIME` (`0` = no cap by default; set to bound wall-clock), `GOVERN_WORKER_TIMEOUT`
-  (1h, a stuck worker is killed not stalled).
+  (1h, a stuck worker is killed not stalled), `GOVERN_WORKER_MAX_TOKENS` (0 = unlimited by default; a
+  wandering worker is killed once it crosses the budget, recorded as a distinct `budget-exceeded`
+  outcome).
 - Progress-preserving: only resolved worktrees are torn down; failed/parked/timed-out worktrees are
   kept (work survives). Every exit writes `logs/govern/run-*/summary.md`.

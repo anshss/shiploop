@@ -320,6 +320,20 @@ strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && stri
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
+
+# #16: per-attempt cumulative TOKEN cap — wall-clock was the only ceiling before this; a worker that
+# wanders can burn tens of millions of tokens before $to fires (tickets #3/#6: ~22M tokens/~$9.7
+# each). GOVERN_WORKER_MAX_TOKENS=0 is the DEFAULT and means unlimited, preserving current behavior
+# for anyone who does not opt in. When set >0, a watchdog polls the LIVE worker.jsonl every
+# GOVERN_TOKEN_POLL_S seconds (govern::cumulative_tokens) and kills the worker tree exactly like the
+# wall-clock watchdog below once cumulative tokens exceed the budget — but stamps a $budget_marker
+# file so the outcome is recorded as a DISTINCT `budget-exceeded` status, not `timeout` (a future
+# evidence-based escalation needs to tell "ran out of budget while still exploring" apart from other
+# failure modes).
+tok_budget="${GOVERN_WORKER_MAX_TOKENS:-0}"
+tok_poll="${GOVERN_TOKEN_POLL_S:-20}"
+worker_budget_exceeded=0
+budget_marker="$logdir/budget-exceeded.marker"; rm -f "$budget_marker"
 # #239: stamp the worker's start time. After the worker exits — for ANY reason, including a
 # GOVERN_WORKER_TIMEOUT kill — we sweep every non-terminal external resource the worker may have
 # created since this epoch and close it (see run_deploy_sweep below), so a killed/timed-out worker
@@ -373,9 +387,10 @@ govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 # tree (group kill + pid-walk) in one sweep. The EXIT trap covers a clean return (cpid already gone →
 # fast no-op) and an abrupt one; the INT/TERM trap covers run-loop forwarding a stop signal to us
 # (run-loop SIGTERMs this process on its own stop), so the kill cascades driver → spawn-worker → tree.
-cpid=""; wd=""
+cpid=""; wd=""; twd=""
 spawn_worker_cleanup() {
   [[ -n "${wd:-}" ]] && { kill "$wd" 2>/dev/null || true; govern::_kill_tree_walk "$wd" TERM; }
+  [[ -n "${twd:-}" ]] && { kill "$twd" 2>/dev/null || true; govern::_kill_tree_walk "$twd" TERM; }
   [[ -n "${cpid:-}" ]] && govern::kill_tree "$cpid" "${GOVERN_KILL_GRACE_S:-10}"
   return 0   # EXIT-trap body must end 0 — its last status would otherwise become the script's exit code
 }
@@ -421,11 +436,29 @@ if [[ "$to" -gt 0 ]]; then
       govern::kill_tree "$cpid" 10
     fi ) 1>/dev/null & wd=$!
 fi
+# #16: token-budget watchdog — same shape as the wall-clock one above, polling cumulative usage
+# instead of a fixed deadline. 1>/dev/null for the same reason: it must not inherit this script's
+# stdout, which feeds the caller's $(...) capture.
+if [[ "$tok_budget" -gt 0 ]]; then
+  ( while kill -0 "$cpid" 2>/dev/null; do
+      sleep "$tok_poll"
+      kill -0 "$cpid" 2>/dev/null || break
+      cur="$(govern::cumulative_tokens "$jsonl")"
+      if [[ "${cur:-0}" -gt "$tok_budget" ]]; then
+        govern::log "worker #$N exceeded token budget (${cur} > ${tok_budget}) — terminating worker tree; worktree PRESERVED at $wtpath (re-run resumes) [#16]"
+        : > "$budget_marker"
+        govern::kill_tree "$cpid" 10
+        break
+      fi
+    done ) 1>/dev/null & twd=$!
+fi
 wait "$cpid"; rc=$?
 if [[ -n "$wd" ]]; then kill "$wd" 2>/dev/null; govern::_kill_tree_walk "$wd" TERM; fi
-wd=""; cpid=""   # worker + watchdog reaped — disarm the cleanup traps' fast path
+if [[ -n "$twd" ]]; then kill "$twd" 2>/dev/null; govern::_kill_tree_walk "$twd" TERM; fi
+wd=""; cpid=""; twd=""   # worker + watchdogs reaped — disarm the cleanup traps' fast path
 set -e
 if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
+[[ -f "$budget_marker" ]] && { worker_killed=1; worker_budget_exceeded=1; }
 
 # #239: sweep this worker's orphan resources NOW — before report resolution and on EVERY exit path
 # (resolved / failed / parked / timed-out / killed). A worker hard-killed by GOVERN_WORKER_TIMEOUT
@@ -456,6 +489,10 @@ fi
 #                reached the report write — recording that as `failed` masks a working result as broken
 #                (a false launch-blocking signal) and wastes a re-run. So emit a DISTINCT
 #                status:"timeout" (incomplete, worktree preserved) → run-loop re-runs it.
+#      budget-exceeded — same kill-before-verdict shape, but HARD-KILLED by the GOVERN_WORKER_MAX_TOKENS
+#                watchdog instead of the wall-clock one (#16). Kept DISTINCT from "timeout" so a
+#                future evidence-based escalation can tell "ran out of budget while still exploring"
+#                apart from other failure modes.
 #      failed  — worker finished/errored on its own (no kill) yet produced no parseable report: a
 #                genuine ticket failure.
 if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
@@ -483,6 +520,13 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     govern::log "worker for #$N → INTERRUPTED — transient connection drop mid-response (e.g. laptop sleep), worktree preserved at $wtpath (auto-retry resumes): $intr_sig"
     report="$(jq -nc --arg e "$intr_sig" --arg wt "$wtpath" \
       '{status:"interrupted",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},interrupted:{error:$e},escalation:null}')"
+  elif [[ "$worker_budget_exceeded" -eq 1 ]]; then
+    # #16: kill-before-verdict via the TOKEN watchdog — a DISTINCT outcome from a wall-clock timeout,
+    # not failed. The worktree is preserved; a re-run resumes it.
+    reason="worker exceeded the GOVERN_WORKER_MAX_TOKENS budget (${tok_budget} tokens) and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Distinct from a wall-clock timeout: this worker burned its token budget, which usually means it was still exploring/wandering (#16)."
+    govern::log "worker for #$N → budget-exceeded (killed before verdict; NOT recorded failed) [#16]: $reason"
+    report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
+      '{status:"budget-exceeded",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_MAX_TOKENS if it legitimately needs a bigger budget)"),options:[]}}')"
   elif [[ "$worker_killed" -eq 1 ]]; then
     # #241: kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result (#241)."
