@@ -1,21 +1,84 @@
 {
   "hooks": {
-    "SessionStart": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
-      { "type": "command", "command": "if [ -f /Users/anshs/Folder/code/shiploop/learnings.md ]; then echo '── workspace learnings ──'; head -30 /Users/anshs/Folder/code/shiploop/learnings.md; echo '...'; fi", "timeout": 5 },
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 }
-    ]}],
-    "UserPromptSubmit": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
-    ]}],
-    "PreToolUse": [{ "matcher": "Read|Bash", "hooks": [
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
-    ]}],
-    "Stop": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
-    ]}],
-    "SessionEnd": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash /Users/anshs/Folder/code/shiploop/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
-    ]}]
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/session-snapshot.sh 2>/dev/null || true",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "if [ -f /Users/anshs/Folder/code/shiploop/learnings.md ]; then echo '── workspace learnings ──'; head -30 /Users/anshs/Folder/code/shiploop/learnings.md; echo '...'; fi",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/check-main-on-main.sh 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/validations-pending-hook.sh 2>/dev/null || true",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/router-posture-reminder.sh 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/router-posture-guard.sh 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/ticket-sweep-reminder.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/anshs/Folder/code/shiploop/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
   }
 }

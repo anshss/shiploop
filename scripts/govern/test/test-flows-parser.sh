@@ -94,7 +94,7 @@ EOF
 if govern::flow_ids "$F" | grep -qx "#12"; then coll=1; else coll=0; fi
 assert_eq "$coll" "0" "flow_ids: a `## #12` ticket-style heading is never parsed as a flow id"
 
-# ── Regression (#3): a `## <id>` heading sitting inside a multi-line <!-- --> comment block (e.g. a
+# ── Regression: a `## <id>` heading sitting inside a multi-line <!-- --> comment block (e.g. a
 # scaffolded seed example kept as commented-out documentation) is decoration, not a real flow — the
 # block scanner must never see it. A real flow declared AFTER the comment block must still parse fine
 # (the comment-strip must not leak state and swallow the rest of the file).

@@ -46,6 +46,16 @@ MODEL_IS_RETRY=0
 [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
 export TICKET_MODEL MODEL_IS_RETRY
 
+# #18: LATCH the per-ticket `Effort:` field the SAME anchored way as Model — reasoning effort is an
+# INDEPENDENT knob from model tier (raising effort is far cheaper than raising tier, so it's the
+# correct first rung on the escalation ladder). Reuses MODEL_IS_RETRY: a failed cheap bet (either
+# knob) shouldn't be re-bet on retry.
+TICKET_EFFORT="$(printf '%s' "$block" \
+  | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
+  | sed -n 's/^[[:space:]]*\*\{0,2\}[Ee]ffort:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' \
+  | head -1)"
+export TICKET_EFFORT
+
 # LATCH the per-ticket `Flow:` field (flow-registry validation ids) the SAME anchored way as Model —
 # the contiguous leading field block only, so a `Flow:` mention in prose/code can't be mis-parsed.
 # Space/comma list; whitespace normalized to single spaces. Injected as full flow blocks below.
@@ -71,6 +81,18 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   elif [[ -n "$TICKET_MODEL" && "$MODEL_IS_RETRY" -eq 1 ]]; then
     dr_source="GOVERN_WORKER_MODEL (retry — ticket Model: '$TICKET_MODEL' skipped)"
   fi
+  # #18: mirror the model resolution above, but the "unset" default is NO flag at all (empty
+  # string), not an invented tier — preserves today's session-default behavior when nothing is set.
+  dr_effort="${GOVERN_WORKER_EFFORT:-}"
+  dr_effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$dr_effort" ]] && dr_effort_source="none (unset)"
+  if [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 0 ]]; then
+    case "$TICKET_EFFORT" in
+      low|medium|high|xhigh|max) dr_effort="$TICKET_EFFORT"; dr_effort_source="ticket-Effort-field" ;;
+      *) dr_effort_source="${dr_effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
+    esac
+  elif [[ -n "$TICKET_EFFORT" && "$MODEL_IS_RETRY" -eq 1 ]]; then
+    dr_effort_source="${dr_effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
+  fi
   dr_mode="${GOVERN_MODE:-live}"
   dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
   [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
@@ -79,13 +101,16 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
     --arg source "$dr_source" \
+    --arg effort "$dr_effort" \
+    --arg effort_source "$dr_effort_source" \
     --arg perm "$dr_perm" \
     --arg mcp "$dr_strict_mcp" \
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
+    --arg te "$TICKET_EFFORT" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, is_retry:$retry, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
   exit 0
 fi
 
@@ -122,7 +147,7 @@ End every PR body you open with EXACTLY this attribution line as the FINAL line 
 \"🤖 Generated with …\" line — keep only this ONE footer, plus the Co-Authored-By trailer the
 commit hook adds):
 
-PR shipped by [shiploop](https://github.com/anshss/shiploop)"
+🤖 shipped by [shiploop](https://github.com/anshss/shiploop)"
 fi
 
 # Public-repo PR hygiene: on a PUBLIC target repo the branch MUST NOT carry the internal ticket id
@@ -312,11 +337,37 @@ elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
   govern::log "worker #$N: retry detected (preserved worktree) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
 fi
 
+# #18: reasoning effort — an INDEPENDENT knob from model tier: raising effort is far cheaper than
+# raising tier, so it's the correct first rung on the escalation ladder. Unset (no GOVERN_WORKER_EFFORT
+# and no ticket Effort:) means NO --effort flag is passed at all — preserves today's session-default
+# behavior exactly; there is no invented default. GOVERN_WORKER_EFFORT sets a workspace-wide floor; a
+# per-ticket `Effort:` field overrides it on the ticket's FIRST attempt only (same retry-escalates-away
+# rule as Model:, via the same MODEL_IS_RETRY signal — a failed cheap bet isn't re-bet on retry).
+effort="${GOVERN_WORKER_EFFORT:-}"
+effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
+if [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
+  case "$TICKET_EFFORT" in
+    low|medium|high|xhigh|max)
+      govern::log "worker #$N effort=$TICKET_EFFORT per ticket Effort: field (first attempt; brain-decided)"
+      effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field"
+      ;;
+    *)
+      govern::log "worker #$N: ignoring unknown Effort: '$TICKET_EFFORT' from ticket — using ${effort:-<none>} (fail-safe)"
+      ;;
+  esac
+elif [[ -n "${TICKET_EFFORT:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
+  govern::log "worker #$N: retry detected (preserved worktree) — using ${effort:-<none>} (ignoring ticket Effort: $TICKET_EFFORT)"
+fi
+
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
 # risks a teardown stall on exit. --strict-mcp-config = load ONLY --mcp-config files (we pass
 # none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers.
 strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && strict_mcp=""
+
+# #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
+# at the CLI's session-default effort, exactly as before this ticket (no invented default).
+effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
@@ -378,7 +429,7 @@ run_deploy_sweep() {
 # claude via `env VAR=...` below — the governor's own shell OTEL_RESOURCE_ATTRIBUTES is unchanged.
 otel_attrs="$(govern::otel_attrs "$slug")"
 
-govern::log "spawning worker for #$N (mode=$mode, model=$model, timeout=${to}s) in $wtpath"
+govern::log "spawning worker for #$N (mode=$mode, model=$model, effort=${effort:-none} [$effort_source], timeout=${to}s) in $wtpath"
 govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 
 # #242: tear the worker subtree down on EVERY exit path so a stopped/killed governor never leaves an
@@ -422,7 +473,7 @@ set -m
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
     $strict_mcp \
-    --permission-mode "$permflag" --model "$model" ) >"$jsonl" 2>&1 &
+    --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
 if [[ "$to" -gt 0 ]]; then

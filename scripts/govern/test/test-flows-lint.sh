@@ -74,7 +74,7 @@ assert_contains "$(cat "$T/err")" "PII/secret" "PII FAIL message"
 printf '# evidence\nauth flow validates an email login someone@example.com <!-- lint:allow email -->\n' > "$M/.claude/shiploop/validation/evidence/deploy.example.md"
 assert_eq "$(run_lint)" "0" "PII with a <!-- lint:allow --> marker is suppressed (rc 0)"
 
-# ── Regression (#3): a registry whose ONLY "flows" are commented-out seed examples must lint cleanly
+# ── Regression: a registry whose ONLY "flows" are commented-out seed examples must lint cleanly
 # (rc 0) and stay byte-for-byte unmutated — a `## <id>` heading sitting inside a multi-line
 # `<!-- ... -->` block must never be treated as a real flow, so its placeholder zero-match glob can
 # never trip the zero-match FAIL + auto-degrade-to-STALE mutation INSIDE the comment.

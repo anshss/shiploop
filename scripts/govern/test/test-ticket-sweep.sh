@@ -124,8 +124,8 @@ dirty_subrepo "$T"
 out="$(sweep "$T" sess9clean)"
 assert_contains "$out" '"decision":"block"' "no baseline + dirty tree → absolute fallback fires"
 
-# ── 10. Regression (#3): a FLOWS LINT FAIL (zero-match glob) at session end must surface the lint's
-#        own message under the neutral wrapper, NEVER the #252 dangling-.claude/shiploop/validation-ref
+# ── 10. Regression: a FLOWS LINT FAIL (zero-match glob) at session end must surface the lint's own
+#        message under the neutral wrapper, NEVER the #252 dangling-.claude/shiploop/validation-ref
 #        framing — the two are independent failure shapes from the same lint script.
 T="$(mk_sandbox)"
 mkdir -p "$T/main/.claude/shiploop/validation"

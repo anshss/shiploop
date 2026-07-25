@@ -1,22 +1,73 @@
 #!/usr/bin/env bash
 # Governor v2 — pure-bash driver. Spends ~zero Claude context itself; Claude is invoked only
 # in fresh, bounded sessions: the per-ticket worker (spawn-worker) and the periodic supervisor.
-# Usage: run-loop.sh [--dry-run] [--exclude N,N,...] [<ticket-number>]
-#   no args        → work the whole eligible backlog sequentially
-#   <number>       → work that one ticket only
-#   --dry-run      → worker runs plan-mode; merge + bookkeep are skipped (logged)
-#   --exclude N,N  → skip these ticket numbers (e.g. a parallel govern session owns them)
+# Usage: run-loop.sh [--dry-run] [--exclude N,N,...] [--parallel[=N]|--serial] [<ticket-number> ...]
+#   no args          → work the whole eligible backlog. Sequentially, or N tickets at a time when
+#                       the workspace sets GOVERN_PARALLEL_DEFAULT=N (see the concurrency block)
+#   <number>         → work that one ticket only
+#   <N> <N> <N> ...  → work EXACTLY that ticket SET, in the driver's normal severity order
+#                       within the set (a ticket not found / not eligible is skipped with a
+#                       logged reason, never silently). Duplicates are folded.
+#                       Every numeric arg used to OVERWRITE a single $TARGET, so
+#                       `run-loop.sh 152 153 154 155` silently kept only #155 and reported
+#                       success for a one-ticket run — the other three were never touched.
+#   --dry-run        → worker runs plan-mode; merge + bookkeep are skipped (logged)
+#   --exclude N,N    → skip these ticket numbers (e.g. a parallel govern session owns them)
+#   --parallel[=N]   → work tickets CONCURRENTLY, up to N at once. This process becomes an
+#                       ORCHESTRATOR (each child gets GOVERN_ALLOW_CONCURRENT=1 + --serial); it
+#                       waits for all of them and logs one aggregate resolved/parked/failed/
+#                       timed-out tally, folding every child's per-ticket rows into this run's
+#                       state.jsonl. Two shapes:
+#                         · explicit ticket SET → one single-ticket child per named ticket.
+#                         · NO targets (backlog) → N FULL backlog drivers, each running the
+#                           ordinary sequential loop and contending on the per-ticket claim lock.
+#                           Each keeps pulling the next eligible ticket until the backlog is dry,
+#                           so a backlog run still grinds the WHOLE backlog, N at a time — and
+#                           every backlog mechanism (dependency gate, #60 streak, supervisor
+#                           cadence + its attemptNext queue, bad-streak, MAX_TICKETS) keeps
+#                           working, because it lives in that loop. See the orchestrator block.
+#                       It composes the SAME machinery a manual "launch N drivers with
+#                       GOVERN_ALLOW_CONCURRENT=1" recipe always used — the per-ticket claim lock
+#                       + the bookkeep lock (below) are what make concurrent drivers exactly-once
+#                       safe; the orchestrator adds nothing new to that safety model, it just
+#                       drives the fan-out for you. NOTE: the hard bounds are PER DRIVER, so a
+#                       backlog run's ceiling is N × GOVERN_MAX_TICKETS (it still always ends).
+#   --serial         → opt back OUT of parallel: one ticket at a time, over the whole backlog.
+#                       `--parallel=1` / `GOVERN_PARALLEL=1` mean the same thing.
+#   --orchestrated   → INTERNAL, set by the orchestrator on each child it spawns: "the run-start
+#                       reconcile already ran once for this run — skip it". Never pass it by hand;
+#                       a driver run with it reconciles nothing (see the RECONCILE block).
+#
+# Concurrency precedence (highest wins):
+#   1. --serial                     → sequential (always wins; nothing overrides an explicit opt-out)
+#   2. --parallel=N                 → parallel, cap N (flag beats env, like every other flag here)
+#   3. --parallel (bare)            → parallel, cap = GOVERN_PARALLEL, else GOVERN_PARALLEL_DEFAULT,
+#                                     else 4
+#   4. GOVERN_PARALLEL=N (env only) → parallel, cap N
+#   5. nothing given                → the WORKSPACE default: GOVERN_PARALLEL_DEFAULT (scripts/lib/
+#      workspace.sh). Unset or 1 = sequential (so bumping the templates never changes an existing
+#      workspace's behavior); N > 1 = parallel at cap N. With several tickets named the cap is the
+#      target-set size. Naming EXACTLY ONE ticket stays sequential either way — there is nothing to
+#      fan out, and a cap-1 orchestrator is just overhead.
+#   A resolved cap of 1 (from any source) collapses to the sequential driver rather than an
+#   orchestrator-of-one, so `--parallel=1` grinds the whole backlog one ticket at a time.
 #
 # GOVERN_ALLOW_CONCURRENT=1 → run alongside another driver (parallel sessions on disjoint
 #   tickets, #41): skips the single-run lock; safety comes from the per-ticket claim lock
 #   (governor/.locks/ticket-N) + the bookkeep lock. Pair with --exclude to partition the backlog.
+#   (--parallel above sets this on each child automatically — you only set it by hand when
+#   hand-launching your own concurrent drivers instead of using --parallel.)
 #
 # Hard bounds (so an unattended run always ends; tune via env):
 #   GOVERN_MAX_TICKETS     (20)    stop after this many tickets processed this run
 #   GOVERN_MAX_BAD_STREAK  (4)     stop after this many CONSECUTIVE parked/failed
 #   GOVERN_MAX_RUNTIME     (0)     stop starting new tickets after this many seconds; 0 = no cap (default).
 #                                  (MAX_TICKETS + per-worker timeout + bad-streak still bound the run.)
-#   GOVERN_SUPERVISOR_EVERY(5)     supervisor review cadence (+ on anomaly)
+#   GOVERN_SUPERVISOR_EVERY(5)     supervisor review cadence, per driver (+ on anomaly)
+#   GOVERN_SUPERVISOR_FLUSH(1)     1 = also review the tail the periodic cadence never reaches: one
+#                                  flush per driver at end-of-loop when it holds unreviewed resolves,
+#                                  plus ONE whole-run pass in the --parallel orchestrator over the
+#                                  aggregated state.jsonl. 0 = periodic + anomaly only.
 #   GOVERN_WORKER_TIMEOUT  (3600)  per-worker wall-clock cap (enforced in spawn-worker)
 #
 # Progress preservation (acts like a human reopening sessions — never throws away work):
@@ -31,17 +82,89 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 
-MODE=live; TARGET=""; EXCLUDE_INIT=""
+MODE=live; TARGETS=(); EXCLUDE_INIT=""; PARALLEL=0; PARALLEL_N=""; SERIAL=0; ORCHESTRATED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)      MODE=dry;;
+    # INTERNAL (set only by govern::_parallel_spawn, never by a human): "an orchestrator already ran
+    # this run's run-start reconcile — don't repeat it". See the RECONCILE block below.
+    --orchestrated) ORCHESTRATED=1;;
     --exclude)      shift; EXCLUDE_INIT="${EXCLUDE_INIT:+$EXCLUDE_INIT,}${1//[^0-9,]/}";;
     --exclude=*)    EXCLUDE_INIT="${EXCLUDE_INIT:+$EXCLUDE_INIT,}${1#--exclude=}"; EXCLUDE_INIT="${EXCLUDE_INIT//[^0-9,]/}";;
-    [0-9]*)         TARGET="$1";;
+    --parallel)     PARALLEL=1;;
+    --parallel=*)   PARALLEL=1; PARALLEL_N="${1#--parallel=}"; PARALLEL_N="${PARALLEL_N//[^0-9]/}";;
+    --serial|--no-parallel) SERIAL=1;;
+    # Ticket SET fix: collect EVERY numeric arg into TARGETS instead of overwriting a single
+    # TARGET — `run-loop.sh 152 153 154 155` previously kept only the LAST number (155) and
+    # silently worked one ticket while the run reported success. A repeated number is folded
+    # (no-op), never a second pass over the same ticket.
+    [0-9]*)         case ",$(IFS=,; echo "${TARGETS[*]:-}")," in *",$1,"*) ;; *) TARGETS+=("$1");; esac;;
     *) govern::die "unknown arg: $1";;
   esac
   shift
 done
+# --parallel bare (no =N) falls back to GOVERN_PARALLEL, then a target-set-sized/default cap.
+# An explicit `--parallel=N` always wins over GOVERN_PARALLEL (flag > env, per the CLI contract
+# every other flag here follows). GOVERN_PARALLEL alone (no --parallel flag at all) also turns
+# parallel mode ON — an operator scripting via env-only shouldn't need the flag too.
+[[ "$PARALLEL" -eq 0 && -n "${GOVERN_PARALLEL:-}" ]] && PARALLEL=1
+if [[ "$PARALLEL" -eq 1 && -z "$PARALLEL_N" ]]; then
+  PARALLEL_N="${GOVERN_PARALLEL:-}"
+  PARALLEL_N="${PARALLEL_N//[^0-9]/}"
+fi
+# TARGET: legacy single-value alias. Every existing "was an explicit target given" branch below
+# tests ${#TARGETS[@]} (true for 1..N targets) so a ticket SET gets the same explicit-target
+# bypasses (dependency gate, cross-driver re-verify, #60 failure-streak override) a lone target
+# always got; TARGET itself now only feeds log/summary strings that read naturally for the
+# single-ticket case.
+TARGET=""; [[ "${#TARGETS[@]}" -eq 1 ]] && TARGET="${TARGETS[0]}"
+# GOVERN_PARALLEL_DEFAULT — the per-workspace DEFAULT concurrency, set in scripts/lib/workspace.sh
+# (or the env). This is the knob that decides whether a plain `run-loop.sh` fans out at all:
+#   unset / 1 → sequential, byte-identical to the pre-flag behavior. A workspace that bumps its
+#               templates therefore never changes run shape until it opts in — the harness contract.
+#   N > 1     → parallel by default at cap N (a fleet that wants fan-out sets this once, e.g. 4),
+#               with `--serial` always available to opt back out for a single run.
+# The carve-out is EXACTLY ONE named ticket: there is nothing to fan out, so it stays on the
+# sequential driver (no orchestrator process in the way) regardless of this knob.
+# The fallback is 4, not 1, and that is load-bearing: `/shiploop:update` PRESERVES a workspace's
+# scripts/lib/workspace.sh, so an EXISTING fleet can never pick up a new default from the template.
+# This fallback is the only path that reaches them — a workspace whose workspace.sh predates the
+# GOVERN_PARALLEL_DEFAULT knob gets parallel-by-default on upgrade. A workspace that explicitly sets
+# the knob (including to 1) always wins over this, and `--serial` opts out for any single run.
+PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"; PARALLEL_DEFAULT="${PARALLEL_DEFAULT//[^0-9]/}"
+PARALLEL_DEFAULT="${PARALLEL_DEFAULT:-4}"
+if [[ "$SERIAL" -eq 0 && "$PARALLEL" -eq 0 && "${#TARGETS[@]}" -ne 1 && "$PARALLEL_DEFAULT" -gt 1 ]]; then
+  PARALLEL=1
+fi
+# Resolve the concurrency cap once TARGETS is final: the target-set size when targets were given
+# (run the whole requested set at once); else the workspace default; else 4 — that last case is a
+# bare `--parallel` on a workspace that never set the knob, where "the operator explicitly asked to
+# fan out" must not resolve to a cap of 1 (which would collapse straight back to sequential).
+if [[ "$PARALLEL" -eq 1 && -z "$PARALLEL_N" ]]; then
+  if   [[ "${#TARGETS[@]}" -gt 0 ]];    then PARALLEL_N="${#TARGETS[@]}"
+  elif [[ "$PARALLEL_DEFAULT" -gt 1 ]]; then PARALLEL_N="$PARALLEL_DEFAULT"
+  else                                       PARALLEL_N=4
+  fi
+fi
+# --serial, --parallel=1 and GOVERN_PARALLEL=1 all mean the SAME thing: one ticket at a time over
+# the WHOLE backlog. Collapse them onto the sequential driver instead of an orchestrator with a cap
+# of 1 — an orchestrator-of-one would spawn a child per ticket for no concurrency at all, and (in
+# backlog mode) is a pointless process layer around the very loop it wraps.
+if [[ "$SERIAL" -eq 1 || ( "$PARALLEL" -eq 1 && "${PARALLEL_N:-1}" -le 1 ) ]]; then PARALLEL=0; PARALLEL_N=1; fi
+# Human-readable target descriptor for logs/summary: "" (backlog) · " (single ticket #N)" ·
+# " (target set: #A #B #C · 3)". Called at run-start AND at write_summary time (run-end), so it
+# reads TARGETS live rather than caching a string — harmless since TARGETS is only ever drained
+# by ticket SELECTION (never by this function) and stays a stable record of what was ASKED for.
+govern::target_set_desc() {
+  local d=""
+  case "${#TARGETS[@]}" in
+    0) ;;
+    1) d=" (single ticket #${TARGETS[0]})";;
+    *) d="$(printf ' (target set: %s · %d)' "$(printf '#%s ' "${TARGETS[@]}" | sed 's/ $//')" "${#TARGETS[@]}")";;
+  esac
+  [[ "${PARALLEL:-0}" -eq 1 ]] && d="$d [parallel, up to ${PARALLEL_N:-?} concurrent]"
+  printf '%s' "$d"
+}
 SUP_EVERY="${GOVERN_SUPERVISOR_EVERY:-5}"
 MAX_TICKETS="${GOVERN_MAX_TICKETS:-20}"
 MAX_BAD_STREAK="${GOVERN_MAX_BAD_STREAK:-4}"
@@ -55,7 +178,11 @@ START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
 # ticket instead of silently dropping it.
 ABORTED=0; ABORT_RC=0; CUR_TICKET=""; CUR_TICKET_MERGED=""
 
-RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$RUNDIR"
+# PID suffix (not just the second-resolution timestamp): a --parallel orchestrator spawns several
+# children within the same wall-clock second, and each computes its own RUNDIR independently — the
+# suffix keeps their run directories from colliding, and lets the orchestrator find a given child's
+# RUNDIR afterward by globbing on that child's known pid (see govern::_parallel_run below).
+RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"; mkdir -p "$RUNDIR"
 # #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
 # (a child process) inherits it. #183: defined BEFORE the lock so the holder file can record this run id.
@@ -110,7 +237,7 @@ if [[ "${GOVERN_ALLOW_CONCURRENT:-0}" == "1" ]]; then
   # a worker/operator shell that already has GOVERN_ALLOW_CONCURRENT=1 silently skips the single-run
   # lock with no `--exclude` partition. That is the most likely #183 root cause, so call it out loudly
   # when there's no partition signal — the operator scanning the run can then spot an unintended flag.
-  if [[ -z "$EXCLUDE_INIT" && -z "$TARGET" ]]; then
+  if [[ -z "$EXCLUDE_INIT" && "${#TARGETS[@]}" -eq 0 ]]; then
     govern::log "concurrency mode: PARALLEL (GOVERN_ALLOW_CONCURRENT=1) with NO --exclude / single ticket — sharing the FULL backlog with any peer driver (per-ticket claim + bookkeep lock keep it exactly-once, #41). ⚠ If you did NOT intend parallel, this flag is likely INHERITED from a governor/worker env — unset GOVERN_ALLOW_CONCURRENT to take the exclusive single-run lock (#183)."
   else
     govern::log "concurrency mode: PARALLEL (GOVERN_ALLOW_CONCURRENT=1) — proceeding alongside other drivers on a partitioned backlog (--exclude / single ticket); per-ticket claim + bookkeep lock keep tickets.md safe (#41)"
@@ -156,6 +283,8 @@ STATE="$RUNDIR/state.jsonl"; REVIEW="$RUNDIR/review.md"; : > "$STATE"
 # run-after-run is detectable and can be auto-escalated instead of silently re-attempted forever.
 HISTORY="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
+TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
+                    # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
 # #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
 # merged dependency unblocked one) — drained BEFORE normal severity selection so the advice changes
 # behavior, not just the log. NA_SET = comma-wrapped set of "NOT govern-automatable" tickets (bold
@@ -371,7 +500,7 @@ write_summary() {
     echo "# Governor session — $(basename "$RUNDIR")"; echo
     echo "- **Ended:** $reason"
     echo "- **Ran for:** ${m}m ${s}s"
-    echo "- **Mode:** $MODE${TARGET:+ (single ticket #$TARGET)}"
+    echo "- **Mode:** $MODE$(govern::target_set_desc)"
     echo "- **Tickets:** processed ${done_count:-0} → ✅ resolved ${nres:-0} · ⏸ parked ${npark:-0} · ✖ failed ${nfail:-0} · ⏱ timed-out ${ntimeout:-0} · 💸 budget-exceeded ${nbudget:-0} · ↻ interrupted ${nintr:-0}"
     # Cost transparency: a per-run spend line — tokens (always, when the worker JSONL carried usage)
     # and dollar cost (only when the JSONL carried total_cost_usd), summed AND per ticket. Reads
@@ -478,18 +607,54 @@ trap 'on_exit' EXIT
 trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; govern_teardown_worker; exit 130' INT TERM
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
+# Ticket-SET fix: log the FULL parsed target set at run start, unconditionally, so a truncation
+# bug like the one this fixes (four numbers given, only the last kept) can never be silent again —
+# the operator can always diff what they typed against this line.
+if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+  govern::log "targets: $(printf '#%s ' "${TARGETS[@]}" | sed 's/ $//') (${#TARGETS[@]})"
+fi
+# Announce the RESOLVED concurrency mode unconditionally, before anything can short-circuit (an
+# empty backlog, a target that turns out ineligible). Parallel became the default, so "which mode
+# am I actually in, and at what cap" must never be something the operator has to infer from whether
+# later fan-out lines happened to appear.
+if [[ "$PARALLEL" -eq 1 ]]; then
+  govern::log "concurrency: parallel — up to $PARALLEL_N ticket(s) at once (default; --serial or --parallel=1 for one-at-a-time)"
+else
+  govern::log "concurrency: serial — one ticket at a time (--parallel[=N] to fan out)"
+fi
 
 # Meta-repo checkout root that owns the queue/ folder (== origin/main for the harness lane). Resolved
 # via the git toplevel (NOT dirname "$TICKETS_FILE", which is now the queue/ subfolder) so the
 # run-start preflight (#71) and the per-ticket cross-driver re-verify (#108) operate on the repo root.
 META_DIR="$(govern::meta_root)"
 
+# ── run-start reconcile: ONCE PER RUN, never once per driver ────────────────────────────────
+# The four run-start steps below (escalations-apply-answers → escalations-emit-pending →
+# preflight-main → externalize-low-tickets) plus the NA-skip streak bookkeeping are WHOLE-RUN state
+# reconciliation against the SINGLE shared meta checkout: they fetch/rebase/push main, rewrite
+# escalations.md / pending-escalations.json / tickets.md, and file GitHub issues. Nothing serializes
+# them — the bookkeep lock only covers tickets.md edits — so when the orchestrator fanned out N full
+# backlog drivers, all N re-ran the same git work against the same checkout concurrently (N-1 of
+# them pure waste, and a real interleaving hazard: two `git pull --rebase` + `git push` racing in one
+# worktree). GOVERN_PARALLEL_STAGGER_S only narrowed the window, it never closed it.
+#
+# The orchestrator ALREADY runs this block itself, before it spawns anything (it is the same
+# top-of-script path), and it holds the single-run lock while doing so. So the correct shape is:
+# orchestrator reconciles once → children skip it via the internal --orchestrated flag. One reconcile
+# per run is both correct and cheaper. Everything AFTER this block (waits refresh, issue de-dup,
+# selection) stays per-driver: those compute each driver's own exclusion set and take no git action.
+RECONCILE=1
+if [[ "$ORCHESTRATED" -eq 1 ]]; then
+  RECONCILE=0
+  govern::log "run-start reconcile: skipped — the orchestrator already ran it once for this run"
+fi
+
 # #62: close the escalation lifecycle BEFORE selecting tickets — apply any operator answers the
 # relay recorded into escalations.md since the last run. "do-the-work" un-parks (the ticket
 # becomes selectable again this run); "defer" migrates the ticket to tickets-parked.md; a
 # "make this a rule" answer grows preferences.md. Without this, answers stay inert file text and
 # parked decisions never migrate (the gap #62 fixes). Live only; dry-run logs intent.
-if [[ "$MODE" == "live" ]]; then
+if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
   "$DIR/escalations-apply-answers.sh" >&2 || govern::log "escalations-apply-answers failed (non-fatal) — continuing"
   # #3/#337: regenerate governor/pending-escalations.json at run-START (not only run-end) against the
   # cleaned escalations.md, so a stale/ghost snapshot left by a crashed run or a manual resolution
@@ -497,7 +662,7 @@ if [[ "$MODE" == "live" ]]; then
   # BEFORE anything reads it. escalations.md ## Open is the source of truth, not this cached JSON.
   "$DIR/escalations-emit-pending.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
     || govern::log "run-start pending-escalations regen failed (non-fatal)"
-else
+elif [[ "$RECONCILE" -eq 1 ]]; then
   govern::log "[dry] would apply recorded escalation answers (un-park / migrate-to-parked / preferences) from escalations.md"
   govern::log "[dry] would regenerate governor/pending-escalations.json at run-start from escalations.md ## Open (#3/#337)"
 fi
@@ -509,10 +674,10 @@ fi
 # preflight-main.sh auto-reconciles (ff / push / rebase+push); it returns non-zero ONLY when main
 # truly diverged and couldn't be reconciled — then we HALT with one clear message instead of
 # silently cascading. Live only (dry-run logs intent).
-if [[ "$MODE" == "live" ]]; then
+if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
   "$DIR/preflight-main.sh" "$META_DIR" \
     || govern::die "run-start preflight: could NOT reconcile the meta-repo main checkout with origin/main — see the SPECIFIC reason logged just above (an uncommitted runtime artifact to commit/stash, a genuine rebase conflict, or a rejected push), not necessarily a divergence. Until reconciled, the harness lane would cut PRs off a stale base (#71). Resolve it — e.g. cd '$META_DIR' && git status && git pull --rebase origin main && git push — then re-run."
-else
+elif [[ "$RECONCILE" -eq 1 ]]; then
   govern::log "[dry] would preflight-reconcile meta main with origin/main before the harness lane (#71)"
 fi
 
@@ -522,7 +687,7 @@ fi
 # self-skips cleanly when GOVERN_EXTERNALIZE_REPO/SUBREPO are unset, so this is a no-op for workspaces
 # that haven't opted in. Runs BEFORE selection so an externalized ticket is never also picked up by a
 # worker the same run. Non-fatal: a failure logs and continues — it must never stall the loop.
-if [[ "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
+if [[ "$RECONCILE" -eq 1 && "${GOVERN_EXTERNALIZE_LANE:-1}" == "1" ]]; then
   if [[ "$MODE" == "live" ]]; then
     "$DIR/externalize-low-tickets.sh" >&2 || govern::log "externalization pass failed (non-fatal) — continuing"
   else
@@ -545,7 +710,11 @@ while IFS=$'\t' read -r na_n na_reason; do
   [[ -n "$na_n" ]] || continue
   NA_SET+="$na_n,"
   govern::log "auto-skipping #$na_n — body marked '$na_reason' (not govern-automatable; handle interactively) — not selecting, no worker burned (#92)"
-  if [[ "$MODE" == "live" ]]; then
+  # The streak counter + its one-time nudge are per-RUN state, so only the reconciling driver may
+  # touch them: N fan-out children each bumping would inflate the streak ~N× per run and race the
+  # nudge's has_open_escalation guard into filing duplicates. Children still LOG the skip and
+  # still exclude the ticket — only the shared bookkeeping is orchestrator-only.
+  if [[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]]; then
     na_count="$(govern::na_skip_bump "$na_n" 2>/dev/null || echo 0)"
     if [[ "${na_count:-0}" -ge "$NA_NUDGE_AFTER" ]] && ! govern::has_open_escalation "$na_n"; then
       govern::log "#$na_n auto-skipped $na_count consecutive runs ('$na_reason') — filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
@@ -559,7 +728,7 @@ while IFS=$'\t' read -r na_n na_reason; do
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 # #120: reset the consecutive-skip streak for any ticket no longer NA (resolved / un-marked) so a
 # stale count can never fire a spurious nudge. NA_SET is comma-wrapped (",N,N,") — "," resets all.
-[[ "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
+[[ "$RECONCILE" -eq 1 && "$MODE" == "live" ]] && govern::na_skip_prune "$NA_SET"
 
 # Pre-run issue de-dup: NEVER let the internal governor work a ticket that is ALREADY a public GitHub
 # issue. Issues on GOVERN_EXTERNALIZE_REPO are seeded for OUTSIDE contributors, not internal members —
@@ -597,6 +766,172 @@ else
   govern::log "[dry] would re-check governor/pending-waits.json + defer tickets whose blocker is unresolved (#119)"
 fi
 
+# ── out-of-loop supervisor pass (shared by the run-tail flush and the whole-run pool review) ─────
+# Runs ONE supervisor review over $1 (a run dir) and records its concerns into $REVIEW under label $2.
+# Only `concerns` are acted on here, deliberately: skipThisRun / attemptNext / waitForMerge / halt all
+# steer the ticket-SELECTION loop, and both callers run only once that loop is over — so this does NOT
+# need the in-loop verdict-handling block lifted out (and `attemptNext`, whose priority queue is
+# per-process in-memory state, could not be honoured from the orchestrator anyway).
+govern::_supervise_final() {
+  local rd="$1"
+  local label="$2"
+  local verdict concerns
+  verdict="$("$DIR/govern-supervise.sh" "$rd" 2>/dev/null || echo '{"verdict":"ok"}')"
+  concerns="$(printf '%s' "$verdict" | jq -r '(.concerns // [])|join("; ")' 2>/dev/null || true)"
+  if [[ -n "$concerns" ]]; then
+    printf -- '- %s: %s\n' "$label" "$concerns" >> "$REVIEW"
+    govern::log "supervisor ($label) concerns: $concerns"
+  fi
+}
+
+# ── --parallel orchestrator ──────────────────────────────────────────────────────────────────────
+# Composes the SAME machinery a manual "launch N drivers, each with GOVERN_ALLOW_CONCURRENT=1"
+# recipe always used — the per-ticket claim lock + the bookkeep lock (both documented above) are
+# what make concurrent drivers exactly-once safe; this adds nothing new to that safety model, it
+# only drives the fan-out/wait/aggregate a human would otherwise do across N terminals.
+#
+# TWO shapes, because they answer different questions:
+#   • explicit ticket SET → ONE single-ticket child per named ticket. The operator named them, so
+#     each child gets the same explicit-target bypasses the sequential set path gives them.
+#   • BACKLOG pull (the default) → N FULL backlog drivers, each running the ordinary sequential
+#     loop. NOT one child per ticket: every backlog mechanism — the dependency gate, the
+#     cross-driver re-verify, the #60 failure-streak auto-escalation, the periodic supervisor
+#     cadence, the supervisor's in-memory attemptNext priority queue, the bad-streak breaker,
+#     MAX_TICKETS/MAX_RUNTIME — lives in that loop and is SKIPPED or never reached by a child
+#     handed a single explicit ticket (a one-ticket child looks exactly like `run-loop.sh <N>`,
+#     which deliberately bypasses those gates). Since parallel is now the DEFAULT, a shape that
+#     quietly drops them would disable them for every unattended run. Full drivers also give
+#     refill for free: each keeps pulling the next eligible ticket until the backlog is dry, so a
+#     mid-run-filed ticket is picked up exactly as it would be sequentially.
+#
+# Reaps children FIFO (oldest first) with a plain `wait <pid>` — no `wait -n` — so a pid is never
+# waited on twice and this works on any bash new enough for arrays.
+PARALLEL_PIDS=(); PARALLEL_TIX=(); PARALLEL_RC=0
+PARALLEL_TRES=0; PARALLEL_TPARK=0; PARALLEL_TFAIL=0; PARALLEL_TTIME=0; PARALLEL_TINTR=0
+PARALLEL_TICKETS=0
+govern::_parallel_reap_one() {
+  local pid="${PARALLEL_PIDS[0]}" lbl="${PARALLEL_TIX[0]}" rd st rows=0
+  PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}"); PARALLEL_TIX=("${PARALLEL_TIX[@]:1}")
+  if wait "$pid"; then :; else PARALLEL_RC=1; fi
+  rd="$(ls -d "$LOG_ROOT"/run-*-"$pid" 2>/dev/null | head -1 || true)"
+  if [[ -n "$rd" && -f "$rd/state.jsonl" ]]; then
+    # Fold the child's per-ticket rows into THIS run's state.jsonl. A full-backlog child records one
+    # row per ticket it worked, so the orchestrator's run dir stays the single place to read what a
+    # run did — otherwise "the run's outcomes" would be scattered across N child run dirs and every
+    # reader (summary, an operator, a test) would have to know the fan-out shape to find them.
+    cat "$rd/state.jsonl" >> "$STATE" 2>/dev/null || true
+    while IFS= read -r st; do
+      [[ -n "$st" ]] || continue
+      rows=$((rows+1))
+      case "$st" in
+        resolved)    PARALLEL_TRES=$((PARALLEL_TRES+1));;
+        parked)      PARALLEL_TPARK=$((PARALLEL_TPARK+1));;
+        failed)      PARALLEL_TFAIL=$((PARALLEL_TFAIL+1));;
+        timeout)     PARALLEL_TTIME=$((PARALLEL_TTIME+1));;
+        interrupted) PARALLEL_TINTR=$((PARALLEL_TINTR+1));;
+        *) rows=$((rows-1)); govern::log "parallel: driver $lbl (pid $pid) left an unrecognized status '$st' — not tallied, see $rd";;
+      esac
+    done < <(jq -r '.status // empty' "$rd/state.jsonl" 2>/dev/null || true)
+    PARALLEL_TICKETS=$((PARALLEL_TICKETS+rows))
+    # rows=0 is NORMAL and not a failure: a backlog driver whose siblings had already claimed every
+    # eligible ticket exits cleanly having worked none.
+    govern::log "parallel: driver $lbl done (pid $pid, $rows ticket(s)) → $rd"
+  else
+    PARALLEL_RC=1
+    govern::log "parallel: driver $lbl done (pid $pid) — could not locate its run dir/state under $LOG_ROOT; treating as failed for the tally, see the child's own log above"
+    PARALLEL_TFAIL=$((PARALLEL_TFAIL+1)); PARALLEL_TICKETS=$((PARALLEL_TICKETS+1))
+  fi
+}
+# Spawn one child driver. $1 = label for logs, $2 = "" or "--dry-run", $3… = extra argv (a ticket
+# number for set mode; nothing for a full backlog driver).
+#
+# `--serial` + a CLEARED GOVERN_PARALLEL on the child are BOTH load-bearing, not belt-and-braces
+# paranoia: a child inherits this process's environment, so under `GOVERN_PARALLEL=4 run-loop.sh`
+# (env-driven parallel mode) the child would itself resolve to parallel mode, become an
+# orchestrator, and spawn a grandchild — which inherits the same env, forever. That is an unbounded
+# fork bomb, reachable today. `--serial` is the primary guard (it wins over every other precedence
+# rule, including any future default); clearing the env keeps the child's own mode log honest.
+govern::_parallel_spawn() {
+  local lbl="$1" dry="$2"; shift 2
+  # `--orchestrated`: THIS process already ran the run-start reconcile (escalations-apply →
+  # emit-pending → preflight-main → externalize) once, under the single-run lock, before it got
+  # here. Children must not repeat it — N drivers fetching/rebasing/pushing the SAME meta checkout
+  # concurrently is wasted git work and a real interleaving hazard that the stagger only narrowed.
+  GOVERN_ALLOW_CONCURRENT=1 GOVERN_PARALLEL='' bash "$DIR/run-loop.sh" "$@" --serial --orchestrated $dry >&2 &
+  PARALLEL_PIDS+=("$!"); PARALLEL_TIX+=("$lbl")
+  govern::log "parallel: spawned $lbl (pid $!) — ${#PARALLEL_PIDS[@]}/$PARALLEL_N driver(s) running"
+}
+govern::_parallel_run() {
+  # A plain string (not an array) here on purpose: bash 3.2 (macOS's /bin/bash) throws "unbound
+  # variable" under `set -u` for a bare `"${emptyarray[@]}"` expansion — a real portability trap,
+  # not a hypothetical one (hit it live while testing this). dry_flag is always either empty or
+  # the single literal word `--dry-run` (no spaces/globs), so plain unquoted word-splitting inside
+  # _parallel_spawn is safe and sidesteps the bug entirely.
+  local dry_flag=""; [[ "$MODE" == "dry" ]] && dry_flag="--dry-run"
+  local spawned=0 t pn pexcl i
+  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+    govern::log "parallel mode: ${#TARGETS[@]} ticket(s) ($(printf '#%s ' "${TARGETS[@]}" | sed 's/ $//')) across up to $PARALLEL_N concurrent driver(s)"
+    for t in "${TARGETS[@]}"; do
+      while [[ "${#PARALLEL_PIDS[@]}" -ge "$PARALLEL_N" ]]; do govern::_parallel_reap_one; done
+      govern::_parallel_spawn "#$t" "$dry_flag" "$t"; spawned=$((spawned+1))
+    done
+  else
+    # SIZE the fleet before spawning it: probe the eligible backlog with the same selector the
+    # drivers will use, up to PARALLEL_N times, and start one driver per eligible ticket found.
+    # Without this, a 1-ticket backlog would still spawn 4 drivers — 3 of which do a full run-start
+    # preflight only to find nothing to claim. The probe is advisory only (it takes no claim); the
+    # drivers re-select for themselves and contend on the per-ticket claim lock as usual.
+    pexcl="$excludes"
+    for (( i=0; i<PARALLEL_N; i++ )); do
+      pn="$("$DIR/select-ticket.sh" "$pexcl" 2>/dev/null || true)"
+      [[ -n "$pn" ]] || break
+      pexcl="${pexcl:+$pexcl,}$pn"; spawned=$((spawned+1))
+    done
+    if [[ "$spawned" -eq 0 ]]; then
+      govern::log "parallel: nothing eligible — no target set given and no eligible backlog ticket found; not spawning anything"
+      return 0
+    fi
+    govern::log "parallel mode: backlog pull across $spawned concurrent full driver(s) (cap $PARALLEL_N) — each grinds the eligible backlog, contending on the per-ticket claim lock, until it is empty. Per-driver bounds apply: max $MAX_TICKETS tickets, bad-streak $MAX_BAD_STREAK, runtime ${MAX_RUNTIME}s."
+    for (( i=0; i<spawned; i++ )); do
+      # Stagger the launches. This USED to be the only thing standing between N drivers and N
+      # concurrent run-start preflights against the same meta checkout — a window it narrowed but
+      # never closed; `--orchestrated` above now removes that work from children entirely.
+      # The stagger stays for what remains genuinely concurrent: N drivers hitting the selector +
+      # per-ticket claim locks + worktree creation in the same instant. A couple of seconds apart
+      # costs nothing on a run measured in minutes. GOVERN_PARALLEL_STAGGER_S=0 disables it.
+      [[ "$i" -gt 0 && "${GOVERN_PARALLEL_STAGGER_S:-2}" -gt 0 ]] && sleep "${GOVERN_PARALLEL_STAGGER_S:-2}"
+      govern::_parallel_spawn "backlog-driver-$((i+1))" "$dry_flag"
+    done
+  fi
+  while [[ "${#PARALLEL_PIDS[@]}" -gt 0 ]]; do govern::_parallel_reap_one; done
+  # The ONE whole-run supervisor pass. Every child's periodic supervisor only ever sees that child's
+  # OWN run dir, i.e. its own slice of history — so without this, no supervisor ever reviews the run
+  # as a WHOLE. This runs over the orchestrator's AGGREGATED state.jsonl (each child's per-ticket rows
+  # were folded in at reap), and being scoped to run-END it needs no lifted verdict-handling (see
+  # govern::_supervise_final). Skipped when nothing resolved, or via GOVERN_SUPERVISOR_FLUSH=0.
+  if [[ "${GOVERN_SUPERVISOR_FLUSH:-1}" == "1" && "$PARALLEL_TRES" -gt 0 ]]; then
+    govern::log "supervisor review (whole-run pool: $spawned driver(s), $PARALLEL_TRES resolved)"
+    govern::_supervise_final "$RUNDIR" "whole-run"
+  fi
+  nres="$PARALLEL_TRES"; npark="$PARALLEL_TPARK"; nfail="$PARALLEL_TFAIL"
+  ntimeout="$PARALLEL_TTIME"; nintr="$PARALLEL_TINTR"
+  done_count="$PARALLEL_TICKETS"
+  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+    govern::log "parallel run done: processed $done_count/$spawned → resolved $nres · parked $npark · failed $nfail · timed-out $ntimeout · interrupted $nintr"
+  else
+    govern::log "parallel run done: $spawned driver(s) processed $done_count ticket(s) → resolved $nres · parked $npark · failed $nfail · timed-out $ntimeout · interrupted $nintr"
+  fi
+  # Emit the SAME canonical DONE line the sequential path ends on. Parallel is the default now, so
+  # anything that reads a run's outcome — an operator eyeballing the tail, a log grep, a test —
+  # must not have to know which mode ran to find the tally.
+  govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout interrupted=$nintr (processed $done_count) | parallel cap=$PARALLEL_N drivers=$spawned"
+  return "$PARALLEL_RC"
+}
+if [[ "$PARALLEL" -eq 1 ]]; then
+  govern::_parallel_run
+  exit $?
+fi
+
 while :; do
   tj_heartbeat   # keep the run-id file fresh (liveness) so a prompt resume re-adopts this run's id (#3)
   # --- hard bounds: stop BEFORE starting another ticket ---
@@ -615,8 +950,38 @@ while :; do
     fi
   fi
 
-  if [[ -n "$TARGET" ]]; then
-    N="$TARGET"
+  if [[ "${#TARGETS[@]}" -gt 0 ]]; then
+    # Ticket-SET selection: restrict the normal severity-ordered selector to EXACTLY the
+    # requested targets by excluding every OTHER ticket currently in tickets.md, then let
+    # select-ticket.sh apply its existing severity/escalation/NA logic unmodified — this is
+    # "the driver's normal severity order within the set" from the ticket-SET fix, reusing the
+    # selector instead of re-implementing severity ordering here. A target already handled this
+    # run (resolved → deleted from tickets.md by bookkeep, or park/fail/skip → added to
+    # $excludes below) naturally drops out on the next iteration.
+    not_targeted=""
+    while IFS= read -r _tn; do
+      [[ -n "$_tn" ]] || continue
+      case ",$(IFS=,; echo "${TARGETS[*]}")," in
+        *",$_tn,"*) ;;
+        *) not_targeted="${not_targeted:+$not_targeted,}$_tn";;
+      esac
+    done < <(grep -oE '^##[[:space:]]+#[0-9]+' "$TICKETS_FILE" 2>/dev/null | grep -oE '[0-9]+')
+    N="$("$DIR/select-ticket.sh" "${excludes}${not_targeted:+,$not_targeted}" 2>/dev/null || true)"
+    if [[ -n "$N" ]]; then
+      TARGETS_SEEN+="$N,"
+    else
+      # Nothing left to pick from the set — name WHY each still-unaccounted-for target never
+      # ran, so a target the operator asked for can never silently vanish the way the original
+      # bug silently dropped everything but the last number.
+      for _t in "${TARGETS[@]}"; do
+        [[ "$TARGETS_SEEN" == *",$_t,"* ]] && continue   # already selected+processed this run (its own outcome is already logged)
+        if grep -qE "^##[[:space:]]+#$_t([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
+          govern::log "target #$_t not eligible this run (excluded / open escalation / not-automatable) — skipping"
+        else
+          govern::log "target #$_t not found in tickets.md — skipping"
+        fi
+      done
+    fi
   else
     # #92: drain the supervisor's "attempt-now" PRIORITY queue before normal severity selection,
     # so an "unblocked-now" recommendation actually moves the ticket to the front. Pop the first
@@ -653,7 +1018,10 @@ while :; do
   if ! govern::lock_try "$CUR_CLAIM"; then
     govern::log "#$N already claimed by another driver — skipping"
     CUR_CLAIM=""
-    [[ -n "$TARGET" ]] && break
+    # Ticket-SET fix: always exclude + continue (never break) here — the selector above already
+    # restricts candidates to the remaining target set (or the backlog), so excluding #N just
+    # narrows the pool; it naturally reaches "no eligible tickets" and stops on its own once the
+    # set/backlog is exhausted, same outcome as the old single-target break, one level up.
     excludes="$excludes,$N"; continue
   fi
 
@@ -665,7 +1033,7 @@ while :; do
   # this fresh origin check the loop would burn a worker (and risk a duplicate PR / re-merge)
   # re-processing a ticket one driver already shipped. Fail-open (no origin / offline /
   # GOVERN_NO_PUSH → present), so a local-only repo or a network blip never wrongly skips a ticket.
-  if [[ "$MODE" == "live" && -z "$TARGET" ]] && ! govern::ticket_present_on_origin "$META_DIR" "$N"; then
+  if [[ "$MODE" == "live" && "${#TARGETS[@]}" -eq 0 ]] && ! govern::ticket_present_on_origin "$META_DIR" "$N"; then
     govern::log "#$N no longer on origin/main (resolved+pushed by a concurrent driver) — skipping, no worker burned (#108)"
     govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
     excludes="$excludes,$N"; continue
@@ -675,8 +1043,9 @@ while :; do
   # tickets.md (unlanded), defer #N this run instead of burning a worker building on something not yet
   # merged (the #80-class wasted run). Same in-run exclude as an escalation skip; the dep is re-derived
   # from the body each run, so #N becomes selectable automatically once #K lands — no persistence needed.
-  # Skipped for an explicit single-ticket TARGET (the operator chose it deliberately, like the #60 override).
-  if [[ -z "$TARGET" ]]; then
+  # Skipped for an explicit TARGETS set — single or multi — since the operator chose these
+  # tickets deliberately (like the #60 override below).
+  if [[ "${#TARGETS[@]}" -eq 0 ]]; then
     _unmet=""
     while IFS= read -r _k; do
       [[ "$_k" =~ ^[0-9]+$ ]] || continue
@@ -695,9 +1064,10 @@ while :; do
   resumed=""; cf=0
   if [[ "$MODE" == "live" ]]; then
     resumed="$(govern::find_pr "$N" || true)"
-    # #60: only consider the cross-run failure streak when there's no PR to resume and we're
-    # not targeting a single ticket (an explicit target overrides the auto-escalation).
-    [[ -z "$resumed" && -z "$TARGET" ]] && cf="$(consecutive_fails "$N" 2>/dev/null || echo 0)"
+    # #60: only consider the cross-run failure streak when there's no PR to resume and the
+    # backlog picked #N itself — an explicit TARGETS set (single or multi) overrides the
+    # auto-escalation, same as a lone explicit target always did.
+    [[ -z "$resumed" && "${#TARGETS[@]}" -eq 0 ]] && cf="$(consecutive_fails "$N" 2>/dev/null || echo 0)"
   fi
   if [[ -n "$resumed" ]]; then
     set -- $resumed; rrepo="$1"; rpr="$2"; rurl="${3:-}"
@@ -1164,6 +1534,18 @@ while :; do
     bash "$DIR/../reap-orphan-deploys.sh" --quiet 2>/dev/null || true
   fi
 
+  # Durable validation runner (spec §4, reader 1/3): on the SAME supervisor cadence, mechanically
+  # adopt any terminal validation job the runner (ticket #5) left pending — a validation that
+  # finishes with no governor active would otherwise land in silence until the NEXT run. Purely
+  # deterministic (no LLM call, unlike govern-supervise.sh below); serialized under the bookkeep
+  # mutex so this pass and a concurrent SessionStart-hook / `govern validations` reader can never
+  # double-stamp or double-escalate the same terminal job. Guarded on existence + always non-fatal.
+  if [[ "$MODE" == "live" && ( "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ) \
+        && -f "$DIR/validations-pending-apply.sh" ]]; then
+    _valapplied="$(bash "$DIR/validations-pending-apply.sh" --reader govern-supervisor 2>/dev/null || true)"
+    [[ -n "$_valapplied" ]] && govern::log "validation job(s) adopted: $(printf '%s' "$_valapplied" | tr '\n' ' ')"
+  fi
+
   if [[ "$anomaly" -eq 1 || "$since_review" -ge "$SUP_EVERY" ]]; then
     govern::log "supervisor review (anomaly=$anomaly, since_review=$since_review)"
     verdict="$("$DIR/govern-supervise.sh" "$RUNDIR" 2>/dev/null || echo '{"verdict":"ok"}')"
@@ -1239,8 +1621,30 @@ while :; do
 
   done_count=$((done_count+1))
   if [[ "$bad_streak" -ge "$MAX_BAD_STREAK" ]]; then govern::log "circuit breaker: $bad_streak consecutive parked/failed — halting"; break; fi
-  [[ -n "$TARGET" ]] && break
+  # Ticket-SET fix: no more "stop after one ticket because TARGET was set" break here — the
+  # selector at the top of the loop already restricts candidates to the remaining target set
+  # (a resolved #N is gone from tickets.md via bookkeep above; any other outcome added #N to
+  # $excludes), so it naturally returns empty and hits "no eligible tickets — done" once the
+  # whole set (single or multi) is exhausted. Same one-ticket-then-stop result for a lone
+  # target as before, just via the general termination path instead of a special case.
 done
+
+# Supervisor TAIL FLUSH — review the resolved tickets the periodic pass never got to.
+# The in-loop supervisor only fires on a multiple of $SUP_EVERY, so a driver that ends holding
+# 1..SUP_EVERY-1 unreviewed resolves never reviews them at all. Sequentially that tail is a rounding
+# error; under --parallel it is the WHOLE run: a 12-ticket backlog spread over 4 drivers gives each
+# driver 3 resolves, so with SUP_EVERY=5 the periodic pass fires ZERO times where the same 12 worked
+# sequentially would have fired twice. One flush per driver restores that rhythm.
+# Why not instead scale the cadence by the fan-out (SUP_EVERY/N per child)? Because the per-driver
+# cadence is NOT globally looser in the steady state — N drivers each firing every SUP_EVERY of their
+# OWN resolves still totals K/SUP_EVERY passes over K tickets. Only the per-driver TAIL is lost.
+# Dividing the cadence would therefore over-fire by ~N× on any long run. See commands/govern.md.
+# GOVERN_SUPERVISOR_FLUSH=0 opts out. Skipped on an infra/auth halt (the API is unreachable anyway).
+if [[ "${GOVERN_SUPERVISOR_FLUSH:-1}" == "1" && "$since_review" -gt 0 && "${INFRA_HALT:-0}" -eq 0 ]]; then
+  govern::log "supervisor review (run-tail flush, since_review=$since_review)"
+  govern::_supervise_final "$RUNDIR" "run tail"
+  since_review=0
+fi
 
 # #337: the AUTHORITATIVE run-end pending-escalations.json emit is DEFERRED to AFTER the run-end
 # escalation writers (self-improve / self-apply). Emitting it here (before self-improve/self-apply

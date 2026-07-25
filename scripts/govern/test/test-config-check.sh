@@ -81,4 +81,22 @@ printf '%s' "$out" | jq -e 'has("root_remote")' >/dev/null 2>&1 && \
   printf 'ok   - 7. JSON has root_remote key\n' || \
   { printf 'FAIL - 7. JSON missing root_remote\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
+# ── 8. GOVERN_MIGRATE_CMD unset + a migration-shaped ticket → dedicated notice ──
+# Today the actual gap-detection only happens reactively in run-loop.sh, AFTER a worker already
+# built + opened a PR for the migration ticket. This surfaces it proactively, pre-run.
+printf '## #9 — needs an ALTER TABLE migration\n\n**Severity:** High\n\nbody\n\n---\n' >> "$ROOT/queue/tickets.md"
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "8. migration-shaped ticket + no migrate cmd → still exit 0 (warning, not a problem)"
+assert_contains "$out" "GOVERN_MIGRATE_CMD is unset but tickets.md has a migration-shaped entry" "8. dedicated migration notice printed"
+assert_contains "$out" "ALTER TABLE" "8. notice names the actual flagged line, not a generic message"
+
+# ── 9. same backlog, but GOVERN_MIGRATE_CMD IS set → no migration notice ────
+out="$(GOVERN_MIGRATE_CMD='echo migrate' bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "9. migrate cmd configured → exit 0"
+if printf '%s' "$out" | grep -q "migration-shaped entry"; then
+  echo "FAIL - 9. migration notice wrongly fired with GOVERN_MIGRATE_CMD set"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - 9. no migration notice once GOVERN_MIGRATE_CMD is configured"
+fi
+
 assert_done
