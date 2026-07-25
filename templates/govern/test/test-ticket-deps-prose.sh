@@ -7,6 +7,9 @@
 #       regression: "16 13 10" resolved against a single declared #16).
 #   (B) a `**Depends on:**` line with multiple comma-separated numbers still parses all of them.
 #   (C) the `**Blocks:**` implicit-blocker path (part B of the function) is unaffected.
+#   (D) marker spelling variants still parse: `**Depends on**: #K` (colon outside the bold) and a
+#       plain unbolded `Depends on: #K`.
+#   (E) only the MARKER line is harvested — a `#N` on the line right after it is not swept in.
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +44,18 @@ body
 
 **Depends on:** #16, #13
 body
+---
+## #31 — colon outside the bold wrapper
+**Depends on**: #16
+body
+---
+## #32 — plain unbolded marker
+Depends on: #13
+body
+---
+## #33 — only the marker LINE is harvested
+**Depends on:** #16
+Follow-up prose on the very next line mentioning #10 and #13.
 EOF
 
 deps22="$(govern::ticket_deps 22 "$ROOT/tickets.md" | tr '\n' ',')"
@@ -48,6 +63,13 @@ assert_eq "$deps22" "16," "A: #22 resolves ONLY the declared #16, not the prose-
 
 deps30="$(govern::ticket_deps 30 "$ROOT/tickets.md" | tr '\n' ',')"
 assert_eq "$deps30" "16,13," "B: a **Depends on:** line with multiple comma-separated numbers still parses all of them"
+
+# ── (D) marker spelling variants ──
+assert_eq "$(govern::ticket_deps 31 "$ROOT/tickets.md" | tr '\n' ',')" "16," "D: '**Depends on**: #K' (colon outside the bold) still parses"
+assert_eq "$(govern::ticket_deps 32 "$ROOT/tickets.md" | tr '\n' ',')" "13," "D: a plain unbolded 'Depends on: #K' still parses"
+
+# ── (E) harvesting is confined to the marker line ──
+assert_eq "$(govern::ticket_deps 33 "$ROOT/tickets.md" | tr '\n' ',')" "16," "E: a #N on the line AFTER the marker is not harvested"
 
 # ── (C) the **Blocks:** implicit-blocker path is unaffected ──
 cat > "$ROOT/blocks.md" <<'EOF'

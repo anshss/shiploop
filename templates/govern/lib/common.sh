@@ -1278,13 +1278,18 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
       inblk=(cur==n); next
     }
     # (A) deps #N DECLARES itself: `**Depends on:** #K` inside its own block. Anchored to the
-    # START of the line (optionally bold-wrapped, colon required right after "on") so PROSE
-    # elsewhere in the body — e.g. "Depends on the `budget-exceeded` outcome ... Coordinate with
-    # ticket #13 and ticket #10" — is never mistaken for the marker and never contributes its own
-    # #N mentions as false dependencies (#29). Only #N on the MARKER line itself is harvested.
+    # START of the line (optionally bold-wrapped) with the COLON required — either inside the bold
+    # (`**Depends on:**`) or just after it (`**Depends on**:`) — so PROSE elsewhere in the body,
+    # e.g. "Depends on the `budget-exceeded` outcome ... Coordinate with ticket #13 and ticket
+    # #10", is never mistaken for the marker and never contributes its own #N mentions as false
+    # dependencies (#29). The colon is what does the work there: that prose sentence DOES start its
+    # line, so line-anchoring alone would still have matched it. Only #N on the MARKER line itself
+    # is harvested — never from the lines that follow it. (`\*?\*?` rather than `\*{0,2}`: ERE
+    # interval quantifiers are unsupported by pre-1.3.4 mawk, still the default awk on older
+    # Debian/Ubuntu, where a `{0,2}` would silently match literally and drop every declared dep.)
     inblk {
       low=tolower($0)
-      if (low ~ /^[[:space:]]*\*{0,2}depends[ \t]+on:\*{0,2}/) {
+      if (low ~ /^[[:space:]]*\*?\*?depends[ \t]+on(:\*?\*?|\*?\*?:)/) {
         s=$0
         while (match(s,/#[0-9]+/)) {
           d=substr(s,RSTART+1,RLENGTH-1); if (!seen[d]++) print d
