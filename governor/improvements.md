@@ -98,6 +98,8 @@ None of these touch a safety rail, so no OPERATOR DECISION flags needed.
 
 ## 2026-07-25 07:15 — run run-20260725-063340 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 07:15:** 4 safe proposal(s) → ticket **#42**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 **GOVERN-IMPROVE output** (findings saved to `/Users/anshs/.claude/plans/govern-improve-you-are-reviewing-jiggly-journal.md`):
 
 I checked `governor/improvements.md`'s full history before proposing anything — the #9/#11 duplicate, the #33 missing `Depends on: #35`, and the six-tickets-piling-up pattern have each been raised 2-3 times already since 2026-07-11 and never applied. Re-proposing them verbatim would be the exact amplification anti-pattern under review, so I verified *why* they keep recurring instead: I read `scripts/govern/govern-self-apply.sh` in full, and its `ALLOWED` allowlist (`select-ticket.sh await-ci.sh merge-pr.sh spawn-worker.sh run-loop.sh dry-run.sh`) structurally excludes every file these recurring proposals target (`lib/common.sh`, `file-ticket.sh`, `lint-tickets.sh`, `govern-improve.sh`, `govern-improve-triage.sh`, `queue/tickets.md`) — by design, since those are policy/bookkeeping files. That's the real root cause: these fixes were never eligible for auto-apply, and nothing surfaces that fact, so they get re-proposed instead of escalated.
