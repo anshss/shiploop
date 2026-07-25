@@ -72,7 +72,6 @@
 #   GOVERN_SKIP_BASE_CHECK (0)     1 = skip the run-start base-branch CI check (#49) — e.g. when
 #                                  the ticket being worked IS the fix for a red baseline.
 #
-
 # Progress preservation (acts like a human reopening sessions — never throws away work):
 #   - only a cleanly RESOLVED ticket's worktree is torn down; failed/parked/timed-out worktrees
 #     are KEPT on disk (uncommitted work survives) and their path is logged.

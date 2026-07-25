@@ -56,7 +56,33 @@ out="$(FAKE_ALPHA='[{"conclusion":"failure","status":"completed","url":"https://
 assert_eq "$rc" "0" "GOVERN_SKIP_BASE_CHECK=1 opts out even on a genuinely red base branch"
 
 # ── gh not installed → proceeds (fail-open) ────────────────────────────────
-out="$(PATH="/usr/bin:/bin" bash "$PF" 2>&1)" && rc=0 || rc=$?
+# Hand-rolling a minimal PATH ("/usr/bin:/bin") to hide gh is environment-fragile and silently
+# stopped exercising this branch: GitHub's Ubuntu runners ship gh at /usr/bin/gh, so gh stayed on
+# PATH and the script fell through to the gh-error path instead (still fail-open, so only the
+# message assertion caught it). Nor can we simply DROP the gh-containing dir — on Ubuntu that is
+# /usr/bin, which also holds dirname/date/mkdir that the script needs before it ever looks for gh.
+# So: mirror each gh-containing dir into a shadow dir that symlinks all its OTHER entries. gh
+# disappears; everything else stays reachable, wherever gh happens to live on this machine.
+nogh_bin="$TMP/nogh"; mkdir -p "$nogh_bin"
+nogh_path=""
+IFS=':' read -r -a path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  [[ -n "$d" && -d "$d" ]] || continue
+  if [[ -x "$d/gh" ]]; then
+    # Collect with a glob and link in ONE batched `ln` call (dir last) — portable to both GNU and
+    # BSD ln, and no per-file fork, so mirroring even a 1000-entry /usr/bin stays cheap. NOT
+    # `find -exec ln -sf {} "$dir/" +`: that is invalid (POSIX requires {} immediately before +).
+    mirror=()
+    for f in "$d"/*; do
+      [[ -e "$f" && "${f##*/}" != "gh" ]] || continue
+      mirror+=("$f")
+    done
+    [[ ${#mirror[@]} -gt 0 ]] && ln -sf "${mirror[@]}" "$nogh_bin/"
+    continue
+  fi
+  nogh_path="$nogh_path${nogh_path:+:}$d"
+done
+out="$(PATH="$nogh_bin${nogh_path:+:$nogh_path}" bash "$PF" 2>&1)" && rc=0 || rc=$?
 assert_eq "$rc" "0" "gh not on PATH → proceeds unchanged"
 assert_contains "$out" "gh not found" "gh-missing case logged as fail-open"
 
