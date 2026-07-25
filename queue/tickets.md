@@ -637,9 +637,11 @@ Note the operator session IS protected here: scripts/router-posture-guard.sh (Pr
 
 (2) The subagent RETURN is unbounded. ROUTER POSTURE tells the worker to delegate and "keep only its verdict in your own context", but never tells it to instruct the CHILD to return something compact. The child chooses its own reply length, so a subagent answering with a long narrative report floods the parent's context anyway — the delegation happened, the saving did not. Delegation only pays if the return is smaller than the work avoided.
 
-Fix direction (both in the worker prompt, same file):
+Fix direction (all in the worker prompt, same file):
 (a) Add explicit command-output discipline: redirect verbose commands to a file and inspect a bounded slice — e.g. `npm test > /tmp/t.log 2>&1 || tail -50 /tmp/t.log` — rather than letting full output land in context. If the tail is insufficient to diagnose, THEN delegate the log to a child. Order matters: redirect-and-tail first (free), delegate second (cheap), read-it-all inline never.
 (b) Add a RETURN CONTRACT to the delegation guidance: when spawning a subagent, the worker must state in the child's prompt what to return and how much — a bounded, structured verdict (e.g. "return at most N lines: root cause, file:line, suggested fix; no narration, no transcript, no restated file contents"). Make explicit that an unbounded child reply defeats the delegation.
+
+(3) VALIDATION PROPORTIONAL TO THE CHANGE. worker-prompt step 3 tells every worker to validate locally before opening a PR, so nearly every ticket runs a full build/test suite — and that suite's output is the single largest context-flooding event in a worker session (see (1)). For a change that touches ONLY markdown/docs, a full suite run is pure waste: it floods context at cache-WRITE price and is then re-read every remaining turn. Evidence: ticket #46 edited exactly one markdown file and still triggered a full local validation plus a 2m50s CI suite. Add guidance that validation should be proportional to the diff — a docs/prompt-only change needs a lint/parse check, not the full suite; CI remains the authoritative gate either way. Keep this conservative: when in doubt, or when ANY executable file is touched, run the full suite.
 (c) Keep this consistent with the existing HARD RULE (subagents gather, the worker is the only writer of record) — the return contract governs SIZE and SHAPE of what comes back, not who persists it.
 
 Done when: the worker prompt carries command-output discipline covering the RUN case (not only the read case) with a concrete redirect-and-tail idiom; the delegation guidance requires an explicit bounded return contract in every child prompt and says why an unbounded reply defeats the purpose; the new text does not contradict the existing subagent-write constraint; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
@@ -669,5 +671,28 @@ Fix direction: implement each proposal above as a normal harness PR (a PR on the
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
 Ref: governor/improvements.md block "2026-07-25 11:47 — run run-20260725-112937-10735 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
+
+## #48 — Workers load the full slash-command surface they never use — pass --disable-slash-commands
+
+**Severity:** Medium
+**Model:** haiku
+
+Where: shiploop/templates/govern/spawn-worker.sh — the `claude -p` invocation (~line 470-476, alongside the existing --strict-mcp-config / --setting-sources flags)
+
+Observed: MEASURED, not inferred. A worker's baseline context — before the ticket prompt, before reading any file — is ~33,000 tokens (measured empirically: `claude -p "..." --strict-mcp-config --setting-sources user --model haiku` reports cache_creation 15,314 + cache_read 17,703). Adding `--disable-slash-commands` brings that to ~30,400, a saving of ~2,600 tokens.
+
+That prefix is re-read on EVERY turn. Per TokenJam telemetry over 30 days, average context re-read per turn is ~130k tokens across 110,146 turns, so ~2,600 tokens is ~2% of a turn's re-read, paid on every turn of every worker. It also avoids a proportional slice of cache-WRITE cost, which telemetry shows is 32% of total spend on only 4.8% of tokens (writes price ~12.5x reads).
+
+Honest sizing: this is a ~2% lever, not a large one. It is worth doing because it is a one-flag change with near-zero risk, not because it is transformative. Do NOT let the PR description overstate it.
+
+Verified non-levers, recorded so nobody re-tries them: `--allowedTools` does NOT reduce the prefix (measured 34,253 vs 33,017 baseline — it gates permission, not what loads). `--bare` errors out without explicitly re-provided context (`is_error: true`, all-zero usage) and additionally skips hooks and LSP, so it is NOT a drop-in and would need its own scoped investigation.
+
+Fix direction: pass `--disable-slash-commands` on the worker spawn, behind a knob (e.g. GOVERN_WORKER_SLASH_COMMANDS=1 to restore) so an operator whose worker prompt genuinely invokes a skill can opt back in. BEFORE enabling by default, verify the worker prompt and operator doctrine never instruct a worker to invoke a slash command / skill — grep governor/worker-prompt.md and governor/preferences.md for `/` command invocations. If any exist, either rewrite them to use Bash/git/gh directly or leave the flag opt-in and say so in the PR.
+
+Done when: workers spawn with --disable-slash-commands by default; a knob restores the old behavior; the worker prompt is confirmed not to depend on slash commands; a before/after baseline measurement is recorded in the PR description; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy is refreshed separately through `/shiploop:update`.
+
+Ref: session 2026-07-25 — measured directly against the installed claude CLI while auditing worker prefix size; prompted by a sibling fleet's finding that workers load tools/skills/plugins they cannot use.
 
 ---
