@@ -426,20 +426,6 @@ Done when: govern-health.sh's status breakdown and human summary both surface a 
 
 ---
 
-## #33 — Parallel drivers each re-run the run-start preflight against the same meta checkout
-
-**Severity:** Medium
-
-Where: scripts/govern/run-loop.sh (+ shiploop/templates/govern/run-loop.sh), the run-start block between `govern::log "run $RUNDIR"` and the orchestrator (escalations-apply-answers.sh, escalations-emit-pending.sh, preflight-main.sh, externalize-low-tickets.sh, govern::waits_refresh).
-
-Observed: with GOVERN_PARALLEL_DEFAULT=4 the orchestrator spawns 4 full backlog drivers, and EACH child independently re-runs the whole run-start preflight — including preflight-main.sh, which does git fetch / rebase / push against the SAME meta checkout. Nothing serializes that: the bookkeep lock only covers tickets.md edits. This predates the change (the operator's hand-launched 4-terminal recipe had the identical property, and the hub's --parallel already spawned N children) but it is now on the DEFAULT path for every run, so the exposure went from occasional to routine. Mitigated only by GOVERN_PARALLEL_STAGGER_S (default 2s between launches), which reduces the collision window rather than removing it.
-
-Fix direction: hoist the run-start preflight into the ORCHESTRATOR (run it once, before spawning) and have children skip it via an internal flag — the orchestrator already holds the single-run lock, so one reconcile per run is both correct and cheaper. Alternative if children must keep running it: serialize the preflight under a dedicated lock (a `govern::lock_try "$GOVERNOR_DIR/.locks/preflight"` around preflight-main + escalations-apply) so at most one child touches git at a time.
-
-Done when: a parallel backlog run performs the run-start reconcile exactly once (or provably serialized); a test spawns 2+ concurrent drivers against a meta checkout and asserts no interleaved git failure and a single reconcile log line; bash -n clean; hub and workspace copies stay identical.
-
----
-
 ## #35 — Workspace govern lib + test dir lag the hub — /shiploop:update bump is due
 
 **Severity:** Medium
