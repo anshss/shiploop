@@ -120,6 +120,39 @@ going forward (older history rows predate the enrichment and show as "no data in
 repos count as self-referential is `GOVERN_SELFREF_REPOS` (defaults to the merge-universe repos
 outside `$REPOS` — the meta-repo + any skill-template repo).
 
+### The sizing decision, not just the cost
+A row that says a ticket cost `$9.66` but not *what tier produced that* is unlearnable — "does this
+class of ticket actually succeed at sonnet?" has no answer, so any scope→tier table stays hand-tuned
+forever. So each history row also carries the **decision**: `model`, `effort`, `attempt` (1-based),
+and `usageSource`. `govern-health.sh` groups spend + resolve rate **by model** from those fields
+(`.byModel` in `--json`; a `by model :` block in the human output), which is the sizing table read off
+real runs. Mechanics:
+
+- `spawn-worker.sh` appends one row per spawn to `logs/govern/run-*/ticket-N/attempts.jsonl` — the
+  resolved model/effort **and where each came from** (a brain-decided ticket field vs the workspace
+  fallback vs a retry escalation), plus that attempt's measured usage. `run-loop.sh` reads the ledger:
+  spend is **summed across the run's attempts** (an in-run re-dispatch's tokens belong to the ticket
+  too), while the decision fields come from the **last** attempt — the one that produced the outcome.
+  So when reading per-tier success rates, filter to `attempt == 1`: a row with `attempt > 1` records
+  the tier that *finished* the ticket, after a cheaper bet had already been tried and escalated away
+  (`byModel.retries` counts those, so the contamination is visible rather than silent).
+- **A killed attempt records its usage too.** A worker hard-killed before its verdict (wall-clock
+  timeout, token budget, a stop signal) never emits the final `result` event that carries usage, so
+  those rows used to be null — biased in the worst possible direction, since a failed attempt is
+  exactly what proves a tier was too cheap. Tokens are now recovered from the per-turn
+  `.message.usage` events (`usageSource:"assistant-partial"`); `costUsd` stays null, because the
+  stream carries no per-turn price and a fabricated one would be worse than a gap.
+- **Every read of a `worker.jsonl` goes through `govern::stream_grep`, never bare `grep`.** A stream
+  can carry a NUL-byte hole (a re-dispatch truncating the file while the prior attempt's fd is still
+  open at a high offset), and plain `grep` then classifies it as *binary* and prints **nothing** —
+  silently reporting "no usage" for an intact `result` event, and equally silencing the token-budget
+  kill switch, the infra/interrupted classifiers, and the report-from-stream fallback. `stream_grep`
+  forces text semantics; spawn-worker also rotates a prior attempt's stream to
+  `worker.attempt<K>.jsonl` so a fresh inode makes the corruption unreachable in the first place.
+
+Rows written before these fields existed simply lack them; every consumer filters on presence, so old
+history keeps working unchanged.
+
 ## Worker hook isolation (automatic)
 `spawn-worker.sh` runs children with **`--setting-sources user`**, dropping this repo's PROJECT
 `.claude/settings.json` hooks — so a worker does NOT inherit a SessionEnd cleanup (which could be

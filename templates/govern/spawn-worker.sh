@@ -314,6 +314,10 @@ mode="${GOVERN_MODE:-live}"
 permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] && permflag="plan"
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_WORKER_MODEL:-opus}"
+# #19: where the resolved tier CAME FROM, mirroring the dry-run seam's `model_source`. Recorded in the
+# per-attempt ledger below so the cross-run history can tell a brain-decided tier apart from the
+# workspace fallback — otherwise "does this class of ticket succeed at sonnet?" stays unanswerable.
+model_source="GOVERN_WORKER_MODEL"
 
 # Per-ticket brain-decided model routing. Honor a `Model:` line inside the ticket block ONLY when
 # THIS is the ticket's FIRST attempt — any retry unconditionally escalates to GOVERN_WORKER_MODEL,
@@ -327,14 +331,16 @@ if [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 0 ]]; then
   case "$TICKET_MODEL" in
     haiku|sonnet|opus)
       govern::log "worker #$N model=$TICKET_MODEL per ticket Model: field (first attempt; brain-decided)"
-      model="$TICKET_MODEL"
+      model="$TICKET_MODEL"; model_source="ticket-Model-field"
       ;;
     *)
       govern::log "worker #$N: ignoring unknown Model: '$TICKET_MODEL' from ticket — using GOVERN_WORKER_MODEL=$model (fail-safe)"
+      model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)"
       ;;
   esac
 elif [[ -n "${TICKET_MODEL:-}" && "$MODEL_IS_RETRY" -eq 1 ]]; then
   govern::log "worker #$N: retry detected (preserved worktree) — escalating to GOVERN_WORKER_MODEL=$model (ignoring ticket Model: $TICKET_MODEL)"
+  model_source="GOVERN_WORKER_MODEL (retry — ticket Model: '$TICKET_MODEL' skipped)"
 fi
 
 # #18: reasoning effort — an INDEPENDENT knob from model tier: raising effort is far cheaper than
@@ -371,6 +377,50 @@ effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
+
+# #19: PER-ATTEMPT LEDGER. One ticket can be spawned MORE THAN ONCE against the same (run-scoped) log
+# dir: an in-run infra/interrupted auto-retry, a GOVERN_FIX_CI re-dispatch, a GOVERN_RESOLVE_CONFLICT
+# re-dispatch. Each spawn used to just reopen worker.jsonl with a truncating `>`, which lost the prior
+# attempt's usage AND (when the prior attempt's fd was still open at a high offset) left a NUL hole at
+# the head of the file that made every later `grep` read the stream as binary and match nothing.
+# So: (a) number this attempt from the ledger's existing row count, (b) ROTATE the previous attempt's
+# stream aside — the redirect below then creates a brand-new inode, so a stale fd can never corrupt
+# the live file and the killed attempt's stream survives for forensics, and (c) after the worker exits,
+# append one append-only row carrying this attempt's sizing DECISION (model/effort/attempt) and its
+# MEASURED usage. run-loop's history enrichment reads this ledger, so ticket-history.jsonl records the
+# decision beside the cost and a killed attempt's spend is never silently dropped.
+attempts_file="$logdir/attempts.jsonl"
+attempt=1
+if [[ -s "$attempts_file" ]]; then
+  attempt=$(( $(awk 'END{print NR+0}' "$attempts_file" 2>/dev/null || echo 0) + 1 ))
+fi
+if [[ -f "$jsonl" ]]; then
+  # attempt>1 → this run's previous attempt (numbered). attempt==1 with a stream already present →
+  # a stream left by an EARLIER standalone invocation in the flat log dir; park it under a neutral name.
+  if [[ "$attempt" -gt 1 ]]; then rotated="$logdir/worker.attempt$((attempt-1)).jsonl"
+  else rotated="$logdir/worker.prior.jsonl"; fi
+  mv -f "$jsonl" "$rotated" 2>/dev/null || rm -f "$jsonl" 2>/dev/null || true
+fi
+
+# Append this attempt's row. Called on EVERY exit path (clean return and the INT/TERM/EXIT teardown),
+# because the attempts a stop signal kills are exactly the expensive ones worth accounting for.
+# Idempotent (a `written` latch) and best-effort — it never changes the worker's reported outcome.
+attempt_row_written=0
+record_attempt() { # status -> appends one ledger row
+  [[ "$attempt_row_written" -eq 0 ]] || return 0
+  attempt_row_written=1
+  local st="${1:-unknown}" usage
+  usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
+  jq -nc --argjson a "$attempt" --arg m "$model" --arg ms "$model_source" \
+     --arg e "$effort" --arg es "$effort_source" --arg tm "${TICKET_MODEL:-}" \
+     --argjson retry "$MODEL_IS_RETRY" --arg mode "$mode" --arg st "$st" \
+     --argjson u "$usage" --argjson ts "$(date +%s)" \
+     '{attempt:$a, model:$m, modelSource:$ms,
+       effort:(if $e == "" then null else $e end), effortSource:$es,
+       ticketModel:(if $tm == "" then null else $tm end), isRetry:($retry == 1),
+       mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
+  return 0
+}
 
 # #16: per-attempt cumulative TOKEN cap — wall-clock was the only ceiling before this; a worker that
 # wanders can burn tens of millions of tokens before $to fires (tickets #3/#6: ~22M tokens/~$9.7
@@ -438,15 +488,22 @@ govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 # tree (group kill + pid-walk) in one sweep. The EXIT trap covers a clean return (cpid already gone →
 # fast no-op) and an abrupt one; the INT/TERM trap covers run-loop forwarding a stop signal to us
 # (run-loop SIGTERMs this process on its own stop), so the kill cascades driver → spawn-worker → tree.
-cpid=""; wd=""; twd=""
+cpid=""; wd=""; twd=""; _spawn_signalled=0
 spawn_worker_cleanup() {
   [[ -n "${wd:-}" ]] && { kill "$wd" 2>/dev/null || true; govern::_kill_tree_walk "$wd" TERM; }
   [[ -n "${twd:-}" ]] && { kill "$twd" 2>/dev/null || true; govern::_kill_tree_walk "$twd" TERM; }
   [[ -n "${cpid:-}" ]] && govern::kill_tree "$cpid" "${GOVERN_KILL_GRACE_S:-10}"
+  # #19: account for an attempt torn down BEFORE it could reach the normal record_attempt call below —
+  # those are the expensive rows a sizing loop most needs. The tree is already dead here, so the stream
+  # has stopped growing and its per-turn usage is final. Latched, so the normal exit path (which
+  # already recorded the real status) makes this a no-op. The status distinguishes a forwarded stop
+  # signal from any other early exit, so neither is mislabelled.
+  if [[ "${_spawn_signalled:-0}" -eq 1 ]]; then record_attempt "killed-by-signal"
+  else record_attempt "aborted-before-verdict"; fi
   return 0   # EXIT-trap body must end 0 — its last status would otherwise become the script's exit code
 }
 trap 'spawn_worker_cleanup' EXIT
-trap 'govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree [#242]"; spawn_worker_cleanup; exit 143' INT TERM
+trap '_spawn_signalled=1; govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree [#242]"; spawn_worker_cleanup; exit 143' INT TERM
 
 set +e
 # --setting-sources user: drop the PROJECT .claude/settings.json hooks so a worker does NOT
@@ -528,7 +585,9 @@ if [[ -s "$report_path" ]]; then
   report="$(govern::extract_report < "$report_path" || true)"
 fi
 if [[ -z "$report" ]]; then
-  result_msg="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
+  # govern::stream_grep (not bare grep): a NUL-holed stream would otherwise hide a perfectly good
+  # report and get the attempt synthesized as `failed` (#19).
+  result_msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
   [[ -n "$result_msg" ]] && report="$(printf '%s' "$result_msg" | govern::extract_report || true)"
 fi
 
@@ -591,4 +650,10 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
       '{status:"failed",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("resume from "+$wt+" or re-run the ticket"),options:[]}}')"
   fi
 fi
+
+# #19: the outcome is now known — append this attempt's decision + measured usage to the ledger.
+# `status` comes from the report itself, so a killed attempt records `timeout`/`budget-exceeded` and
+# a genuine failure records `failed`, each with the tokens it actually burned.
+record_attempt "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
+
 printf '%s\n' "$report"

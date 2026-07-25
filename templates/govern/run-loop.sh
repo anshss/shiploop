@@ -292,24 +292,45 @@ TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (an
 # prioritized pick from ever resurrecting one.
 PRIORITY=""; NA_SET=","
 
-# #272: ROI enrichment for the cross-run history. Reads the just-finished worker's stream-json
-# result event for per-ticket token spend + cost, and classifies churn from the current $report's
-# PR repos (self-referential harness/templates work vs shipped product). Best-effort — every field
-# degrades to null so a missing worker.jsonl or an un-parseable report never blocks the outcome
-# record. Emits a JSON object of the extra fields to merge into the history line.
-history_enrich() { # ticket -> echoes {tokens,costUsd,churn,repos}
-  local n="$1" jsonl toks='null' cost='null' repos='[]' churn='null' res
-  jsonl="$(govern::worker_logdir "$n")/worker.jsonl"
-  if [[ -s "$jsonl" ]]; then
-    res="$(grep '"type":"result"' "$jsonl" 2>/dev/null | tail -1 || true)"
-    if [[ -n "$res" ]]; then
-      toks="$(printf '%s' "$res" | jq -c '(.usage // {}) as $u
-        | {input:($u.input_tokens//0), output:($u.output_tokens//0),
-           cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
-        | .total = (.input + .output + .cacheRead + .cacheCreation)' 2>/dev/null || echo null)"
-      cost="$(printf '%s' "$res" | jq -c '.total_cost_usd // null' 2>/dev/null || echo null)"
-    fi
+# #272: ROI enrichment for the cross-run history. Records what the ticket SPENT (tokens + cost), the
+# sizing DECISION that produced that spend (#19: model / effort / attempt), and a churn classification
+# from the current $report's PR repos (self-referential harness/templates work vs shipped product).
+# Best-effort — every field degrades to null so a missing log or an un-parseable report never blocks
+# the outcome record. Emits a JSON object of the extra fields to merge into the history line.
+#
+# #19 — cost WITHOUT the decision is unlearnable: a row saying "$9.66" with no tier can't answer "does
+# this class of ticket actually succeed at sonnet?", so any scope→tier sizing table stays hand-tuned
+# forever. spawn-worker.sh now appends one `attempts.jsonl` row per spawn carrying both, and this reads
+# it. Spend is SUMMED across the run's attempts (an in-run re-dispatch's tokens belong to this ticket
+# too, and the prior attempt's stream is rotated aside so it can't be double-counted); the DECISION
+# fields come from the LAST attempt — the one that produced the outcome being recorded.
+history_enrich() { # ticket -> echoes {tokens,costUsd,model,effort,attempt,usageSource,churn,repos}
+  local n="$1" logdir jsonl attempts_file extra='{}' repos='[]' churn='null'
+  logdir="$(govern::worker_logdir "$n")"
+  jsonl="$logdir/worker.jsonl"; attempts_file="$logdir/attempts.jsonl"
+  if [[ -s "$attempts_file" ]]; then
+    extra="$(jq -sc '
+      ([ .[] | select(.tokens != null) ]) as $wt
+      | { tokens: (if ($wt|length) == 0 then null else
+            ($wt | reduce .[] as $r ({input:0,output:0,cacheRead:0,cacheCreation:0,total:0};
+              {input:        (.input        + ($r.tokens.input        // 0)),
+               output:       (.output       + ($r.tokens.output       // 0)),
+               cacheRead:    (.cacheRead    + ($r.tokens.cacheRead    // 0)),
+               cacheCreation:(.cacheCreation+ ($r.tokens.cacheCreation// 0)),
+               total:        (.total        + ($r.tokens.total        // 0))})) end),
+          costUsd: ([ .[].costUsd | select(. != null) ] | if length == 0 then null else add end),
+          model:       (.[-1].model       // null),
+          effort:      (.[-1].effort      // null),
+          attempt:     (.[-1].attempt     // length),
+          usageSource: (.[-1].usageSource // null) }' "$attempts_file" 2>/dev/null || echo '{}')"
+  else
+    # No ledger — a pre-#19 log dir, or a run that recorded an outcome WITHOUT spawning a worker (a
+    # resumed ticket, or the #60 auto-park that never spawns). Fall back to reading the stream directly;
+    # govern::stream_usage also recovers a killed attempt's tokens from its per-turn usage events, so
+    # a failed/timed-out row is no longer null just because there is no final `result` event.
+    extra="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{}')"
   fi
+  [[ -n "$extra" ]] || extra='{}'
   # PR repos come from the current $report (loop-scope global). churn = has ≥1 PR AND every PR repo
   # is self-referential; false if it shipped ANY product PR; null when there is no PR to classify.
   repos="$(printf '%s' "${report:-}" | jq -c '[ (.pr // empty), (.prs // [])[] ]
@@ -323,8 +344,11 @@ history_enrich() { # ticket -> echoes {tokens,costUsd,churn,repos}
       < <(printf '%s' "$repos" | jq -r '.[]' 2>/dev/null || true)
     if [[ "$nself" -eq "$nrepos" ]]; then churn=true; else churn=false; fi
   fi
-  jq -nc --argjson t "$toks" --argjson c "$cost" --argjson ch "$churn" --argjson rp "$repos" \
-    '{tokens:$t, costUsd:$c, churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
+  # Explicit null defaults first, so a row from an OLD log dir still carries every key (consumers can
+  # then `select(.model != null)` instead of guessing whether the key exists).
+  jq -nc --argjson e "$extra" --argjson ch "$churn" --argjson rp "$repos" \
+    '{tokens:null, costUsd:null, model:null, effort:null, attempt:null, usageSource:null}
+     + $e + {churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
 }
 
 record() { # ticket status note
