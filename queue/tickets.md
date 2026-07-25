@@ -488,3 +488,25 @@ Fix direction: run /shiploop:update (scaffold.sh --component per component) to b
 Done when: `diff -r scripts/govern shiploop/templates/govern` shows no unexplained drift (workspace-specific files documented); the full govern suite is green in the workspace after the bump; the harness-version stamp matches the hub VERSION.
 
 ---
+
+## #36 — Harness self-improvement: promote safe proposals from run-20260725-053951
+
+**Severity:** Low
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-053951. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `queue/tickets.md` + `scripts/govern/select-ticket.sh`: add a `**Blocks:** #N[, #M...]` optional field, parsed the same tolerant way `select-ticket.sh` already parses `**Severity:**`, and have it feed the exclusion set the same way `## Open` escalations already do — why: nothing today stops #9 or #11 from being independently selected even though #30 already says they duplicate each other and should be merged first. The 05:53 proposals prevent *future* duplicate pairs; they don't give the *existing* #30 any teeth to actually block #9/#11 in the meantime.
+- `scripts/govern/run-loop.sh` (~line 754, where a worker's `crossRefs.overlaps`/`crossRefs.dependsOn` is read off its report): write that back as a `Blocks:`/`Depends on:` line on the referenced ticket, or file it as an `## Open` escalation, instead of only setting `anomaly=1` for one supervisor glance — why: a worker has the freshest evidence of a real overlap while doing the work, and today that evidence is discarded after a single pass instead of durably blocking the ticket it names.
+- `scripts/govern/lint-tickets.sh` (or `file-ticket.sh` at filing time): WARN (non-blocking) when a ticket's body names a CLI flag/env var (`--foo`, `GOVERN_*`) or "the orchestrator"/"N drivers" that doesn't grep-match anything in this workspace's current `scripts/govern/*.sh` — why: I confirmed directly that `#33`/`#34` describe `GOVERN_PARALLEL_DEFAULT`/`--parallel` orchestrator machinery that exists only in the hub template (`shiploop/templates/govern/run-loop.sh`), not in this workspace's copy (ticket #35 already flags the lag) — dispatching a worker at either ticket today would burn a session on a target that isn't there yet, likely a confused park/fail rather than a clean block.
+- `queue/tickets.md`: add `**Depends on:** #35` to #33 and #34's field blocks (a data-only fix, zero script changes) — the existing `govern::ticket_deps` gate already honors literal "depends on #N" prose today, so this alone stops either from being dispatched before #35 (the hub-sync bump) lands.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-25 06:25 — run run-20260725-053951 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
