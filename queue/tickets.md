@@ -622,3 +622,28 @@ Done when: a committed benchmark harness runs both arms over a fixed task set an
 Ref: session 2026-07-25 — operator asked for this directly after the v1.11.0 token-efficiency release, noting the reduction claim is still unproven.
 
 ---
+
+## #46 — Worker context flooding: bound COMMAND output and require a bounded subagent return contract
+
+**Severity:** High
+**Model:** sonnet
+
+Where: shiploop/templates/governor/worker-prompt.md — the ROUTER POSTURE section (and the validation section's command guidance). Hub-first; the workspace copy refreshes via /shiploop:update.
+
+Observed: two distinct context-flooding paths remain open in the worker session, which is ~98% of all token spend. Cost is turns x accumulated context, so anything that lands in the worker's context is re-paid on EVERY subsequent turn.
+
+(1) COMMAND output is unbounded. ROUTER POSTURE currently says "Do NOT read large files or verbose build/test output into your own context yourself — have a child read it and return the conclusion." That covers READING a file. It does NOT cover RUNNING a command that emits the output: a worker that runs `npm test` / a build inline receives the whole result as the Bash tool result, which is not a "read" and so the existing rule never bites. This is the common case — every worker validates locally before opening a PR (worker-prompt step 3), so nearly every ticket runs at least one build/test. A single failing test run can dump thousands of lines that are then re-sent on every turn for the rest of the session.
+Note the operator session IS protected here: scripts/router-posture-guard.sh (PreToolUse on Read|Bash) warns on verbose builds, its own comment citing "runs a verbose build bloats the window and re-pays". Workers launch with `--setting-sources user` (spawn-worker.sh:452,474), which DELIBERATELY drops project hooks — so the cheap session is guarded and the expensive one is not. Same structural gap that ticket #15 fixed for delegation.
+
+(2) The subagent RETURN is unbounded. ROUTER POSTURE tells the worker to delegate and "keep only its verdict in your own context", but never tells it to instruct the CHILD to return something compact. The child chooses its own reply length, so a subagent answering with a long narrative report floods the parent's context anyway — the delegation happened, the saving did not. Delegation only pays if the return is smaller than the work avoided.
+
+Fix direction (both in the worker prompt, same file):
+(a) Add explicit command-output discipline: redirect verbose commands to a file and inspect a bounded slice — e.g. `npm test > /tmp/t.log 2>&1 || tail -50 /tmp/t.log` — rather than letting full output land in context. If the tail is insufficient to diagnose, THEN delegate the log to a child. Order matters: redirect-and-tail first (free), delegate second (cheap), read-it-all inline never.
+(b) Add a RETURN CONTRACT to the delegation guidance: when spawning a subagent, the worker must state in the child's prompt what to return and how much — a bounded, structured verdict (e.g. "return at most N lines: root cause, file:line, suggested fix; no narration, no transcript, no restated file contents"). Make explicit that an unbounded child reply defeats the delegation.
+(c) Keep this consistent with the existing HARD RULE (subagents gather, the worker is the only writer of record) — the return contract governs SIZE and SHAPE of what comes back, not who persists it.
+
+Done when: the worker prompt carries command-output discipline covering the RUN case (not only the read case) with a concrete redirect-and-tail idiom; the delegation guidance requires an explicit bounded return contract in every child prompt and says why an unbounded reply defeats the purpose; the new text does not contradict the existing subagent-write constraint; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
+
+Ref: session 2026-07-25 — operator raised subagent-reply flooding; verified ROUTER POSTURE covers the read path but not the run path, and specifies no return contract.
+
+---
