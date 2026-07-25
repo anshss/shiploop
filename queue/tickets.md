@@ -167,23 +167,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #16 — Add a per-attempt token budget kill switch for workers (only wall-clock exists today)
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: shiploop/templates/govern/spawn-worker.sh (hub) + scripts/govern/spawn-worker.sh (workspace); knob documented alongside GOVERN_WORKER_TIMEOUT
-
-Observed: the only ceiling on a worker is `GOVERN_WORKER_TIMEOUT` (default 3600s wall clock, spawn-worker.sh ~line 321). There is NO token ceiling. A worker that wanders can burn 22M+ tokens before the wall clock stops it (governor/ticket-history.jsonl: tickets #3 and #6 each ~22M tokens / ~$9.7). This is also the missing safety rail that would make cheap-tier-first sizing safe: without a bounded probe, a haiku attempt that is out of its depth costs a full session before anyone finds out.
-
-Fix direction: add `GOVERN_WORKER_MAX_TOKENS` (suggest a conservative default, and 0 = unlimited to preserve current behavior for anyone who wants it). The worker is launched at spawn-worker.sh ~line 406 as `claude -p ... ` with output teed to a per-run JSONL; that JSONL carries cumulative usage. Monitor it (same supervision loop that already enforces the wall-clock timeout and kills the process tree) and terminate the attempt when cumulative tokens exceed the budget. Record the termination reason distinctly from a wall-clock timeout — `budget-exceeded` must be a distinguishable outcome, because ticket #(S3, evidence-based escalation) needs to tell "ran out of budget while still exploring" apart from other failures in order to escalate the right axis.
-
-Done when: GOVERN_WORKER_MAX_TOKENS is honored and documented; exceeding it kills the worker process tree exactly like the existing timeout path; the outcome is recorded with a distinct `budget-exceeded` reason in the worker report and state.jsonl; default preserves existing behavior for anyone who does not set it; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component W2
-
----
-
 ## #17 — Worker prompt hygiene: move {{TICKET_BLOCK}} last, drop duplicate CLAUDE.md read, dedupe repeated rules
 
 **Severity:** Low
@@ -514,5 +497,16 @@ Consider additionally: a cheap independent verifier pass (haiku) that re-reads t
 Done when: EITHER this ticket is declined in its PR description with evidence that no real instance of a falsely-asserted completion exists in the recent resolution history — an acceptable and expected outcome — OR: a worker report carries a per-clause Done-when self-assessment; bookkeeping refuses to delete a ticket with any not-met clause and parks it with an escalation naming the clause; the refusal path is covered by a test under templates/govern/test/; bash -n passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 — caught while verifying shiploop#82; workspace copy lacked the section the ticket required, yet the ticket was resolved and deleted.
+
+---
+
+## #32 — govern-health.sh has no budget-exceeded bucket in its status breakdown
+
+**Severity:** Low
+
+Where: scripts/govern/govern-health.sh (workspace) + templates/govern/govern-health.sh (hub), ~line 125 (the jq status-bucket object) and ~line 198 (the human-readable summary).
+Observed: ticket #16 added a `budget-exceeded` outcome status (distinct from `timeout`) to state.jsonl / ticket-history.jsonl, and wired it into run-loop.sh's own DONE summary + streak logic, but govern-health.sh's ROI dashboard only buckets `timeout` (and `failed`) — a budget-exceeded ticket is simply omitted from that specific breakdown (not miscounted, just invisible there).
+Fix direction: add a `budget-exceeded` bucket alongside the existing `timeout` bucket in the jq status-count object and the human-readable summary line, mirroring how `timeout` is already surfaced.
+Done when: govern-health.sh's status breakdown and human summary both surface a budget-exceeded count; a test under templates/govern/test/ covers it; bash -n passes; hub and workspace copies stay in sync.
 
 ---
