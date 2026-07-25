@@ -72,6 +72,16 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
 
+# ── Default concurrency (GOVERN_PARALLEL_DEFAULT) ────────────────────────────
+# How many tickets a plain `scripts/govern/run-loop.sh` (no flags, no ticket number) works at once.
+#   1 (default)  one at a time — the original behavior; a template bump never changes your run shape.
+#   N > 1        the driver becomes an orchestrator and runs N full backlog drivers concurrently,
+#                each grinding the queue and contending on the per-ticket claim lock. This is the
+#                "launch N terminals" recipe, automated. 4 is a sensible fleet setting.
+# Per-run overrides always win: `--parallel[=N]` to fan out, `--serial` to force one-at-a-time.
+# Raising this multiplies concurrent headless workers (and their spend) — raise it deliberately.
+export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-1}"
+
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────
 # How much the governor is allowed to do on its own. Flip ONE knob as trust builds — the graduation
 # is observe → pr-only → auto (see commands/govern.md + governor/README.md):
