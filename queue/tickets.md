@@ -254,31 +254,6 @@ Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-toke
 
 ---
 
-## #23 — Locality batching: group tickets by predicted file scope so one worker fixes a whole group
-
-**Severity:** Medium
-**Model:** opus
-
-**Depends on:** #14
-
-Where: new grouping step in shiploop/templates/govern/run-loop.sh (+ workspace mirror) between ticket selection and the --parallel fan-out; likely a helper in templates/govern/lib/common.sh
-
-Observed: exploration is the dominant cost term (a resolved ticket is ~22M tokens, 98% cacheRead — governor/ticket-history.jsonl). Three tickets that all touch `scripts/govern/` currently mean THREE workers each paying full discovery cost on the same code: three repo loads, three CLAUDE.md reads, three architecture explorations. One worker fixing all three pays that once. On the dominant term this approaches a 3x saving for that group.
-
-This also makes parallelism SAFER, not just cheaper: today N concurrent workers are selected purely by severity order with no regard for whether they touch the same files, so two workers can race on the same file and produce conflicting branches. Grouping by locality means the fan-out runs over DISJOINT groups by construction.
-
-Fix direction: before fanning out, partition the eligible ticket set into locality groups using the tickets' `Where:` fields (and, if ticket #(S2, the scout) has landed, its measured file list — prefer that signal when available since `Where:` is prose). Dispatch ONE worker per group with all of that group's ticket blocks in its prompt, and have it produce one branch/PR per group. `--parallel=N` then means N GROUPS, not N tickets.
-
-Batching and parallelism pull against each other — past a point, bigger groups reduce wall-clock gains. Expose the aggressiveness as an explicit knob (e.g. GOVERN_BATCH_MAX, max tickets per group, with 1 = today's behavior of one ticket per worker) rather than hard-coding a policy. Default should be conservative.
-
-Hard constraints: (a) the existing per-ticket claim lock and bookkeep lock semantics must still hold — a group claims all its tickets or none; (b) the `**Depends on:**` gate (govern::ticket_deps, lib/common.sh:1270) must still be enforced, and two tickets in a dependency relationship must NOT be silently co-batched in a way that violates ordering — either co-batch them in dependency order within the single worker, or keep them in separate groups; (c) a group that partially fails must report per-ticket outcomes, not collapse to one verdict, or bookkeeping will mark unfixed tickets resolved.
-
-Done when: eligible tickets are partitioned into disjoint locality groups; one worker handles a group and reports per-ticket outcomes; GOVERN_BATCH_MAX controls group size with 1 preserving today's behavior; dependency-related tickets are never co-batched out of order; claim/bookkeep locking is preserved for every ticket in a group; a test under templates/govern/test/ covers the partitioning and the per-ticket outcome mapping; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component C2
-
----
-
 ## #24 — Deterministic pre-gate: skip spawning an agent for codemod-able or already-fixed-upstream tickets
 
 **Severity:** Low
