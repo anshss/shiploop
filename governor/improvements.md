@@ -81,6 +81,8 @@ None of these touch hard-stops, run bounds, the permission gate, or the merge al
 
 ## 2026-07-25 06:41 — run run-20260725-060424 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-25 06:41:** 4 safe proposal(s) → ticket **#39**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 I've verified everything against the actual scripts (not just supervisor prose) and written the full analysis to the plan file at `~/.claude/plans/govern-improve-you-are-reviewing-mellow-globe.md`. The `ExitPlanMode` tool isn't wired up in this environment, so here's the final deliverable directly:
 
 **Key discovery:** both of this run's friction points already have fixes built in the hub template (`shiploop/templates/govern/`) — they just haven't synced into this workspace's `scripts/govern/` copy (1402 vs 1708 lines in `lib/common.sh`, confirmed via `diff`).
