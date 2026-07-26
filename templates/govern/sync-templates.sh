@@ -46,6 +46,9 @@
 # Usage:
 #   sync-templates.sh [--check]   # default: report unported drift; exit 3 if any, 0 if clean
 #   sync-templates.sh --files     # list distinct MIRRORED files changed since the marker
+#   sync-templates.sh --paths     # same set, BARE paths, silent when empty (machine-readable)
+#   sync-templates.sh --counterpart <live-path>
+#                                 # print the template counterpart of one live path; exit 1 if unmirrored
 #   sync-templates.sh --diff      # emit the consolidated diff of the mirrored files to port
 #   sync-templates.sh --mark [SHA]# advance the marker to SHA (default HEAD)
 #   sync-templates.sh --sha       # print the current marker SHA
@@ -231,6 +234,32 @@ case "$MODE" in
     git_g diff "$base..$UPPER" -- "${files[@]}"
     ;;
 
+  --counterpart)
+    # Machine-readable single-path lookup: repo-relative LIVE path -> its template
+    # counterpart. Exit 0 + path on stdout when the file is mirrored; exit 1 and
+    # silence when it is not. Needs no marker and touches no git history, so the
+    # pre-dispatch drift gate (lib/pregate.sh) can call it on an arbitrary
+    # `**Where:**` token without first proving the workspace is marker-initialized.
+    [[ -n "${2:-}" ]] || { echo "sync-templates: --counterpart needs a repo-relative path" >&2; exit 2; }
+    template_counterpart_path "$2" || exit 1
+    ;;
+
+  --paths)
+    # Same set as --files, but BARE paths and a silent-empty contract (exit 0, no
+    # output) so callers can consume it without stripping the human "[mirrored]"
+    # column or the "(none — …)" sentence.
+    #
+    # The rc MUST be 0 for "no drift" and non-zero ONLY for "cannot answer" — the
+    # drift gate keys its fail-open on exactly that distinction, and a bare
+    # `mirrored_files` would leak its loop's last-iteration status (1 whenever the
+    # final candidate happens to be unmirrored), turning a clean workspace into a
+    # phantom "unknowable" and silently disarming the gate. Capture, then exit 0.
+    base="$(read_marker)" || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
+    paths="$(mirrored_files "$base")"
+    [[ -n "$paths" ]] && printf '%s\n' "$paths"
+    exit 0
+    ;;
+
   --files)
     base="$(read_marker)" || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
     files="$(mirrored_files "$base")"
@@ -266,7 +295,7 @@ case "$MODE" in
     ;;
 
   *)
-    echo "sync-templates: unknown option '$MODE' (try --check|--files|--diff|--mark|--sha|--help)" >&2
+    echo "sync-templates: unknown option '$MODE' (try --check|--files|--paths|--counterpart|--diff|--mark|--sha|--help)" >&2
     exit 2
     ;;
 esac
