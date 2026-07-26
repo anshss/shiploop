@@ -600,3 +600,26 @@ Done when: terminating spawn-worker.sh by any path (SIGTERM, SIGINT, pipe close,
 Ref: session 2026-07-26 — surfaced while diagnosing PR #97 CI failures; confirmed pre-existing on main, explicitly NOT caused by the `--exclude-dynamic-system-prompt-sections` probe.
 
 ---
+
+## #64 — CI validates the plugin manifests but never cross-checks their version against VERSION — they silently drifted two releases behind
+
+**Severity:** Medium
+**Model:** sonnet
+**Effort:** low
+
+**Severity:** Medium
+**Model:** sonnet
+
+Where: `shiploop/.github/workflows/ci.yml` (job `validate-manifests`, ~lines 70-95); the files it must cross-check are `shiploop/VERSION`, `shiploop/.claude-plugin/plugin.json`, `shiploop/.claude-plugin/marketplace.json`, and `shiploop/CHANGELOG.md`.
+
+Observed: `validate-manifests` checks only that the two manifests are valid JSON and that `plugin.json` has non-empty `name`/`version`. It never compares those versions against `VERSION` or against each other. As a result both manifests silently sat at `1.10.0` while `VERSION` and `CHANGELOG` advanced to `1.12.0` — two full releases of drift, published to the plugin marketplace, with CI green the whole time. Caught by hand while cutting v1.13.0 and fixed in that release, but nothing prevents an immediate recurrence on the next bump.
+
+Impact: the marketplace advertises a stale version to every prospective user, and the drift is invisible to the only automated gate that looks at these files. This is the same class of defect as #44 (a release shipping a headline feature inert) — a Done-when that nothing verifies.
+
+Fix direction: extend `validate-manifests` to assert `VERSION` == `plugin.json.version` == `marketplace.json.plugins[0].version`, and additionally that `CHANGELOG.md`'s top `## <version>` heading matches `VERSION`. Fail the job on mismatch. Keep it a pure text/JSON comparison so it needs no auth and stays fast.
+
+Done when: CI fails on a PR that bumps `VERSION` without bumping both manifests; CI fails when the top CHANGELOG heading disagrees with `VERSION`; a green run proves all four agree at the current release; the check runs on every PR, not just release PRs.
+
+Ref: session 2026-07-26 — found while cutting v1.13.0 (shiploop PR #98), which repaired the drift by hand. Related: the published v1.12.0 GitHub Release body also absorbed a stale `## Unreleased` CHANGELOG block, another symptom of release-time copy having no automated gate.
+
+---
