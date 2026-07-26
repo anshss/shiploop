@@ -91,6 +91,23 @@ slower is less spend for the same work — compression that delays a compaction 
 nicety, and compaction is worse than linear (you pay to summarise, then re-read the summary every turn
 after).
 
+**2026-07-26 — interactive mode tested: `PostToolUse` → `updatedToolOutput` is ALSO a NO-OP (#74).**
+Ran the same sentinel repro against a real INTERACTIVE session (`claude --setting-sources user
+--settings <file>`, no `-p`), driven via `expect` over a pty (a TUI needs a real terminal, not piped
+stdin) with `--settings` pointing a `PostToolUse`/`Bash` hook at a script that (a) writes the raw
+stdin payload to a side-effect file and (b) returns
+`{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"REWRITTEN_SENTINEL_XYZ"}}`.
+Confirmed by side-effect log per the ticket's instruction (hook execution isn't surfaced in the
+transcript): the hook **did fire** — `hook-input.json` captured the real `tool_response` containing
+`ORIGINAL_MARKER_ABC` — but `REWRITTEN_SENTINEL_XYZ` appears **nowhere** in the session transcript;
+only `ORIGINAL_MARKER_ABC` reached the model and its final answer. Same result as `-p` mode, same CLI
+build (2.1.220). **Verdict: `updatedToolOutput` is a NO-OP in both delivery modes** — this was not a
+`-p`-only artifact. C1 (`headroom`'s spill-and-handle, cap the `Agent` return + spill full report to
+`$WORKTREE/.governor-notes/subagent-<id>.md`) stays BLOCKED on this API; no size measurement to do
+since the mechanism doesn't work interactively either. Route C1 through the already-proven layers
+instead: `PreToolUse`→`updatedInput` (rewrite the call before the tool runs) or the `ANTHROPIC_BASE_URL`
+proxy (mutate the assembled request) — both measured WORKING, see the entry above.
+
 ### 2026-07-26 — reading token usage out of `stream-json`: three traps that silently corrupt the numbers
 
 Hit all three while measuring the fleet. Anything that analyses `logs/govern/**/worker*.jsonl` (the #45
