@@ -25,9 +25,38 @@ ORIGINAL output. Reproduced twice; sentinel string appeared 0 times, original 6 
 emitted nothing. Also note `PostToolUse` hook execution is not surfaced as `hook_started`/`hook_response`
 events in `-p` stream-json, so you cannot confirm it ran from the transcript alone — log a side-effect.
 
-**Consequence:** any "compress/truncate/dedup tool output via a hook" design is unbuildable on this path
-today. Only tested in `-p` mode — may work interactively. Re-test on CLI upgrades before assuming it's
-still broken; the delivery path below is proven and would work the moment this is fixed.
+**Consequence — scoped narrowly on purpose (corrected 2026-07-26):** exactly ONE API is broken,
+`PostToolUse` + `updatedToolOutput`, in `-p` mode. This entry previously ended "any compress/truncate/dedup
+tool output via a hook design is unbuildable," which got read as *compression is impossible* and parked
+three separate levers. It isn't, and two alternative layers were measured WORKING the same day (same
+binary, same subscription/OAuth auth) — see #68:
+
+- **`PreToolUse` → `updatedInput` WORKS in `-p`.** Bash: a hook rewrote `echo ORIGINAL_MARKER` →
+  `echo REWRITTEN_MARKER_XYZ`; the `tool_use` event still logs the model's ORIGINAL command, but the
+  executed command and the `tool_result` were the rewritten one. Read: injecting `offset:1, limit:5` into
+  a Read of a 500-line file returned 5 lines and the model reported receiving 5. So output can be shaped
+  BEFORE it exists by rewriting the call — no dependency on the broken API. Watch out: the model NOTICED
+  the substitution and spent its reply commenting on it, so a rewrite must carry a visible marker or it
+  buys confusion turns.
+- **An API-layer proxy on `ANTHROPIC_BASE_URL` WORKS, and subscription auth survives it.** This is NOT the
+  `--bare` blocker (which forces `ANTHROPIC_API_KEY`): a local pass-through forwards OAuth/keychain creds
+  unchanged, verified `rc=0` end-to-end. The full assembled request is visible AND mutable — a tail
+  injection moved the body 161,602 → 164,023 bytes and changed the model's reply. Corollary: the claim
+  "Claude Code never exposes the assembled prompt" (v1.13.0 plan line 84) is FALSE at this layer, and the
+  differential-ablation procedure built on it is unnecessary — read the componentised breakdown directly.
+
+**Still genuinely untested: interactive mode** — and that is the layer that matters most, because the real
+topology is an INTERACTIVE session in a shiploop repo spawning the headless workers. The interactive
+orchestrator is the long-lived leg: it accumulates across a whole govern run and it is the only one that
+ever compacts. Every measurement in this entry is `-p` only, so "unbuildable" was never established for
+the layer where subagent returns actually pile up. Test `updatedToolOutput` interactively before parking
+anything else on this entry. Re-test on CLI upgrades either way; the `--settings` + `--setting-sources user`
+delivery path below is proven and works the moment the API is fixed.
+
+**Do not re-split context-window pressure from token spend.** They are one resource. A window that fills
+slower is less spend for the same work — compression that delays a compaction is a cost lever, not a UX
+nicety, and compaction is worse than linear (you pay to summarise, then re-read the summary every turn
+after).
 
 ### 2026-07-26 — reading token usage out of `stream-json`: three traps that silently corrupt the numbers
 
