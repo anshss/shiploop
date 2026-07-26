@@ -623,3 +623,26 @@ Done when: CI fails on a PR that bumps `VERSION` without bumping both manifests;
 Ref: session 2026-07-26 — found while cutting v1.13.0 (shiploop PR #98), which repaired the drift by hand. Related: the published v1.12.0 GitHub Release body also absorbed a stale `## Unreleased` CHANGELOG block, another symptom of release-time copy having no automated gate.
 
 ---
+
+## #66 — file-ticket.sh header says retries escalate unconditionally, but resolve_sizing classifies them
+
+**Severity:** Low
+**Model:** haiku
+**Effort:** low
+
+**Severity:** Low
+**Model:** haiku
+
+Where: `shiploop/templates/govern/file-ticket.sh` (header comment, ~lines 23-30) and its workspace copy `scripts/govern/file-ticket.sh`.
+
+Observed: the header documents `--model` as "pins the model the governor uses for THIS ticket's FIRST-attempt worker (any retry escalates to GOVERN_WORKER_MODEL unconditionally)", and repeats the same "retry-escalates-away" rule for `--effort`. That is stale. `spawn-worker.sh`'s `resolve_sizing` no longer escalates unconditionally: it calls `govern::retry_class` and branches, so an `infra` or `ci` failure retries at the SAME tier (logged as "retry class=... same tier, not escalated"), budget exhaustion raises the tier only, and a judgment failure raises tier and effort. `GOVERN_RETRY_CLASSIFY=0` reverts to the old always-escalate path.
+
+Impact: low but real. This header is the reference an agent reads when filing a ticket with `--model`/`--effort`, so it teaches a wrong cost model: it implies any retry is guaranteed to cost top-tier, which discourages using a cheap first-attempt tier. It also already misled a doc pass, which propagated "retries escalate unconditionally" into the public README before the code was checked.
+
+Fix direction: update both header comments to describe the classification (same tier for infra/CI, tier-only for budget, tier+effort for judgment, unconditional only when `GOVERN_RETRY_CLASSIFY=0`). While there, grep the rest of the tree for the same stale phrasing so no other doc repeats it.
+
+Done when: no file in the hub or workspace claims retries escalate unconditionally without noting the classifier; the described behaviour matches `resolve_sizing`; hub-first, so the fix lands in `shiploop/templates/govern/file-ticket.sh` and flows down via `/shiploop:update`.
+
+Ref: session 2026-07-26 — found while correcting the README's sizing claims (shiploop PR #103).
+
+---
