@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Retry memory — a worker's findings survive into its next attempt.** A failed or timed-out worker
+  left its worktree preserved but its knowledge nowhere: the retry started from the same cold prompt
+  and re-derived the whole exploration, which is the dominant cost term. Every worker now appends to
+  a `.governor-notes.md` scratchpad at its worktree root as it goes (relevant files, ones ruled out,
+  root cause, what was tried and why it failed, the repro commands), and `spawn-worker.sh` injects
+  that file back into the prompt **on a retry only**.
+
+  The injected block is framed as **untrusted prior-attempt evidence** — the attempt that wrote it
+  did not finish, so its conclusions are things to evaluate, never instructions and never established
+  fact. Content is delimited as data and byte-capped by `GOVERN_RETRY_NOTES_MAX_BYTES` (default
+  `16000`), with the full file left on disk. First attempts are unchanged apart from the standing
+  instruction to keep notes; a retry with no notes file injects nothing. The scratchpad is
+  git-ignored, so it never lands in a PR.
+
 ## 1.13.1 — 2026-07-26
 
 The ticket-cadence release. Auto-filing stays — it is the mechanism that keeps a backlog grinding

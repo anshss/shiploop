@@ -20,6 +20,19 @@ operator doctrine below, then write a JSON report and exit.
 5. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
    the sub-repo `CLAUDE.md` inside your PR (sub-repo-level).
 
+## FINDINGS SCRATCHPAD — append to `.governor-notes.md` as you go
+If this attempt fails or times out, your worktree is PRESERVED and a retry runs inside it — but only
+what you wrote to DISK survives; your context does not. Keep a running `.governor-notes.md` at your
+worktree root (git-ignored, so it can never land in a PR) and append **as you go**, not at the end —
+a timeout kills you before any final write. Record, in terse bullets:
+- files/symbols found relevant, with `file:line` — and ones you RULED OUT (just as valuable),
+- the root cause once you have it,
+- what you TRIED, what failed, and why,
+- the exact commands that reproduce, build, or validate.
+Mark anything uncertain AS uncertain — on a retry the governor injects this file back as untrusted
+prior-attempt evidence, and a wrong claim stated confidently costs the next attempt more than an
+omission does. No transcripts, no narration: this is the same terseness budget as everything else.
+
 ## ROUTER POSTURE — delegate reconnaissance, keep only the verdict
 You run at `--permission-mode bypassPermissions` with full tool access, so you CAN spawn subagents —
 use that. Per-turn cost is proportional to THIS session's own context size, which is re-sent in full
