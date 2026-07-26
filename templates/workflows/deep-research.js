@@ -163,6 +163,10 @@ if (!scope) {
 }
 log("Q: " + QUESTION.slice(0, 80) + (QUESTION.length > 80 ? "…" : ""))
 log("Decomposed into " + scope.angles.length + " angles: " + scope.angles.map(a => a.label).join(", "))
+// SCOPE_SCHEMA marks `summary` required and the scope prompt asks for a decomposition strategy —
+// it was generated on every run and read by nothing. Surfacing it is what makes the angle choice
+// auditable when a run returns thin results.
+if (scope.summary) log("Strategy: " + scope.summary)
 
 // ─── Dedup state — accumulates across searchers as they complete ───
 const normURL = u => {
@@ -207,6 +211,7 @@ const VERIFY_PROMPT = (claim, v) =>
   "## Research question\n" + QUESTION + "\n\n" +
   "## Claim under review\n\"" + claim.claim + "\"\n\n" +
   "**Source:** " + claim.sourceUrl + " (" + claim.sourceQuality + ")\n" +
+  "**Published:** " + (claim.publishDate || "unknown — treat recency as unverified") + "\n" +
   "**Supporting quote:** \"" + claim.quote + "\"\n\n" +
   "## Checklist\n" +
   "1. Is the claim actually supported by the quote, or is it an overreach/misread?\n" +
@@ -264,7 +269,9 @@ const searchResults = await pipeline(
           return {
             url: source.url, title: source.title, angle: searchResult.angle,
             sourceQuality: ext.sourceQuality, publishDate: ext.publishDate,
-            claims: ext.claims.map(c => ({ ...c, sourceUrl: source.url, sourceQuality: ext.sourceQuality })),
+            // publishDate rides along on each claim: the verifier's checklist item 4 asks whether the
+            // claim is outdated, and it cannot answer that from a URL alone.
+            claims: ext.claims.map(c => ({ ...c, sourceUrl: source.url, sourceQuality: ext.sourceQuality, publishDate: ext.publishDate })),
           }
         }).catch(e => {
           log("fetch failed: " + source.url + " — " + (e.message || e))
@@ -331,7 +338,16 @@ const killed = voted.filter(c => c.isRefuted)
 const unverified = voted.filter(c => !c.survives && !c.isRefuted)
 log("Verify done: " + voted.length + " claims → " + confirmed.length + " confirmed, " + killed.length + " refuted, " + unverified.length + " unverified")
 
-const toRefuted = c => ({ claim: c.claim, vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes, source: c.sourceUrl })
+// counterSource is the whole point of a refutation — the source that disputes the claim. It was
+// declared in VERDICT_SCHEMA and read by nothing, so every refutation reported "killed" with the
+// evidence that killed it discarded. Surface the first refuter that named one.
+const toRefuted = c => ({
+  claim: c.claim,
+  vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes,
+  source: c.sourceUrl,
+  counterSource: (c.verdicts.find(v => v.refuted && v.counterSource) || {}).counterSource || null,
+  evidence: (c.verdicts.find(v => v.refuted && v.evidence) || {}).evidence || null,
+})
 const toUnverified = c => ({ claim: c.claim, erroredVotes: c.erroredVotes, validVotes: c.verdicts.length, source: c.sourceUrl })
 
 if (confirmed.length === 0) {
@@ -370,7 +386,11 @@ const block = confirmed.map((c, i) => {
 
 const killedBlock = killed.length > 0
   ? "\n## Refuted claims (for transparency)\n" +
-    killed.map(c => "- \"" + c.claim + "\" (" + c.sourceUrl + ", vote " + (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes + ")").join("\n")
+    killed.map(c => {
+      const cs = (c.verdicts.find(v => v.refuted && v.counterSource) || {}).counterSource
+      return "- \"" + c.claim + "\" (" + c.sourceUrl + ", vote " + (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes + ")" +
+        (cs ? "\n  contradicted by: " + cs : "")
+    }).join("\n")
   : ""
 
 const unverifiedBlock = unverified.length > 0
