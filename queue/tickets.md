@@ -245,6 +245,8 @@ Done when: a digest can be generated per repo and is stamped with its source com
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component T1
 
+Update (2026-07-26): the earlier cost objection ("paid unconditionally, 320k per ticket") has been re-derived and does NOT hold — see learnings.md. Against the measured mean 7,188,418-token session, an injected digest costs roughly 1-4% (a 2k digest over the measured median 37-turn session ≈ 74k ≈ 1%; a 3k digest over ~107 turns ≈ 320k ≈ 4%). Do not purge this on cost grounds. It remains a gated bet whose only real open question is whether the injection deletes more exploration than that 1-4% — an empirical question, not a foregone conclusion either way.
+
 ---
 
 ## #26 — Precedent injection: hand the worker the analogous prior commit for its target area
@@ -263,6 +265,8 @@ Bounds: cap the injected diff size hard (a large diff costs more than the explor
 Done when: a relevant prior commit is located deterministically for a ticket's target paths and injected as a size-bounded excerpt; no precedent found means no block injected; the block is framed as non-authoritative evidence; injection is skippable via a knob; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
 
 Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component T2
+
+Update (2026-07-26): the earlier cost objection has been re-derived and does NOT hold — see learnings.md. An injected precedent excerpt costs roughly 1-4% of a mean 7.19M-token session at a 2-3k cap, so do not purge this on cost grounds; it remains a gated bet (on T1) whose only real question is whether the injection deletes more exploration than it costs.
 
 ---
 
@@ -734,9 +738,9 @@ Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn me
 
 ## #58 — A worker transcript was written with 682,025 leading NUL bytes, masking a complete real session from every text-based analysis
 
-**Severity:** High
+**Severity:** Low
 **Model:** sonnet
-**Effort:** high
+**Effort:** low
 
 Where: scripts/govern/spawn-worker.sh (the $jsonl redirect + attempt/retry file handling) + hub template equivalent shiploop/templates/govern/spawn-worker.sh.
 
@@ -746,9 +750,9 @@ Impact: because of the NUL prefix, `grep` (and any other text-mode tool) treats 
 
 Likely mechanism: a sparse-file write (e.g. a seek-past-end or truncate-then-write pattern) or a concurrent-append interaction between an attempt/retry and the `>"$jsonl" 2>&1` redirect, where a later write lands at a large offset before the actual content is flushed, leaving the gap zero-filled by the filesystem.
 
-Fix direction: audit spawn-worker.sh's jsonl redirect and any retry/attempt logic that reopens or re-truncates the same jsonl path for a seek/append ordering bug; add a guard (e.g. verify the file's first bytes are valid JSON/UTF-8 immediately after each worker exits, or eliminate any code path that can seek before writing) so a future occurrence is caught immediately instead of silently. Confirm whether the run loop's own report-parsing path (govern::extract_report) is vulnerable to the same NUL-prefix pattern, since that would make it a correctness bug, not just a telemetry gap.
+Fix direction: downgraded — this is n=1 (from 2026-07-11), root cause unknown, and has not recurred since; a full seek/append-ordering hunt for a one-off is a bad trade. Do NOT chase the write bug. Instead add a cheap tripwire: a lint/check that flags any `worker*.jsonl` beginning with NUL bytes (e.g. a one-line check in the log-tree audit path, or a periodic sweep) so a recurrence is detected immediately instead of silently, without investing in reproducing the original mechanism.
 
-Done when: the writer path that can produce a NUL-padded jsonl is identified and fixed (or ruled out, with a detection guard added instead); a test reproduces the seek/append ordering condition (or documents why it can't be reproduced deterministically) and asserts the guard catches it; whether govern::extract_report is or isn't vulnerable to a NUL-prefixed report is confirmed and documented either way; bash -n passes; hub-first — land in shiploop/templates/govern/spawn-worker.sh and port down via /shiploop:update.
+Done when: a cheap check exists that flags any `worker*.jsonl` file beginning with NUL bytes, runs as part of routine log-tree auditing (or an equivalent periodic sweep), and is proven to catch the already-known offending file (logs/govern/run-20260711-033250/ticket-7/worker.jsonl) as a regression check; bash -n passes; hub-first — land in shiploop/templates/govern/spawn-worker.sh (or the appropriate lib) and port down via /shiploop:update.
 
 Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; confirmed via `grep -a` and byte-offset inspection that the file is a complete, valid, high-cost real session buried under a NUL prefix.
 
@@ -785,22 +789,5 @@ Fix direction: push the branch, open a PR against the shiploop hub, land it, the
 Done when: PR merged and worktree removed.
 
 Ref: session 2026-07-26 — found while auditing the token-efficiency worktree during a cost/turn measurement pass over logs/govern/.
-
----
-
-## #61 — Correct or supersede .plans/2026-07-25-shiploop-v1.13.0-token-efficiency.md
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: .plans/2026-07-25-shiploop-v1.13.0-token-efficiency.md.
-
-Observed: the plan doc contains claims that were measured FALSE this session and will mislead a future session that reads it. Specifically: (1) Component C's mechanism is stated as "verified" — `PostToolUse` `updatedToolOutput` is a NO-OP in `claude -p` mode on CLI 2.1.220, so C1's hook half, C2 and C3 are unbuildable today (see learnings.md); (2) W6's "215 of 262 (82%) transcripts have no model turns" is fixture pollution, real production rate is ~0 (see #57); (3) B2 "remove generic self-check phrasing" is a no-op — no generic self-check phrasing exists in `worker-prompt.md`; (4) `--bare` should be added to the "already ruled out" section (biggest prefix lever, but OAuth/keychain are never read so it breaks subscription auth, and it skips hooks). Also worth recording as CONFIRMED: the ~27% prefix estimate measured at 23.4%.
-
-Fix direction: revise the doc in place with measured numbers and a "falsified by measurement" section.
-
-Done when: no claim in the doc contradicts learnings.md or #56-#58.
-
-Ref: session 2026-07-26 — found while re-checking the v1.13.0 token-efficiency plan doc against measurements made this session (see #56, #57, #58, and learnings.md's stream-json usage-accounting entries).
 
 ---
