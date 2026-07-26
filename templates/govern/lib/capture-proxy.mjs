@@ -29,6 +29,11 @@ import https from 'node:https'
 import fs from 'node:fs'
 import { URL } from 'node:url'
 
+// Upstream transport follows the upstream URL's own protocol. In production that is always https;
+// an http upstream exists so the no-credential-leak property can be tested against a local stub
+// instead of only asserted in this comment.
+const transportFor = (url) => (url.protocol === 'http:' ? http : https)
+
 const DEFAULT_UPSTREAM = 'https://api.anthropic.com'
 const LISTEN_HOST = '127.0.0.1'
 // Bodies are large (100k+) but bounded; refuse anything absurd rather than buffer without limit.
@@ -131,11 +136,11 @@ const server = http.createServer((req, res) => {
       ...(captureHeaderNames ? { headerNames: Object.keys(headers).sort() } : {}),
     }
 
-    const upstreamReq = https.request(
+    const upstreamReq = transportFor(upstream).request(
       {
         protocol: upstream.protocol,
         hostname: upstream.hostname,
-        port: upstream.port || 443,
+        port: upstream.port || (upstream.protocol === 'http:' ? 80 : 443),
         path: req.url,
         method: req.method,
         headers,

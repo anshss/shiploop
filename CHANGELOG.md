@@ -20,7 +20,10 @@
   forwarded **verbatim** and no header **value** is ever read, stored or logged; no request or
   response **body** content is ever written to the log, only sizes and names; and it binds to
   `127.0.0.1` only. Subscription/OAuth auth survives it unchanged — this is *not* the `--bare`
-  blocker, which forces `ANTHROPIC_API_KEY`.
+  blocker, which forces `ANTHROPIC_API_KEY`. All three are asserted against a real proxied request in
+  `templates/govern/test/test-capture-proxy-no-leak.sh` (local http stub upstream, no network): a
+  credential sentinel, a request-body sentinel and a response-body sentinel must all be absent from
+  the capture log, while the stub upstream must still receive the credential verbatim.
 
   First measurement (CLI 2.1.220, `--model opus`, a real spawn): of 164,795 turn-1 request bytes,
   **tool schemas are 85,260 — 51.7%**, ahead of `messages` (43.7%) and the system prompt (4.3%). A

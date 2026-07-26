@@ -216,7 +216,11 @@ The proxy (`scripts/govern/lib/capture-proxy.mjs`) sits in front of a worker and
 credentials, so three properties are load-bearing: it forwards every header **verbatim** and never
 reads, stores or logs a header **value**; it never writes request or response **body** content to
 its log, only sizes and names; and it binds to `127.0.0.1` only. Subscription/OAuth auth survives it
-unchanged — this is *not* the `--bare` blocker, which forces `ANTHROPIC_API_KEY`.
+unchanged — this is *not* the `--bare` blocker, which forces `ANTHROPIC_API_KEY`. Those three
+properties are regression-locked by `scripts/govern/test/test-capture-proxy-no-leak.sh`, which proxies
+a real request through a local stub upstream and asserts that a credential sentinel, a request-body
+sentinel and a response-body sentinel are all absent from the capture log while the upstream still
+receives the credential verbatim.
 
 ## Limitations
 
