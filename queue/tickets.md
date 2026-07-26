@@ -569,3 +569,22 @@ Done when: no file in the hub or workspace claims retries escalate unconditional
 Ref: session 2026-07-26 — found while correcting the README's sizing claims (shiploop PR #103).
 
 ---
+
+## #67 — Harness self-improvement: promote safe proposals from run-20260726-102716-12107
+
+**Severity:** Low
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260726-102716-12107. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `governor/supervisor-prompt.md`: extend the "Output contract" to document `skipThisRun` (array of ticket #s), `attemptNext` (array of ticket #s), and `waitForMerge` (array of `{ticket, dependsOn}` or `{ticket, pr, repo}`) — `run-loop.sh:1826-1865` already fully implements all three, but the prompt never tells the supervisor they exist, so every finding can only go into free-text `concerns`, which is just logged for a human and never changes what `select-ticket.sh` picks next. Evidence: the identical "#44 is stale, re-verify before dispatch" finding was independently re-derived and re-logged in two consecutive supervisor passes (after #21 and after #24) — `skipThisRun: [44]` on the first pass would have prevented that. Same root cause explains why three same-file collision clusters (`#44/#52/#55`, `#40/#44/#52/#55`+`#62`D on `run-loop.sh`; `#59/#62`C/`#63` on `spawn-worker.sh`) were flagged in prose only, with no enforcement — `waitForMerge: [{ticket:55, dependsOn:52}]`-style entries already persist exactly this kind of ordering across runs via `pending-waits.json`, but the supervisor is never told the field exists.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-26 12:40 — run run-20260726-102716-12107 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
