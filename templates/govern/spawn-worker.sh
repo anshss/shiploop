@@ -202,6 +202,71 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
   return 0
 }
 
+# ── tool-schema trim ────────────────────────────────────────────────────────────────────────────
+# Measured with `measure-prefix.sh` against a REAL worker spawn (opus, this flag set, 2026-07-26,
+# CLI 2.1.220): of a 164,795-byte turn-1 request, the `tools` JSON block is 85,260 bytes — 51.7%,
+# the single largest component, ahead of `messages` (43.7%) and the system prompt (4.3%). One tool
+# the fleet can never use (`Workflow`, 21,525 B) is by itself 13.1% of the request.
+#
+# Why this cut and not output compression: the tool block is STATIC and DETERMINISTIC, so trimming
+# it is cache-safe — it moves the cache key exactly once and every later worker shares the smaller
+# prefix. Rewriting anything already in the conversation would instead invalidate the cache from
+# that point on and convert ~0.1x reads into ~1.25x writes (read:creation measured at 33.3:1),
+# which is why only the TAIL is ever safe to touch. `--allowedTools` is NOT a substitute: measured
+# no-change, because it gates permission rather than what gets loaded.
+#
+# OPT-IN, per this repo's additive-union rule: unset (or `off`) → no `--tools`, byte-identical to
+# the pre-trim spawn, so nobody's workspace changes behavior on a template bump. Losing a tool a
+# worker genuinely needed costs a failed ticket, which dwarfs the prefix saved — that asymmetry is
+# exactly what the rule protects, so the operator opts in knowingly.
+#   GOVERN_WORKER_TOOLS=default   → the measured recommended allow-list below
+#   GOVERN_WORKER_TOOLS=<list>    → that space/comma-separated list verbatim
+#   GOVERN_WORKER_TOOLS=off|unset → no `--tools` at all (default)
+# Unknown names in the list are tolerated by the CLI (verified: an unrecognised name does not fail
+# argument parsing), so naming a tool a given build lacks is safe — that is deliberate, it keeps
+# one hub list working across CLI versions that ship different tool sets.
+#
+# KEEP/PURGE GATE — purge (unset / `off`) if either holds:
+#   * a worker fails or parks because a tool it genuinely needed was absent, or
+#   * re-running `measure-prefix.sh` shows the tool block is no longer a material share of the
+#     request (< ~15%), i.e. the CLI started deferring schemas on its own.
+# Keep it while the measured cut holds and the suite plus a real end-to-end ticket stay green.
+#
+# The recommended list keeps everything a headless one-ticket worker actually exercises: file +
+# shell + search, `Agent` (the router posture MANDATES delegation), the docs-research web tools, and
+# the background-task controls that manage a spawned `Agent`. It drops the interactive/long-lived
+# surface a `-p` worker has no genuine use for: `Workflow` (requires explicit user opt-in),
+# Enter/ExitWorktree (it is ALREADY in a governor-allocated worktree), the Cron family,
+# PushNotification, RemoteTrigger, DesignSync and ReportFindings (the worker reports via
+# report.json).
+#
+# `Monitor`, `ScheduleWakeup` and `SendMessage` were dropped in the original cut on the theory that
+# the worker prompt discourages them (in-turn poll loops instead of Monitor/ScheduleWakeup; no
+# multi-agent messaging peer). A scan of the 39 confirmed-real worker transcripts under
+# `logs/govern/` (ticket #73, 2026-07-26) showed workers invoke them anyway — Monitor 11x,
+# ScheduleWakeup 6x, SendMessage 3x — so theory lost to measurement; they're kept. The `Task*`
+# tail (TaskCreate/TaskGet/TaskList/TaskOutput/TaskStop/TaskUpdate) and NotebookEdit are kept too
+# even though several of them measured zero invocations in that same scan (TaskGet/TaskList/
+# TaskOutput/TaskStop/NotebookEdit) — dropping them needs its own re-measure to confirm the byte
+# saving is worth the removal risk (see KEEP/PURGE GATE above); don't drop opportunistically.
+GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
+# Sets the global `tools_flag` (empty, or `--tools <list>`) and always returns 0.
+resolve_tools_flag() { # <claude_bin>
+  local bin="$1" list
+  tools_flag=""
+  list="${GOVERN_WORKER_TOOLS:-off}"
+  [[ "$list" == "default" ]] && list="$GOVERN_WORKER_TOOLS_DEFAULT"
+  if [[ "$list" == "off" || -z "$list" ]]; then
+    return 0   # opt-out (the default) wins regardless of what the CLI supports
+  fi
+  if govern::claude_supports_tools_flag "$bin"; then
+    tools_flag="--tools $list"
+  else
+    govern::log "worker #$N: claude CLI ($bin) does not support --tools (older build) — skipping the tool-schema trim; upgrade the CLI to reclaim it (~35% of request bytes measured)"
+  fi
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -219,6 +284,8 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   dr_strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && dr_strict_mcp=""
   resolve_exclude_dynamic_prompt "${GOVERN_CLAUDE_BIN:-claude}"
   dr_exclude_dynamic="$exclude_dynamic_prompt"
+  resolve_tools_flag "${GOVERN_CLAUDE_BIN:-claude}"
+  dr_tools="$tools_flag"
   jq -nc \
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
@@ -228,6 +295,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg perm "$dr_perm" \
     --arg mcp "$dr_strict_mcp" \
     --arg edp "$dr_exclude_dynamic" \
+    --arg tools "$dr_tools" \
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
@@ -236,7 +304,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg sclass "$SCOUT_CLASS" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, scope_class:(if $sclass == "" then null else $sclass end), permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, scope_class:(if $sclass == "" then null else $sclass end), permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, worktree:$wtpath}'
   exit 0
 fi
 
@@ -483,6 +551,16 @@ If the conflict genuinely cannot be resolved without a judgment call the doctrin
 PARK (status \"parked\") and explain precisely in \`escalation\`. Otherwise resolve + push + report resolved."
 fi
 
+# GOVERN_SPAWN_PRINT_PROMPT=1: print the fully assembled worker prompt to stdout and exit 0 WITHOUT
+# creating a worktree and WITHOUT launching a worker. Sibling seam to GOVERN_SPAWN_DRY_RUN above
+# (which prints the FLAG set); together they let `measure-prefix.sh` reproduce a REAL worker spawn
+# byte-for-byte instead of approximating one — an approximated prompt measures the wrong payload.
+# No auth, no cost, no side effects. Not part of the normal run path.
+if [[ "${GOVERN_SPAWN_PRINT_PROMPT:-0}" == "1" ]]; then
+  printf '%s' "$prompt"
+  exit 0
+fi
+
 # 3. Create the worktree.
 wt_cmd="${GOVERN_WORKTREE_CMD:-}"
 wtpath="$WORKTREE_BASE/$slug"
@@ -573,6 +651,11 @@ disable_slash_cmds="--disable-slash-commands"; [[ "${GOVERN_WORKER_SLASH_COMMAND
 # to every fleet as a hub template — passing an unsupported flag would fail EVERY worker at argument
 # parsing, so the flag is only added once a `--help` probe confirms the running CLI supports it.
 resolve_exclude_dynamic_prompt "$claude_bin"
+
+# Opt-in tool-schema trim (GOVERN_WORKER_TOOLS) — the tool block is the largest single component of
+# the request (51.7% measured). Same capability-gate reasoning as the flag above; see
+# resolve_tools_flag for the opt-in contract and the keep/purge gate.
+resolve_tools_flag "$claude_bin"
 
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
@@ -734,7 +817,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
-    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt \
+    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
