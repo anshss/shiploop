@@ -468,6 +468,17 @@ WORKER_PID=""; SPAWN_OUT=""
 spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
   local n="$1"; shift
   SPAWN_OUT="$(mktemp)"
+  # #21 scout-then-size: MEASURE #n's scope with a cheap haiku pass BEFORE dispatch, so a ticket the
+  # brain left unsized is sized from evidence instead of falling through to the blanket opus default.
+  # This is the ONE chokepoint every spawn goes through (plain dispatch, retry, CI-fix and
+  # conflict-resolve re-dispatch alike), and the verdict is cached on the run dir — so the retries
+  # below reuse it rather than re-scouting from scratch. Best-effort by construction: a failure caches
+  # nothing, spawn-worker's `--verdict` read comes back empty, and sizing falls back to today's
+  # GOVERN_WORKER_MODEL behavior with the reason logged. Skipped in dry mode (an observation run must
+  # stay free of model calls) and under GOVERN_SCOUT=0.
+  if [[ "${GOVERN_SCOUT:-1}" != "0" && "${MODE:-live}" != "dry" ]]; then
+    "$DIR/scout-ticket.sh" "$n" >/dev/null || true
+  fi
   # #23: extra args are the co-batched tickets of #n's locality group (empty for a plain single spawn).
   "$DIR/spawn-worker.sh" "$n" "$@" >"$SPAWN_OUT" &
   WORKER_PID=$!
