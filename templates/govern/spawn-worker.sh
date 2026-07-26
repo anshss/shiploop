@@ -159,6 +159,24 @@ resolve_sizing() {
   return 0
 }
 
+# ── exclude-dynamic-system-prompt-sections gate ─────────────────────────────────────────────────
+# ONE resolver (same shared-by-both-paths shape as resolve_sizing above) so the dry-run observation
+# seam and the live spawn can never drift on whether this NEW, capability-gated flag is included.
+# Sets the global `exclude_dynamic_prompt` (empty, or the flag literal) and always returns 0.
+resolve_exclude_dynamic_prompt() { # <claude_bin>
+  local bin="$1"
+  exclude_dynamic_prompt=""
+  if [[ "${GOVERN_EXCLUDE_DYNAMIC_PROMPT:-1}" == "0" ]]; then
+    return 0   # explicit opt-out wins regardless of what the CLI supports
+  fi
+  if govern::claude_supports_exclude_dynamic_prompt "$bin"; then
+    exclude_dynamic_prompt="--exclude-dynamic-system-prompt-sections"
+  else
+    govern::log "worker #$N: claude CLI ($bin) does not support --exclude-dynamic-system-prompt-sections (older build) — skipping this prompt-cache optimization; upgrade the CLI to regain cross-worker cache reuse"
+  fi
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -174,6 +192,8 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   dr_perm="${GOVERN_PERMISSION_MODE:-bypassPermissions}"
   [[ "$dr_mode" == "dry" ]] && dr_perm="plan"
   dr_strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && dr_strict_mcp=""
+  resolve_exclude_dynamic_prompt "${GOVERN_CLAUDE_BIN:-claude}"
+  dr_exclude_dynamic="$exclude_dynamic_prompt"
   jq -nc \
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
@@ -182,6 +202,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg effort_source "$dr_effort_source" \
     --arg perm "$dr_perm" \
     --arg mcp "$dr_strict_mcp" \
+    --arg edp "$dr_exclude_dynamic" \
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
@@ -189,7 +210,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg rreason "$retry_reason" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, worktree:$wtpath}'
   exit 0
 fi
 
@@ -472,6 +493,18 @@ strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && stri
 # to restore (e.g., if worker prompt instructs slash-command invocation).
 disable_slash_cmds="--disable-slash-commands"; [[ "${GOVERN_WORKER_SLASH_COMMANDS:-0}" == "1" ]] && disable_slash_cmds=""
 
+# Move per-machine system-prompt sections (cwd, env info, memory paths, git status) into the
+# first user message instead of the system prompt — those sections are unique per worker
+# (different worktree path, different ticket) and busting the cache on every spawn defeats
+# cross-worker prompt-cache reuse. Only safe because this spawn passes NO --system-prompt /
+# --append-system-prompt (the flag is silently ignored when either is set — verified against
+# Claude Code 2.1.220). DEFAULT ON; set GOVERN_EXCLUDE_DYNAMIC_PROMPT=0 to disable. Capability-gated
+# (see resolve_exclude_dynamic_prompt / govern::claude_supports_exclude_dynamic_prompt above/in
+# common.sh): an older CLI on some other fleet doesn't recognize this NEW flag, and this file ships
+# to every fleet as a hub template — passing an unsupported flag would fail EVERY worker at argument
+# parsing, so the flag is only added once a `--help` probe confirms the running CLI supports it.
+resolve_exclude_dynamic_prompt "$claude_bin"
+
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
 effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
@@ -630,7 +663,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
-    $strict_mcp $disable_slash_cmds \
+    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
