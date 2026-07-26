@@ -423,7 +423,9 @@ Fix direction: measure SEQUENTIALLY — run worker A (flag on) to first token, l
 
 Second lever, same instrument, worth capturing in the same pass: if concurrent spawns cannot share a cache entry, then `--parallel` FORFEITS the cross-worker prefix share that serial runs get — each of N concurrently-spawned workers pays a full ~23.9k-token write instead of a ~0.1x read. Rough arithmetic at cap 4: ~119k token-equivalents vs ~37k sequential (~3.2x on the prefix term). That is real but BOUNDED — against the mean 7,188,418-token session cited in #25 it is a fraction of a percent, so this is a footnote to the parallel-vs-serial tradeoff, NOT an argument against `--parallel` (which buys wall-clock and keeps driver context flat). Quantify it, record it, do not act on it without the number. Whether govern's actual `--parallel` spawns overlap inside the first worker's TTFT is UNVERIFIED — check before assuming the effect applies at all.
 
-Done when: a committed before/after measurement exists, taken sequentially rather than concurrently, and the flag is either kept with evidence or removed; the parallel-forfeit figure is recorded alongside it (or explicitly measured as not applicable because spawns do not overlap).
+**Better instrument available (2026-07-26, see #68) — prefer it over the differential above.** This ticket infers prefix composition indirectly from turn-1 `cache_creation`/`cache_read` deltas, which is why its method was already wrong once. A local pass-through proxy on `ANTHROPIC_BASE_URL` exposes the assembled request DIRECTLY and works under this fleet's subscription/OAuth auth (measured; it is not blocked the way `--bare` is). Read the dynamic sections' byte cost straight off the captured body instead of inferring it — no A/B, no ordering bias, no TTFT timing rule to get wrong. One such capture also shows tool schemas at 65.4% of request bytes versus 17.1% for the entire system prompt, which bounds how much this flag could ever pay: it operates only on a subset of that 17.1%. Size that ceiling before spending a run on the A/B.
+
+Done when: a committed before/after measurement exists, taken sequentially rather than concurrently (or read directly off a proxy capture per #68), and the flag is either kept with evidence or removed; the parallel-forfeit figure is recorded alongside it (or explicitly measured as not applicable because spawns do not overlap).
 
 Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn measurement pass; the 23,909 cache_read recurrence and the 23.4% prefix figure were derived over the 35 confirmed-real sessions identified while investigating #57. Method correction added 2026-07-26 from the Anthropic prompt-caching contract (prefix-match keying; concurrent-request timing rule) after an operator challenged whether parallel workers re-caching the same files is token burn — the file-level premise does not hold (caching is prefix-positional, never content-addressed, so the same file read by two workers is never shared at any timing), but chasing it surfaced that this ticket's own method was broken.
 
@@ -586,5 +588,39 @@ Fix direction: implement each proposal above as a normal harness PR (a PR on the
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
 Ref: governor/improvements.md block "2026-07-26 12:40 — run run-20260726-102716-12107 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
+
+## #68 — Inline compression: two delivery layers measured WORKING, and the standing docs say otherwise
+
+**Severity:** Medium
+**Model:** inherit
+**Effort:** high
+
+Where: `shiploop/templates/hooks/` (PreToolUse input shaping), a new proxy component under `shiploop/templates/`, plus corrections to root `learnings.md` and `.plans/2026-07-25-shiploop-v1.13.0-token-efficiency.md` (lines 84, 132-151, 348-372).
+
+Observed: the v1.13.0 plan records output compression as "unbuildable on this path today" and rules out `headroom`/`rtk`'s output half. That verdict was reached against ONE insertion point — `PostToolUse` → `updatedToolOutput`, which is genuinely a no-op in `-p` mode (still true, unchanged). It was then generalised to "compression is unbuildable," which is false. Two other layers were never tested. Both were tested this session on CLI 2.1.220 under this fleet's subscription/OAuth auth, and both WORK:
+
+1. **`PreToolUse` → `updatedInput` works.** Bash: a hook rewrote `echo ORIGINAL_MARKER` → `echo REWRITTEN_MARKER_XYZ`; the `tool_use` event still logs the model's original command but the executed command and the `tool_result` were the rewritten one. Read: a hook injected `offset:1, limit:5` into a Read of a 500-line file; the model asked for the whole file, received 5 lines, and reported receiving 5. This is `rtk`'s actual mechanism (shape output BEFORE it exists by rewriting the command), and it sidesteps the broken `PostToolUse` path entirely. Caveat measured: in the Bash test the model NOTICED the substitution and commented on it unprompted — a silent rewrite costs turns on the model investigating its own tooling, so any rewrite needs a visible note.
+
+2. **An API-layer proxy on `ANTHROPIC_BASE_URL` works, and subscription auth survives it.** This is NOT the `--bare` blocker (which forces `ANTHROPIC_API_KEY` and is why `--bare` is dead): a local pass-through forwards OAuth/keychain credentials unchanged. Verified `rc=0` with the model replying through the proxy. The FULL assembled request is both visible and mutable — a tail injection took the body 161,602 → 164,023 bytes and changed the model's reply accordingly.
+
+**Consequence for the plan's own measurement work:** plan line 84 states *"`count_tokens` won't work — Claude Code never exposes the assembled prompt"*, and builds P1 around differential cache-token ablation. That premise is false at the proxy layer; the componentised breakdown can be read directly. One capture already reframes the prefix problem — of 161,602 request bytes: **tool schemas 105,703 (65.4%)**, messages 28,234 (17.5%), system prompt 27,702 (17.1%). Prefix work to date has targeted `worker-prompt.md` (~4.4k tokens) and dynamic system sections, but roughly two-thirds of the payload is tool JSON schemas re-read every turn. That makes P3 (`--tools`) the main lever, not a footnote. NOT YET CONFIRMED: the capture is a Haiku probe carrying `--strict-mcp-config --disable-slash-commands` but is not a real govern worker spawn — the 65.4% figure must be re-measured against an actual spawn before anything is sized on it.
+
+Fix direction: measure first, build second.
+- Re-capture the component split against a REAL govern worker spawn before choosing a lever.
+- Cache economics are the binding constraint, not feasibility. Cache reads bill ~0.1x, writes ~1.25x, and read:creation is measured at 33.3:1 — so rewriting the prefix or any prior message invalidates from that point forward and converts cheap reads into expensive writes. Raw-text reduction claims (`headroom`'s "~50%") do not survive that conversion. **Design rule: compress only the TAIL** — a fresh `tool_result` on its first transmission, with nothing downstream of it yet. That recovers exactly the broken `PostToolUse` capability with no invalidation. Never rewrite history. Any compressor must also be DETERMINISTIC, or it changes the prefix between turns and busts the cache every turn.
+- Trimming the tool schema set is cache-safe (static and deterministic) and is the largest single cut available.
+- Operational cost to weigh explicitly before committing: a proxy becomes a hard dependency in front of every worker (it dies, the fleet dies) and it handles credentials, so it must never log them — the probe used here forwards auth verbatim and logs only size/shape, and that property is load-bearing.
+- `caveman`'s terseness directive needs NO work — already shipped at `governor/worker-prompt.md:40` and `:81-83`. `headroom`'s free CLI remains telemetry-only. Neither changes.
+
+Done when:
+- [ ] Root `learnings.md`'s `PostToolUse` entry is narrowed to the one API it actually measured, and names `PreToolUse`/`updatedInput` and the proxy layer as measured-working alternatives.
+- [ ] Plan line 84's "never exposes the assembled prompt" claim is corrected, and P1's ablation procedure is replaced with direct proxy capture.
+- [ ] The plan's "Already ruled out" section no longer implies hook-based shaping is dead generally — the PreToolUse half is live.
+- [ ] Component split re-measured against a real govern worker spawn, committed as a table.
+- [ ] Whichever lever the measurement selects is implemented hub-first in `shiploop/templates/**` with a test, keep/purge criteria stated, and the tail-only + determinism rules enforced.
+
+Ref: session 2026-07-26 — operator challenged the "already dead" verdict on `headroom`/`caveman`, correctly noting those tools sit at the API boundary rather than in the hook surface. Four experiments run this session (PreToolUse Bash rewrite, PreToolUse Read bounding, proxy pass-through under OAuth, proxy body mutation). Supersedes the measurement instrument in #59.
 
 ---
