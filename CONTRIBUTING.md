@@ -92,6 +92,10 @@ When a test encodes an assumption about the machine — where a binary lives, wh
 accepts (`stat`, `sed`, `date` are the classic GNU/BSD splits) — verify it against the runner's
 environment rather than your own, and prefer deriving the fact at runtime over hardcoding it.
 
+### A test runs from two different layouts — never hardcode one
+
+The same corollary applies to paths. Every test file executes twice: as `templates/govern/test/test-x.sh` in this repo, and as `scripts/govern/test/test-x.sh` inside the scaffolded workspace CI builds. `$DIR/../` (the mechanism script under test) is stable across both; anything *above* that is not — `templates/gitignore` becomes the workspace's `.gitignore`, `templates/governor/worker-prompt.md` becomes `governor/worker-prompt.md`. A test that asserts on a shipped file must resolve the first path that exists across both layouts (and skip if neither does), or it passes locally and fails only in `scaffold-and-test`.
+
 ## Porting discipline (for changes coming FROM a production fleet)
 
 Most fixes here originated on a production workspace and were ported back. The three rules that keep the templates re-installable everywhere:
