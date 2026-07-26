@@ -1,17 +1,23 @@
 # Workspace learnings — cross-repo
 
-Transient / evolving discoveries that don't belong in `CLAUDE.md` (too volatile) and don't belong in
-a ticket (not a work item). Read at session start (the SessionStart hook prints the top of this file);
-append at session end when something is worth carrying forward but hasn't yet stabilized into a
-permanent pattern.
+Transient / evolving operational knowledge — true right now, not yet stable enough for `CLAUDE.md`
+("X provider is flaky this week"). **Not** a work item (→ `queue/tickets.md`) and **not** a fixed-bug
+writeup (→ promote the durable lesson to `CLAUDE.md`, or delete it). When an entry is still true after
+~2 weeks, promote it and delete it from here.
 
-> The SessionStart hook auto-prints **only this root `learnings.md`** — when working inside a sub-repo,
+> The SessionStart digest covers **only this root `learnings.md`** — when working inside a sub-repo,
 > open that sub-repo's own `learnings.md` yourself.
 
-Format: short, date-stamped, grep-able. When a learning stabilizes (still true after ~2 weeks /
-several sessions), promote it into the appropriate `CLAUDE.md` and delete the entry here. **A fixed
-bug is NOT a learning** — promote its durable lesson to `CLAUDE.md` or delete it; **work items go to
-`tickets.md`**, never here.
+Entry format — the digest finds entries by this heading shape and injects the newest few:
+
+```
+### YYYY-MM-DD — short grep-able title
+
+Two or three lines. What you observed, and what a future session should do differently.
+```
+
+Order doesn't matter (entries are date-sorted on read). This preamble is never injected — only entries
+are — so an empty file costs nothing at session start.
 
 ---
 

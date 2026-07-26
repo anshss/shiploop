@@ -81,7 +81,8 @@ A durable, file-based backlog the whole harness reads.
 | Where | Use when |
 |---|---|
 | `queue/tickets.md` | Work items — anything to fix/build later |
-| `CLAUDE.md` (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. **Sub-repo `CLAUDE.md` wins in its scope**; the root file is cross-repo orchestration only |
+| `CLAUDE.md` (root or sub-repo) | Stable **hard rules** a session must never miss. Home for the durable lesson from a fixed bug. **Sub-repo `CLAUDE.md` wins in its scope**; the root file is cross-repo orchestration only. Re-sent every turn — keep it terse |
+| `CLAUDE-APPENDIX.md` | The same durable knowledge when it's reference rather than rule — command tables, deep provider notes, the *why* behind a rule. Loaded on demand, so there is no length budget |
 | `learnings.md` (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for CLAUDE.md. Never a work item; never a fixed-bug writeup |
 | Project memory (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences |
 
@@ -107,7 +108,7 @@ Before a live run, from a **plain terminal** (not nested in a Claude session), c
 ## Hooks (deterministic session scaffolding)
 
 Wired into the workspace `.claude/settings.json` by setup:
-- **SessionStart:** print the top of `learnings.md` (skim before diving in) · `check-main-on-main.sh` (warn if the main checkout drifted off main) · optional project drift check (e.g. prod-behind-main).
+- **SessionStart:** `learnings-digest.sh` (inject the newest few `learnings.md` **entries** — skipping the file's preamble, and injecting nothing at all when there are none) · `check-main-on-main.sh` (warn if the main checkout drifted off main) · optional project drift check (e.g. prod-behind-main).
 - **UserPromptSubmit:** `router-posture-reminder.sh` (prime the delegate-heavy-work-to-a-child-Agent router posture once per session — a driver's per-turn cost is proportional to its own context, re-sent in full every turn).
 - **PreToolUse (Read|Bash):** `router-posture-guard.sh` (catch a router-posture violation in the moment — a large inline Read or a verbose build/`npm run dev` the driver should have delegated instead).
 - **Stop:** `ticket-sweep-reminder.sh` (reconcile tickets once per code-touching session).
