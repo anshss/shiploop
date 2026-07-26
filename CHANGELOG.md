@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.13.3 — 2026-07-26
 
 ### Added
 
@@ -109,6 +109,77 @@
   (dropping them needs its own evidence, not opportunistic cleanup). The default remains **off** —
   turning it on fleet-wide still needs a real A/B on cost-per-successful-ticket, not bytes, which
   hasn't run yet.
+
+- **The flow-registry grammar was described but not enforced.** `govern::flow_validate` encoded the
+  whole flow-block grammar and had no production caller — the gate that actually runs
+  (`lint-validation-refs.sh` and the Stop hook, both via `govern::flows_lint`) never invoked it, so a
+  flow missing `Kind`/`Surface`/`Paths` passed the real gate. `GOVERN_FLOW_ID_RE` and
+  `GOVERN_FLOW_STATUSES` were likewise declared and never read. Consequence: a typo'd `Status: PSAS`
+  linted clean and then matched none of the downstream `case` arms (staleability, status summary,
+  revalidation, the validated-subset field requirement) — the flow did not error, it silently ceased
+  to exist for the registry. `flows_lint` now runs `flow_validate` per flow as a FAIL row, and
+  `flow_validate` rejects an out-of-charset id and an unknown `Status`. Covered in
+  `test-flows-parser.sh` and `test-flows-lint.sh`, including a negative case so a legal `Status`
+  cannot trip the check.
+
+- **The validation gate recognized fewer tickets than the worker prompt does — and degraded OPEN.**
+  `worker-prompt.md` gives the worker four tells for "this is a validation ticket, empirical evidence
+  required", but the #67/#73 safety net in `run-loop.sh` matched only the first two plus half of the
+  third. A ticket whose `Done when` asks for a PASS/FAIL table from a real run was validation-required
+  *by the worker's own prompt* and invisible to the gate, so a worker reporting `resolved` off static
+  analysis walked straight through the mechanism built to stop exactly that. Every other malformed key
+  in the report contract degrades closed; this one accepted an unproven "resolved". The recognizer is
+  now `govern::is_validation_ticket` in `lib/common.sh`, beside `govern::validation_gate_action`, so
+  the prompt's tells and the enforcement have one place to drift from instead of two; tells 3b
+  ("actually work") and 4 ("PASS/FAIL") are added, and it is deliberately fail-closed — a false
+  positive parks and asks a human, a false negative is the bug.
+  `test-validation-ticket-recognizer.sh` locks all four tells *and* the negative direction, so routine
+  bugfix/docs tickets are not swept into the gate.
+
+- **The deep-research verifier is asked to judge recency but was never given the date.**
+  `EXTRACT_SCHEMA` declares `publishDate` and the fetch stage writes it, but nothing read it — absent
+  from all four `sources:` projections and from synthesis — while `VERIFY_PROMPT` item 4 tells every
+  verifier to check whether a claim is outdated. That checklist item was answered from guesswork. The
+  date now rides on each claim and renders in the verifier prompt, with an explicit "unknown — treat
+  recency as unverified" when the source had none. Two further declared-and-unread fields are also
+  surfaced: `counterSource` (the source that disputes a claim — every killed claim previously discarded
+  its own evidence) now appears in `refuted[]` and the synthesis prompt, and `scope.summary` is logged
+  so the angle choice is auditable when a run comes back thin. Additive only; the output shape stays
+  at parity with Claude Code's built-in deep-research.
+
+### Removed
+
+- **Three dead artifacts, each verified by repo-wide `git grep` returning only its own definition.**
+  `measurements/ticket-76-tail-compression-ceiling.md` (zero inbound references anywhere — a one-off
+  analysis artifact that read as current documentation while being unreachable, citing tickets no
+  longer live), `scaffold.sh write_if_changed()` (defined, never invoked, no `eval`/`trap`/`export -f`
+  dispatch), and `templates/lib/wrap.sh fs_is_case_insensitive()` (an APFS/HFS+ probe never invoked —
+  removing it drops no capability, since `wrap.sh`'s real case-collision check uses `find -iname`,
+  which works on any filesystem without knowing the FS first). The scan covered 257 tracked files and
+  406 shell functions across 201 files; these were the only inert artifacts on the shell/file axis.
+
+### Docs
+
+- **Four documented claims that contradicted the implementation, all re-verified against the code.**
+  `templates/.claude/commands/govern.md` — the copy that scaffolds into every workspace as `/govern`,
+  and the one `commands/govern.md` explicitly declares authoritative — was many revisions behind its
+  hub counterpart: the more authoritative file was the more stale one. It was missing the
+  `GOVERN_AUTONOMY` trust ladder and `GOVERN_BATCH_MAX` locality batching, and told operators to
+  hand-edit `governor/escalations.md` entries when `record-escalation-answer.sh` is the real
+  mechanism, while omitting the `mitigated` disposition entirely. Regenerated from the hub copy via the
+  same transform the other three pairs already use. Also: `GOVERN_MAX_RUNTIME` was documented as "~4h"
+  when `run-loop.sh` defaults it to `0` (no cap) — a wall-clock bound that does not exist is the worse
+  direction of wrong; `CONTRIBUTING.md` said "the four slash commands" when there are seven; and
+  `commands/push.md` gave the sync-port lock path as `scripts/govern/.locks/` when it resolves under
+  `governor/.locks/`.
+
+- **~25 user-tunable governor knobs were source-only.** A sweep of all 182 `GOVERN_*`/`SHIPLOOP_*`
+  identifiers found no documented-but-unread knob — the docs were accurate as far as they went — but
+  that many genuinely tunable knobs in no README table, no `.env.example` and no prose, discoverable
+  only by reading the governor source. The one that matters most is `GOVERN_PERMISSION_MODE`: it
+  defaults to `bypassPermissions` and is on the `GOVERN_PROTECTED_PATTERNS` self-apply guard list —
+  considered important enough to shield from agent self-edit, yet invisible to the operator, so the
+  permissive default was effectively non-negotiable in practice.
 
 ## 1.13.2 — 2026-07-26
 
