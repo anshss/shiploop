@@ -62,8 +62,6 @@
   layouts. Includes a guard that the shipped seed `learnings.md` injects zero bytes, so re-introducing
   a heading into the seed can't silently re-tax every fleet.
 
-||||||| 3718c76
-
 ### Changed
 
 - **The seed `CLAUDE.md` is 47% smaller, and the displaced material has a home.** `CLAUDE.md` is
