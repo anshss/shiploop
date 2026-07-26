@@ -56,6 +56,19 @@
   while the cut holds and the suite plus a real end-to-end ticket stay green. Covered by
   `templates/govern/test/test-spawn-tools-trim.sh`.
 
+### Fixed
+
+- **`GOVERN_WORKER_TOOLS_DEFAULT` was missing three tools workers actually invoke.** A scan of 39
+  confirmed-real worker transcripts found `Monitor` (11x), `ScheduleWakeup` (6x) and `SendMessage`
+  (3x) all in live use despite being cut from the recommended `--tools` list on the theory that a
+  headless `-p` worker has no use for them. Flipping the trim on as-shipped would have removed tools
+  mid-flight for any worker that reached for one — a failed ticket costs far more than the prefix
+  saved, so measurement wins over theory here. All three are back in the recommended list; the
+  never-invoked `Task*` tail and `NotebookEdit` are left in place pending a dedicated re-measure
+  (dropping them needs its own evidence, not opportunistic cleanup). The default remains **off** —
+  turning it on fleet-wide still needs a real A/B on cost-per-successful-ticket, not bytes, which
+  hasn't run yet.
+
 ## 1.13.2 — 2026-07-26
 
 The cost release. Three levers, all aimed at the same target: the tokens a ticket spends on
