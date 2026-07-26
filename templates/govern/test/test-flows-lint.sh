@@ -74,6 +74,27 @@ assert_contains "$(cat "$T/err")" "PII/secret" "PII FAIL message"
 printf '# evidence\nauth flow validates an email login someone@example.com <!-- lint:allow email -->\n' > "$M/.claude/shiploop/validation/evidence/deploy.example.md"
 assert_eq "$(run_lint)" "0" "PII with a <!-- lint:allow --> marker is suppressed (rc 0)"
 
+# ── Row: registry GRAMMAR is enforced by the gate. govern::flow_validate encodes the whole grammar
+# but used to have no production caller — it was reachable only from test-flows-parser.sh, while the
+# gate that actually runs (lint-validation-refs.sh and the Stop hook both call flows_lint) never
+# invoked it. So a flow missing Kind/Surface/Paths, or carrying a typo'd Status, passed the real gate.
+cp "$F.clean" "$F"
+govern::flow_set_field deploy.example Status "PSAS" "$F"
+assert_eq "$(run_lint)" "1" "out-of-vocabulary Status → FAIL (rc 1)"
+assert_contains "$(cat "$T/err")" "not in the known vocabulary" "grammar FAIL message names the vocabulary"
+cp "$F.clean" "$F"
+
+cat >> "$F" <<'EOF'
+
+## missing.fields
+- **Kind:** correctness
+- **Status:** UNTESTED
+EOF
+assert_eq "$(run_lint)" "1" "flow missing required fields → FAIL (rc 1)"
+assert_contains "$(cat "$T/err")" "missing required field Surface" "grammar FAIL message names the missing field"
+cp "$F.clean" "$F"
+assert_eq "$(run_lint)" "0" "restored clean registry still lints cleanly (rc 0)"
+
 # ── Regression: a registry whose ONLY "flows" are commented-out seed examples must lint cleanly
 # (rc 0) and stay byte-for-byte unmutated — a `## <id>` heading sitting inside a multi-line
 # `<!-- ... -->` block must never be treated as a real flow, so its placeholder zero-match glob can

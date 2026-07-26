@@ -158,6 +158,23 @@ govern::flow_validate() { # id [file] -> problems on stdout, rc 1 if any
   done
   kind="$(govern::flow_field "$id" Kind "$f")"
   status="$(govern::flow_field "$id" Status "$f")"
+
+  # The id charset and the Status vocabulary are the two constants this file has always declared but
+  # never enforced. Without these checks a typo'd Status (`PSAS`) lints CLEAN and then matches none of
+  # the `case` arms downstream (staleability, summary buckets, revalidation, the validated-subset field
+  # requirement above) — the flow silently ceases to exist for the registry rather than erroring. The id
+  # check likewise backs this file's own collision-safety claim: `## #<digits>` ticket headings can only
+  # stay disjoint from `## <id>` flow headings while `#` is provably outside the id charset.
+  if [[ ! "$id" =~ $GOVERN_FLOW_ID_RE ]]; then
+    printf '%s: id is not a legal flow id (must match %s)\n' "$id" "$GOVERN_FLOW_ID_RE"; bad=1
+  fi
+  if [[ -n "$status" ]]; then
+    case " $GOVERN_FLOW_STATUSES " in
+      *" $status "*) ;;
+      *) printf '%s: Status=%s is not in the known vocabulary (%s)\n' "$id" "$status" "$GOVERN_FLOW_STATUSES"; bad=1 ;;
+    esac
+  fi
+
   if [[ "$kind" == "effectiveness" && -z "$(govern::flow_field "$id" Gate "$f")" ]]; then
     printf '%s: Kind=effectiveness requires a Gate field\n' "$id"; bad=1
   fi
@@ -307,6 +324,17 @@ govern::flows_lint() { # [meta-root] -> rc 1 if any FAIL row tripped
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
     status="$(govern::flow_field "$id" Status "$flows")"
+
+    # Row: block grammar (required fields, legal id, known Status, per-Kind/Status field requirements).
+    # govern::flow_validate encodes the whole grammar but had NO production caller — it was reachable
+    # only from test-flows-parser.sh, so the gate that actually runs (lint-validation-refs.sh and the
+    # Stop hook both call flows_lint, never flow_validate) accepted a flow missing Kind/Surface/Paths
+    # outright. Running it here is what makes the grammar enforced rather than merely described.
+    local _probs
+    if ! _probs="$(govern::flow_validate "$id" "$flows")"; then
+      printf 'FLOWS LINT FAIL — flow %s violates the registry grammar:\n%s\n' "$id" "$_probs" >&2
+      rc=1
+    fi
 
     # Row: Evidence ref dangles (no file, dead URL shape) → FAIL. Skip statuses that predate validation.
     ev="$(govern::flow_field "$id" Evidence "$flows")"

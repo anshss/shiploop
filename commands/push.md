@@ -131,7 +131,7 @@ GOVERN_SYNC_PORT_NO_MERGE=1 bash scripts/govern/sync-port.sh
 
 `sync-port.sh` handles everything from here:
 
-- Single-owner lock (`scripts/govern/.locks/sync-port`) — if held by another run, exits 0 with a
+- Single-owner lock (`governor/.locks/sync-port`) — if held by another run, exits 0 with a
   friendly message and no work.
 - Fail-closed EXIT trap that restores the hub-clone worktree to `main` on any error, so a failed
   port doesn't strand you on a half-baked branch.
