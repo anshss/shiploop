@@ -5,7 +5,7 @@ Thanks for looking. This repo is unusual: it is the template source for an auton
 ## What lives where
 
 - `scaffold.sh` — deterministic scaffolder. Every mechanical file operation is here. Idempotent, non-interactive with `--yes`, component-scoped with `--component <name>`.
-- `commands/*.md` — the four slash commands (`setup`, `govern`, `investigate`, `resolve`). Judgment only; mechanical work belongs in `scaffold.sh` or a template script.
+- `commands/*.md` — the slash commands (`setup`, `update`, `govern`, `investigate`, `resolve`, `flows`, `push`). Judgment only; mechanical work belongs in `scaffold.sh` or a template script.
 - `templates/lib/workspace.sh` — the one config file every mechanism script sources. Mechanism scripts are byte-identical across installs; per-workspace values live here.
 - `templates/govern/` — governor driver, ticket selector, merge-PR, supervisor, escalations.
 - `templates/govern/test/` — 60 hermetic bash tests locking governor invariants.

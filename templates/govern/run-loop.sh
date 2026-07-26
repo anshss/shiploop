@@ -1399,10 +1399,12 @@ while :; do
   if [[ "$status" == "resolved" && "$MODE" == "live" ]]; then
     # Use the shared tolerant parser so a `##  #N` (double-space) or `## #N—Title` (em-dash
     # no space) heading doesn't yield an empty tblock — which would silently disable this
-    # gate: the VALIDATION|SPIKE grep would miss and a code-reading verdict would resolve a
-    # validation ticket without live-test evidence, defeating the #67 gate.
+    # gate: the recognizer would miss and a code-reading verdict would resolve a validation
+    # ticket without live-test evidence, defeating the #67 gate.
+    # Recognition itself lives in govern::is_validation_ticket (lib/common.sh) so it stays in
+    # sync with the tells worker-prompt.md gives the worker — they had already drifted apart.
     tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
-    if printf '%s' "$tblock" | grep -qE '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif' 2>/dev/null; then
+    if govern::is_validation_ticket "$tblock"; then
       case "$(govern::validation_gate_action "$report")" in
         park-no-evidence)
           govern::log "#$N is a VALIDATION ticket but the worker gave no live-test evidence — refusing to auto-resolve; parking for a real test (#67 gate). Any worker PR is left open for review."
