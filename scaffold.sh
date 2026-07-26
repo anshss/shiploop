@@ -162,17 +162,6 @@ if [ -n "$REPOS_SPEC" ]; then
   done
 fi
 
-# ── Utility: write only if changed (returns 0 if wrote, 1 if unchanged) ─────
-write_if_changed() {
-  local target="$1"; local content="$2"
-  if [ -f "$target" ] && [ "$(cat "$target")" = "$content" ]; then
-    [ "$VERBOSE" -eq 1 ] && info "unchanged: $target"
-    return 1
-  fi
-  printf '%s' "$content" > "$target"
-  [ "$VERBOSE" -eq 1 ] && info "wrote:     $target"
-  return 0
-}
 
 # ── Component implementations ───────────────────────────────────────────────
 
