@@ -61,43 +61,6 @@ Ref: PR anshss/shiploop#76 history (2 red runs, fix commit b72c82e); learnings f
 
 ---
 
-## #21 — Scout-then-size: measure ticket scope with a cheap pass, then select model+effort deterministically
-
-**Severity:** Medium
-**Model:** opus
-
-**Depends on:** #18
-
-Where: new script under shiploop/templates/govern/ (+ workspace mirror in scripts/govern/), called from the dispatch path in run-loop.sh before spawn-worker.sh
-
-Observed: today's sizing is a PRIOR, not a measurement. The `Model:` field is decided before any evidence by whoever files the ticket, and when absent the default is `opus` (`model="${GOVERN_WORKER_MODEL:-opus}"`, spawn-worker.sh:64 and :291). That is wrong in both directions: it overpays on easy tickets, and it cannot detect a hard ticket until an attempt has already failed at full price. Reconnaissance costs roughly 1/1000th of the work, so spending a cent to decide whether to spend $3 or $34 is the highest-ROI decision in the harness.
-
-Fix direction: add a scout pass that runs BEFORE the worker is spawned and measures scope cheaply (haiku tier), emitting structured JSON:
-  - how many files the fix plausibly touches (symbol/grep search seeded from the ticket's `Where:`)
-  - how many repos are involved
-  - whether tests already cover the touched area
-  - whether git history contains a precedent commit for the same file/area (a precedent means easy)
-  - local edit (function body) vs structural change (signature / schema / API contract)
-  - whether the ticket's fix direction is concrete or vague
-
-Then select (model, effort) with a DETERMINISTIC bash scoring function over that JSON — auditable and tunable, NOT a second LLM judgement call:
-  | measured scope                                            | model  | effort |
-  | 1 file, local, precedent + test exist                     | haiku  | low    |
-  | <=5 files, 1 repo, concrete fix direction                 | sonnet | medium |
-  | cross-repo, or contract/schema change, or no test, or vague| opus  | high   |
-
-Precedence: an explicit ticket `Model:`/`Effort:` field always WINS over the scout (the human/brain override must remain authoritative). The scout only decides when the fields are absent — replacing the blanket `opus` default, not the operator.
-
-Cache the scout's verdict onto the run so a retry does not re-scout from scratch, and record it so ticket #(S5) can log which scope class produced which outcome.
-
-Guard: scout output is untrusted model output feeding a dispatch decision — validate the JSON shape and clamp to known enum values; on any parse failure or timeout, fall back to today's behavior (GOVERN_WORKER_MODEL) and log the fallback loudly. Never let a malformed scout silently downgrade a hard ticket to haiku.
-
-Done when: the scout runs pre-dispatch and emits validated JSON; the scoring function selects model+effort deterministically from it and is unit-testable in isolation (add a test under templates/govern/test/); an explicit ticket Model:/Effort: overrides the scout; malformed/absent scout output falls back safely and loudly; the chosen tier and the scope class are logged; `bash -n` passes; hub-first — land the change in `shiploop/templates/**` ONLY; the workspace copy under `scripts/govern/` or `governor/` is refreshed separately through the `/shiploop:update` channel, so do NOT hand-edit it in the same PR.
-
-Ref: session 2026-07-25 token-efficiency review; .plans/2026-07-25-shiploop-token-efficiency.md component S2
-
----
-
 ## #24 — Deterministic pre-gate: skip spawning an agent for codemod-able or already-fixed-upstream tickets
 
 **Severity:** Low
