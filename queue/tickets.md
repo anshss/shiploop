@@ -654,3 +654,82 @@ Done when: each safe proposal above is implemented via a harness PR or explicitl
 Ref: governor/improvements.md block "2026-07-26 17:29 — run run-20260726-165215-2261 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
+
+## #73 — Land the --tools trim in the workspace and decide default-on; its allow-list drops three tools workers actually use
+
+**Severity:** High
+**Model:** sonnet
+**Effort:** medium
+
+Where: `shiploop/templates/govern/spawn-worker.sh` (`GOVERN_WORKER_TOOLS`, `GOVERN_WORKER_TOOLS_DEFAULT` at :243), and the workspace mirror `scripts/govern/spawn-worker.sh` via `/shiploop:update`.
+
+Observed: shiploop#109 (MERGED, 3/3 CI green) shipped the tool-schema trim and measured it at 164,795 → 107,985 turn-1 bytes (−34.5%) against a real opus worker spawn. Two gaps remain:
+
+1. **It is opt-in and default-off** (`GOVERN_WORKER_TOOLS=off|unset → no --tools at all (default)`), and the workspace copy has not been synced at all — `scripts/govern/measure-prefix.sh` does not exist here and `GOVERN_WORKER_TOOLS` has zero wiring. So the largest measured lever on the board is currently saving this fleet nothing.
+2. **`GOVERN_WORKER_TOOLS_DEFAULT` drops three tools workers demonstrably invoke.** A scan of the 39 confirmed-real worker transcripts under `logs/govern/` (msg_ filter per #57) counts: Bash 1,982 · Read 247 · Edit 228 · Write 53 · Agent 34 · TaskUpdate 24 · TaskCreate 13 · ToolSearch 11 · **Monitor 11** · **ScheduleWakeup 6** · **SendMessage 3**. The shipped allow-list omits Monitor, ScheduleWakeup and SendMessage. Conversely it KEEPS several tools with zero invocations (NotebookEdit, TaskList, TaskGet, TaskOutput, TaskStop), so it is simultaneously too tight and too loose.
+
+Impact: turning this on as-shipped removes three tools that were in live use. A worker that reaches for a missing tool can flail or fail, and a failed ticket retries at roughly full cost (#20: 1.15M then 1.66M tokens on the same ticket) — one extra failure per ~15 tickets erases the entire saving.
+
+Fix direction: reconcile `GOVERN_WORKER_TOOLS_DEFAULT` against the measured usage above (add Monitor/ScheduleWakeup/SendMessage; drop the never-invoked Task* tail and NotebookEdit only if the re-measure shows it is worth the risk). Sync hub→workspace. Then run a real A/B on cost-per-SUCCESSFUL-ticket, not on bytes, before flipping the default on. Keep the env kill switch.
+
+Done when: the workspace runs the trim; `GOVERN_WORKER_TOOLS_DEFAULT` contains every tool with a non-zero invocation count in the real-transcript scan; a committed A/B shows no increase in ticket failure rate; the default-on decision is recorded either way.
+
+Ref: session 2026-07-26 — usage counts derived from the 39 real sessions under `logs/govern/`; byte figures from shiploop#109's own measurement.
+
+---
+
+## #74 — Measure whether PostToolUse/updatedToolOutput works INTERACTIVELY — it gates the largest orchestrator-side lever
+
+**Severity:** Medium
+**Model:** sonnet
+**Effort:** low
+
+Where: a throwaway `--settings` file + scratch session; no production config touched. Findings land in root `learnings.md`.
+
+Observed: every measurement of the `updatedToolOutput` no-op was taken in `claude -p`. The real topology is an INTERACTIVE session in a shiploop repo spawning the headless workers — and the interactive orchestrator is the long-lived leg that accumulates across a whole govern run and is the only one that ever compacts. So the layer where subagent returns actually pile up has never been tested, and "unbuildable" was never established for it.
+
+If it works interactively, it unblocks capping the `Agent` return at N chars, spilling the full report to `$WORKTREE/.governor-notes/subagent-<id>.md`, and returning the cap plus that path (`headroom`'s spill-and-handle, plan component C1 half 2 — currently parked as BLOCKED on evidence from the wrong layer).
+
+Fix direction: run the same sentinel repro used for the `-p` result, interactively. Confirm by side-effect log, not by transcript (hook execution is not surfaced as `hook_started`/`hook_response`). If it works, size C1 before building: compare total `cache_read_input_tokens` on one real multi-subagent ticket with the cap on vs off.
+
+Done when: a committed verdict in `learnings.md` for interactive mode, and — if it works — a measured size for C1 with keep/purge criteria stated.
+
+Ref: session 2026-07-26 — operator corrected the topology assumption; every prior measurement on this entry is `-p` only.
+
+---
+
+## #75 — Size the rtk lever before building it: measure how much worker Bash output is pure noise
+
+**Severity:** Medium
+**Model:** sonnet
+**Effort:** low
+
+Where: analysis over `logs/govern/**/worker*.jsonl` (msg_ filter per #57). No production change.
+
+Observed: `PreToolUse`/`updatedInput` is measured working, so rtk-style command rewriting is buildable — but nobody has measured whether it is worth building. Workers are overwhelmingly shell-driven: 1,982 Bash invocations vs 247 Reads across the 39 real sessions. Accumulated tool output is the dominant cost term (roughly the ~76% of the bill that is not prefix re-read), and Bash is where almost all of it enters. Unknown: what share of those bytes is information-free noise (install chatter, per-file test-runner OK lines, progress spinners, full `git log` bodies).
+
+Fix direction: aggregate `tool_result` bytes per Bash command across the real sessions; bucket by command head (`npm`, `git`, `bash test/`, etc.); report total bytes and the share attributable to noise-class commands. Weight by position — a result entering at turn 10 of a 37-turn session is re-read on every remaining turn, so early-entering bulk costs far more than its raw size.
+
+Done when: a committed table of Bash output bytes by command class with the noise share quantified, and an explicit build/skip recommendation for the rewrite hook. Do NOT build the hook under this ticket.
+
+Ref: session 2026-07-26 — `PreToolUse`/`updatedInput` proven working (see `learnings.md`); this sizes the lever before committing to it.
+
+---
+
+## #76 — Size the proxy tail-compression ceiling, reusing the capture proxy shiploop#109 already shipped
+
+**Severity:** Low
+**Model:** inherit
+**Effort:** medium
+
+Where: `shiploop/templates/govern/lib/capture-proxy.mjs` (already shipped and CI-green with a no-leak test), extended read-only for measurement.
+
+Observed: an `ANTHROPIC_BASE_URL` proxy is measured working under subscription/OAuth auth, with the assembled request both visible and mutable. Tail-only compression — rewriting a fresh `tool_result` on its FIRST transmission, leaving all history untouched — is the one shape that avoids cache invalidation. Its ceiling is unmeasured, and it overlaps heavily with #74's C1 and #75's rewrite hook: all three attack the same accumulating-tool-output term, so their savings do NOT add.
+
+Fix direction: measurement only. Using the existing capture proxy, record for a real ticket what a tail-only compressor COULD have removed (bytes eliminated on first transmission × remaining turns), without actually mutating anything. Compare that ceiling against #74's and #75's numbers and recommend ONE delivery mechanism, not three. Explicitly price the operational cost: a proxy is a hard dependency in front of every worker and it handles credentials — the no-leak test is load-bearing and must stay.
+
+Done when: a committed ceiling figure for tail-only compression, set beside #74 and #75, with a single recommended mechanism and the overlap stated so no two are built.
+
+Ref: session 2026-07-26 — proxy layer proven working; `capture-proxy.mjs` landed via shiploop#109.
+
+---
