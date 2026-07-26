@@ -85,6 +85,32 @@ assert_contains "$probs" "missing required field Paths" "flow_validate: flags mi
 assert_contains "$probs" "Kind=effectiveness requires a Gate" "flow_validate: flags missing Gate"
 assert_contains "$probs" "Status=PASS requires a Validated" "flow_validate: flags missing Validated on a validated status"
 
+# ── flow_validate: an out-of-vocabulary Status is rejected. Before this check the two constants
+# GOVERN_FLOW_STATUSES / GOVERN_FLOW_ID_RE were declared and never read, so a typo'd status linted
+# clean and then matched no downstream `case` arm — the flow silently vanished from staleability,
+# the status summary, and revalidation instead of erroring.
+cat >> "$F" <<'EOF'
+
+## typo.status
+- **Kind:** correctness
+- **Surface:** UI
+- **Paths:** src/**
+- **Status:** PSAS
+EOF
+probs="$(govern::flow_validate typo.status "$F" 2>&1 || true)"
+assert_contains "$probs" "not in the known vocabulary" "flow_validate: rejects an out-of-vocabulary Status"
+# A legal status on an otherwise-identical block must NOT trip the vocabulary check.
+govern::flow_set_field typo.status Status UNTESTED "$F"
+probs="$(govern::flow_validate typo.status "$F" 2>&1 || true)"
+if printf '%s' "$probs" | grep -q "known vocabulary"; then vocabfp=1; else vocabfp=0; fi
+assert_eq "$vocabfp" "0" "flow_validate: a legal Status does not trip the vocabulary check"
+
+# ── flow_validate: an id outside the charset is rejected. This is what backs the file's own
+# collision-safety claim — `## #<digits>` ticket headings stay disjoint from `## <id>` flow headings
+# only while `#` is provably outside the charset.
+probs="$(govern::flow_validate 'Bad_Id!' "$F" 2>&1 || true)"
+assert_contains "$probs" "not a legal flow id" "flow_validate: rejects an id outside the charset"
+
 # ── The ticket parser and the flow parser do NOT collide: a `## #12` heading is not a flow id.
 cat >> "$F" <<'EOF'
 
