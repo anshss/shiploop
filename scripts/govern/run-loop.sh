@@ -468,6 +468,17 @@ WORKER_PID=""; SPAWN_OUT=""
 spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
   local n="$1"; shift
   SPAWN_OUT="$(mktemp)"
+  # #21 scout-then-size: MEASURE #n's scope with a cheap haiku pass BEFORE dispatch, so a ticket the
+  # brain left unsized is sized from evidence instead of falling through to the blanket opus default.
+  # This is the ONE chokepoint every spawn goes through (plain dispatch, retry, CI-fix and
+  # conflict-resolve re-dispatch alike), and the verdict is cached on the run dir — so the retries
+  # below reuse it rather than re-scouting from scratch. Best-effort by construction: a failure caches
+  # nothing, spawn-worker's `--verdict` read comes back empty, and sizing falls back to today's
+  # GOVERN_WORKER_MODEL behavior with the reason logged. Skipped in dry mode (an observation run must
+  # stay free of model calls) and under GOVERN_SCOUT=0.
+  if [[ "${GOVERN_SCOUT:-1}" != "0" && "${MODE:-live}" != "dry" ]]; then
+    "$DIR/scout-ticket.sh" "$n" >/dev/null || true
+  fi
   # #23: extra args are the co-batched tickets of #n's locality group (empty for a plain single spawn).
   "$DIR/spawn-worker.sh" "$n" "$@" >"$SPAWN_OUT" &
   WORKER_PID=$!
@@ -1197,6 +1208,22 @@ while :; do
     # auto-escalation, same as a lone explicit target always did.
     [[ -z "$resumed" && "${#TARGETS[@]}" -eq 0 ]] && cf="$(consecutive_fails "$N" 2>/dev/null || echo 0)"
   fi
+
+  # Deterministic UPSTREAM-DRIFT pre-gate. Root CLAUDE.md's "workspace ↔ hub drift" anti-pattern:
+  # this workspace dogfoods the harness as a sub-repo, so a ticket whose `Where:` names a mirrored
+  # mechanism script may ALREADY be fixed in the hub templates by another fleet. Until now nothing
+  # enforced that rule, so a worker could spend a full session re-deriving an existing fix.
+  # lib/pregate.sh answers "is the HUB ahead on this exact file?" with pure file/git reads (no LLM,
+  # no network, no writes) and is fail-open by construction — any uncertainty emits nothing and we
+  # spawn as before. Its ONLY possible outcome is park+escalate; it can never resolve a ticket.
+  # Skipped for an explicit TARGETS set (the operator chose this ticket deliberately) and when the
+  # lib is absent (pre-existing workspace) — same conventions as the #119 dep gate and #60 above.
+  DRIFT=""
+  if [[ -z "$resumed" && "${cf:-0}" -lt "${GOVERN_MAX_TICKET_FAILS:-2}" && "${#TARGETS[@]}" -eq 0 ]] \
+     && declare -F govern::pregate_hub_ahead >/dev/null 2>&1; then
+    DRIFT="$(govern::pregate_hub_ahead "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+  fi
+
   if [[ -n "$resumed" ]]; then
     set -- $resumed; rrepo="$1"; rpr="$2"; rurl="${3:-}"
     govern::log "found existing PR $rrepo#$rpr for #$N — resuming (no new worker, no duplicate PR)"
@@ -1208,6 +1235,24 @@ while :; do
     # run too) so the operator/root-cause path takes over instead of an infinite retry.
     govern::log "#$N failed $cf consecutive runs — auto-escalating as a systemic blocker; not re-spawning (#60)"
     report="$(jq -nc --argjson c "$cf" '{status:"parked",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{title:("systemic blocker — " + ($c|tostring) + " consecutive failed runs"),reason:("systemic blocker — failed " + ($c|tostring) + " consecutive runs; needs operator / root-cause, not another auto-retry"),question:"inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)",options:[]}}')"
+  elif [[ -n "$DRIFT" ]]; then
+    # The hub is ahead on a file this ticket targets — port the diff DOWN rather than paying an
+    # agent session to re-derive it. Park + escalate (never resolve): only the operator decides
+    # whether the hub version actually covers #N. The escalation keeps #N out of the selector next
+    # run, so this cannot loop; answering it (or `/shiploop:update` + closing the escalation) puts
+    # #N back in play. Zero LLM tokens spent.
+    # Both strings stay SINGLE-LINE: file_open_escalation writes the reason onto one
+    # `- **Reason:** …` markdown line, and a newline there would corrupt the block (and the
+    # NDJSON the relay parses out of it).
+    _dpaths="$(printf '%s' "$DRIFT" | cut -f1 | paste -sd' ' -)"
+    _dpairs="$(printf '%s' "$DRIFT" | awk -F'\t' 'NF>=2{printf "%s%s -> %s", (n++?"; ":""), $1, $2}')"
+    govern::log "#$N targets file(s) the HUB is AHEAD on ($_dpaths) — not spawning a fresh-fix worker; escalating 'port the hub diff down' (workspace↔hub drift anti-pattern)"
+    report="$(jq -nc --arg p "$_dpaths" --arg d "$_dpairs" \
+      '{status:"parked",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{
+         title:"hub template ahead — port down, do not re-fix",
+         reason:("this ticket targets " + $p + ", which this workspace has NOT changed since the templates-sync marker yet which DIFFERS from its hub template — so the hub moved, not us, and the fix it asks for may already exist upstream. Spawning a fresh-fix worker would re-derive it (workspace↔hub drift anti-pattern, root CLAUDE.md). live→template pairs: " + $d),
+         question:"diff each pair; if the hub already covers this ticket, pull it down via /shiploop:update and close the ticket — otherwise re-scope the ticket to just the delta and answer here to release it",
+         options:["pull the hub down via /shiploop:update, then close or re-scope","port the hub diff by hand","spawn a worker anyway (hub diff is unrelated)"]}}')"
   else
     # #23 LOCALITY BATCHING — grow #N into a locality group before spawning. Exploration is the
     # dominant cost of a resolved ticket (~98% cacheRead), so three tickets in the same directory
