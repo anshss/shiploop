@@ -1,5 +1,5 @@
 ---
-description: The self-improvement channel, push direction. Ports your workspace's mechanism-script improvements back to the hub so every other fleet inherits them. Detects drift (harness→template) with sync-templates.sh, then invokes sync-port.sh to genericize the changes via a headless porter and open a PR against the canonical hub — auto-forking when you lack push access — for HUMAN review. Reuses the fail-closed sync-port pipeline (bash -n + forbidden-identity-strings gate + scaffold-test-suite baseline diff) — never auto-merges.
+description: Port this workspace's mechanism-script improvements back to the shiploop hub so other fleets inherit them, as a PR for human review (never auto-merged). Use to send harness changes UP; see /shiploop:update to pull them down.
 allowed-tools: Bash, Read
 ---
 

@@ -176,7 +176,7 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 
 
 ## Configuration
 
-Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **off** so a fresh install is inert until you opt in:
+Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **off** so a fresh install is inert until you opt in — with the marked exceptions below, which are on by default:
 
 | Knob | Default | Turns on |
 |---|---|---|
@@ -190,12 +190,34 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm: a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_WORKER_TOOLS` | empty (off) | Tool-schema trim: `default` passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
+| `GOVERN_IMPROVE` | **on** | End-of-run reviewer that proposes harness improvements into `governor/improvements.md` when a run hit friction — see [Harness self-improvement](#harness-self-improvement-is-on-by-default) |
+| `GOVERN_IMPROVE_TRIAGE` | **on** | Auto-files the safe proposals above as a ticket in **your** `queue/tickets.md`, which the governor then drains like any other |
+| `GOVERN_SELF_APPLY` | off | Applies one proposal automatically under strict guards; observe→propose is the default posture |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB: additive migrations merge instead of parking |
 | `GOVERN_PUBLIC_REPOS` | auto-detect | Public repos get neutral `sl-<hex>` branches, no ticket ids on PRs |
 | `GOVERN_EXTERNALIZE_REPO` / `_SUBREPO` | empty | Stage low-severity OSS tickets as public "good first issue"s, filed only on your approval |
 | `GOVERN_UPSTREAM_HARNESS_REPO` / `_DIR` | empty | The `/shiploop:push` sync channel to your hub fork |
 | `WSP_PR_FOOTER` | on | "shipped by shiploop" attribution line on worker PRs (`off` to suppress) |
+
+### Harness self-improvement is on by default
+
+Two of the knobs above are exceptions to the "ships off" rule, and they cost you tokens, so they are
+worth an explicit paragraph rather than a table row.
+
+When a run ends with any failed or parked ticket — which is most runs — `GOVERN_IMPROVE` spends one
+reviewer pass (sonnet) reading that run's friction, the harness layout, and the failed workers' logs,
+and appends concrete improvement proposals to `governor/improvements.md`. Then `GOVERN_IMPROVE_TRIAGE`
+takes the proposals it classifies as safe and additive and **files them as a ticket in your
+`queue/tickets.md`**, which the governor drains on a later run at full worker cost. Proposals that
+touch a safety rail are never auto-queued; they stay in `improvements.md` behind the human gate.
+
+This is how the harness gets better, and the improvements are real ones aimed at *your* run's actual
+friction. But be clear about what you are buying: the reviewer pass is a per-run cost, and the filed
+tickets are harness work competing with your product backlog for worker time. If you want the signal
+without the spend, set `GOVERN_IMPROVE_TRIAGE=0` — proposals still accumulate in `improvements.md`
+where you can read them and promote any you want by hand. `GOVERN_IMPROVE=0` turns the reviewer pass
+off entirely.
 
 ## Requirements
 

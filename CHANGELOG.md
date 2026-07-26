@@ -62,6 +62,19 @@
   layouts. Includes a guard that the shipped seed `learnings.md` injects zero bytes, so re-introducing
   a heading into the seed can't silently re-tax every fleet.
 
+
+- **Documented that harness self-improvement is billed to the user, and how to turn it off.**
+  `GOVERN_IMPROVE` and `GOVERN_IMPROVE_TRIAGE` both default ON and fire on any run with a failed or
+  parked ticket — which is most runs. The first spends a reviewer pass on the run's friction; the
+  second **files the resulting harness proposals as a ticket in the user's own `queue/tickets.md`**,
+  which the governor later drains at full worker cost. That is the dogfooding flywheel working as
+  designed, but it was undocumented, and the Configuration section claimed advanced lanes "ship off
+  so a fresh install is inert until you opt in" — which these two contradict.
+
+  No default change. The README now carries a `Harness self-improvement is on by default` section
+  stating plainly what the run buys and what it costs, the three knobs are in the config table marked
+  on-by-default, and the "ships off" sentence is corrected. `GOVERN_IMPROVE_TRIAGE=0` keeps the
+  proposals without enqueueing work; `GOVERN_IMPROVE=0` turns the pass off entirely.
 ### Changed
 
 - **The seed `CLAUDE.md` is 47% smaller, and the displaced material has a home.** `CLAUDE.md` is
@@ -96,6 +109,20 @@
   A fresh fleet goes from ~1.9 KB of session-start boilerplate to **zero bytes**. `settings-merge`
   rewrites the legacy inline command **in place** on existing fleets rather than appending beside it
   (which would double the injection), and the rewrite is idempotent.
+
+- **Plugin descriptions are routing hints again, not feature pitches.** A skill's `description` and
+  every slash-command `description` sit in context on **every turn for every user**, whether or not
+  they ever scaffold a workspace — so they are the one surface every shiploop install pays for. They
+  had been written as README copy ("The self-improvement channel, push direction"; "where the harness
+  gets smarter, since every resolved ticket writes a durable lesson into your git-tracked
+  CLAUDE.md"). A description's job is to help the model decide *when to invoke*, and disambiguate it
+  from its siblings — nothing more.
+
+  Rewritten across `SKILL.md` and all seven commands: **596 → 328 words** always-on. `/shiploop:push`
+  and `/shiploop:update` now state the direction (up to the hub / down to the workspace) and
+  cross-reference each other, which is the disambiguation that actually earns its tokens.
+  `templates/.claude/commands/flows.md`, which lands in every scaffolded workspace, got the same
+  treatment: 164 → 118 words for the workspace command set.
 
 ### Fixed
 
