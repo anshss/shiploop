@@ -235,12 +235,21 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # The recommended list keeps everything a headless one-ticket worker actually exercises: file +
 # shell + search, `Agent` (the router posture MANDATES delegation), the docs-research web tools, and
 # the background-task controls that manage a spawned `Agent`. It drops the interactive/long-lived
-# surface a `-p` worker has no user for: `Workflow` (requires explicit user opt-in), `ScheduleWakeup`
-# (the worker prompt forbids it outright — a headless worker is never re-invoked), Enter/ExitWorktree
-# (it is ALREADY in a governor-allocated worktree), the Cron family, PushNotification, SendMessage,
-# RemoteTrigger, DesignSync, Monitor (the worker prompt mandates an in-turn bash poll loop instead)
-# and ReportFindings (the worker reports via report.json).
-GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
+# surface a `-p` worker has no genuine use for: `Workflow` (requires explicit user opt-in),
+# Enter/ExitWorktree (it is ALREADY in a governor-allocated worktree), the Cron family,
+# PushNotification, RemoteTrigger, DesignSync and ReportFindings (the worker reports via
+# report.json).
+#
+# `Monitor`, `ScheduleWakeup` and `SendMessage` were dropped in the original cut on the theory that
+# the worker prompt discourages them (in-turn poll loops instead of Monitor/ScheduleWakeup; no
+# multi-agent messaging peer). A scan of the 39 confirmed-real worker transcripts under
+# `logs/govern/` (ticket #73, 2026-07-26) showed workers invoke them anyway — Monitor 11x,
+# ScheduleWakeup 6x, SendMessage 3x — so theory lost to measurement; they're kept. The `Task*`
+# tail (TaskCreate/TaskGet/TaskList/TaskOutput/TaskStop/TaskUpdate) and NotebookEdit are kept too
+# even though several of them measured zero invocations in that same scan (TaskGet/TaskList/
+# TaskOutput/TaskStop/NotebookEdit) — dropping them needs its own re-measure to confirm the byte
+# saving is worth the removal risk (see KEEP/PURGE GATE above); don't drop opportunistically.
+GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
 # Sets the global `tools_flag` (empty, or `--tools <list>`) and always returns 0.
 resolve_tools_flag() { # <claude_bin>
   local bin="$1" list
