@@ -92,11 +92,25 @@ seen="$(cat "$T/seen.txt")"
 assert_eq "$(grep -c 'PREVIOUS ATTEMPT' <<<"$seen" || true)" "0" "retry without notes: nothing injected"
 assert_contains "$seen" "HEADER" "retry without notes: prompt still assembled normally"
 
-# ── The scratchpad is git-ignored by the shipped workspace gitignore template.
-assert_contains "$(cat "$DIR/../../gitignore")" ".governor-notes.md" \
-  "gitignore template ignores the scratchpad so it never lands in a PR"
-# ── And every worker is told to write it (otherwise a retry has nothing to read).
-assert_contains "$(cat "$DIR/../../governor/worker-prompt.md")" ".governor-notes.md" \
-  "worker prompt instructs the worker to record findings to the scratchpad"
+# ── Wiring checks. These files live at DIFFERENT paths depending on where the suite runs from: the
+# hub (templates/govern/test → templates/gitignore) or a scaffolded workspace (scripts/govern/test →
+# <ws>/.gitignore). Resolve the first that exists; if neither does, the suite is running from a
+# layout that doesn't ship them, so skip rather than fail on a path assumption.
+first_existing() { for p in "$@"; do [[ -f "$p" ]] && { printf '%s' "$p"; return 0; }; done; return 1; }
+
+# The scratchpad is git-ignored, so it can never land in a PR.
+if gi="$(first_existing "$DIR/../../gitignore" "$DIR/../../../.gitignore")"; then
+  assert_contains "$(cat "$gi")" ".governor-notes.md" \
+    "gitignore ignores the scratchpad so it never lands in a PR ($gi)"
+else
+  printf 'skip - gitignore not present in this layout\n'
+fi
+# And every worker is told to write it (otherwise a retry has nothing to read).
+if wp="$(first_existing "$DIR/../../governor/worker-prompt.md" "$DIR/../../../governor/worker-prompt.md")"; then
+  assert_contains "$(cat "$wp")" ".governor-notes.md" \
+    "worker prompt instructs the worker to record findings to the scratchpad ($wp)"
+else
+  printf 'skip - worker-prompt.md not present in this layout\n'
+fi
 
 assert_done
