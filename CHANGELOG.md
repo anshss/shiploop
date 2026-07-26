@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+Every prior cost release targeted what a *worker* spends. This one targets what the **harness itself**
+spends before any work happens — the always-on context and per-session injections every session pays
+for whether or not they carry information.
+
+### Changed
+
+- **The seed `CLAUDE.md` is 47% smaller, and the displaced material has a home.** `CLAUDE.md` is
+  re-sent to the model on *every turn*, so it is the most expensive storage in the workspace — and the
+  seed was using it for reference tables and rationale. The full `npm run` command table (discoverable
+  via `npm run`), the *why* behind the delegation rule, and the multi-paragraph justification for
+  checkpoint filing were all being re-billed every turn, forever, on every fleet.
+
+  The seed now ships a **`CLAUDE-APPENDIX.md`** alongside it: same durable knowledge, loaded on demand
+  instead of every turn. `CLAUDE.md` keeps the hard rules a session must never miss; the appendix
+  carries the depth. 1682 → 892 words in the always-on file, and that is *after* promoting an
+  additional load-bearing anti-pattern into it. Two near-duplicate rules (the delegation posture
+  appeared as both operating rule #3 and anti-pattern #10) collapsed into one.
+
+  The appendix is seeded on existing fleets too, not just new ones — an absent appendix is precisely
+  what makes operators keep growing the always-on file.
+
+- **The SessionStart learnings hook injects entries, not lines.** The slot ran an inline
+  `head -30 learnings.md`, which was a net token *loss* three ways. It paid for the file's ~16-line
+  instructional preamble ("what belongs here", "promote when stable") before reaching anything the
+  file had to *say*. On a fresh fleet it injected 18 lines whose entire payload was
+  `_(empty — append dated entries…)_` — a per-session tax, forever, for zero information. And `head`
+  reads the *top* of a file the seed tells operators to *append* to, so any fleet that followed the
+  instruction was shown its **oldest** learnings with the newest truncated away.
+
+  Replaced by `scripts/learnings-digest.sh`: skips the preamble, date-ranks entries (correct whether
+  a fleet prepends or appends), emits the newest few, and emits **nothing at all** when there are no
+  entries. Fenced code blocks are not treated as entry boundaries, so a shell snippet containing
+  `## comment` no longer slices the file at the wrong place. Tuned by
+  `SHIPLOOP_LEARNINGS_MAX_ENTRIES` (default 3) and `SHIPLOOP_LEARNINGS_MAX_LINES` (default 40).
+
+  A fresh fleet goes from ~1.9 KB of session-start boilerplate to **zero bytes**. `settings-merge`
+  rewrites the legacy inline command **in place** on existing fleets rather than appending beside it
+  (which would double the injection), and the rewrite is idempotent.
+
+### Added
+
+- `assert_not_contains` in the govern test harness — asserting that something is **absent** is the
+  natural shape for a context-cost test, and there was no helper for it.
+- `test-learnings-digest.sh` (19 assertions), which runs in both the hub and scaffolded-workspace
+  layouts. Includes a guard that the shipped seed `learnings.md` injects zero bytes, so re-introducing
+  a heading into the seed can't silently re-tax every fleet.
+
 ## 1.13.2 — 2026-07-26
 
 The cost release. Three levers, all aimed at the same target: the tokens a ticket spends on

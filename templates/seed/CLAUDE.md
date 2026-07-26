@@ -4,139 +4,83 @@ A **meta-repo**: a workspace root holding N independent git repos as sub-folders
 remote, PR queue, and CI. The root is also its own git repo, holding workspace config, cross-cutting
 scripts, the ticket queue, the governor, and shared AI context.
 
-> This file is the workspace's **always-on context** — it auto-loads every session, so it is the home
-> for the conventions below. Keep it current; it is the first thing a new session (human or agent) reads.
->
-> **Keep this file the lean, always-loaded hard-rules core.** Because it is re-sent every turn, every
-> line here has a standing per-turn cost — so it should hold only the load-bearing rules a session must
-> never miss. As durable detail accumulates (deep provider notes, long gotcha writeups, historical
-> context), don't let the core bloat: overflow it into a sibling **`CLAUDE-APPENDIX.md`** and reference
-> that file from here. The core stays scannable; the appendix carries the depth, loaded on demand.
+> **This file is re-sent to the model on every turn.** It holds hard rules only — the things a session
+> must never miss. Rationale, reference tables, and long gotcha writeups go in `CLAUDE-APPENDIX.md`,
+> which is read on demand. When you add something here, ask whether every future turn should pay for
+> it; if not, it belongs in the appendix.
 
-## How to operate (read first)
+## How to operate
 
-1. **Any task that will touch code → start with `npm run worktree:new -- <task-slug>` and `cd` into
-   it.** The main checkout is read / plan / main-branch-ops only — never edit code there. A worktree is
-   an isolated copy (own branches, own dev stack, own ports, own SessionEnd cleanup) so parallel
-   sessions don't collide. Clean up with `npm run worktree:rm -- <slug>` after PRs merge. The only
-   exception is purely read-only work (explain / "where is X").
+1. **Code work → `npm run worktree:new -- <slug>`, then `cd` into it.** The main checkout is
+   read/plan/main-branch-ops only. Clean up with `npm run worktree:rm -- <slug>` after PRs merge.
+   Read-only work (explain / "where is X") is the only exception.
 
-2. **Default to the full local loop for non-trivial work** (`npm run dev`), and validate through the
-   real UI/API path a user touches — not a shortcut that skips the layers where bugs hide.
+2. **Validate through the real path** (`npm run dev`) — the UI/API route a user actually touches, not a
+   shortcut that skips the layers where bugs hide.
 
-3. **Offload context-heavy sub-tasks to subagents** (a diagnosis, a codebase sweep, a multi-file
-   investigation) so this session's context stays flat — the subagent's logs stay in its context; only
-   the conclusion returns to yours. Reserve the main session for orchestration + decisions.
-   **When you delegate, also SIZE THE MODEL** — children do NOT need this session's model. Rough
-   guide: `haiku` = mechanical/extract/lookup/URL-fetch · `sonnet` = search/investigation/multi-file
-   reads/standard edits/verify votes · inherit (the session model / `GOVERN_WORKER_MODEL`) only for
-   judgment-heavy synthesis / architecture / final review / hard tickets. A fan-out (N similar
-   children) is almost never inherit-tier. Escalation valve: on a cheap-tier failure, retry once on
-   the stronger tier — never the reverse. Same guide applies when filing a ticket that carries a
-   `Model:` field (see `queue/tickets.md`).
+3. **The driver session orchestrates; it does not read or edit product source.** Every inline `Read`
+   becomes permanent context cargo, re-sent every later turn. Delegate any investigation, sweep,
+   diagnosis, build, or fix — however small — to an `Agent`, and relay only its verdict. The driver may
+   freely read and edit coordination files (`queue/`, `governor/`, `CLAUDE.md`, `learnings.md`).
+   **Size the child:** `haiku` = mechanical/extract/lookup · `sonnet` = search/investigate/standard
+   edits · inherit only for judgment-heavy synthesis, architecture, or final review. A fan-out of N
+   similar children is almost never inherit-tier. On a cheap-tier failure retry once higher — never the
+   reverse. Same guide applies to a ticket's `Model:` field.
 
-4. **When an issue is reported conversationally: investigate → discuss → file AT THE CHECKPOINT.**
-   Confirm it's real and locate the root cause first (delegate if context-heavy) — never file a bare
-   uninvestigated ticket unless told to just track it. Then **answer the person.** A discussion turn
-   ends with the finding, not with a new `## #N`. Filing happens at the session's bookkeeping
-   checkpoint (the Stop-hook sweep, `/resolve`, or an explicit "file this"), by which point the
-   discussion has decided what the item actually IS. Filing mid-discussion pre-empts that decision
-   twice over: it hijacks a thread the operator opened to think in, and it hands a half-formed gap to
-   a future governor run as authorized work.
+4. **Issue reported in conversation → investigate → answer → file at the checkpoint.** Confirm it's
+   real and locate the root cause first; a discussion turn ends with the finding, not a new `## #N`.
+   File at the session's bookkeeping checkpoint (Stop-hook sweep, `/resolve`, or an explicit "file
+   this"). **Consolidate by default** — fold the finding into an open ticket unless it is independently
+   dispatchable; two tickets one worker would fix in one PR should have been one ticket. A filing
+   correction from the operator is a standing constraint for the rest of the session, not a one-off.
 
-   **Consolidate by default — a new number is the exception.** Before minting `## #N`, look for an
-   OPEN ticket the finding belongs inside and fold it in; rewriting that ticket's body is expected,
-   not a compromise. Mint a new number only when the work is independently dispatchable — a different
-   repo/area, or something a worker could ship without touching the other ticket. **Two tickets one
-   worker would fix in one PR should have been one ticket.** Several findings out of one discussion
-   are usually one ticket. This binds worker-report follow-ups too: one consolidated entry per
-   report, not two thin ones.
+## Where knowledge goes
 
-   **A filing correction is session-durable.** When the operator rejects a filing decision ("that
-   should all be one ticket", "don't file that, let's discuss it"), that is a standing constraint on
-   every later filing this session — not a one-off edit to the ticket in hand. Record it where
-   compaction cannot drop it (the todo list, or a note in the working file) and apply it thereafter.
-
-**Capture learnings at natural breakpoints — don't wait to be asked.** Route findings by **stability**,
-not topic:
+Route by **stability**, not topic. Each destination has a different cost: `CLAUDE.md` is paid every
+turn, the rest are paid only when read.
 
 | Where | Use when |
 |---|---|
-| **`queue/tickets.md`** (root) | **Work items only** — bugs, gaps, missing capabilities, follow-ups; anything to fix/build later. Each is its own numbered `## #N` block. **Isolation** — the queue admits exactly TWO scopes: the current project's sub-repos and the harness itself. Any tool/skill/product EXTERNAL to those two must NEVER file a ticket here, even when invoked from this workspace's terminal; its follow-ups go to its own tracker. |
-| **`CLAUDE.md`** (root or sub-repo) | Stable, reusable patterns — env vars, conventions, architecture, persistent gotchas. Home for the durable lesson from a fixed bug. |
-| **`learnings.md`** (root or sub-repo) | Only transient/evolving operational knowledge not yet stable enough for `CLAUDE.md` ("X provider flaky this week"). **Never** a work item (→ tickets) and **never** a fixed-bug writeup (→ promote or delete). |
-| **Project memory** (`~/.claude/projects/<encoded-workspace-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. The memory dir is fronted by a `MEMORY.md` index — a list of one-line `[title](file.md) — gist` links pointing at per-topic note files; add the link when you add a note so it stays discoverable. |
+| **`queue/tickets.md`** | **Work items only** — anything to fix or build later, one `## #N` block each. Admits exactly two scopes: this workspace's sub-repos and the harness. Anything external files in its own tracker. |
+| **`CLAUDE.md`** (root or sub-repo) | Stable hard rules a session must never miss. Sub-repo file wins in its own scope; root is cross-repo only. |
+| **`CLAUDE-APPENDIX.md`** | The same durable knowledge when it's reference rather than rule — command tables, deep provider notes, the *why* behind a rule. |
+| **`learnings.md`** (root or sub-repo) | Transient/evolving knowledge only ("X provider flaky this week"). Never a work item, never a fixed-bug writeup. |
+| **Project memory** (`~/.claude/projects/<encoded-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. Add a line to its `MEMORY.md` index. |
 
-Bar: would knowing this save a future session 5+ min? If yes, propose the edit and ask before ending
-the session. **At session start, skim `learnings.md` (root + the sub-repo you're in)** — the
-SessionStart hook auto-prints only the **root** `learnings.md`, so when working inside a sub-repo you
-must open that sub-repo's `learnings.md` yourself.
-
-## The CLAUDE.md hierarchy
-
-- **Root `CLAUDE.md`** (this file) — cross-repo orchestration only: how to operate, the ticket/learnings
-  routing above, the sub-repo map, and the load-bearing anti-patterns.
-- **Sub-repo `CLAUDE.md` wins in its scope.** Inside a sub-repo, that repo's `CLAUDE.md` is the source
-  of truth for its own patterns. The root file is cross-repo only — don't duplicate sub-repo content
-  here, and don't put cross-repo orchestration in a sub-repo file.
-- The same split applies to `learnings.md` (a root one for cross-repo discoveries, a per-sub-repo one
-  for repo-local transient knowledge).
+Bar: would knowing this save a future session 5+ min? Propose the edit before ending the session. The
+SessionStart digest surfaces only the **root** `learnings.md` — open a sub-repo's own file yourself.
 
 ## Sub-repos
 
-The sub-repo list + dev commands + ports are a single source of truth: `scripts/lib/workspace.sh`.
-Adding/removing a sub-repo is a one-file edit there.
+Single source of truth for the repo list, dev commands, and ports: `scripts/lib/workspace.sh`.
+Adding or removing a sub-repo is a one-file edit there.
 
 | Folder | Remote | Stack | Port |
 |--------|--------|-------|------|
 | `<repo>/` | `<org>/<repo>` | `<stack>` | `<port>` |
 
-## Operating commands
+## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `npm run dev` | Boot all sub-repos (`-- --only a,b` to scope); tee output to `logs/<name>.log` |
-| `npm run dev:<name>` | Boot one sub-repo |
-| `npm run status` | Branch / dirty / ahead / behind / PR# / CI per repo |
-| `npm run doctor` | Health audit: tooling, env, ports, repo presence |
-| `npm run branch -- <name>` | Create a branch across repos (`--only a,b` to scope) |
-| `npm run switch -- <name>` | Checkout a branch across all (tracks origin if local missing) |
-| `npm run pull` / `npm run push` | `git pull --ff-only` per repo / push changed repos + open PRs |
-| `npm run health` | curl each dev server |
-| `npm run worktree:new -- <slug>` | Allocate a slot; create isolated worktrees on branch `<slug>` |
-| `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
-| `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
-
-**Pass args/flags after the script with `--`** — `npm run worktree:new -- <slug>`, `npm run dev -- --only console`. (npm and pnpm need the `--`; yarn classic tolerates it. Commands here use `npm run` — substitute your root PM if it differs.)
+`npm run dev` · `status` · `doctor` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` · `govern`.
+Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list. **Pass args after `--`.**
 
 ## Anti-patterns (load-bearing)
 
 1. **MCP servers always at workspace root.** Never `claude mcp add` from a sub-repo.
-2. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files; each
-   commits independently.
-3. **Never assume sub-repos share a branch.** They drift. Run `npm run status` first.
+2. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files.
+   Corollary: `git status` at the root proves nothing about sub-repo state.
+3. **Never assume sub-repos share a branch.** They drift — run `npm run status` first.
 4. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
-5. **PRs aren't transactional across sub-repos — merge backend-first.** When the backend adds a
-   capability the frontend consumes (enum, endpoint, response field), the backend PR merges + deploys
-   before the frontend PR. State the merge order in each sibling PR.
-6. **`.env.example` is the contract.** Never commit `.env`. `doctor` checks each `.env` exists.
-7. **One package manager at the root — never two.** The root PM is set in `scripts/lib/workspace.sh`
-   (`ROOT_PM` = npm/pnpm/yarn/bun); the root scripts are PM-agnostic bash aliases. Don't mix two PMs at
-   the root — a stray second root lockfile diverges (the `.gitignore` guards against this). Sub-repos
-   keep their own package manager independently.
-8. **Main checkout stays on `main`, every repo, always. Branch work only in worktrees.** Meta-repo
-   coordination files (`CLAUDE.md`, `queue/tickets.md`, `learnings.md`, `scripts/`) commit directly to `main`
-   in the main checkout — never branched/PR'd.
-9. **PR opened → tear the local stack down.** Don't leave dev servers idling (zombies hold ports → next
-   `dev` serves stale code on `EADDRINUSE`).
-10. **The driver session neither READS nor edits product source — reading is the bigger sin.** Every
-    `Read` of a source file becomes permanent driver-context cargo, re-sent to the model on every later
-    turn for the rest of the session; a few "minor" inline fixes cost more in re-read context than
-    they're worth. Triage review findings and tickets from their text alone; dispatch any fix — however
-    small — to a fresh headless worker or subagent briefed with the finding + branch, and relay only its
-    verdict (pass/fail + PR state). The driver's lane is: orchestrate, merge, verify via terse command
-    output, and bookkeep coordination files (`queue/`, `governor/`, `CLAUDE.md`) — those it may read and
-    edit freely.
+5. **Never `git stash` to A/B a baseline** — the edits usually live in a nested sub-repo, so a
+   root-level stash is a silent no-op that yields a worthless "baseline". Use a throwaway
+   `git archive HEAD | tar -x -C "$(mktemp -d)"` export instead.
+6. **PRs aren't transactional across sub-repos — merge backend-first**, and state the merge order in
+   each sibling PR.
+7. **`.env.example` is the contract.** Never commit `.env`.
+8. **One package manager at the root — never two.** Set via `ROOT_PM` in `scripts/lib/workspace.sh`.
+9. **Main checkout stays on `main`, every repo, always.** Branch work only in worktrees; coordination
+   files (`CLAUDE.md`, `queue/`, `learnings.md`, `scripts/`) commit directly to `main` there.
+10. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
 
 > Replace the `<…>` placeholders and the Sub-repos table with your workspace's specifics, then append
-> your own conventions, gotchas, and architecture notes below as you learn them.
+> your own hard rules here and your reference material to `CLAUDE-APPENDIX.md` as you learn them.
