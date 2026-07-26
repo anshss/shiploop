@@ -1,5 +1,77 @@
 # Changelog
 
+## 1.13.0 — 2026-07-26
+
+The context-hygiene release. Where 1.12.0 attacked how many workers you run and what they collide
+with, this one attacks what a single worker carries on every turn.
+
+The measurement that drove it, over 35 real worker sessions: the system-prompt prefix is **re-read on
+every turn**, and totals **~23% of a session's tokens**. Measuring only the one-time cache *write*
+puts it near 0.2% — that is the wrong number, and it is the easy mistake to make. Median session
+output was ~17.4k tokens against a mean session total of ~7.2M, so output discipline compounds:
+anything a worker doesn't write is also something it never re-reads on a later turn.
+
+A note on units, unchanged from 1.12.0: on a subscription plan the binding constraint is quota and
+wall-clock, not dollars.
+
+### Added
+
+- **`--exclude-dynamic-system-prompt-sections` on the worker spawn.** Per-machine sections (cwd, env
+  info, memory paths, git status) move out of the system prompt and into the first user message, so
+  concurrent workers in different worktrees can share one cached prefix instead of each building a
+  private one. `GOVERN_EXCLUDE_DYNAMIC_PROMPT=0` opts out.
+
+  **The size of this win is not yet measured.** Turn-1 cache reads recur identically across unrelated
+  tickets, which means a deterministic block already caches across workers today — so the marginal
+  gain is only over the genuinely dynamic sections, and may be small. It ships on by default because
+  it is free and safe, not because a number justifies it.
+
+- **A bounded capability probe** (`GOVERN_EDP_PROBE_TIMEOUT_S`, default 5s). The flag above is passed
+  only if the installed `claude` advertises it in `--help`, probed once per run and cached. On an
+  older CLI the flag is omitted with a warning and the run continues.
+
+  This guard matters more than the flag it guards. An unrecognized flag makes `claude -p` exit at
+  argument parsing with a plain-text error, which the run loop cannot distinguish from an ordinary
+  ticket failure — so shipping a new flag unguarded would kill every worker on a fleet running an
+  older CLI and present as N indistinguishable failures. The probe treats a timeout as unsupported,
+  so a `claude` wrapper that hangs on `--help` cannot hang the spawn.
+
+- **`--forward-subagent-text` is locked out** by a source-scan assertion. It forwards sub-agent text
+  and thinking into the parent — the opposite of the bounded-return contract below — so the suite now
+  fails if it is ever introduced.
+
+### Changed
+
+- **Worker prompt: output discipline.** A conciseness directive scoped to prose, summaries, and PR
+  bodies — explicitly *not* to doing less work, since a worker that under-delivers to save words is a
+  failed ticket and costs far more than it saves. A delegation **floor** opposite the existing ceiling
+  ("don't delegate what you could finish in a few tool calls," because each sub-agent re-establishes
+  context from scratch). And a return contract for sub-agents that cuts filler but forbids
+  compressing code, commands, file paths, error text, or exact numbers.
+
+### Upgrade notes
+
+Nothing to do. Both new behaviours are on by default and degrade safely: `GOVERN_EXCLUDE_DYNAMIC_PROMPT=0`
+disables the flag, and an older `claude` simply never receives it.
+
+If you maintain your own copies of `templates/govern/test/*`, note that any test driving a fake
+`claude` stub now needs `_GOVERN_EDP_SUPPORTED=1` in its env. A probe that invokes `$claude_bin`
+otherwise consumes an invocation from stubs that don't implement `--help` — which is exactly how this
+release's first CI run went red.
+
+### Still not here
+
+Automatic model/effort right-sizing remains unbuilt. A ticket's `Model:`/`Effort:` fields are still
+the only thing that sizes a worker, and a ticket naming neither runs at `GOVERN_WORKER_MODEL`
+(`opus`). This remains the largest unclaimed saving in the harness.
+
+Hook-based output shaping was investigated and ruled out. A `PostToolUse` hook does fire and does
+receive the real tool response in `claude -p` mode, but returning `updatedToolOutput` has no effect
+on what the model sees (measured on CLI 2.1.220, reproduced twice). Bash-output capping and read
+dedup are unbuildable on that path until that changes. The delivery path is proven and waiting:
+`--settings <file>` plus `--setting-sources user` gives a worker exactly the hooks you choose with no
+project-hook leakage.
+
 ## 1.12.0 — 2026-07-25
 
 The cost-and-throughput release. v1.11.x shipped the *mechanism* for parallel execution; this one
@@ -82,67 +154,6 @@ Automatic model/effort right-sizing remains unbuilt — an unpinned ticket still
 that measures ticket scope and selects both knobs is tracked but deliberately not in this release:
 tier selection mostly shifts list-price cost between models, and on a subscription plan its effect
 on the binding constraint — quota — is far smaller than the raw price spread suggests.
-
-## Unreleased
-
-### Added
-
-- **Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Exploration is the dominant cost of a
-  resolved ticket — roughly 98% of a worker's tokens are cache reads of code it had to discover. Three
-  tickets that all touch `scripts/govern/` therefore mean three workers each paying full discovery
-  cost on the same code: three repo loads, three `CLAUDE.md` reads, three architecture explorations.
-  `GOVERN_BATCH_MAX=N` lets one worker take up to N tickets from the same area so discovery is paid
-  once. On the dominant cost term this approaches an N× saving for a group.
-
-  It also makes `--parallel` **safer**, not just cheaper. Concurrent drivers were previously selected
-  by severity alone, with no regard for whether two tickets edit the same file — so two workers could
-  race the same file and produce conflicting branches. Groups are disjoint by construction, which
-  removes that race.
-
-  - **Locality key** = the leaf directory name of the dominant path token on the ticket's `Files:`
-    line (a measured file list, preferred when present) or its `Where:` line. Depth-1 is deliberate:
-    a hub/workspace mirror pair — `templates/govern/run-loop.sh` and `scripts/govern/run-loop.sh` —
-    *is* the same area, and grouping them is the intent. A ticket that names no path is unlocalized
-    and is never batched on a guess.
-  - **One worker → one branch → one PR** per group, with per-ticket commits.
-  - **Dependency-safe.** Two tickets in a dependency relation — declared via `**Depends on:**` or
-    implied by the other side's `**Blocks:**` — are never co-batched, so a group cannot be worked out
-    of order. Each batched ticket also re-passes the pre-spawn dependency gate individually.
-  - **Locking is unchanged.** Every ticket in a group is claim-locked by the driver for the whole run,
-    so the exactly-once guarantee holds per ticket. A candidate another driver already claimed is left
-    out of the group rather than collapsing the batch — under `--parallel`, all-or-nothing claiming
-    would mean batching almost never happens.
-  - **Partial failure stays per-ticket.** The worker returns a `tickets` array of
-    `{ticket, status, note}`. A batched ticket is bookkept — which *deletes its block* — only on an
-    explicit `resolved` entry. Any other status, a missing entry, an empty array, or an unparseable
-    report leaves it in `tickets.md` for a later run. A group verdict can never mark an unfixed ticket
-    resolved.
-
-  Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for
-  the token saving. So the aggressiveness is an explicit operator knob rather than a hard-coded
-  policy, and the default of `1` preserves today's behavior exactly — one ticket per worker. Applies
-  only to a backlog pull; an explicit ticket set is dispatched exactly as named.
-
-- **Base-branch CI preflight (`GOVERN_SKIP_BASE_CHECK`, default `0` = check).** The run-start
-  preflight now reads the base branch's latest CI conclusion (`gh run list --branch <base> --limit 1`,
-  one API call per repo, no tokens) before any worker is spawned, and refuses to dispatch when it is
-  unambiguously red — naming the failing run URL.
-
-  Measured motivation: a ticket dispatched onto a red `main` opened a PR that inherited the broken
-  baseline, went red, and was recorded `failed` — after a full worker session — even though its change
-  (one markdown file) could not have failed the suite. Under `--parallel` this scales: a red baseline
-  means *every* concurrent worker in the wave opens a PR that cannot go green. The governor already
-  polls CI after a PR exists, so without this check the problem surfaces at the most expensive
-  possible moment.
-
-  - **Fails OPEN by design.** `gh` missing or unauthenticated, no CI configured, no runs yet, an
-    in-progress/queued run, or an API error all proceed exactly as before. Only a *completed* run with
-    `conclusion=failure` blocks. A repo with no checks at all stays fully dispatchable — consistent
-    with the existing green-or-no-checks merge policy.
-  - **Once per run, not once per driver.** Runs on the existing run-start reconcile seam, which a
-    `--parallel` child driver has disabled, so a wave does not repeat it per child.
-  - `GOVERN_SKIP_BASE_CHECK=1` opts out — e.g. when the work being dispatched *is* the fix for the
-    red baseline. `GOVERN_BASE_BRANCH` overrides the branch name (default `main`).
 
 ## 1.11.1 — 2026-07-25
 
