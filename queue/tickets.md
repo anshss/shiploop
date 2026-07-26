@@ -44,90 +44,6 @@ Ref: session 2026-07-11 — README feature shipped (commit 9828a35); update-gap 
 
 ---
 
-## #9 — Harness self-improvement: promote safe proposals from run-20260711-033250
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260711-033250. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `queue/tickets.md`: document `**Depends on:** #K[, #J...]` as a first-class "Optional per-ticket field" (next to the existing `Model:` entry, ~line 22-31) — state that this exact phrase is what `govern::ticket_deps()` (`scripts/govern/lib/common.sh:1095-1116`) parses and what the #119 pre-spawn gate (`run-loop.sh:673-688`) enforces, and that "Ref:"/"siblings"/other prose is not machine-read — why: #7 (commit `49c3c8c`) declared its real blocking prerequisites on #5/#6 as prose siblings only, never the literal phrase, so the gate silently no-op'd and #7 was picked/resolved (shiploop#75) before #5/#6 landed — the exact case the supervisor flagged after the fact. The enforcement already exists; it was just undocumented.
-- `scripts/govern/file-ticket.sh`: add a `--depends-on N[,M...]` flag (same pattern as the existing `--model`/`--flow`/`--flow-op` flags, ~line 42-66) that emits a `**Depends on:** #N, #M` line into the filed ticket's leading field block — why: gives a ticket-filer a structured, typo-proof way to declare a blocking prerequisite instead of hand-writing prose that must exactly match `govern::ticket_deps`'s regex, removing the single point of failure that caused #7's ordering miss.
-- `scripts/govern/lint-tickets.sh`: add an advisory (WARN-only, non-blocking, exit 0) pass alongside the existing duplicate-heading check that flags when a ticket's body/`Ref:` line names another still-open ticket via relationship language ("sibling", "interface contract", "consumes", etc.) but that number never appears in `govern::ticket_deps`'s parsed output for it — e.g. "#N mentions #K as related but has no `Depends on:` declaration — confirm #K isn't a blocking prerequisite" — why: would have surfaced the #7→#5/#6 mismatch to a human before a worker was ever spawned.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-11 03:55 — run run-20260711-033250 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
-## #10 — Harness self-improvement: promote safe proposals from run-20260711-033247
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260711-033247. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `scripts/govern/spawn-worker.sh`: add a `GOVERN_FIX_CI` prompt-override block (mirrored on the existing `GOVERN_RESOLVE_CONFLICT` block at spawn-worker.sh:214-236) instructing a CI-fix-redispatch worker that the PR already exists, not to redo the ticket, and to query `gh pr checks`/`gh run view --log-failed` to diagnose the actual CI failure before fixing — currently `GOVERN_FIX_CI` is set by run-loop.sh:275 but never read anywhere in spawn-worker.sh, so the redispatched worker gets the plain first-attempt prompt with no idea CI is red or why, and just re-verifies locally and resubmits (the traced cause of ticket #5's `PR#76(CI-red-left-open)` outcome) — why: this is the direct, code-confirmed root cause, not a one-off worker mistake.
-- `scripts/govern/run-loop.sh` (`merge_pr_for_ticket`, ~line 273-276): before each CI-fix redispatch, capture the failing check name(s) via `gh pr checks "$pr" --repo "$(govern::repo_slug "$repo")" --json name,bucket`, then (a) pass them into the worker prompt via a new `GOVERN_FIX_CI_DETAIL` var, and (b) append them to the `"CI-red-left-open"` log line / `pr_summary` so the state note surfaces "which check failed" to the operator without opening GitHub — why: right now neither the redispatched worker nor the operator has any CI-failure detail; both have to dig on GitHub manually.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-11 03:56 — run run-20260711-033247 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
-## #11 — Harness self-improvement: promote safe proposals from run-20260711-033248
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260711-033248. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `scripts/govern/lint-tickets.sh` (+ new `govern::lint_dependency_phrasing` helper in `scripts/govern/lib/common.sh`): flag a ticket whose body references another ticket number alongside dependency language ("sibling", "owned by", "interface contract", "dependency:", "built on", "blocked by") but has no literal `**Depends on:** #N` line — why: tickets #6 and #7 both said they depended on #5 ("OWNED by sibling ticket #5", "DEPENDENCY: ..."), but neither used the phrase `depends on` that `govern::ticket_deps` (`common.sh:1107`) requires, so the existing #119 pre-spawn gate (`run-loop.sh:674-690`, built specifically to prevent this class of problem) never fired and both merged while #5 stayed open.
-- `scripts/govern/file-ticket.sh`: add a `--depends-on <N[,N…]>` flag parallel to the existing `--model`/`--flow`/`--flow-op` flags, emitting a normalized `**Depends on:** #N` line — why: the only way to trigger the dependency gate today is to hand-type the exact phrase from memory; a first-class flag makes correct syntax the default, which matters most for LLM-filed tickets (as #5/#6/#7 were).
-- `queue/tickets.md` header (near line 13) or `governor/worker-prompt.md`: document the required `**Depends on:** #N` syntax next to the existing "sibling ticket"/"interface contract" filing convention — why: this run's filing template was clearly disciplined but never mentioned the one phrase that's actually machine-read.
-- `governor/supervisor-prompt.md` (schema ~line 26-28) + `scripts/govern/escalations-emit-pending.sh` (lines 36-41): add a structured `orderingRisks: [{ticket, blockedOn, note}]` field alongside the free-text `concerns` array, and promote non-empty entries into durable `## Open` items in `governor/escalations.md` — why: this run's supervisor already spotted the exact risk in prose, but it only lives in this run's ephemeral review.md/pending-escalations.json, which the next run's own review.md overwrites — the reconciliation check needed when #5 lands could be silently lost.
-- `scripts/govern/lib/common.sh` (`govern::ticket_deps` gate consumed by `run-loop.sh:674-690`): once a dependency is declared, also confirm the dependency's PR actually merged (reuse `govern::pr_state`, already used by `govern::waits_refresh`), not just that the ticket entry was deleted — why: `queue/tickets.md`'s own convention defines "Resolved = PR opened" (not merged), so a correctly-declared dependency could still race an unmerged foundation through a narrower version of the same gap.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-11 03:57 — run run-20260711-033248 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
-## #12 — Harness self-improvement: promote safe proposals from run-20260711-035801
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260711-035801. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- scripts/govern/run-loop.sh: in the `red)` case (~lines 907–913) of the merge-repo PR walk, attach a `.escalation` object to `$report` and set `status="parked"` (not `"failed"`) — exactly like the adjacent `unmergeable)`/`error)`/`external-blocked)` cases — so a PR that's still CI-red after the fix-worker retry gets a real `## Open` entry in `governor/escalations.md` instead of silently landing in `state.jsonl` as `failed` with no escalation. This is what happened to ticket #5 (`shiploop#76` left open on red CI, no escalation filed).
-- scripts/govern/run-loop.sh: same fix also closes a second-order bug — the `#60` consecutive-failure circuit breaker (`consecutive_fails`, line ~700) is only checked when `-z "$resumed"`, but a red-CI ticket always has an open PR to resume, so it currently bypasses the circuit breaker entirely and would silently re-dispatch a fresh CI-fix worker on every future run indefinitely. Parking it removes it from selection via the existing escalation-exclusion path, so no separate change to the `resumed` branch is needed.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-11 04:06 — run run-20260711-035801 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
 ## #13 — Workers verify on macOS while CI runs Linux — inject failing-CI-log excerpts on retry + portability guidance in worker prompt
 
 **Severity:** Medium
@@ -295,31 +211,6 @@ Ref: session 2026-07-25 — hit while dry-running ticket #14 before launching th
 
 ---
 
-## #30 — Tickets #9 and #11 duplicate each other — same Depends-on work proposed twice
-
-**Severity:** Low
-**Model:** haiku
-
-Where: queue/tickets.md — open tickets #9 and #11
-
-Observed: #9 and #11 were both auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) after two different govern runs (run-20260711-033250 and run-20260711-033248), and they propose substantially the SAME work:
-  - both propose documenting `**Depends on:** #K` as a first-class optional per-ticket field in queue/tickets.md
-  - both propose adding a `--depends-on N[,M...]` flag to scripts/govern/file-ticket.sh
-  - both propose a lint pass flagging prose dependency language with no declared `Depends on:` line
-#11 additionally carries two proposals #9 does not (a supervisor `orderingRisks` schema field, and having the dependency gate confirm the dependency's PR actually MERGED rather than just that the ticket entry was deleted).
-
-Impact: two workers can be dispatched to implement the same three changes, wasting a full session each and producing conflicting PRs on the same files (queue/tickets.md, file-ticket.sh, lint-tickets.sh). This becomes materially more likely now that the governor runs tickets in parallel by default.
-
-Root cause worth noting: the auto-triage promoter appears to have no dedup against ALREADY-OPEN promoted tickets, so the same recurring proposal gets re-promoted on each run that surfaces it. That de-dup gap may deserve its own fix beyond merging these two entries.
-
-Fix direction: merge #9 and #11 into a single ticket that carries the union of their proposals (keeping #11's two extra items), and delete the other. Then consider whether govern-improve-triage.sh should dedup a proposal against open tickets before promoting it.
-
-Done when: only one open ticket covers the Depends-on documentation + `--depends-on` flag + dependency lint work, with #11's two additional proposals preserved; the redundant entry is deleted with a commit message naming the merge; a decision is recorded (ticket or CLAUDE.md note) on whether triage-time dedup is worth adding.
-
-Ref: session 2026-07-25 — spotted while deduping the token-efficiency ticket set against the existing queue.
-
----
-
 ## #31 — Nothing verifies a ticket's 'Done when' criteria before bookkeeping marks it resolved and deletes it
 
 **Severity:** Medium
@@ -372,28 +263,6 @@ Done when: `diff -r scripts/govern shiploop/templates/govern` shows no unexplain
 
 ---
 
-## #36 — Harness self-improvement: promote safe proposals from run-20260725-053951
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-053951. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `queue/tickets.md` + `scripts/govern/select-ticket.sh`: add a `**Blocks:** #N[, #M...]` optional field, parsed the same tolerant way `select-ticket.sh` already parses `**Severity:**`, and have it feed the exclusion set the same way `## Open` escalations already do — why: nothing today stops #9 or #11 from being independently selected even though #30 already says they duplicate each other and should be merged first. The 05:53 proposals prevent *future* duplicate pairs; they don't give the *existing* #30 any teeth to actually block #9/#11 in the meantime.
-- `scripts/govern/run-loop.sh` (~line 754, where a worker's `crossRefs.overlaps`/`crossRefs.dependsOn` is read off its report): write that back as a `Blocks:`/`Depends on:` line on the referenced ticket, or file it as an `## Open` escalation, instead of only setting `anomaly=1` for one supervisor glance — why: a worker has the freshest evidence of a real overlap while doing the work, and today that evidence is discarded after a single pass instead of durably blocking the ticket it names.
-- `scripts/govern/lint-tickets.sh` (or `file-ticket.sh` at filing time): WARN (non-blocking) when a ticket's body names a CLI flag/env var (`--foo`, `GOVERN_*`) or "the orchestrator"/"N drivers" that doesn't grep-match anything in this workspace's current `scripts/govern/*.sh` — why: I confirmed directly that `#33`/`#34` describe `GOVERN_PARALLEL_DEFAULT`/`--parallel` orchestrator machinery that exists only in the hub template (`shiploop/templates/govern/run-loop.sh`), not in this workspace's copy (ticket #35 already flags the lag) — dispatching a worker at either ticket today would burn a session on a target that isn't there yet, likely a confused park/fail rather than a clean block.
-- `queue/tickets.md`: add `**Depends on:** #35` to #33 and #34's field blocks (a data-only fix, zero script changes) — the existing `govern::ticket_deps` gate already honors literal "depends on #N" prose today, so this alone stops either from being dispatched before #35 (the hub-sync bump) lands.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 06:25 — run run-20260725-053951 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
 ## #37 — govern test suite fails spuriously when run from inside a live governor session
 
 **Severity:** Medium
@@ -426,28 +295,6 @@ Done when: the workspace copy carries prose_dep_warnings; #9/#11 are collapsed a
 
 ---
 
-## #39 — Harness self-improvement: promote safe proposals from run-20260725-060424
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-060424. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `queue/tickets.md`: add `**Depends on:** #35` to tickets #33 and #34's field blocks now — a zero-script, data-only fix (ticket #36 already proposes this) — why: `govern::ticket_deps`/the #119 pre-spawn gate only honors the literal bold marker, so until this line lands either ticket could be selected and dispatched before #35 (the hub-sync bump) lands, burning a worker session on machinery this workspace's `scripts/govern` copy doesn't have yet.
-- `scripts/govern/lib/common.sh`, `scripts/govern/lint-tickets.sh`, `scripts/govern/file-ticket.sh`: sync these from `shiploop/templates/govern/` (hub→workspace sync, e.g. `/shiploop:update`) — why: the hub template already implements `govern::prose_dep_warnings` (flags prose-only dependency phrasing like "sibling ticket #N" lacking a canonical `**Depends on:**`/`**Blocks:**` marker) and a duplicate-title advisory check in `file-ticket.sh` (flags `⚠ possible duplicate of #M` on >50% title-word overlap with an open ticket) — exactly the two mechanisms that would have caught this run's frictions (#33/#34's undeclared dependency, #38 re-filing #30's merge instruction). The workspace's `common.sh` is missing both blocks entirely — this is sync drift, not a missing feature; the fix already exists in this same repo.
-- `scripts/govern/govern-improve.sh`: append a compact open-ticket digest (number, title, severity, `Where:` target files — no body) from `queue/tickets.md` when assembling this reviewer's context — why: confirmed absent from both the workspace and hub-template copy, so every improve run re-derives friction from scratch with no way to check "is this already tracked?" — the exact gap that let #38 restate #30's #9/#11-merge instruction.
-- `scripts/govern/govern-improve-triage.sh`: before auto-filing a new "promote safe proposals" ticket, check whether an already-open ticket carries the same auto-promotion marker and targets overlapping files/tickets; if so, append the new bullets to that existing ticket's body instead of filing a new `## #N` — confirmed absent from both workspace and hub copy — why: this is the actual mechanism (two runs' reviewers independently auto-promoting overlapping fixes) that produced the #30/#38 duplicate pair.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 06:41 — run run-20260725-060424 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
 ## #40 — --parallel orchestrator exits before every run-end block (self-improve, escalations emit, health, sync-port)
 
 **Severity:** Medium
@@ -473,28 +320,6 @@ Observed: all four section-5 assertions failed once during a full-suite run exec
 Fix direction: make the SIGINT delivery deterministic instead of time-based — have the scaffold under test touch a sentinel file once its trap is armed and the wrap has started, and poll for that sentinel (bounded) before sending the signal, rather than sleeping a fixed interval. Keep the existing timeout as a backstop.
 
 Done when: the section passes reliably with the suite running under artificial CPU load (e.g. several concurrent runs); no fixed sleep remains between the background launch and the kill.
-
----
-
-## #42 — Harness self-improvement: promote safe proposals from run-20260725-063340
-
-**Severity:** Low
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-063340. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `governor/improvements.md` (via `govern-improve.sh`'s output contract): tag each proposal bullet `[self-apply-eligible]` or `[policy-file — needs human/ticket]` based on whether its target file is in `govern-self-apply.sh`'s allowlist — why: makes visible at proposal time which fixes are structurally stuck and need a human/ticket, instead of silently re-proposing the same policy-file fix run after run.
-- `scripts/govern/govern-improve-triage.sh`: before filing a new "promote safe proposals from run X" ticket, check for an already-open ticket with the same auto-promotion marker and overlapping target files, and append instead of filing a new one — why: proposed 3 times now (05:53, 06:25, this run) and still unapplied; #9/#10/#11/#12/#36/#39 are the visible cost.
-- `queue/tickets.md`: add `**Depends on:** #35` to ticket #33's field block — a one-line, zero-script, data-only fix an operator can apply directly right now.
-- `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` — why: gives the run loop itself a nudge toward the merge the supervisor has now requested three runs in a row.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 07:15 — run run-20260725-063340 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
 
@@ -553,78 +378,6 @@ Ref: session 2026-07-25 — operator asked for this directly after the v1.11.0 t
 
 ---
 
-## #47 — Harness self-improvement: promote safe proposals from run-20260725-112937-10735
-
-**Severity:** Low
-
-⚠ possible duplicate of #9
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-112937-10735. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `governor/worker-prompt.md`: Add an explicit instruction to check CI baseline before declaring `resolved` — compare the PR's failing checks against `gh run list --branch main --limit 3` (or equivalent) to determine whether a red check predates the worker's own change — why: ticket #46's worker rediscovered this exact lesson after the fact, but the harness discarded it before it reached CLAUDE.md; teaching it up front prevents every future worker from rediscovering it and wasting CI-fix cycles on unrelated upstream breakage.
-- `scripts/govern/run-loop.sh` (resolved→failed CI-red downgrade path) / `scripts/govern/govern-bookkeep.sh`: persist any `lessonPatch` a worker returned even when the ticket gets CI-downgraded to failed (e.g. append to `governor/improvements.md`), instead of silently dropping it because `govern-bookkeep.sh` only runs in the `status=="resolved"` branch — why: this run is direct proof a genuinely useful lesson was generated and then lost; without this fix the harness keeps losing valid lessons every time a resolved ticket gets downgraded.
-- `scripts/govern/run-loop.sh` (`merge_pr_for_ticket` CI-fix redispatch): before spending the single `GOVERN_CI_FIX_TRIES` retry, check whether `origin/main`'s own latest CI run is already red (baseline-red); if so, skip the fix-dispatch and record a distinct note like `CI-red-baseline-preexisting` instead of `CI-red-left-open` — why: if CI was already broken on main, the CI-fix worker is doomed by construction, burning the one retry and mislabeling the failure as the ticket's fault — exactly the scenario #46's worker diagnosed on its own.
-- `governor/README.md`: document that a re-selected ticket with an already-open PR is adopted via `govern::find_pr` without spawning a new worker and is re-fed through `await-ci.sh` on the next run — why: this auto-retry-on-reselection behavior isn't documented, so an operator seeing "failed, worktree preserved" might intervene (e.g. delete the worktree) in a way that breaks that adoption path.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 11:47 — run run-20260725-112937-10735 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
-## #50 — Harness self-improvement: promote safe proposals from run-20260725-111730-97043
-
-**Severity:** Low
-
-⚠ possible duplicate of #9
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-111730-97043. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `scripts/govern/spawn-worker.sh`: add a `GOVERN_FIX_CI` handling block (mirroring the existing `GOVERN_RESOLVE_CONFLICT` block at spawn-worker.sh:239-261) that injects the PR number, an excerpt of the actually-failing CI job's log, and "a prior attempt already implemented this — your job is ONLY to fix the failing check" framing — this run's #19 worker had to rediscover the existing-PR-with-red-CI situation entirely from scratch, burning budget and hitting a stray `cd templates/govern/test: no such file or directory`. This exact gap is already named as open tickets #10/#13 in `scripts/govern/test/test-ticket-deps-prose.sh:31`; this run is a live, reproduced instance of it.
-- `scripts/govern/run-loop.sh` (~line 1279, the CI-red downgrade branch `[[ "$status" == "resolved" ]] && status="failed"`): apply `.lessonPatch` even when status gets downgraded to `failed`/`parked`. Today `govern-bookkeep.sh` (the only place a `lessonPatch` gets written into CLAUDE.md) is invoked only from the `resolved)` branch at run-loop.sh:1385, so ticket #19's fully-diagnosed anti-pattern lesson ("attribute CI red against the base commit's own run, not yours") was silently dropped despite being captured in the worker's own report.json.
-- `scripts/govern/run-loop.sh` (~line 285, the `excludes` variable): the "already-worked-this-run" exclude tracking is a plain per-process shell variable, not synchronized across parallel child drivers. Under the default `GOVERN_PARALLEL_DEFAULT=4` (run-loop.sh:134), a killed-before-verdict ticket can be double-processed, producing duplicate `timeout` entries — the actual root cause behind `test-budget-exceeded-classification`/`test-timeout-classification` failing in CI. Make the exclusion atomic (shared lock-guarded file all children re-read) instead of relying on each child's local variable.
-- `scripts/govern/config-check.sh`: add a drift check between this workspace's `scripts/govern/test/*.sh` and the hub's `templates/govern/test/*.sh`. The hub's copy of the two failing tests already pins `--serial` as a band-aid for the race above; this workspace's copy doesn't have that pin yet, which is exactly why CI (built fresh from hub templates) failed while local verification (this workspace's stale copy) passed.
-- `governor/worker-prompt.md` or root `CLAUDE.md`: add a one-line note on the `templates/govern/` vs `scripts/govern/` split (templates/ = canonical distributable copy synced via sync-templates.sh; scripts/ = this repo's own live/dogfood copy — run tests from scripts/, never `cd` into templates/ directly) — this run's worker guessed the wrong path and hit a dead end.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 12:12 — run run-20260725-111730-97043 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
-## #51 — Harness self-improvement: promote safe proposals from run-20260725-120551-43436
-
-**Severity:** Low
-
-⚠ possible duplicate of #9
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-120551-43436. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `scripts/govern/lint-tickets.sh`: add a non-blocking WARN pass (alongside the existing duplicate-heading check) that validates every `**Depends on:** #N` / `**Blocks:** #N` / `Ref: #N` pointer resolves to a `## #N` heading still present in `queue/tickets.md` — why: #36 and #39 (this run's own promoted tickets) both propose "add `Depends on: #35` to #33 and #34," but #33/#34 no longer exist in the open queue; nothing today would have caught either proposal referencing a closed ticket, so the same stale-reference mistake will keep recurring silently.
-- `scripts/govern/file-ticket.sh`: extend the existing title-word-overlap duplicate check (which only compares the new ticket's title against other `## #N` headings) to also compare its `Where:`/target-file text against every open ticket's `Where:` field, and when two open tickets name overlapping files, auto-emit `**Depends on:** #<older>` into the new ticket's body instead of only the cosmetic `⚠ possible duplicate of #M` marker — why: #9, #11, and #38 all touch `common.sh`/`lint-tickets.sh`/`file-ticket.sh`, the exact files #35's hub-sync will overwrite, and none declares a dependency on #35; the file-overlap check that exists today (`common.sh:826-857`) is scoped only to sync-port escalations, not general open-ticket-vs-open-ticket collisions, so this class of risk is invisible outside that one path.
-- `scripts/govern/govern-improve-triage.sh`: implement the dedup-before-filing check that #30, #39, and #42 have each already proposed and none has landed — before filing a new "promote safe proposals from run-X" ticket, check whether an open ticket already carries the same auto-promotion marker and append the new bullets to it instead of minting a new `## #N` — why: this is now empirically the highest-friction gap in the harness — it has produced 9 open duplicate tickets (#9, #10, #11, #12, #36, #39, #42, #47, #50) across 9 runs, and the duplicate-title advisory that would flag it at filing time (`file-ticket.sh`'s `⚠ possible duplicate of #M`) is confirmed firing correctly (visible on #47 and #50) but is purely cosmetic — nothing consumes it to actually merge or block, so it decorates the exact problem it detects without fixing it.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 12:17 — run run-20260725-120551-43436 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
-
----
-
 ## #52 — Parallel-by-default lets a killed ticket be attempted twice in one run — hub main CI red since v1.11.1
 
 **Severity:** High
@@ -640,28 +393,6 @@ This costs a real worker per occurrence — a killed ticket is exactly the expen
 Fix direction: make the attempted-this-run exclusion CROSS-DRIVER (a run-scoped file under $RUNDIR that each driver appends to and consults before selecting, alongside the existing claim lock), so a killed/timed-out ticket is not re-selected by a sibling in the same run. Do NOT pin the two tests to `--serial` as the fix — that masks the defect (see the root CLAUDE.md anti-pattern on proving a fan-out shape with the existing tests). If a `--serial` pin is used at all, it must be in addition to the real fix and justified per test.
 
 Done when: hub `main` CI is green; both tests pass on Linux CI without being pinned to --serial; a test covers 'a ticket whose worker was killed is not re-selected by a sibling driver in the same run'; `bash -n` passes; hub-first — land in shiploop/templates/** only.
-
----
-
-## #53 — Harness self-improvement: promote safe proposals from run-20260725-111845-99416
-
-**Severity:** Low
-
-⚠ possible duplicate of #9
-
-Where: scripts/govern/* and/or governor/* (per the proposals below).
-
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260725-111845-99416. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
-
-Proposals (classified safe/additive — none touches a governor safety rail):
-- `scripts/govern/govern-improve-triage.sh`: before filing a new "Harness self-improvement: promote safe proposals from run X" ticket, scan `queue/tickets.md` for an already-open ticket whose title matches `^Harness self-improvement: promote safe proposals` and append this run's safe-proposal bullets to it instead of calling `file-ticket.sh` again — why: this gap has already produced 10 near-duplicate tickets (#9, #10, #11, #12, #36, #39, #42, #47, #50, #51), each triggering a separate full worker dispatch on largely the same proposals; the fix was already specified in ticket #42's own body (and independently in #30/#38) but has no owner because it keeps getting buried under a fresh "promote safe proposals" ticket instead of ever being selected.
-- `scripts/govern/select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` (same shape as the existing `govern::sync_port_collision_tickets` exclusion added for #314) — why: gives the run loop a visible, repeating nudge toward consolidating the pile every cycle until the triage fix above lands, instead of the duplication silently growing run after run.
-
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
-
-Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
-
-Ref: governor/improvements.md block "2026-07-25 12:23 — run run-20260725-111845-99416 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 
 ---
 
@@ -789,5 +520,77 @@ Fix direction: push the branch, open a PR against the shiploop hub, land it, the
 Done when: PR merged and worktree removed.
 
 Ref: session 2026-07-26 — found while auditing the token-efficiency worktree during a cost/turn measurement pass over logs/govern/.
+
+---
+
+## #62 — Consolidated harness self-improvement duplicate cluster: dedup consumer, Depends-on/Blocks mechanism, CI-fix redispatch context, escalation fix
+
+**Severity:** High
+**Model:** sonnet
+
+Where: `scripts/govern/govern-improve-triage.sh` + `scripts/govern/file-ticket.sh` (workspace) AND their `shiploop/templates/govern/govern-improve-triage.sh` + `shiploop/templates/govern/file-ticket.sh` counterparts (hub). Secondary targets named below.
+
+Observed: this is the consolidation of an 11-ticket duplicate cluster (#9, #10, #11, #12, #36, #39, #42, #47, #50, #51, #53), all auto-filed by `govern-improve-triage.sh` from separate `govern-improve.sh` runs, most proposing overlapping fixes to the same root gap. Per #51: 9 open duplicate "Harness self-improvement: promote safe proposals" tickets accumulated across 9 runs before this consolidation (#9, #10, #11, #12, #36, #39, #42, #47, #50), and a 10th (#53) makes explicit that the fix for the duplication was itself proposed 4 times (#30, #39, #42, #51/#53) and never landed.
+
+**Root cause — detection exists, nothing consumes it.** `file-ticket.sh:160-188` already runs a cheap title-word-overlap check on every new ticket and prepends `⚠ possible duplicate of #M` when >50% of the new title's words match an existing open heading — confirmed firing correctly, purely advisory ("NEVER blocks filing, purely advisory" per its own comment). 7 such markers exist in the current queue (4 literal `⚠ possible duplicate of #9` tags on #47/#50/#51/#53, 3 more referenced in ticket prose). `govern-improve-triage.sh:117` files every "promote safe proposals" ticket straight through `file-ticket.sh` with zero pre-check against already-open tickets carrying the same marker. The gap is the CONSUMER, not the detector.
+
+**Hub-vs-workspace drift verdict (verify-before-building):** diffed `scripts/govern/lib/common.sh` / `scripts/govern/file-ticket.sh` against `shiploop/templates/govern/{lib/common.sh,file-ticket.sh}` — **byte-identical, zero diff, on both files, right now.** `govern::prose_dep_warnings` exists in BOTH copies (`common.sh:1334`), wired into `lint-tickets.sh` in both. #38's and #39's claim that the workspace `common.sh` is "missing both blocks entirely" (sync drift) is **no longer true** — the workspace has since caught up (likely via a `/shiploop:update` bump after #38/#39 were filed). Neither side has a `--depends-on` flag in `file-ticket.sh` (`grep -c depends-on` = 0 on both) — that is the one genuinely-unshipped piece from the #9/#11/#38 thread. Do NOT re-diagnose drift here; there is none left to fix.
+
+**#33/#34 dead-reference check:** #36 and #39 both instruct adding `**Depends on:** #35` to tickets #33 and #34. Checked `git log --oneline --all | grep -iE "#33|#34"`: both are RESOLVED, not lost — `ae36ed9 docs(tickets): resolve #33 (shiploop#90)` and `326aaca docs(tickets): resolve #34 (shiploop#89)`. Both instructions are moot; dropped below with this evidence rather than carried forward.
+
+**Corrections to the pre-analysis this ticket was scoped from:**
+- The `GOVERN_FIX_CI` prompt-injection block (mirroring `GOVERN_RESOLVE_CONFLICT`) is proposed by **#10 and #50 only** — #47 does NOT propose this block (verified: #47's 4 bullets are CI-baseline-worker-prompt guidance, lessonPatch persistence, a baseline-red pre-retry skip, and a README doc note — none of them add the GOVERN_FIX_CI block itself). Merge #10+#50's version, not a 3-way merge.
+- The "widen file-ticket.sh's duplicate check from title-words to `Where:`/target-file overlap, auto-emit `Depends on:`" ask is **#51's**, not #50's (#50 has no such bullet; verified by re-reading both in full).
+- #50's "atomic cross-driver exclude tracking" (the `excludes` variable is per-driver in-memory, letting a killed ticket be re-selected by a sibling under `GOVERN_PARALLEL_DEFAULT>1`) is the exact same root cause already tracked as **#52** (High severity, hub `main` CI red since v1.11.1 over this). Not duplicated here — left fully owned by #52.
+
+## Inventory — every distinct ask from the 11 tickets
+
+**A. The core consumer fix (highest priority — this is what makes the other 10 tickets stop recurring):**
+- [ ] `govern-improve-triage.sh`: before calling `file-ticket.sh` to file a new "Harness self-improvement: promote safe proposals from run-X" ticket, check whether an open ticket already carries the same auto-promotion marker / matches `^Harness self-improvement: promote safe proposals` — if so, APPEND the new run's proposal bullets to that existing ticket's body instead of minting a new `## #N`. (#30, #39, #42, #51, #53 — proposed 5 times, 0 landed.)
+- [ ] `select-ticket.sh`: WARN in the selection log when 2+ open tickets match `^Harness self-improvement: promote safe proposals` — a visible nudge toward consolidation on every cycle until the consumer fix above lands. (#42, #53 — both propose this.)
+
+**B. Depends-on / Blocks mechanism (from #9, #11, #30, #36, #38):**
+- [ ] Document `**Depends on:** #K[, #J...]` as a first-class "Optional per-ticket field" in `queue/tickets.md`'s header (next to the existing `Model:` entry) — state it is the literal phrase `govern::ticket_deps` parses and the #119 pre-spawn gate enforces. (#9, #11)
+- [ ] Add a `--depends-on N[,M...]` flag to `file-ticket.sh` (parallel to the existing `--model`/`--effort`/`--flow` flags), emitting a normalized `**Depends on:** #N` line. **Confirmed still genuinely unshipped on both hub and workspace** — see drift verdict above. (#9, #11, #38)
+- [ ] Prose-dependency lint flagging a ticket that states a dependency in prose ("sibling ticket #N", "blocked by #N") without a canonical `**Depends on:**`/`**Blocks:**` marker — **ALREADY SHIPPED** as `govern::prose_dep_warnings` (`common.sh:1334`), wired into `lint-tickets.sh`, covered by `test-lint-prose-deps.sh`, identical on both hub and workspace. No work needed; this bullet exists in #9/#11 only because they predate confirming it shipped (per #38). (#9, #11 — DECLINE, already shipped)
+- [ ] `governor/supervisor-prompt.md` schema (~line 26-28) + `escalations-emit-pending.sh` (lines 36-41): add a structured `orderingRisks: [{ticket, blockedOn, note}]` field, and promote non-empty entries into durable `## Open` items in `governor/escalations.md` — a supervisor's free-text ordering-risk observation currently only lives in the run's ephemeral review.md/pending-escalations.json and is overwritten by the next run. (#11 — unique, not proposed elsewhere)
+- [ ] `govern::ticket_deps` gate (consumed by `run-loop.sh:673-690`): once a dependency is declared, also confirm the dependency's PR actually MERGED (reuse `govern::pr_state`), not just that the ticket entry was deleted — "Resolved" in this queue's own convention means "PR opened," not merged, so a correctly-declared dependency can still race an unmerged foundation through a narrower version of the original gap. (#11 — unique)
+- [ ] `queue/tickets.md` + `select-ticket.sh`: add a `**Blocks:** #N[, #M...]` optional field feeding the same exclusion path `## Open` escalations already use. **Verify before building**: `govern::ticket_deps` (`common.sh:1269-1310`) already parses a `**Blocks:**` marker as an implicit dependency, consumed by the #119 pre-spawn gate (`run-loop.sh:1169-1182`) — so the mechanism may already substantially exist; confirm what (if anything) is actually missing (e.g. `select-ticket.sh`-level selection-time visibility vs. spawn-time deferral) before implementing, and decline the redundant part if the #119 gate already covers it. (#36 — unique, needs verification)
+- [ ] `run-loop.sh` (~line 754, where a worker's `crossRefs.overlaps`/`crossRefs.dependsOn` is read off its report): write that back as a `Blocks:`/`Depends on:` line on the referenced ticket, or file it as an `## Open` escalation, instead of only setting `anomaly=1` for a single supervisor glance. (#36 — unique)
+- [ ] `lint-tickets.sh` (or `file-ticket.sh` at filing time): WARN when a ticket's body names a CLI flag/env var (`--foo`, `GOVERN_*`) or orchestrator language ("N drivers") that doesn't grep-match anything in this workspace's CURRENT `scripts/govern/*.sh` — prevents dispatching a worker at machinery that only exists in the hub template (or nowhere), a confused park/fail. (#36 — unique; note the #33/#34 example that motivated it is now moot, but the general check is still worth having)
+- [ ] `lint-tickets.sh`: add a non-blocking WARN validating that every `**Depends on:** #N` / `**Blocks:** #N` / `Ref: #N` pointer resolves to a `## #N` heading still present in `queue/tickets.md` — catches exactly the #33/#34 stale-reference class this consolidation just had to hand-verify via `git log`. (#51 — unique)
+- [ ] `file-ticket.sh`: extend the existing title-word-overlap duplicate check to ALSO compare the new ticket's `Where:`/target-file text against every open ticket's `Where:` field, and when two open tickets name overlapping files, auto-emit `**Depends on:** #<older>` instead of only the cosmetic `⚠ possible duplicate of #M` marker. (#51 — unique; corrected attribution, not #50)
+- [x] ~~`queue/tickets.md`: add `**Depends on:** #35` to #33 and #34~~ — MOOT, both resolved (`ae36ed9`, `326aaca`). (#36, #39 — dropped)
+- [x] ~~sync `common.sh`/`lint-tickets.sh`/`file-ticket.sh` from hub~~ — ALREADY DONE, files are byte-identical. (#39 — dropped)
+
+**C. CI-fix redispatch context (from #10, #47, #50):**
+- [ ] `spawn-worker.sh`: add a `GOVERN_FIX_CI` prompt-override block (mirroring the existing `GOVERN_RESOLVE_CONFLICT` block) telling a CI-fix-redispatch worker the PR already exists, not to redo the ticket, and to query `gh pr checks`/`gh run view --log-failed` to diagnose the ACTUAL CI failure before touching anything — currently `GOVERN_FIX_CI` is set by `run-loop.sh` but never read in `spawn-worker.sh`, so the redispatched worker gets the plain first-attempt prompt with no idea CI is red or why. (#10, #50 — same ask, independently proposed; NOT #47)
+- [ ] `run-loop.sh` (`merge_pr_for_ticket`): before each CI-fix redispatch, capture the failing check name(s) via `gh pr checks ... --json name,bucket`, pass them into the worker prompt via `GOVERN_FIX_CI_DETAIL`, and append them to the `CI-red-left-open` log line / `pr_summary` so the operator sees which check failed without opening GitHub. (#10 — unique)
+- [ ] `governor/worker-prompt.md`: add an explicit instruction to check CI baseline before declaring `resolved` — compare the PR's failing checks against `gh run list --branch main --limit 3` to determine whether a red check predates the worker's own change. (#47 — unique; distinct from the run-loop pre-retry skip below)
+- [ ] `run-loop.sh` (`merge_pr_for_ticket` CI-fix redispatch): before spending the single `GOVERN_CI_FIX_TRIES` retry, check whether `origin/main`'s own latest CI run is already red (baseline-red); if so, skip the fix-dispatch and record `CI-red-baseline-preexisting` instead of `CI-red-left-open` — avoids burning the one retry on a doomed dispatch when the base itself is broken. (#47 — unique, explicitly flagged as distinct and valuable)
+- [ ] `run-loop.sh` (CI-red downgrade path) / `govern-bookkeep.sh`: persist any `lessonPatch` a worker returned even when the ticket gets CI-downgraded to `failed`/`parked`, instead of silently dropping it because `govern-bookkeep.sh` only runs in the `status=="resolved"` branch. (#47, #50 — same ask, independently proposed)
+- [ ] `governor/README.md`: document that a re-selected ticket with an already-open PR is adopted via `govern::find_pr` without spawning a new worker and is re-fed through `await-ci.sh` on the next run — undocumented today, so an operator might break the adoption path by intervening (e.g. deleting the worktree). (#47 — unique)
+- [ ] `config-check.sh`: add a drift check between this workspace's `scripts/govern/test/*.sh` and the hub's `templates/govern/test/*.sh` (an ONGOING automated check, distinct from the one-time #35 bump) — the hub pins `--serial` on `test-budget-exceeded-classification`/`test-timeout-classification` as a band-aid for #52's race; a drift check would have caught the workspace copy missing that pin before CI (built fresh from hub templates) diverged from local verification (stale workspace copy). (#50 — unique)
+- [ ] `governor/worker-prompt.md` or root `CLAUDE.md`: one-line note on the `templates/govern/` (canonical, synced via sync-templates.sh) vs `scripts/govern/` (this repo's live/dogfood copy — run tests from here, never `cd` into `templates/` directly) split — a worker guessed wrong and hit a dead end (`cd templates/govern/test: no such file or directory`). (#50 — unique)
+
+**D. run-loop.sh escalation/circuit-breaker fix (from #12):**
+- [ ] In the `red)` case of the merge-repo PR walk (~run-loop.sh:907-913), attach a `.escalation` object and set `status="parked"` (not `"failed"`) — matching the adjacent `unmergeable)`/`error)`/`external-blocked)` cases — so a PR still CI-red after the fix-worker retry gets a real `## Open` escalation entry instead of silently landing in `state.jsonl` as `failed`. This also fixes a second-order bug: the #60 consecutive-failure circuit breaker is only checked when `-z "$resumed"`, but a red-CI ticket always has an open PR to resume, so it currently bypasses the breaker entirely and would re-dispatch a fresh CI-fix worker indefinitely; parking removes it from selection via the existing escalation-exclusion path, so no separate fix to the `resumed` branch is needed. (#12 — unique)
+
+**E. Subsumed / not carried forward (recorded, not duplicated):**
+- #50's "atomic cross-driver exclude tracking" (per-driver in-memory `excludes` lets a killed ticket be re-selected by a sibling driver) — this is the identical root cause already owned by **#52** (High, hub `main` CI red since v1.11.1). Do not re-implement here; see #52.
+- #38's diagnosis that the workspace `common.sh` lacks `govern::prose_dep_warnings`/the duplicate-title check — superseded; both are now present and byte-identical to the hub (see drift verdict above).
+
+## Fix direction
+Implement each unchecked item above as a normal harness PR, or explicitly decline it in the PR description if on closer inspection it isn't worth doing. This is **hub-first**: land every mechanism change in `shiploop/templates/govern/**` and let it flow down to this workspace via `/shiploop:update` — do not hand-edit `scripts/govern/**` in the same PR (the two copies are currently in sync; keep them that way through the sync channel, not a parallel edit).
+
+Done when:
+- [ ] `govern-improve-triage.sh` (hub + workspace, via sync) checks for an already-open "promote safe proposals" ticket before filing a new one, and appends instead of minting `## #N` — verified by filing two synthetic proposals and confirming only one ticket exists after both.
+- [ ] `select-ticket.sh` logs a WARN when 2+ open tickets match `^Harness self-improvement: promote safe proposals`.
+- [ ] `queue/tickets.md` documents `**Depends on:**` as a first-class field; `file-ticket.sh` supports `--depends-on N[,M...]`.
+- [ ] Each remaining unchecked item in sections B–D above is either implemented (with a test under `templates/govern/test/`) or explicitly declined with reasoning in its PR description.
+- [ ] `bash -n` passes on every touched script; hub and workspace copies remain byte-identical after landing (verified via `diff -r scripts/govern shiploop/templates/govern`).
+- [ ] No new duplicate "promote safe proposals" ticket has been auto-filed since this lands (spot-check on the next few govern runs).
+
+Ref: consolidation of #9, #10, #11, #12, #30, #36, #38 (evidence only, not deleted), #39, #42, #47, #50, #51, #53. See `git log --oneline --all | grep -iE "#33|#34"` for the #33/#34 resolution evidence (`ae36ed9`, `326aaca`).
 
 ---
