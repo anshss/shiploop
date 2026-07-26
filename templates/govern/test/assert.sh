@@ -27,6 +27,14 @@ export GOVERN_PROMPTS_DIR="${GOVERN_PROMPTS_DIR:-}" GOVERN_HOOKS_DIR="${GOVERN_H
 # that need to EXERCISE the guard (test-automerge-guard.sh) explicitly `unset` this after sourcing.
 export _GOVERN_ASSUME_MERGE_ALLOWED=1
 
+# Hermetic retry-classifier inputs: govern::retry_class reads these from the ENVIRONMENT, and the
+# suite is routinely run BY a governor worker whose own session exports them (a CI-fix worker runs
+# with GOVERN_FIX_CI=<repo>#<pr> set). Inheriting them makes every retry classify as `ci` and turns
+# the sizing tests red for reasons that have nothing to do with the code under test. Clear them here
+# so a run is identical inside and outside a governor session; the tests that EXERCISE a class set
+# it explicitly per case.
+unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it

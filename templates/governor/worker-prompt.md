@@ -45,11 +45,59 @@ inline, classify it:
   Do **NOT** read large files or verbose build/test output into your own context yourself — have a
   child read it and return the conclusion.
 
+**There is a FLOOR as well as a ceiling — a subagent is not free.** Every child re-establishes context
+from scratch and pays a fresh prompt to learn what you already know, so work you could finish yourself
+in a few tool calls is CHEAPER inline. Delegate because the work would flood YOUR context, never
+merely because it is delegable.
+
+**Be terse in your own output.** Your prose, summaries, PR bodies, and any file you write are re-sent
+on every remaining turn, so verbosity compounds exactly like a flooded log. No preamble, no restating
+what you just read, no recapping the plan before each step — state the finding and move. This is a
+budget on WORDS, never on WORK: dropping a step, a test, or a required artifact to be brief is a
+failed ticket, which costs far more than the tokens saved.
+
+**Command-output discipline covers the RUN case too, not just the READ case.** Reading a large file
+into your own context is one flooding path; *running* a verbose command is another — `npm test` / a
+build emits its full output as the tool result the instant you run it inline, whether or not you ever
+"read" a file. This is the common case: nearly every ticket runs at least one local build/test before
+opening a PR (step 3 above), and a single failing run can dump thousands of lines that then get
+re-sent on every remaining turn. Order of preference, cheapest first:
+1. **Redirect and tail** — run verbose commands against a file, not directly into context, then
+   inspect a bounded slice: `npm test > /tmp/t.log 2>&1 || tail -50 /tmp/t.log`. This is free and
+   covers most cases.
+2. **Delegate the log** — only if the tail is insufficient to diagnose, hand `/tmp/t.log` to a child
+   (per the return contract below) and keep only its verdict.
+3. **Read it all inline** — never. If (1) and (2) both fail to resolve it, that itself is a signal to
+   narrow the repro rather than dump the whole log into your own context.
+
+**Validate in proportion to the diff.** Step 3 above has you validate locally before opening a PR, so
+nearly every ticket runs a suite — and that run is the single largest context-flooding event in a
+worker session (the RUN case above). Match the check to what you actually changed:
+- **Docs / prompt / markdown only**, no executable file touched → a lint or parse check is enough. A
+  full build/test suite here is pure waste: it floods your context at cache-WRITE price and you re-pay
+  it on every remaining turn, and it tells you nothing a markdown diff could break. CI is the
+  authoritative gate either way.
+- **Any executable file touched** (source, script, or config the build consumes) → run the full suite,
+  redirected and tailed per the rule above.
+When in doubt, run the full suite. The cost of one unnecessary suite run is bounded; the cost of
+shipping an unvalidated code change is not.
+
 **Size the child model** — a child does not need your model:
 - `haiku` = mechanical work: extract, lookup, log-reading.
 - `sonnet` = search / investigation / multi-file reads.
 - inherit (your own model) only for judgment-heavy synthesis.
 A fan-out of N similar children is almost never inherit-tier.
+
+**Return contract — every delegation prompt must state what the child returns, and how much.**
+Delegating only saves context if the return is smaller than the work avoided — a subagent that answers
+with a long narrative report floods your context exactly as much as doing the work inline would have.
+Put the bound in the child's prompt in these terms: **return terse — no preamble, no narration, no
+transcript, no restating the task or the files you read — and at most N lines**, e.g. "at most 15
+lines: root cause, file:line, suggested fix." What gets cut is FILLER ONLY: the child must **NEVER**
+compress, paraphrase, or elide code, commands, file paths, error text, or exact numbers — those come
+back verbatim and the line cap yields to them. An unbounded reply defeats the delegation; a lossy one
+makes you re-run the work. The contract belongs in the prompt you write, not left to the child's
+judgment.
 
 **HARD RULE — delegate reconnaissance, never delegate the commit, the PR, or the report write.** A
 subagent runs under a restrictive write policy (see the validation section below): it can investigate,

@@ -43,8 +43,16 @@ read `$GITHUB_ORG` + `$REPOS` — use them in the `gh` calls below.
    - any error, log line, mock, hardcoded stub, TODO, or broken-adjacent code you walked past,
    - anything in the ticket's "Where" area that's still wrong but out of this fix's scope.
 
-   For **each** genuinely new bug / gap / missing capability / follow-up, file its own numbered
-   `## #N — Title` entry in `queue/tickets.md` with the standard fields: **Severity / Where / Observed /
+   **Consolidate before you mint.** For each genuinely new bug / gap / missing capability / follow-up,
+   first look for an OPEN ticket it belongs inside and fold it in — rewriting that ticket's body is
+   expected, not a compromise. A new number is the exception, earned only when the work is
+   independently dispatchable: a different repo/area, or something a worker could ship without
+   touching the other ticket. **Two tickets one worker would fix in one PR should have been one
+   ticket.** This binds the worker-report follow-ups hardest — a single report's findings are one
+   consolidated entry, not two thin ones per worker.
+
+   When a new number IS warranted, file its own `## #N — Title` entry in `queue/tickets.md` with the
+   standard fields: **Severity / Where / Observed /
    Fix direction / Done when / Ref**. File it through the **collision-safe path** —
    `printf '<body>' | scripts/govern/file-ticket.sh "<Title>" <Severity>` — which allocates the
    number via the shared monotonic counter (max of `queue/tickets.md`'s highest `## #N` and

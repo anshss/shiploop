@@ -18,6 +18,209 @@
   instruction to keep notes; a retry with no notes file injects nothing. The scratchpad is
   git-ignored, so it never lands in a PR.
 
+## 1.13.1 — 2026-07-26
+
+The ticket-cadence release. Auto-filing stays — it is the mechanism that keeps a backlog grinding
+without you. What changes is **when** it fires and **how coarse** it is.
+
+The measurement that drove it, from one real 14-hour session: **23 tickets filed, zero requested by
+the operator.** Eight were minted mechanically by `/resolve`'s post-PR sweep, two per worker report
+(`resolve #341 (PR 598 opened); file #344/#345 from worker report`). The other fifteen were
+volunteered mid-answer, inside replies to the operator's *discussion questions* — the operator asked
+what a component did today and got an answer plus a new numbered ticket. When they pushed back —
+*"it should all be in single 328, you can merge and rewrite"* — the correction was applied to that
+one ticket and the next unprompted filing landed four minutes later.
+
+Three defects, none of which require weakening auto-filing.
+
+### Changed
+
+- **Filing moved from the discussion turn to the bookkeeping checkpoint.** A discussion turn now ends
+  with the finding, not with a new `## #N`. Filing happens where the harness already has a checkpoint
+  — the Stop-hook sweep, `/resolve`, or an explicit "file this" — by which point the discussion has
+  decided what the item actually IS.
+
+  Filing mid-discussion pre-empts that decision twice over: it hijacks a thread the operator opened
+  in order to *think*, and it hands a half-formed gap to a future governor run as authorized work.
+  That second half is the real cost — in this harness, filing and authorizing are the same act, so
+  every reflexive ticket silently widens what runs unsupervised later.
+
+- **Consolidation is the default; a new number is the exception.** Before minting `## #N`, fold the
+  finding into the nearest OPEN ticket — rewriting that ticket's body is expected, not a compromise.
+  A new number is earned only when the work is independently dispatchable: a different repo/area, or
+  something a worker could ship without touching the other ticket. The rule of thumb that ships in
+  the seed context: **two tickets one worker would fix in one PR should have been one ticket**, and
+  several findings out of one discussion are usually one ticket.
+
+  This binds `/resolve`'s worker-report sweep hardest — one consolidated entry per report, not two
+  thin ones. Fragmentation there is not cosmetic: each thin ticket is a separate future governor
+  dispatch, so a split queue costs real worker spawns to ship the same change.
+
+- **A filing correction is session-durable.** When the operator rejects a filing decision ("that
+  should all be one ticket", "don't file that, let's discuss it"), that is now a standing constraint
+  on every later filing in the session, recorded where compaction cannot drop it — not a one-off edit
+  to the ticket in hand. The Stop-hook sweep restates it at the checkpoint.
+
+Touches `templates/seed/CLAUDE.md` (rule 4), `templates/hooks/ticket-sweep-reminder.sh` (the
+blocking sweep text), and the `/resolve` + `/investigate` commands in both the plugin and the
+scaffolded-workspace copies. Behavior-only: no script logic changed, and the govern suite is
+unaffected.
+
+## 1.13.0 — 2026-07-26
+
+The context-hygiene release. Where 1.12.0 attacked how many workers you run and what they collide
+with, this one attacks what a single worker carries on every turn.
+
+The measurement that drove it, over 35 real worker sessions: the system-prompt prefix is **re-read on
+every turn**, and totals **~23% of a session's tokens**. Measuring only the one-time cache *write*
+puts it near 0.2% — that is the wrong number, and it is the easy mistake to make. Median session
+output was ~17.4k tokens against a mean session total of ~7.2M, so output discipline compounds:
+anything a worker doesn't write is also something it never re-reads on a later turn.
+
+A note on units, unchanged from 1.12.0: on a subscription plan the binding constraint is quota and
+wall-clock, not dollars.
+
+### Added
+
+- **`--exclude-dynamic-system-prompt-sections` on the worker spawn.** Per-machine sections (cwd, env
+  info, memory paths, git status) move out of the system prompt and into the first user message, so
+  concurrent workers in different worktrees can share one cached prefix instead of each building a
+  private one. `GOVERN_EXCLUDE_DYNAMIC_PROMPT=0` opts out.
+
+  **The size of this win is not yet measured.** Turn-1 cache reads recur identically across unrelated
+  tickets, which means a deterministic block already caches across workers today — so the marginal
+  gain is only over the genuinely dynamic sections, and may be small. It ships on by default because
+  it is free and safe, not because a number justifies it.
+
+- **A bounded capability probe** (`GOVERN_EDP_PROBE_TIMEOUT_S`, default 5s). The flag above is passed
+  only if the installed `claude` advertises it in `--help`, probed once per run and cached. On an
+  older CLI the flag is omitted with a warning and the run continues.
+
+  This guard matters more than the flag it guards. An unrecognized flag makes `claude -p` exit at
+  argument parsing with a plain-text error, which the run loop cannot distinguish from an ordinary
+  ticket failure — so shipping a new flag unguarded would kill every worker on a fleet running an
+  older CLI and present as N indistinguishable failures. The probe treats a timeout as unsupported,
+  so a `claude` wrapper that hangs on `--help` cannot hang the spawn.
+
+- **`--forward-subagent-text` is locked out** by a source-scan assertion. It forwards sub-agent text
+  and thinking into the parent — the opposite of the bounded-return contract below — so the suite now
+  fails if it is ever introduced.
+
+### Changed
+
+- **Worker prompt: output discipline.** A conciseness directive scoped to prose, summaries, and PR
+  bodies — explicitly *not* to doing less work, since a worker that under-delivers to save words is a
+  failed ticket and costs far more than it saves. A delegation **floor** opposite the existing ceiling
+  ("don't delegate what you could finish in a few tool calls," because each sub-agent re-establishes
+  context from scratch). And a return contract for sub-agents that cuts filler but forbids
+  compressing code, commands, file paths, error text, or exact numbers.
+
+### Upgrade notes
+
+Nothing to do. Both new behaviours are on by default and degrade safely: `GOVERN_EXCLUDE_DYNAMIC_PROMPT=0`
+disables the flag, and an older `claude` simply never receives it.
+
+If you maintain your own copies of `templates/govern/test/*`, note that any test driving a fake
+`claude` stub now needs `_GOVERN_EDP_SUPPORTED=1` in its env. A probe that invokes `$claude_bin`
+otherwise consumes an invocation from stubs that don't implement `--help` — which is exactly how this
+release's first CI run went red.
+
+### Still not here
+
+Automatic model/effort right-sizing remains unbuilt. A ticket's `Model:`/`Effort:` fields are still
+the only thing that sizes a worker, and a ticket naming neither runs at `GOVERN_WORKER_MODEL`
+(`opus`). This remains the largest unclaimed saving in the harness.
+
+Hook-based output shaping was investigated and ruled out. A `PostToolUse` hook does fire and does
+receive the real tool response in `claude -p` mode, but returning `updatedToolOutput` has no effect
+on what the model sees (measured on CLI 2.1.220, reproduced twice). Bash-output capping and read
+dedup are unbuildable on that path until that changes. The delivery path is proven and waiting:
+`--settings <file>` plus `--setting-sources user` gives a worker exactly the hooks you choose with no
+project-hook leakage.
+
+## 1.12.0 — 2026-07-25
+
+The cost-and-throughput release. v1.11.x shipped the *mechanism* for parallel execution; this one
+ships the things that make a parallel run actually cheaper and safer — non-colliding workers,
+bounded context growth, and a refusal to waste a whole fan-out on a broken baseline.
+
+Everything here was sized against measured telemetry rather than argument. The two numbers that
+drove the priorities:
+
+- **Cache *writes* are ~32% of cost on ~4.8% of tokens** — writes price roughly 12.5x reads. Anything
+  that keeps junk out of context is therefore paid for twice: once at write price immediately, and
+  again on every subsequent turn at read price.
+- **~16,500 new tokens are cached per turn**, against an average re-read context of ~130k tokens per
+  turn. Context growth, not prompt size, is what a long worker session actually spends.
+
+A note on units: on a subscription plan the binding constraint is **quota and wall-clock**, not
+dollars. Improvements below are described in tokens and turns for that reason.
+
+### Added
+
+- **Locality batching** (#92), **opt-in**. When enabled, eligible tickets are partitioned into
+  disjoint groups by the files they touch and one worker handles a whole group, so `--parallel=N`
+  means N *groups* rather than N tickets. Two effects: concurrent workers stop colliding on the same
+  file, and a group pays discovery — repo layout, conventions, the ~15k-token session-start cache
+  write — **once** instead of once per ticket.
+
+  **It is OFF by default.** `GOVERN_BATCH_MAX` defaults to `1`, which is exactly the previous
+  one-ticket-per-worker behavior; set it above 1 in `scripts/lib/workspace.sh` to enable grouping.
+  The conservative default is deliberate: grouping keys off a locality heuristic that has not yet
+  been exercised on a real backlog, and a bad key would put unrelated work in one worker. Raise it
+  once you have watched it group a run you can inspect.
+- **Base-branch CI guard** (#95). The run-start preflight refuses to dispatch workers onto an
+  unambiguously CI-red base branch. Measured motivation: two tickets in one wave each burned a full
+  worker session producing correct code that could never go green, because the base was red at
+  dispatch — under parallel-by-default a red baseline wastes the *entire* fan-out, not one ticket.
+  Fail-**open** by design: absent CI, no auth, in-progress runs, and API errors all proceed exactly
+  as before, so a fleet with no checks is unaffected. `GOVERN_SKIP_BASE_CHECK=1` opts out — for
+  example when the ticket being worked *is* the CI fix.
+- **Sizing decision recorded beside the cost** (#93). `ticket-history.jsonl` rows now carry `model`,
+  `effort`, and `attempt` alongside the tokens and cost already logged, and usage is no longer lost
+  on killed attempts. Previously you could see what a ticket cost but not which tier produced it,
+  which made the data unlearnable — failures, the rows most worth studying, were also the ones
+  most often missing usage.
+
+### Changed
+
+- **Worker context discipline** (#91). Three additions to the worker prompt, all targeting context
+  growth: verbose commands are redirected and inspected in bounded slices rather than dumping full
+  build/test output into context; every delegated subagent must be given an explicit **return
+  contract** (an unbounded child reply defeats the delegation it was supposed to pay for); and local
+  validation is scaled to the diff, so a docs-only change no longer triggers a full suite run whose
+  output floods the session. The read path was already covered in v1.11.0 — the *run* path, which is
+  the common case, was not.
+- **Evidence-based retry escalation** (#94). A failed attempt is classified by failure signature
+  instead of unconditionally re-betting at `GOVERN_WORKER_MODEL`. A CI failure caused by
+  environment/portability retries at the **same** tier with the failing log injected; running out of
+  token budget while still exploring means scope was underestimated and escalates; infrastructure
+  errors retry identically without escalating at all. An unrecognized signature falls back to the
+  previous escalate-always behavior.
+- **Workers no longer load the slash-command surface** (#96). Measured: a worker's baseline context
+  was ~33,000 tokens before its ticket prompt or any file read; `--disable-slash-commands` brings
+  that to ~30,400 — roughly 2,600 tokens off *every turn*. Honest sizing: this is a ~2% lever, worth
+  taking because it is a one-flag change with an opt-out (`GOVERN_WORKER_SLASH_COMMANDS=1`), not
+  because it is transformative.
+
+  Recorded so nobody retries them: `--allowedTools` does **not** shrink the prefix (it gates
+  permission, not loading), and `--bare` fails without explicitly re-provided context and also skips
+  hooks and LSP, so it is not a drop-in.
+
+### Upgrade notes
+
+Parallel execution remains the default from v1.11.1 (`GOVERN_PARALLEL_DEFAULT`, fallback 4), and
+`--serial` still opts out per run. With locality batching, that default now fans out over disjoint
+groups, so concurrent workers are substantially less likely to conflict than in v1.11.1.
+
+### Still not here
+
+Automatic model/effort right-sizing remains unbuilt — an unpinned ticket still runs at
+`GOVERN_WORKER_MODEL` (default `opus`), and `GOVERN_WORKER_EFFORT` is inert unless set. A scout pass
+that measures ticket scope and selects both knobs is tracked but deliberately not in this release:
+tier selection mostly shifts list-price cost between models, and on a subscription plan its effect
+on the binding constraint — quota — is far smaller than the raw price spread suggests.
+
 ## 1.11.1 — 2026-07-25
 
 **Behavior change on upgrade — read this before updating.** Parallel backlog execution is now
