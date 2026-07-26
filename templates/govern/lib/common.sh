@@ -1018,6 +1018,11 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
 # repo-visibility cache above) so a long run shells out to `--help` at most ONCE, not once per
 # spawned worker. Test seam: pre-seed _GOVERN_EDP_SUPPORTED=1|0 to skip the probe entirely.
 _GOVERN_EDP_PROBE_CACHE="${GOVERN_EDP_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-edp-support}"
+# Bound (seconds) for the `--help` probe below. This runs synchronously in spawn-worker.sh BEFORE
+# the real worker's $cpid is assigned and its kill traps armed (spawn-worker.sh's own teardown can't
+# reach it), so a `claude` wrapper/shim that hangs on `--help` would otherwise hang the ENTIRE spawn
+# with no cleanup path. 5s is ample for a real CLI's --help. Override via GOVERN_EDP_PROBE_TIMEOUT_S.
+_GOVERN_EDP_PROBE_TIMEOUT_S="${GOVERN_EDP_PROBE_TIMEOUT_S:-5}"
 govern::claude_supports_exclude_dynamic_prompt() { # <claude_bin> -> rc 0 supported, 1 not
   local bin="$1"
   local cached=""
@@ -1026,15 +1031,69 @@ govern::claude_supports_exclude_dynamic_prompt() { # <claude_bin> -> rc 0 suppor
   fi
   [[ -f "$_GOVERN_EDP_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true)"
   if [[ -z "$cached" ]]; then
-    if "$bin" --help 2>/dev/null | grep -q -- '--exclude-dynamic-system-prompt-sections'; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--exclude-dynamic-system-prompt-sections'; then
       cached="1"
     else
       cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim) — treating as unsupported this run; omitting --exclude-dynamic-system-prompt-sections"
     fi
     mkdir -p "$(dirname "$_GOVERN_EDP_PROBE_CACHE")" 2>/dev/null || true
     printf '%s' "$cached" > "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true
   fi
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
+# Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
+# Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
+# macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled
+# background+poll+govern::kill_tree watchdog when NEITHER binary is on PATH, so a bare macOS box
+# with no coreutils installed still gets a bounded probe instead of an unbounded hang. Sets
+# $_GOVERN_EDP_TIMED_OUT=1 when the bound tripped, so the caller can log a distinct "timed out"
+# message instead of a normal negative (flag genuinely absent).
+govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
+  local bin="$1" secs="$2" needle="$3"
+  local out="" rc=0
+  _GOVERN_EDP_TIMED_OUT=0
+  if command -v timeout >/dev/null 2>&1; then
+    out="$(timeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
+  elif command -v gtimeout >/dev/null 2>&1; then
+    out="$(gtimeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
+  else
+    out="$(govern::_run_with_manual_timeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
+  fi
+  [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
+  printf '%s' "$out" | grep -q -- "$needle"
+}
+
+# Manual fallback timeout used only when neither `timeout` nor `gtimeout` is on PATH. Backgrounds
+# <cmd...> under `set -m` (its own process group, same idiom the worker timeout watchdog uses),
+# polls up to <secs>, and on expiry reaps the WHOLE subtree via govern::kill_tree (not just the
+# direct child — a hanging wrapper could itself fork). Exits 124 on expiry to mirror GNU `timeout`'s
+# convention, so the caller can tell "timed out" from "ran and exited nonzero on its own".
+govern::_run_with_manual_timeout() { # <secs> <cmd...>
+  local secs="$1"; shift
+  local out_file
+  out_file="$(mktemp 2>/dev/null || printf '/tmp/govern-bounded.%s.%s' "$$" "$RANDOM")"
+  local cpid waited=0 rc=0
+  set -m
+  ( "$@" >"$out_file" 2>&1 ) &
+  cpid=$!
+  set +m
+  while kill -0 "$cpid" 2>/dev/null && [[ "$waited" -lt "$secs" ]]; do
+    sleep 1
+    waited=$((waited+1))
+  done
+  if kill -0 "$cpid" 2>/dev/null; then
+    govern::kill_tree "$cpid" 2
+    rc=124
+  else
+    wait "$cpid" 2>/dev/null || rc=$?
+  fi
+  cat "$out_file" 2>/dev/null
+  rm -f "$out_file" 2>/dev/null || true
+  return "$rc"
 }
 
 # The branch name a worker should use for ticket N on a given repo: neutral `sl-<hex>` on a PUBLIC

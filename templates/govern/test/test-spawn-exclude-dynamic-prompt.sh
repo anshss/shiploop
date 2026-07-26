@@ -183,4 +183,74 @@ else
   printf 'ok   - %s\n' "--forward-subagent-text absent from spawn-worker.sh"
 fi
 
+# 7. A `claude` wrapper/shim that HANGS on --help must NOT hang the spawn. Before this fix the probe
+# ran `"$bin" --help` unbounded and synchronously, BEFORE the real worker's $cpid is assigned and its
+# own kill traps armed — spawn-worker's teardown could never reach a hung probe. Use a short
+# GOVERN_EDP_PROBE_TIMEOUT_S so the test stays fast; assert the dry-run still completes well under
+# the fake CLI's hang duration, treats the timeout as "unsupported" (never risk passing an
+# unrecognized flag when we couldn't confirm support), and logs a DISTINCT "TIMED OUT" warning
+# (not the normal "does not support" negative-result message).
+cat > "$TMP/fake-claude-hang.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "--help" ]]; then
+  exec sleep 300   # never returns within any sane probe bound
+fi
+printf 'Usage: claude [options]\n'
+EOF
+chmod +x "$TMP/fake-claude-hang.sh"
+
+err7="$TMP/err7.txt"
+start7=$(date +%s)
+out7="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
+  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
+  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
+  GOVERN_LOG_ROOT="$TMP/logs-hang" \
+  GOVERN_WORKER_MODEL="opus" \
+  GOVERN_CLAUDE_BIN="$TMP/fake-claude-hang.sh" \
+  GOVERN_EDP_PROBE_CACHE="$TMP/edp-cache-hang" \
+  GOVERN_EDP_PROBE_TIMEOUT_S=2 \
+  GOVERN_SPAWN_DRY_RUN=1 \
+  "$SPAWN" 301 2>"$err7")"
+end7=$(date +%s)
+elapsed7=$((end7-start7))
+# Best-effort reap of the killed probe's `sleep 300` (timeout/gtimeout should already have killed
+# it; this is a belt-and-suspenders sweep scoped to this test's unique TMP path).
+pkill -f "$TMP/fake-claude-hang.sh" 2>/dev/null || true
+
+if [[ "$elapsed7" -lt 15 ]]; then
+  printf 'ok   - hanging --help probe does NOT hang the spawn (bounded, %ss elapsed)\n' "$elapsed7"
+else
+  printf 'FAIL - %s\n       spawn took %ss — hanging --help probe was not bounded\n' \
+    "hanging --help probe does NOT hang the spawn" "$elapsed7"
+  ASSERT_FAILS=$((ASSERT_FAILS+1))
+fi
+assert_eq "$(printf '%s' "$out7" | jq -r '.exclude_dynamic_prompt')" "" \
+  "hanging probe → treated as unsupported (never risk an unrecognized flag)"
+if grep -qi "TIMED OUT" "$err7"; then
+  printf 'ok   - %s\n' "a distinct TIMED OUT warning is logged (not the normal unsupported message)"
+else
+  printf 'FAIL - %s\n       expected a TIMED OUT warning in stderr, got: %s\n' \
+    "a distinct TIMED OUT warning is logged" "$(cat "$err7" 2>/dev/null)"
+  ASSERT_FAILS=$((ASSERT_FAILS+1))
+fi
+
+# 8. Unit test of the manual-timeout fallback itself (govern::_run_with_manual_timeout), exercised
+# directly regardless of whether `timeout`/`gtimeout` happen to be on THIS machine's PATH — stock
+# macOS ships neither, and the fallback must be independently correct, not just "never hit in CI".
+T8="$(mktemp -d)"; mk_ws_stub "$T8"; source "$DIR/../lib/common.sh"
+start8=$(date +%s)
+out8="$(govern::_run_with_manual_timeout 1 sleep 30 2>&1)" && rc8=0 || rc8=$?
+end8=$(date +%s)
+elapsed8=$((end8-start8))
+assert_eq "$rc8" "124" "manual-timeout fallback: expired command reports rc=124 (mirrors GNU timeout)"
+if [[ "$elapsed8" -lt 10 ]]; then
+  printf 'ok   - %s\n' "manual-timeout fallback: expiry is bounded (~1s bound, ${elapsed8}s elapsed), not left hanging"
+else
+  printf 'FAIL - %s\n       took %ss\n' "manual-timeout fallback: expiry is bounded" "$elapsed8"
+  ASSERT_FAILS=$((ASSERT_FAILS+1))
+fi
+out8b="$(govern::_run_with_manual_timeout 5 printf 'hello-world')"
+assert_eq "$out8b" "hello-world" "manual-timeout fallback: a command that finishes in time returns its real output"
+rm -rf "$T8"
+
 assert_done
