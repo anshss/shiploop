@@ -229,18 +229,6 @@ on_signal() { FAIL_REASON="interrupted by signal"; rollback_and_exit 1; }
 # all of them listed so setup.md can ask once and re-invoke with the flags.
 NEEDS_CONFIRM=()
 
-# Detect a case-insensitive filesystem at the workspace root (APFS/HFS+ default).
-fs_is_case_insensitive() {
-  local probe=".wrap_case_probe.$$"
-  rm -f "$probe" "$(printf '%s' "$probe" | tr 'a-z' 'A-Z')" 2>/dev/null
-  : > "$probe" 2>/dev/null || { return 1; }
-  local hit=1
-  # If creating lowercase makes the UPPERCASE name resolve, the FS is case-insensitive.
-  [ -e "$(printf '%s' "$probe" | tr 'a-z' 'A-Z')" ] && hit=0
-  rm -f "$probe" 2>/dev/null
-  return "$hit"
-}
-
 # Read a [core] key from a RAW git config file without invoking git on the repo.
 # Critical: an absolute core.worktree that points at a missing path makes EVERY
 # `git ...` invocation from inside the repo fail ("fatal: Invalid path") — even
