@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stop hook: when a session that did real code work is about to end, nudge once to
-# reconcile tickets.md — file any newly-discovered bug/gap as a numbered ticket,
+# reconcile tickets.md — fold any newly-discovered bug/gap into an open ticket (or file a new
+# numbered one when the work is independently dispatchable),
 # and delete any ticket whose fix PR was opened this session. Generic — repo list
 # from scripts/lib/workspace.sh, paths resolved relative to this script.
 #
@@ -207,10 +208,16 @@ never auto-removed). "
 fi
 
 reason="${outscope_note}${flows_note}Before ending: reconcile tickets.md (root meta-repo). \
-(1) NEW TICKETS — review what you touched/discovered this session. Any bug, gap, \
-missing capability, or follow-up that is NOT already a ticket gets its own numbered \
-## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / Done when / Ref). \
-A discovered gap ALWAYS goes to tickets.md, never learnings.md. \
+(1) NEW TICKETS — review what you touched/discovered this session. THIS is where filing belongs: a \
+finding surfaced mid-discussion should have been carried here, not filed inline. For each bug, gap, \
+missing capability, or follow-up not already tracked, CONSOLIDATE FIRST — look for an OPEN ticket it \
+belongs inside and fold it in (rewriting that ticket's body is expected, not a compromise). Mint a \
+new numbered ## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / \
+Done when / Ref) only when the work is independently dispatchable — a different area, or something a \
+worker could ship without touching the other ticket. Two tickets one worker would fix in one PR \
+should have been one ticket; several findings out of one discussion are usually one ticket. \
+A discovered gap goes to tickets.md, never learnings.md. If the operator rejected a filing decision \
+this session (\"that should be one ticket\", \"don't file that\"), that constraint binds here too. \
 (2) RESOLVED TICKETS — for any ticket whose fix PR you OPENED this session (PR opened = resolved, \
 not merged), DELETE its entry from tickets.md now; promote any durable lesson to CLAUDE.md first, \
 and name the PR number in the deletion commit. \
