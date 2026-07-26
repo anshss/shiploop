@@ -17,6 +17,39 @@ bug is NOT a learning** — promote its durable lesson to `CLAUDE.md` or delete 
 
 ### 2026-07-26 — `PostToolUse` → `updatedToolOutput` is a NO-OP in `claude -p` mode (CLI 2.1.220)
 
+**SCOPE — corrected 2026-07-26 (read this before the entry below).** This result is about EXACTLY ONE
+API: `PostToolUse` → `updatedToolOutput`. It was then over-generalised to "compression is unbuildable,"
+which is FALSE. The "Consequence" paragraph below is superseded by this note. Two other delivery layers
+were never tested at the time; both were then measured on CLI 2.1.220 under subscription/OAuth auth,
+and **both work**:
+
+1. **`PreToolUse` → `updatedInput` WORKS.** Bash: a hook rewrote `echo ORIGINAL_MARKER` →
+   `echo REWRITTEN_MARKER_XYZ`; the `tool_use` event still logged the model's original command, but the
+   executed command and the `tool_result` were the rewritten one. Read: a hook injected
+   `offset:1, limit:5` into a Read of a 500-line file; the model asked for the whole file, received 5
+   lines, and reported receiving 5. This is `rtk`'s actual mechanism — shape the output BEFORE it exists
+   by rewriting the command — and it sidesteps the broken `PostToolUse` path entirely. **Caveat
+   measured:** the model NOTICED the Bash substitution and commented on it unprompted, so a silent
+   rewrite costs turns on the model investigating its own tooling; any rewrite needs a visible note.
+2. **A pass-through proxy on `ANTHROPIC_BASE_URL` WORKS, and subscription auth survives it.** Not the
+   `--bare` blocker (which forces `ANTHROPIC_API_KEY`): a local forwarder passes OAuth/keychain
+   credentials through unchanged. The full assembled request is both visible and mutable.
+
+**So the binding constraint is cache economics, not feasibility.** Cache reads bill ~0.1x, writes ~1.25x,
+read:creation measured 33.3:1 — rewriting the prefix or any prior message invalidates from that point
+forward and turns cheap reads into expensive writes, so raw-text reduction claims (`headroom`'s "~50%")
+do not survive the conversion. **Design rule: compress only the TAIL** — a fresh `tool_result` on its
+first transmission, with nothing downstream of it yet. That recovers exactly the broken `PostToolUse`
+capability with no invalidation. Never rewrite history, and any compressor must be DETERMINISTIC or it
+changes the prefix between turns and busts the cache every turn.
+
+**Also corrected: "Claude Code never exposes the assembled prompt" is false at the proxy layer.** The
+componentised split is a direct read — shipped as `scripts/govern/measure-prefix.sh`. Measured against a
+REAL govern worker spawn (opus, CLI 2.1.220): of 164,795 turn-1 bytes, **tool schemas 85,260 (51.7%)**,
+messages 71,981 (43.7%), system prompt 7,093 (4.3%). An earlier Haiku probe's 65.4%/17.1% figures did NOT
+reproduce — do not quote them. Trimming the tool block via `--tools` (`GOVERN_WORKER_TOOLS`, opt-in) is
+cache-safe because that block is static and deterministic: measured 164,795 → 107,985 bytes (−34.5%).
+
 Measured, not read from docs. In headless `-p --output-format stream-json`, a `PostToolUse` hook **does
 fire** and **does receive** the real `tool_response` on stdin — but returning
 `{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"…"}}` (valid JSON, exit 0)
