@@ -15,7 +15,7 @@ A self-improving multi-agent harness for Interactive Coding Agents. It grinds a 
 
 One goal: the fewest tokens per shipped ticket. Roughly in order of how much each one saves.
 
-- **You decide how much brain each ticket gets.** Put `Model:` and `Effort:` on a ticket. Haiku for mechanical work, opus only when it's genuinely hard. This is the biggest lever by a wide margin, and it's the one you control. A ticket that sets neither runs on opus, because automatic sizing isn't built yet.
+- **Every ticket is sized before it runs.** The Claude session that files a ticket stamps it with `Model:` and `Effort:`, and the governor honors that for the first attempt: haiku for mechanical single-file work, sonnet for standard search and edit, opus only for the judgment-heavy ones. You don't set these by hand. This is the biggest lever by a wide margin, because it's the difference between running everything on opus and running most things on haiku. Two things worth knowing: a ticket filed with neither field runs at `GOVERN_WORKER_MODEL`, which is opus, and the sizing is a judgment call made from the ticket text, since there's no cheap scout pass that reads the real code first.
 
 - **It won't start work that can't succeed.** Before spawning anything it checks a few things. Is this repo's CI already red? Is this ticket waiting on another that isn't done? Does it touch a file already being changed upstream? Is this a check whose setup isn't wired yet? Is the disk nearly full? Any yes and it skips. No agent, no tokens. A session you never start is the cheapest one there is.
 
@@ -135,7 +135,7 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns s
 </p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
-- **Right-sized models.** But you do the sizing. A ticket's `Model:` field (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy) is what the spawn honors; the interactive "brain" filing the ticket is what stamps it. There is no classifier. A ticket that names no tier runs at `GOVERN_WORKER_MODEL`, which defaults to `opus`. Retries escalate to `GOVERN_WORKER_MODEL` unconditionally.
+- **Right-sized models.** The interactive "brain" filing a ticket stamps it with a `Model:` field (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy) and an `Effort:`, and the spawn honors both on the first attempt. A ticket that names no tier runs at `GOVERN_WORKER_MODEL`, default `opus`. Retries are classified rather than blindly escalated: an infra or CI failure retries at the same tier, running out of budget raises the tier, and a judgment failure raises both tier and effort.
 - **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
 - **It gets better over time.** `/shiploop:resolve` promotes each ticket's durable lesson into the right `CLAUDE.md` before deleting the ticket: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
 
