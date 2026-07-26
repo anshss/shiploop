@@ -230,6 +230,8 @@ Full detail and verification steps are in the plan file. This run itself was cle
 
 ## 2026-07-26 17:29 — run run-20260726-165215-2261 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-26 17:29:** 2 safe proposal(s) → ticket **#72**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Two concrete, non-duplicative harness findings from this run:
 
 - `governor/supervisor-prompt.md`: the output contract doesn't document `skipThisRun`/`attemptNext`/`waitForMerge`, which `run-loop.sh` already fully implements — so this run's ordering notes (defer #38, sequence #52 before #40/#55) landed as inert prose instead of actionable, persisted deferrals.
