@@ -13,36 +13,39 @@ A self-improving multi-agent harness for Interactive Coding Agents. It grinds a 
 
 ### Built to spend fewer tokens
 
-Every mechanism below exists for one goal: **the fewest tokens per shipped ticket.**
+One goal: **the fewest tokens per shipped ticket.** Here is every way it gets there.
 
-**Work it never starts.** The cheapest ticket is the one no worker was spawned for.
+- **Running the loop costs nothing.** The part that picks tickets, tracks state and merges PRs is plain bash. It never calls a model. Tokens are spent only inside the agents it starts.
 
-- **The driver is bash, not a model.** `run-loop.sh` owns selection, state, and merges deterministically and spends near-zero model context. Tokens burn only inside the workers it spawns.
-- **It won't dispatch onto a red base branch**, so a worker can't spend a whole session writing correct code that could never go green.
-- **A ticket whose declared dependency is still open is deferred**, not attempted — and one that collides with an in-flight upstream port is skipped rather than sent into a guaranteed merge conflict.
-- **Consecutive failures trip a circuit breaker** (`GOVERN_MAX_TICKET_FAILS`, `GOVERN_MAX_BAD_STREAK`) instead of re-betting on a bad run.
-- **Under parallel, drivers share a run-scoped attempted list**, so a ticket that frees its claim mid-run can't be picked up and paid for twice.
-- **`config-check.sh` is a genuinely free preflight** — no tokens, no auth. (`--dry-run` is *not* free; it runs a real worker in plan mode.)
+- **It won't start work that can't succeed.** Before spawning anything it asks: is this repo's CI already red? Is this ticket waiting on another that isn't done? Does it touch a file already being changed upstream? Any yes, and it skips — no agent, no tokens.
 
-**Cheaper per ticket.**
+- **It gives up on a losing ticket instead of retrying forever.** A couple of failed attempts and it escalates to you; a run that keeps failing halts itself.
 
-- **Workers start lean.** No MCP servers, no slash-command or skill surface (~2,600 tokens off every turn), no project hooks.
-- **The prompt is built to cache.** Boilerplate is stable and the ticket text is substituted last, so the prefix is identical across workers; per-machine sections (cwd, env, git status) are moved out of the system prompt so concurrent workers can share it.
-- **The worker prompt fights context growth.** Reconnaissance goes to cheap sub-agents, verbose build output is tailed from a file instead of dumped inline, sub-agent returns are bounded, validation scales to the diff, and there's a floor on delegation — a sub-agent isn't free either.
-- **The supervisor that audits a run is cheap** — a `sonnet` session in plan mode that re-reads only what's new since its last pass.
-- **`Model:` and `Effort:` size the worker** — `haiku` for mechanical work, `opus` only for judgment. **Automatic right-sizing isn't built yet**, so setting these is where most of the saving comes from; a ticket naming neither runs at `opus`.
+- **The same ticket never gets paid for twice.** When several agents run at once they share one list of what's been attempted, so two of them can't quietly pick up the same work.
 
-**Never paid twice.**
+- **Checking your setup is genuinely free.** `config-check.sh` validates your whole config without calling Claude at all. (Note `--dry-run` is *not* free — it runs a real agent in plan mode.)
 
-- **Every resolved ticket writes a durable lesson** into your git-tracked `CLAUDE.md`, so the next run re-derives less. Memory you can read, diff, and delete.
-- **Retries are classified, not blindly escalated.** A CI failure retries at the same tier with the log injected; only budget exhaustion buys a bigger model.
-- **A retry resumes the preserved worktree** instead of re-cloning and re-exploring, and worktrees are cut from a fresh `origin/main` so PRs aren't born pre-conflicted.
-- **Repeat lookups are cached per run** — CLI capability, repo visibility, `gh` identity — so a 100-PR pass doesn't re-ask 100 times, and run-start reconciliation happens once rather than once per parallel driver.
-- **Every attempt records model, effort, tokens and cost** to `ticket-history.jsonl`, so you tune from data instead of guesswork.
+- **Each agent starts with a small context.** No MCP servers, no slash commands or skill descriptions, no project hooks. That alone is about 2,600 tokens saved on every turn.
 
-**More in flight.** Parallel workers (`GOVERN_PARALLEL_DEFAULT`, default `4`) multiply what's running at once — throughput, not a cheaper ticket. Two levers are off until you turn them on: **locality batching** (`GOVERN_BATCH_MAX`) groups same-area tickets so discovery is paid once for the group, and a **token ceiling** (`GOVERN_WORKER_MAX_TOKENS`) hard-stops a worker that wanders.
+- **The prompt is built to be cached.** The unchanging parts come first and your ticket text goes last, so every agent reuses one cached prefix instead of paying to build its own.
 
-One caveat worth stating plainly: batching and the dependency and failure-streak gates engage on a backlog pull, not when you name ticket numbers explicitly.
+- **Agents are told to stay small.** Hand heavy reading to cheap sub-agents, keep build output in a file instead of pasting it into the conversation, keep replies short — and don't spin up a sub-agent for something you could finish in two commands.
+
+- **You decide how much brain each ticket gets.** `Model:` and `Effort:` on a ticket — `haiku` for mechanical work, `opus` only when it's genuinely hard. **This is the biggest lever, and it's yours:** a ticket that sets neither runs on `opus`, because automatic sizing isn't built yet.
+
+- **The reviewer is cheap too.** The supervisor auditing a run is a `sonnet` session in read-only mode, and it only reads what changed since it last looked.
+
+- **What it learns, it keeps.** Every finished ticket writes a lesson into your `CLAUDE.md`, so the next agent doesn't rediscover it. Plain text you can read, edit and delete.
+
+- **A retry picks up where it left off.** The old worktree is kept, so attempt two doesn't re-clone and re-explore. Failures are read before retrying, too — a CI failure retries at the same tier with the log attached instead of automatically buying a bigger model.
+
+- **Repeated lookups happen once.** Your GitHub identity, each repo's visibility, what your CLI supports — resolved a single time per run, not once per PR.
+
+- **You can see where the tokens went.** Every attempt records its model, effort, tokens and cost, so you tune from real numbers instead of guessing.
+
+- **Two extras, off until you want them.** `GOVERN_BATCH_MAX` lets one agent take several tickets in the same area so it explores once instead of once each. `GOVERN_WORKER_MAX_TOKENS` hard-stops an agent that wanders.
+
+Two things worth knowing up front: running four agents at once is the default (`GOVERN_PARALLEL_DEFAULT`), which gets more done per hour but costs four times as much at once — it doesn't make any single ticket cheaper. And the skip-it-early checks above apply when the governor pulls from your backlog, not when you name specific ticket numbers.
 
 ## Install
 
