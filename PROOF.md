@@ -127,6 +127,97 @@ jq '[.[].costUsd] | add/length' resolved-cost.json          # mean
 jq '[.[].costUsd] | sort' resolved-cost.json                # full distribution, for the median/range
 ```
 
+## 5. Worker request payload — measured component split
+
+The prefix a worker re-sends on **every** turn is the harness's largest recurring token cost, so it
+is worth knowing what the prefix is actually made of. This section is not an estimate: it is a
+direct read of the assembled HTTP request, captured by `scripts/govern/measure-prefix.sh` (see
+"How this was measured" below).
+
+Measured 2026-07-26, Claude Code CLI 2.1.220, `--model opus`, a real govern worker spawn — same
+prompt, same flags, same worktree the fleet uses in production.
+
+**Before the tool-schema trim — 164,795 bytes, turn 1:**
+
+| Component | Bytes | % of request |
+|---|---:|---:|
+| tool schemas (`tools`) | 85,260 | 51.7% |
+| messages | 71,981 | 43.7% |
+| system prompt | 7,093 | 4.3% |
+| other (model, metadata, …) | 461 | 0.3% |
+
+The system prompt is small **because** the fleet already ships
+`--exclude-dynamic-system-prompt-sections`, which moves the per-machine sections into the first user
+message — they are counted under `messages`, not under `system prompt`.
+
+Tool schemas are one JSON array whose members can be dropped individually, and the five largest
+accounted for 46,127 of the 85,260 bytes:
+
+| Tool | Bytes | % of tool block | Usable by a headless `-p` worker? |
+|---|---:|---:|---|
+| `Workflow` | 21,525 | 25.2% | no — requires explicit user opt-in |
+| `DesignSync` | 8,978 | 10.5% | no |
+| `Monitor` | 7,767 | 9.1% | no — the worker prompt mandates an in-turn bash poll loop |
+| `EnterWorktree` | 4,027 | 4.7% | no — the worker is already in an allocated worktree |
+| `ScheduleWakeup` | 3,838 | 4.5% | no — the worker prompt forbids it; it is never re-invoked |
+
+`Workflow` alone was **13.1% of the entire request**, re-sent every turn, for a tool the harness
+structurally cannot call.
+
+**After the trim** (`--tools` restricted to what a worker exercises; default on, capability-probed,
+kill switch `GOVERN_WORKER_TOOLS=off`) — same spawn, worker still completed normally:
+
+| Component | Before | After | Δ |
+|---|---:|---:|---:|
+| tool schemas | 85,260 | 28,417 | **−66.7%** |
+| messages | 71,981 | 72,014 | +33 |
+| system prompt | 7,093 | 7,093 | 0 |
+| **request total** | **164,795** | **107,985** | **−56,810 (−34.5%)** |
+
+The trim also *adds* `Glob` and `Grep` (3,961 B), which the CLI's default `-p` tool set omits —
+dedicated search tools return less into context than the bash pipelines that replace them.
+
+Functional check on the trimmed set (a separate real spawn instructed to exercise each tool):
+`WORKED=Glob,Grep,Read,Write,Edit,Bash,Agent  FAILED=none`, with the written file's `alpha`→`beta`
+edit confirmed on disk — including `Agent`, so subagent delegation survives the cut.
+
+**Why this cut and not output compression.** Cache reads bill ~0.1x and cache writes ~1.25x, and
+this workspace's measured read:creation ratio is 33.3:1. Rewriting anything already in the
+conversation invalidates the cache from that point forward and converts cheap reads into expensive
+writes, so a raw-byte reduction does not survive the conversion. The tool block is different: it is
+**static and deterministic**, sits at the front of the prefix, and is identical across workers — so
+trimming it moves the cache key exactly once and every subsequent worker shares the smaller prefix.
+The same rule is why any tool-output compressor must only ever touch the **tail** (a fresh
+`tool_result` with nothing downstream of it yet) and must be deterministic.
+
+**Keep/purge gate for the trim.** Purge it (`GOVERN_WORKER_TOOLS=off`) if a worker fails or parks
+because a tool it genuinely needed was absent, or if re-running the measurement shows the tool block
+is no longer a material share of the request (< ~15%). Keep it while the measured cut holds and the
+govern suite plus a real end-to-end ticket stay green.
+
+### How this was measured
+
+`count_tokens` cannot see what Claude Code assembles, and turn-1 `cache_creation_input_tokens`
+collapses the whole prefix into one number — attributing it that way means one re-spawn per
+component and N sources of noise. At the API boundary the assembled body is already componentised,
+so one spawn through a local pass-through proxy reads the split directly:
+
+```bash
+scripts/govern/measure-prefix.sh <ticket-number>   # → table.md, summary.json, capture.jsonl
+```
+
+The harness takes the prompt from `spawn-worker.sh`'s own assembly (`GOVERN_SPAWN_PRINT_PROMPT=1`)
+and the flags from its own resolver (`GOVERN_SPAWN_DRY_RUN=1`), so it measures the spawn the fleet
+actually runs rather than a hand-rolled probe whose flag set drifts. The only deviation from a
+production spawn is a one-line override appended to the **tail** of the user message telling the
+worker to reply `OK` and stop — `tools` and `system` are untouched by it.
+
+The proxy (`scripts/govern/lib/capture-proxy.mjs`) sits in front of a worker and handles live
+credentials, so three properties are load-bearing: it forwards every header **verbatim** and never
+reads, stores or logs a header **value**; it never writes request or response **body** content to
+its log, only sizes and names; and it binds to `127.0.0.1` only. Subscription/OAuth auth survives it
+unchanged — this is *not* the `--bare` blocker, which forces `ANTHROPIC_API_KEY`.
+
 ## Limitations
 
 - Single maintainer, single workspace. Not a multi-deployment study.
@@ -137,6 +228,9 @@ jq '[.[].costUsd] | sort' resolved-cost.json                # full distribution,
 - The cost sample (section 4) is 32 tickets from a 6-week telemetry window, not the full 281
   resolved-ticket history — earlier tickets ran before cost tracking existed and can't be
   reconstructed after the fact.
+- The payload split (section 5) is n=1 spawn per configuration on one CLI version. Byte counts are
+  exact for that capture; the tool block's *share* will move as the CLI's default tool set changes,
+  so re-run `measure-prefix.sh` after a CLI upgrade rather than trusting these percentages.
 
 All queries above are plain `git`/`gh`/`jq` — no proprietary tooling. Run them against your own
 `GOVERN_MERGE_REPOS` and `governor/ticket-history.jsonl` to audit your own deployment the same way.
