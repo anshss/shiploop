@@ -220,6 +220,8 @@ None of these touch a hard-stop, run bound, permission gate, or merge allowlist.
 
 ## 2026-07-26 12:40 — run run-20260726-102716-12107 (resolved/parked/failed observed)
 
+> **AUTO-PROMOTED 2026-07-26 12:40:** 1 safe proposal(s) → ticket **#67**. 0 rail-touching/OPERATOR-DECISION proposal(s) held here behind the human gate (govern-improve-triage.sh, #274).
+
 Based on this run's supervisor notes, I found one concrete, well-grounded harness gap: the supervisor's output contract is missing fields that `run-loop.sh` already knows how to consume.
 
 - `governor/supervisor-prompt.md`: extend the "Output contract" to document `skipThisRun` (array of ticket #s), `attemptNext` (array of ticket #s), and `waitForMerge` (array of `{ticket, dependsOn}` or `{ticket, pr, repo}`) — `run-loop.sh:1826-1865` already fully implements all three, but the prompt never tells the supervisor they exist, so every finding can only go into free-text `concerns`, which is just logged for a human and never changes what `select-ticket.sh` picks next. Evidence: the identical "#44 is stale, re-verify before dispatch" finding was independently re-derived and re-logged in two consecutive supervisor passes (after #21 and after #24) — `skipThisRun: [44]` on the first pass would have prevented that. Same root cause explains why three same-file collision clusters (`#44/#52/#55`, `#40/#44/#52/#55`+`#62`D on `run-loop.sh`; `#59/#62`C/`#63` on `spawn-worker.sh`) were flagged in prose only, with no enforcement — `waitForMerge: [{ticket:55, dependsOn:52}]`-style entries already persist exactly this kind of ordering across runs via `pending-waits.json`, but the supervisor is never told the field exists.
