@@ -1,5 +1,5 @@
 ---
-description: Become the governor — launch the bash-driven ticket loop (scripts/govern/run-loop.sh): a fresh headless worker per ticket, auto-merge allowlisted repos on green-or-no-checks CI, periodic supervisor, escalate hard-stops, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
+description: Ships your backlog. Launches the bash-driven ticket loop (scripts/govern/run-loop.sh) that grinds queue/tickets.md across every repo in your product — a fresh right-sized headless worker per ticket (brain-decided haiku/sonnet/opus), guarded auto-merge on green-or-no-checks CI for allowlisted repos, periodic supervisor, hard-stops escalated, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
 allowed-tools: Bash, Read
 ---
 
@@ -7,19 +7,56 @@ allowed-tools: Bash, Read
 
 Launch the governor — a **pure-bash driver** (`scripts/govern/run-loop.sh`) so this session's context
 stays flat (near-zero parent cost). Claude runs only in fresh, bounded sub-sessions: the per-ticket
-**worker** and a periodic **supervisor**. `$ARGUMENTS`: empty = whole eligible backlog · a number =
-one ticket · **multiple numbers = work exactly that ticket SET, sequentially, in severity order**
-(e.g. `152 153 154 155` works all four, in one run — a numeric arg no longer silently overwrites the
-previous one and truncates the run to the last ticket) · `--dry-run` = prove it, ship nothing ·
-`--exclude N,N` = skip tickets a parallel govern session owns.
+**worker** and a periodic **supervisor**.
 
-**Running tickets in parallel:** add `--parallel[=N]` to any of the above (or set `GOVERN_PARALLEL=N`)
-to work the ticket set — or, with no explicit numbers, the top-N eligible backlog tickets — with N
-concurrent drivers instead of one sequential process; N defaults to the target-set size, or 4 for a
-bare backlog pull. This is the built-in equivalent of the manual recipe of hand-launching N separate
-single-ticket `run-loop.sh <N>` drivers, each with `GOVERN_ALLOW_CONCURRENT=1` — the per-ticket claim
-lock + the bookkeep lock make either form exactly-once safe; `--parallel` just drives the fan-out/
-wait/aggregate for you and reports one combined resolved/parked/failed/timed-out tally at the end.
+`$ARGUMENTS`:
+
+| Argument | Effect |
+|---|---|
+| *(empty)* | The whole eligible backlog — one ticket at a time, or N at a time if this workspace set `GOVERN_PARALLEL_DEFAULT=N` |
+| `<N>` | That one ticket only — always sequential (nothing to fan out) |
+| `<N> <N> <N>` | Exactly that ticket set, in severity order |
+| `--parallel[=N]` | Work up to N tickets concurrently; bare `--parallel` uses the workspace default cap (else 4) |
+| `--serial` | Force one ticket at a time over the whole backlog (`--parallel=1` is identical) |
+| `--dry-run` | Prove it, ship nothing |
+| `--exclude N,N` | Skip these tickets (e.g. another govern session owns them) |
+
+**Concurrency.** The default is **sequential**; set `GOVERN_PARALLEL_DEFAULT=N` in
+`scripts/lib/workspace.sh` to make a plain `run-loop.sh` fan out (4 is a sensible fleet setting), or
+pass `--parallel[=N]` per run. In parallel mode the driver becomes an orchestrator: for a backlog
+pull it spawns **N full backlog drivers**, each grinding the queue until it is empty and contending
+on the per-ticket claim lock — literally the "launch N terminals" recipe, automated. Because each
+child is an ordinary sequential driver, every backlog mechanism keeps working inside it (dependency
+gate, #60 failure streak, periodic supervisor, bad-streak breaker). For an explicit ticket set it
+spawns one single-ticket child per named ticket instead. Safety is unchanged — the per-ticket claim
+lock + the bookkeep lock are what make concurrent drivers exactly-once safe; the orchestrator adds
+nothing to that model. Note the hard bounds are **per driver**, so a parallel backlog run's ceiling
+is N × `GOVERN_MAX_TICKETS` (it still always ends), and N concurrent workers cost N× the spend.
+
+**Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Concurrency governs how many workers
+run at once; batching governs how many tickets each one takes. Exploration is the dominant cost of a
+resolved ticket (~98% cache reads), so three tickets in the same directory mean three workers each
+paying full discovery cost on the same code. `GOVERN_BATCH_MAX=N` groups up to N same-area tickets
+into ONE worker, which explores once and opens ONE PR for the group (per-ticket commits). Groups are
+keyed on the leaf directory of the ticket's `Files:`/`Where:` paths, are disjoint by construction —
+which is also what stops two concurrent drivers racing the same file — and never co-batch two tickets
+in a dependency relation. Every ticket in a group is claim-locked, and a batched ticket is bookkept
+only on an explicit per-ticket `resolved` in the worker's `tickets` array; anything else leaves it in
+the queue. Backlog pulls only; an explicit ticket set is dispatched as named. See
+`governor/README.md` for the full semantics.
+
+The **run-start reconcile** (apply escalation answers → regenerate `pending-escalations.json` →
+`preflight-main.sh` → externalization lane → NA-skip streak bookkeeping) is explicitly *not* per
+driver: it is whole-run state reconciliation against the one shared meta checkout, and
+`preflight-main.sh` fetches / rebases / pushes it. The orchestrator runs it once, before it spawns
+anything and while it holds the single-run lock; each child is handed the internal `--orchestrated`
+flag and skips it (logging one auditable `run-start reconcile: skipped` line). Never pass
+`--orchestrated` by hand — a driver run with it reconciles nothing.
+
+Precedence, highest first: `--serial` › `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` ›
+`GOVERN_PARALLEL_DEFAULT` (unset or 1 = sequential; the target-set size caps it when several tickets
+are named). A resolved cap of 1 from any source means `--serial`, i.e. the whole backlog one ticket
+at a time — never "one ticket then quit".
 
 Run from the **main checkout** of the meta-repo (not a worktree), in a **plain terminal** — NOT from
 inside an interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env
@@ -41,6 +78,26 @@ you're almost certainly running it nested inside a Claude session — open a rea
 Also confirm the doctrine + allowlist are set: `governor/preferences.md` reflects how you'd decide,
 and `GOVERN_MERGE_REPOS` in `scripts/lib/workspace.sh` lists exactly the repos safe to auto-merge.
 
+## Trust ladder — how much the governor does on its own (`GOVERN_AUTONOMY`)
+One knob in `scripts/lib/workspace.sh` sets how far the governor is allowed to go. Graduate up a rung
+as you trust the loop — you never rewrite config, just flip the value:
+
+| `GOVERN_AUTONOMY` | Workers do the work + push `ticket-<N>` | Open a PR | Governor merges |
+|---|---|---|---|
+| `observe` | yes | **draft** PR (visible, inert) | never |
+| `pr-only` | yes | normal PR | never (a human merges) |
+| `auto` | yes | normal PR | auto-merges allowlisted repos on green-or-no-checks CI |
+
+- **Start at `observe`** to watch what the harness produces without a single line landing on `main`:
+  every ticket ends in a draft PR you read at your leisure.
+- **Move to `pr-only`** (the default a fresh scaffold seeds) once the drafts look right — now you get
+  the full ship pipeline minus the final click; nothing merges until you say so.
+- **Flip to `auto`** when you trust it — the governor merges allowlisted-repo PRs itself (frontend
+  stays PR-only regardless of the rung). This is the original behavior.
+
+Backward compat: a workspace scaffolded before the ladder existed has no `GOVERN_AUTONOMY` line and
+behaves as `auto` (unchanged). Add the line from the template to opt into a lower rung.
+
 ## Run it
 ```bash
 scripts/govern/run-loop.sh $ARGUMENTS
@@ -59,10 +116,8 @@ Relay its log lines to the operator as they appear. The driver does everything �
      chunk into ceil(count/4) calls (4, then the rest) — still the minimum number of prompts, never
      one-per-ticket. For each entry use its `question` + `options`, and ALWAYS include these
      standing choices so the answer drives the lifecycle: **Do the work** (un-park → governor
-     retries), **Defer / keep-manual** (auto-moves the still-TODO ticket to `queue/tickets-parked.md`),
-     **Mitigated** (harm already zero / accept current state → removes the ticket from `queue/tickets.md`
-     and closes it as accepted-current-state, NOT parked as still-todo), and **Keep open** (decide
-     later).
+     retries), **Defer / keep-manual** (auto-moves the ticket to `tickets-parked.md`), and **Keep
+     open** (decide later).
      - **Don't fragment the asks across a phased run.** If you split one backlog into multiple
        `run-loop.sh` invocations, each run emits its own `pending-escalations.json` and you'd
        surface the escalations in **separate waves**. Prefer a **single whole-backlog invocation**
@@ -72,10 +127,10 @@ Relay its log lines to the operator as they appear. The driver does everything �
        an answer, so whatever you record applies at the **NEXT** run-start (`escalations-apply-answers.sh`).
        That two-run drain — run, answer the batch, re-run to act on the answers — is expected; the
        fix here is only to make the *ask* a single batch, not to make the loop interactive.
-  3. Write the operator's choice back into `governor/escalations.md` under that `### #N` entry:
-     fill `- **Answer:**` with their words and `- **Disposition:**` with the canonical token
-     (`do-the-work` | `defer` | `mitigated` | `keep-open`). If they want it to become standing policy,
-     put the rule sentence in `- **Make this a rule?:**`.
+  3. Write the operator's choice back into `governor/escalations.md` under that `### #N` entry via
+     `scripts/govern/record-escalation-answer.sh <N> --answer "<their words>" --disposition <token>
+     [--rule "<rule text>"]` (`<token>` one of `do-the-work` | `defer` | `mitigated` | `keep-open`) —
+     a Bash-only helper, so this step never needs an Edit-tool ask. Run it once per answered ticket.
   - The NEXT `run-loop.sh` start applies these automatically (`escalations-apply-answers.sh`):
     un-park, migrate-to-parked, and/or append the rule to `preferences.md`. You don't act on them
     by hand — just record the answers.
@@ -84,8 +139,11 @@ Relay its log lines to the operator as they appear. The driver does everything �
   the reason; don't take over.
 
 ## Policy (enforced by the scripts, not by you)
-- Sequential by default (`--parallel` opts into N concurrent single-ticket drivers, see above); auto-
-  merge only `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is PR-only.
+- Sequential by default; `GOVERN_PARALLEL_DEFAULT=N` (or `--parallel[=N]`) fans out into N concurrent
+  backlog drivers, `--serial` forces one-at-a-time. Auto-merge only
+  `GOVERN_MERGE_REPOS` on **green-or-no-checks** CI; every other repo is
+  PR-only. The `GOVERN_AUTONOMY` trust-ladder rung gates this: `observe`/`pr-only` never auto-merge at
+  all (PRs are left open); only `auto` merges. See the Trust ladder section above.
 - Hard-stops (destructive git; prod data / destructive schema / secrets) and doctrine gaps → worker
   **parks** → escalation.
 - Additive prod migrations auto-apply only if `GOVERN_MIGRATE_CMD` is configured (else park for manual
@@ -112,8 +170,9 @@ Relay its log lines to the operator as they appear. The driver does everything �
   `queue/tickets.md`, parked ones are skipped via `escalations.md`, an existing `ticket-<N>` PR is reused,
   so a re-run continues cleanly.
 - Hard bounds so a run always ends: `GOVERN_MAX_TICKETS` (20), `GOVERN_MAX_BAD_STREAK` (4),
-  `GOVERN_MAX_RUNTIME` (~4h), `GOVERN_WORKER_TIMEOUT` (1h, a stuck worker is killed not stalled),
-  `GOVERN_WORKER_MAX_TOKENS` (0 = unlimited by default; a wandering worker is killed once it crosses
-  the budget, recorded as a distinct `budget-exceeded` outcome).
+  `GOVERN_MAX_RUNTIME` (`0` = no cap by default; set to bound wall-clock), `GOVERN_WORKER_TIMEOUT`
+  (1h, a stuck worker is killed not stalled), `GOVERN_WORKER_MAX_TOKENS` (0 = unlimited by default; a
+  wandering worker is killed once it crosses the budget, recorded as a distinct `budget-exceeded`
+  outcome).
 - Progress-preserving: only resolved worktrees are torn down; failed/parked/timed-out worktrees are
   kept (work survives). Every exit writes `logs/govern/run-*/summary.md`.
