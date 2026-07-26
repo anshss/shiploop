@@ -9,7 +9,20 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-A self-improving multi-agent harness for Interactive Coding Agents. It works across every repo in your product - a fresh, right-sized headless agent per ticket, guarded auto-merge and after every resolved ticket it writes the durable lesson.
+A self-improving multi-agent harness for Interactive Coding Agents. It grinds a ticket backlog across every repo in your product — a fresh headless agent per ticket, guarded auto-merge on green CI, and a durable lesson written into your tracked `CLAUDE.md` after every resolved ticket.
+
+### Where your tokens go
+
+On a subscription plan the binding constraint isn't your invoice — it's quota and wall-clock. Everything below exists to fit **more shipped tickets inside the same plan**, not to lower a bill.
+
+- **The driver is bash, not a model.** `run-loop.sh` owns selection, state, and merges deterministically, and spends near-zero model context. Tokens burn only inside the workers it spawns.
+- **Every ticket gets a fresh worker.** Nothing carries over from the last ticket, so context — and cost — doesn't compound as the backlog drains.
+- **Workers start lean.** MCP servers, the slash-command and skill surface, and your project hooks are all left out of a worker's context by default. Per-machine sections (cwd, env, git status) are moved out of the system prompt so concurrent workers can share one cached prefix.
+- **The worker prompt fights context growth.** Workers are told to hand context-heavy sub-tasks to sub-agents, tail verbose output to a file instead of reading it inline, bound what a sub-agent hands back, and keep their own prose short.
+- **Each resolved ticket writes a lesson** into your git-tracked `CLAUDE.md`, so the next run re-derives less. Memory you can read, diff, and delete.
+- **You set the tier, the harness honors it.** Tickets carry `Model:` and `Effort:` fields — mechanical work on `haiku`, judgment-heavy work on `opus`. A ticket that names neither falls back to `GOVERN_WORKER_MODEL` (`opus`). Automatic right-sizing isn't built yet, so **setting these fields is where most of the saving actually comes from**.
+
+Two more are off until you turn them on: **locality batching** (`GOVERN_BATCH_MAX`) groups same-directory tickets so exploration is paid once instead of per ticket, and a **token ceiling** (`GOVERN_WORKER_MAX_TOKENS`) hard-stops a worker that wanders. Note that batching and the dependency/failure-streak gates engage on a backlog pull, not when you name ticket numbers explicitly.
 
 ## Install
 
@@ -87,7 +100,7 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns s
 </p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
-- **Right-sized models.** The interactive "brain" stamps each ticket with the cheapest capable tier (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy); retries escalate to `GOVERN_WORKER_MODEL` unconditionally.
+- **Right-sized models — but you do the sizing.** A ticket's `Model:` field (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy) is what the spawn honors; the interactive "brain" filing the ticket is what stamps it. There is no classifier — a ticket that names no tier runs at `GOVERN_WORKER_MODEL`, which defaults to `opus`. Retries escalate to `GOVERN_WORKER_MODEL` unconditionally.
 - **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
 - **It gets better over time.** `/shiploop:resolve` promotes each ticket's durable lesson into the right `CLAUDE.md` before deleting the ticket — memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo — always via human-reviewed PR.
 
