@@ -804,6 +804,24 @@ govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate
   else echo "resolve"; fi
 }
 
+# ── "is this a validation ticket?" — the recognizer behind the #67/#73 gate ──
+# MUST stay in sync with the four tells worker-prompt.md gives the worker ("Validation / test /
+# 'does X actually work' tickets"). It previously drifted: the inline grep in run-loop.sh matched
+# only tells 1-2 and the "live-verif" half of tell 3, so a ticket like
+#   ## #50 — Confirm the payment webhook actually works
+#   **Done when:** a PASS/FAIL table from an actual run against the sandbox
+# was treated as validation-required BY THE WORKER (its prompt lists exactly those tells) while the
+# governor's safety net did not recognise it at all. A worker resolving that off static analysis
+# sailed through the very gate #67/#73 exist to enforce — a silent fail-OPEN, the one direction this
+# gate must never fail. Extracted here so prompt and enforcement have a single place to drift from.
+#
+# Deliberately fail-CLOSED: a false positive parks a ticket and asks a human (recoverable, noisy);
+# a false negative accepts an unproven "resolved" (silent, and exactly the bug). When in doubt, match.
+GOVERN_VALIDATION_TICKET_RE='^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif|[Aa]ctually work|PASS/FAIL'
+govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/spike ticket
+  printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_TICKET_RE" 2>/dev/null
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
