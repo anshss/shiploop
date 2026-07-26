@@ -54,7 +54,7 @@ state) are workspace-specific and live behind the `# workspace-specific` markers
    - **Not confident:** report what's still unclear and what would resolve it.
 
 10. **After the fix lands** (a later turn), append a `## Resolution` block: what changed, which
-    sub-repo(s), and any follow-ups. File any newly-discovered gap as a ticket in `queue/tickets.md`.
+    sub-repo(s), and any follow-ups. Fold any newly-discovered gap into the nearest OPEN ticket; file a new one in `queue/tickets.md` only when it is independently dispatchable.
 
 ## Anti-patterns
 

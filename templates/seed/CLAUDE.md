@@ -35,10 +35,27 @@ scripts, the ticket queue, the governor, and shared AI context.
    the stronger tier — never the reverse. Same guide applies when filing a ticket that carries a
    `Model:` field (see `queue/tickets.md`).
 
-4. **When an issue is reported conversationally, default to investigate → file → ask, not
-   file-and-drop.** Confirm it's real and locate the root cause first (delegate if context-heavy), THEN
-   file the ticket with that evidence, THEN ask whether to start fixing now. File a bare uninvestigated
-   ticket only when explicitly told to just track it for later.
+4. **When an issue is reported conversationally: investigate → discuss → file AT THE CHECKPOINT.**
+   Confirm it's real and locate the root cause first (delegate if context-heavy) — never file a bare
+   uninvestigated ticket unless told to just track it. Then **answer the person.** A discussion turn
+   ends with the finding, not with a new `## #N`. Filing happens at the session's bookkeeping
+   checkpoint (the Stop-hook sweep, `/resolve`, or an explicit "file this"), by which point the
+   discussion has decided what the item actually IS. Filing mid-discussion pre-empts that decision
+   twice over: it hijacks a thread the operator opened to think in, and it hands a half-formed gap to
+   a future governor run as authorized work.
+
+   **Consolidate by default — a new number is the exception.** Before minting `## #N`, look for an
+   OPEN ticket the finding belongs inside and fold it in; rewriting that ticket's body is expected,
+   not a compromise. Mint a new number only when the work is independently dispatchable — a different
+   repo/area, or something a worker could ship without touching the other ticket. **Two tickets one
+   worker would fix in one PR should have been one ticket.** Several findings out of one discussion
+   are usually one ticket. This binds worker-report follow-ups too: one consolidated entry per
+   report, not two thin ones.
+
+   **A filing correction is session-durable.** When the operator rejects a filing decision ("that
+   should all be one ticket", "don't file that, let's discuss it"), that is a standing constraint on
+   every later filing this session — not a one-off edit to the ticket in hand. Record it where
+   compaction cannot drop it (the todo list, or a note in the working file) and apply it thereafter.
 
 **Capture learnings at natural breakpoints — don't wait to be asked.** Route findings by **stability**,
 not topic:

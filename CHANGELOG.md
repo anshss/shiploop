@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.13.1 — 2026-07-26
+
+The ticket-cadence release. Auto-filing stays — it is the mechanism that keeps a backlog grinding
+without you. What changes is **when** it fires and **how coarse** it is.
+
+The measurement that drove it, from one real 14-hour session: **23 tickets filed, zero requested by
+the operator.** Eight were minted mechanically by `/resolve`'s post-PR sweep, two per worker report
+(`resolve #341 (PR 598 opened); file #344/#345 from worker report`). The other fifteen were
+volunteered mid-answer, inside replies to the operator's *discussion questions* — the operator asked
+what a component did today and got an answer plus a new numbered ticket. When they pushed back —
+*"it should all be in single 328, you can merge and rewrite"* — the correction was applied to that
+one ticket and the next unprompted filing landed four minutes later.
+
+Three defects, none of which require weakening auto-filing.
+
+### Changed
+
+- **Filing moved from the discussion turn to the bookkeeping checkpoint.** A discussion turn now ends
+  with the finding, not with a new `## #N`. Filing happens where the harness already has a checkpoint
+  — the Stop-hook sweep, `/resolve`, or an explicit "file this" — by which point the discussion has
+  decided what the item actually IS.
+
+  Filing mid-discussion pre-empts that decision twice over: it hijacks a thread the operator opened
+  in order to *think*, and it hands a half-formed gap to a future governor run as authorized work.
+  That second half is the real cost — in this harness, filing and authorizing are the same act, so
+  every reflexive ticket silently widens what runs unsupervised later.
+
+- **Consolidation is the default; a new number is the exception.** Before minting `## #N`, fold the
+  finding into the nearest OPEN ticket — rewriting that ticket's body is expected, not a compromise.
+  A new number is earned only when the work is independently dispatchable: a different repo/area, or
+  something a worker could ship without touching the other ticket. The rule of thumb that ships in
+  the seed context: **two tickets one worker would fix in one PR should have been one ticket**, and
+  several findings out of one discussion are usually one ticket.
+
+  This binds `/resolve`'s worker-report sweep hardest — one consolidated entry per report, not two
+  thin ones. Fragmentation there is not cosmetic: each thin ticket is a separate future governor
+  dispatch, so a split queue costs real worker spawns to ship the same change.
+
+- **A filing correction is session-durable.** When the operator rejects a filing decision ("that
+  should all be one ticket", "don't file that, let's discuss it"), that is now a standing constraint
+  on every later filing in the session, recorded where compaction cannot drop it — not a one-off edit
+  to the ticket in hand. The Stop-hook sweep restates it at the checkpoint.
+
+Touches `templates/seed/CLAUDE.md` (rule 4), `templates/hooks/ticket-sweep-reminder.sh` (the
+blocking sweep text), and the `/resolve` + `/investigate` commands in both the plugin and the
+scaffolded-workspace copies. Behavior-only: no script logic changed, and the govern suite is
+unaffected.
+
 ## 1.13.0 — 2026-07-26
 
 The context-hygiene release. Where 1.12.0 attacked how many workers you run and what they collide
