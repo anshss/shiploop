@@ -632,3 +632,25 @@ Done when: a run with the knob set halts selection once the accumulated spend cr
 Ref: session 2026-07-26 — surfaced while auditing shiploop's own token cost (PR anshss/shiploop#108, which cut the always-on context tax). Raised to the operator as the second of two suggested changes; the first (the retry-tier floor) was investigated and REJECTED as correct-by-design — `test-retry-escalation.sh` shows `infra`/`ci` classes deliberately hold their tier and `budget`/`judgment` are exactly where escalation is the right response. This ceiling is the part that remains a real gap. Related but distinct: #45 (measures cost, does not bound it), #32 (health-dashboard bucket for the per-worker status).
 
 ---
+
+## #72 — Harness self-improvement: promote safe proposals from run-20260726-165215-2261
+
+**Severity:** Low
+
+⚠ possible duplicate of #67
+
+Where: scripts/govern/* and/or governor/* (per the proposals below).
+
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run run-20260726-165215-2261. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+
+Proposals (classified safe/additive — none touches a governor safety rail):
+- `governor/supervisor-prompt.md`: the output contract doesn't document `skipThisRun`/`attemptNext`/`waitForMerge`, which `run-loop.sh` already fully implements — so this run's ordering notes (defer #38, sequence #52 before #40/#55) landed as inert prose instead of actionable, persisted deferrals.
+- `scripts/govern/lib/common.sh` + `lint-tickets.sh`: no mechanism acts on a consolidation ticket's own self-declared supersession — `#62` already states in its body that it supersedes `#38`, but nothing closes or flags `#38`, so it keeps getting manually re-flagged run after run.
+
+Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+
+Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
+
+Ref: governor/improvements.md block "2026-07-26 17:29 — run run-20260726-165215-2261 (resolved/parked/failed observed)". 0 rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+
+---
