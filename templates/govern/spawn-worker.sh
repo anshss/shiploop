@@ -88,9 +88,13 @@ export TICKET_FLOW
 #
 # Retry: classify WHY the last attempt failed (govern::retry_class) and escalate the axis that
 # actually failed, instead of always jumping to GOVERN_WORKER_MODEL. See the table in lib/common.sh.
+# #21: the scope class the scout MEASURED for this ticket ("" when no scout verdict applied). Carried
+# into the log line and the attempts ledger so a later analysis can join scope class → outcome.
+SCOUT_CLASS=""
 resolve_sizing() {
   local base_model base_effort escalated_model
   retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
+  SCOUT_CLASS=""
 
   # Baseline = what the FIRST attempt would have used.
   base_model="${GOVERN_WORKER_MODEL:-opus}"; model_source="GOVERN_WORKER_MODEL"
@@ -106,6 +110,27 @@ resolve_sizing() {
     low|medium|high|xhigh|max) base_effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field" ;;
     *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
   esac
+  # #21 scout-then-size: on the axes the brain left BLANK, prefer a MEASURED verdict over the blanket
+  # GOVERN_WORKER_MODEL default. run-loop ran scout-ticket.sh pre-dispatch (a cheap haiku pass that
+  # greps the real code) and cached its scope measurement on the run dir; `--verdict` re-scores that
+  # cache deterministically and never calls a model. An explicit ticket field always WINS — the cases
+  # above already claimed those axes, and the guards below only fire when they didn't. No cache, a
+  # malformed one, or GOVERN_SCOUT=0 → this block is a no-op and the floors stand, exactly as before
+  # (scout-ticket.sh logs the why on stderr, which is deliberately NOT suppressed here).
+  if [[ "${GOVERN_SCOUT:-1}" != "0" ]]; then
+    local scout_line scout_model scout_effort scout_class
+    scout_line="$("$DIR/scout-ticket.sh" --verdict "$N" || true)"
+    if [[ -n "$scout_line" ]]; then
+      IFS=$'\t' read -r scout_model scout_effort scout_class <<<"$scout_line"
+      SCOUT_CLASS="$scout_class"
+      if [[ "$model_source" != "ticket-Model-field" ]]; then
+        base_model="$scout_model"; model_source="scout (scope=$scout_class)"
+      fi
+      if [[ "$effort_source" != "ticket-Effort-field" ]]; then
+        base_effort="$scout_effort"; effort_source="scout (scope=$scout_class)"
+      fi
+    fi
+  fi
   model="$base_model"; effort="$base_effort"
   [[ "${MODEL_IS_RETRY:-0}" -eq 1 ]] || return 0   # first attempt: the baseline IS the answer
 
@@ -208,9 +233,10 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg te "$TICKET_EFFORT" \
     --arg rclass "$retry_class" \
     --arg rreason "$retry_reason" \
+    --arg sclass "$SCOUT_CLASS" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, scope_class:(if $sclass == "" then null else $sclass end), permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, worktree:$wtpath}'
   exit 0
 fi
 
@@ -523,7 +549,7 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 #     exactly the pre-classifier escalate-to-GOVERN_WORKER_MODEL behavior.
 resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
-govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
+govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] scope=${SCOUT_CLASS:-none} retry-class=$retry_class — $retry_reason"
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
@@ -590,11 +616,13 @@ record_attempt() { # status -> appends one ledger row
   usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
   jq -nc --argjson a "$attempt" --arg m "$model" --arg ms "$model_source" \
      --arg e "$effort" --arg es "$effort_source" --arg tm "${TICKET_MODEL:-}" \
+     --arg sc "${SCOUT_CLASS:-}" \
      --argjson retry "$MODEL_IS_RETRY" --arg mode "$mode" --arg st "$st" \
      --argjson u "$usage" --argjson ts "$(date +%s)" \
      '{attempt:$a, model:$m, modelSource:$ms,
        effort:(if $e == "" then null else $e end), effortSource:$es,
        ticketModel:(if $tm == "" then null else $tm end), isRetry:($retry == 1),
+       scopeClass:(if $sc == "" then null else $sc end),
        mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
   return 0
 }
