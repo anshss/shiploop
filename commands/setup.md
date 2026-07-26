@@ -5,7 +5,7 @@
 # of a live onboarding (a measured run spent ~7 min on model turns vs ~30s in tools).
 model: sonnet
 effort: medium
-description: Scaffold OR upgrade a shiploop workspace in the current folder — wraps N sub-repos into one workspace and installs the self-improving multi-agent harness (worktrees + ticket queue + governor + hooks; every resolved ticket writes a lesson into your git-tracked CLAUDE.md) that ships your backlog. Fresh folder → full scaffold via scaffold.sh (interview → invoke → verify). Existing workspace → component-by-component bump using scaffold.sh --component <name>. All mechanical file operations live in scaffold.sh; this command owns detection + judgment only. For ongoing maintenance (routine hub-to-workspace bumps), use /shiploop:update; for pushing local mechanism improvements back to the hub, use /shiploop:push.
+description: Scaffold a shiploop workspace in the current folder, or upgrade an existing one — wraps N sub-repos into one workspace and installs the harness (worktrees, ticket queue, governor, hooks). Use for first-time setup; see /shiploop:update for routine hub bumps.
 ---
 
 You are the meta-repo setup command. You convert the current folder into — or upgrade an existing —

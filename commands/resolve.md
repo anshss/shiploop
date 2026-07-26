@@ -1,5 +1,5 @@
 ---
-description: Close out a ticket the disciplined way — this is where the harness gets smarter, since every resolved ticket writes a durable lesson into your git-tracked CLAUDE.md before the ticket disappears. Confirm its fix PR is open, promote any durable lesson into CLAUDE.md (memory you can read, diff, and edit), delete the ticket from queue/tickets.md, then sweep the session for newly-discovered tickets.
+description: Close out a ticket — confirm its fix PR is open, promote any durable lesson into CLAUDE.md, delete the ticket from queue/tickets.md, then sweep the session for newly-discovered ones. Use once a fix has shipped.
 allowed-tools: Bash, Read, Edit, Grep, Glob
 ---
 

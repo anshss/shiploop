@@ -1,5 +1,5 @@
 ---
-description: Ships your backlog. Launches the bash-driven ticket loop (scripts/govern/run-loop.sh) that grinds queue/tickets.md across every repo in your product — a fresh right-sized headless worker per ticket (brain-decided haiku/sonnet/opus), guarded auto-merge on green-or-no-checks CI for allowlisted repos, periodic supervisor, hard-stops escalated, deterministic queue/tickets.md bookkeeping. Keeps THIS session's context flat.
+description: Ship the backlog — run the autonomous ticket loop over queue/tickets.md across every repo, one fresh right-sized headless worker per ticket, with guarded auto-merge on green CI. Use to start unattended work; keeps this session's context flat.
 allowed-tools: Bash, Read
 ---
 
