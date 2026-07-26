@@ -296,6 +296,11 @@ component_govern() {
   log "component: govern"
   cp "$T"/govern/*.sh scripts/govern/           # incl. run-validation.sh (durable validation runner)
   cp "$T"/govern/lib/*.sh scripts/govern/lib/   # common.sh + flows.sh + valjob.sh (job substrate)
+  # Node helpers under govern/lib (the request-capture proxy + its reporter). Guarded: the glob is
+  # only copied when it actually matches, so an older template tree without them still scaffolds.
+  if compgen -G "$T/govern/lib/*.mjs" >/dev/null 2>&1; then
+    cp "$T"/govern/lib/*.mjs scripts/govern/lib/
+  fi
   cp "$T"/govern/test/*.sh scripts/govern/test/
   chmod +x scripts/govern/*.sh scripts/govern/test/*.sh
   # governor/*.md — refresh prompt templates only; preserve operator data.

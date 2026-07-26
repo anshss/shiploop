@@ -1050,6 +1050,36 @@ govern::claude_supports_exclude_dynamic_prompt() { # <claude_bin> -> rc 0 suppor
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
 }
 
+# Capability probe: does $claude_bin support `--tools`? Same reasoning as the probe above — this
+# file ships to every fleet, the fleet's CLI version is not ours, and an unknown flag kills EVERY
+# worker at argument parsing (an outage that govern's failure classifier cannot even see; see
+# learnings.md). Same run-scoped `--help` cache so a long run probes at most once.
+# Test seam: pre-seed _GOVERN_TOOLS_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_TOOLS_PROBE_CACHE="${GOVERN_TOOLS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-tools-support}"
+govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_TOOLS_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_TOOLS_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_TOOLS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    # `--tools <tools...>` — anchored on the space so it can never match `--toolsomething`, and
+    # distinct from `--allowedTools, --allowed-tools <tools...>` which is a different flag.
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--tools <tools'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim) — treating as unsupported this run; omitting --tools"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_TOOLS_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
 # Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
 # Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
 # macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled
