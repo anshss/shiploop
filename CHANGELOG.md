@@ -2,10 +2,79 @@
 
 ## Unreleased
 
-Every prior cost release targeted what a *worker* spends. This one targets what the **harness itself**
-spends before any work happens — the always-on context and per-session injections every session pays
-for whether or not they carry information.
+### Added
 
+- **The worker's request payload is now measurable — and the biggest component turned out to be tool
+  JSON.** Every prefix decision so far was made against a number nobody could see directly.
+  `count_tokens` cannot observe what Claude Code assembles, and turn-1 `cache_creation_input_tokens`
+  collapses the whole prefix into a single figure, so attributing it meant one throwaway re-spawn per
+  component and N sources of noise. At the API boundary the assembled body is already componentised,
+  so `templates/govern/measure-prefix.sh` reads the split directly: it starts a local pass-through
+  proxy on `ANTHROPIC_BASE_URL`, spawns a REAL worker through it — the prompt from `spawn-worker.sh`'s
+  own assembly (new `GOVERN_SPAWN_PRINT_PROMPT=1` seam) and the flags from its own resolver
+  (`GOVERN_SPAWN_DRY_RUN=1`), so the measurement can never drift from the spawn the fleet runs — and
+  emits a component table plus a per-tool schema breakdown.
+
+  The proxy (`templates/govern/lib/capture-proxy.mjs`) sits in front of a worker and handles live
+  credentials, so three properties are load-bearing and asserted in its header: every header is
+  forwarded **verbatim** and no header **value** is ever read, stored or logged; no request or
+  response **body** content is ever written to the log, only sizes and names; and it binds to
+  `127.0.0.1` only. Subscription/OAuth auth survives it unchanged — this is *not* the `--bare`
+  blocker, which forces `ANTHROPIC_API_KEY`. All three are asserted against a real proxied request in
+  `templates/govern/test/test-capture-proxy-no-leak.sh` (local http stub upstream, no network): a
+  credential sentinel, a request-body sentinel and a response-body sentinel must all be absent from
+  the capture log, while the stub upstream must still receive the credential verbatim.
+
+  First measurement (CLI 2.1.220, `--model opus`, a real spawn): of 164,795 turn-1 request bytes,
+  **tool schemas are 85,260 — 51.7%**, ahead of `messages` (43.7%) and the system prompt (4.3%). A
+  single tool a headless worker structurally cannot call (`Workflow`, 21,525 B) is 13.1% of the whole
+  request, re-sent every turn. Full table and method in `PROOF.md` section 5.
+
+- **`GOVERN_WORKER_TOOLS` — opt-in tool-schema trim, -34.5% request bytes measured.** Set it to
+  `default` to pass `--tools <recommended list>` to every worker, or give your own space/comma-
+  separated list. On the same spawn as above this took the request from 164,795 to 107,985 bytes,
+  with the tool block down 66.7%, and the worker still completed normally. The recommended list keeps
+  file + shell + search, `Agent` (the router posture mandates delegation), the docs-research web tools
+  and the background-task controls; it drops the interactive/long-lived surface a `-p` worker has no
+  user for. It also *adds* `Glob` and `Grep`, which the CLI's default `-p` set omits — dedicated
+  search tools return less into context than the bash pipelines that replace them.
+
+  Why this lever and not tool-output compression: cache reads bill ~0.1x and writes ~1.25x, so
+  rewriting anything already in the conversation invalidates from that point forward and converts
+  cheap reads into expensive writes — a raw-byte reduction does not survive the conversion. The tool
+  block is **static and deterministic** and sits at the front of the prefix, so trimming it moves the
+  cache key exactly once and every later worker shares the smaller prefix. (The same rule is why any
+  future output compressor may only touch the **tail** — a fresh `tool_result` with nothing
+  downstream of it — and must be deterministic.) `--allowedTools` is not a substitute: measured
+  no-change, because it gates permission rather than what gets loaded.
+
+  **Off by default** per the additive-union rule — losing a tool a worker genuinely needed costs a
+  failed ticket, which dwarfs the prefix saved, so the opt-in is deliberate. Capability-probed via
+  `--help` (`govern::claude_supports_tools_flag`), so a fleet on an older CLI silently skips the flag
+  instead of failing every worker at argument parsing. **Keep/purge gate:** purge if a worker fails or
+  parks for a missing tool, or if re-measuring shows the tool block below ~15% of the request; keep
+  while the cut holds and the suite plus a real end-to-end ticket stay green. Covered by
+  `templates/govern/test/test-spawn-tools-trim.sh`.
+
+- `assert_not_contains` in the govern test harness — asserting that something is **absent** is the
+  natural shape for a context-cost test, and there was no helper for it.
+- `test-learnings-digest.sh` (19 assertions), which runs in both the hub and scaffolded-workspace
+  layouts. Includes a guard that the shipped seed `learnings.md` injects zero bytes, so re-introducing
+  a heading into the seed can't silently re-tax every fleet.
+
+
+- **Documented that harness self-improvement is billed to the user, and how to turn it off.**
+  `GOVERN_IMPROVE` and `GOVERN_IMPROVE_TRIAGE` both default ON and fire on any run with a failed or
+  parked ticket — which is most runs. The first spends a reviewer pass on the run's friction; the
+  second **files the resulting harness proposals as a ticket in the user's own `queue/tickets.md`**,
+  which the governor later drains at full worker cost. That is the dogfooding flywheel working as
+  designed, but it was undocumented, and the Configuration section claimed advanced lanes "ship off
+  so a fresh install is inert until you opt in" — which these two contradict.
+
+  No default change. The README now carries a `Harness self-improvement is on by default` section
+  stating plainly what the run buys and what it costs, the three knobs are in the config table marked
+  on-by-default, and the "ships off" sentence is corrected. `GOVERN_IMPROVE_TRIAGE=0` keeps the
+  proposals without enqueueing work; `GOVERN_IMPROVE=0` turns the pass off entirely.
 ### Changed
 
 - **The seed `CLAUDE.md` is 47% smaller, and the displaced material has a home.** `CLAUDE.md` is
@@ -55,26 +124,18 @@ for whether or not they carry information.
   `templates/.claude/commands/flows.md`, which lands in every scaffolded workspace, got the same
   treatment: 164 → 118 words for the workspace command set.
 
-### Added
+### Fixed
 
-- **Documented that harness self-improvement is billed to the user, and how to turn it off.**
-  `GOVERN_IMPROVE` and `GOVERN_IMPROVE_TRIAGE` both default ON and fire on any run with a failed or
-  parked ticket — which is most runs. The first spends a reviewer pass on the run's friction; the
-  second **files the resulting harness proposals as a ticket in the user's own `queue/tickets.md`**,
-  which the governor later drains at full worker cost. That is the dogfooding flywheel working as
-  designed, but it was undocumented, and the Configuration section claimed advanced lanes "ship off
-  so a fresh install is inert until you opt in" — which these two contradict.
-
-  No default change. The README now carries a `Harness self-improvement is on by default` section
-  stating plainly what the run buys and what it costs, the three knobs are in the config table marked
-  on-by-default, and the "ships off" sentence is corrected. `GOVERN_IMPROVE_TRIAGE=0` keeps the
-  proposals without enqueueing work; `GOVERN_IMPROVE=0` turns the pass off entirely.
-
-- `assert_not_contains` in the govern test harness — asserting that something is **absent** is the
-  natural shape for a context-cost test, and there was no helper for it.
-- `test-learnings-digest.sh` (19 assertions), which runs in both the hub and scaffolded-workspace
-  layouts. Includes a guard that the shipped seed `learnings.md` injects zero bytes, so re-introducing
-  a heading into the seed can't silently re-tax every fleet.
+- **`GOVERN_WORKER_TOOLS_DEFAULT` was missing three tools workers actually invoke.** A scan of 39
+  confirmed-real worker transcripts found `Monitor` (11x), `ScheduleWakeup` (6x) and `SendMessage`
+  (3x) all in live use despite being cut from the recommended `--tools` list on the theory that a
+  headless `-p` worker has no use for them. Flipping the trim on as-shipped would have removed tools
+  mid-flight for any worker that reached for one — a failed ticket costs far more than the prefix
+  saved, so measurement wins over theory here. All three are back in the recommended list; the
+  never-invoked `Task*` tail and `NotebookEdit` are left in place pending a dedicated re-measure
+  (dropping them needs its own evidence, not opportunistic cleanup). The default remains **off** —
+  turning it on fleet-wide still needs a real A/B on cost-per-successful-ticket, not bytes, which
+  hasn't run yet.
 
 ## 1.13.2 — 2026-07-26
 

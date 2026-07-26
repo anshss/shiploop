@@ -189,6 +189,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Tickets a plain `run-loop.sh` works at once: `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
 | `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm: a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
+| `GOVERN_WORKER_TOOLS` | empty (off) | Tool-schema trim: `default` passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `GOVERN_IMPROVE` | **on** | End-of-run reviewer that proposes harness improvements into `governor/improvements.md` when a run hit friction — see [Harness self-improvement](#harness-self-improvement-is-on-by-default) |
 | `GOVERN_IMPROVE_TRIAGE` | **on** | Auto-files the safe proposals above as a ticket in **your** `queue/tickets.md`, which the governor then drains like any other |
 | `GOVERN_SELF_APPLY` | off | Applies one proposal automatically under strict guards; observe→propose is the default posture |
