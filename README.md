@@ -17,7 +17,7 @@ One goal: **the fewest tokens per shipped ticket.** Here is every way it gets th
 
 - **Running the loop costs nothing.** The part that picks tickets, tracks state and merges PRs is plain bash. It never calls a model. Tokens are spent only inside the agents it starts.
 
-- **It won't start work that can't succeed.** Before spawning anything it asks: is this repo's CI already red? Is this ticket waiting on another that isn't done? Does it touch a file already being changed upstream? Any yes, and it skips — no agent, no tokens.
+- **It won't start work that can't succeed.** Before spawning anything it asks: is this repo's CI already red? Is this ticket waiting on another that isn't done? Does it touch a file already being changed upstream? Is this a check whose setup isn't configured yet? Any yes, and it skips — no agent, no tokens.
 
 - **It gives up on a losing ticket instead of retrying forever.** A couple of failed attempts and it escalates to you; a run that keeps failing halts itself.
 
@@ -31,6 +31,8 @@ One goal: **the fewest tokens per shipped ticket.** Here is every way it gets th
 
 - **Agents are told to stay small.** Hand heavy reading to cheap sub-agents, keep build output in a file instead of pasting it into the conversation, keep replies short — and don't spin up a sub-agent for something you could finish in two commands.
 
+- **Checking is sized to the change.** A docs-only edit doesn't trigger a full test suite; validation scales to how big the diff actually is.
+
 - **You decide how much brain each ticket gets.** `Model:` and `Effort:` on a ticket — `haiku` for mechanical work, `opus` only when it's genuinely hard. **This is the biggest lever, and it's yours:** a ticket that sets neither runs on `opus`, because automatic sizing isn't built yet.
 
 - **The reviewer is cheap too.** The supervisor auditing a run is a `sonnet` session in read-only mode, and it only reads what changed since it last looked.
@@ -39,9 +41,15 @@ One goal: **the fewest tokens per shipped ticket.** Here is every way it gets th
 
 - **A retry picks up where it left off.** The old worktree is kept, so attempt two doesn't re-clone and re-explore. Failures are read before retrying, too — a CI failure retries at the same tier with the log attached instead of automatically buying a bigger model.
 
-- **Repeated lookups happen once.** Your GitHub identity, each repo's visibility, what your CLI supports — resolved a single time per run, not once per PR.
+- **Branches start from current code.** New worktrees are cut from a freshly fetched `origin/main`, not a stale local copy, so a PR isn't born already conflicted and needing a second attempt.
+
+- **Repeated lookups happen once.** Your GitHub identity, each repo's visibility, what your CLI supports — resolved a single time per run, not once per PR. The same goes for start-of-run housekeeping: it runs once for the whole run, not once per agent.
+
+- **It cleans up after a killed agent.** If a worker is stopped mid-flight, its preview deploys and other billable resources are torn down rather than left running. That one is real money, not tokens.
 
 - **You can see where the tokens went.** Every attempt records its model, effort, tokens and cost, so you tune from real numbers instead of guessing.
+
+- **Some work doesn't have to be yours.** On a public repo, low-severity tickets can be filed as GitHub issues for outside contributors instead of spending one of your agents on them. Off by default, and nothing is published without your say-so.
 
 - **Two extras, off until you want them.** `GOVERN_BATCH_MAX` lets one agent take several tickets in the same area so it explores once instead of once each. `GOVERN_WORKER_MAX_TOKENS` hard-stops an agent that wanders.
 
