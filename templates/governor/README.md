@@ -118,6 +118,32 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   preserved and a re-run resumes it, exactly like a timeout.
 - `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
 
+## Upstream-drift pre-gate (`GOVERN_PREGATE_DRIFT`, default `1` = on)
+
+If your workspace dogfoods this harness as one of its own sub-repos, a mechanism script under
+`scripts/govern/` has a counterpart in the hub `templates/` — and another fleet may have already
+ported the fix a ticket is asking for *up*. Nothing used to enforce the "diff the workspace copy
+against the hub template first" rule, so a worker could spend a whole session re-deriving a fix that
+was one `/shiploop:update` away. `lib/pregate.sh` closes that with pure file/git reads before the
+worker is spawned — no LLM call, no network, no writes.
+
+- **The direction test.** `live != template` alone would fire on every unported *local* improvement.
+  `sync-templates.sh --paths` already lists the mirrored files this workspace changed since the sync
+  marker, i.e. unported local work. Differs **and** in `--paths` → we moved → spawn. Differs and
+  **not** in `--paths` → the hub moved → surface it.
+- **It can never resolve a ticket.** Its only outcome is park + escalate ("port the hub diff down"),
+  strictly weaker than what a worker could have done. The operator decides whether the hub version
+  actually covers the ticket.
+- **Fail-open everywhere.** Missing marker, missing `sync-templates.sh`, unparseable `Where:`,
+  unmirrored path, any ambiguity → emit nothing → spawn exactly as before. A false negative costs one
+  session; a false positive would silently stall a real ticket.
+- **Narrow by construction.** Only literal, glob-free paths under `GOVERN_PREGATE_PREFIXES`
+  (`scripts/ governor/ .githooks/ .claude/commands/`) are even considered, so a product-repo ticket
+  can't trip it. Skipped for an explicit ticket set — the operator chose that ticket deliberately.
+
+Codemod auto-detection is deliberately **not** implemented: a false positive that "resolves" a ticket
+without fixing it is far worse than a missed opportunity, and no narrow, safe detector was found.
+
 ## Locality batching (`GOVERN_BATCH_MAX`, default `1` = off)
 
 Exploration is the dominant cost of a resolved ticket (~98% cacheRead): three tickets that all touch
