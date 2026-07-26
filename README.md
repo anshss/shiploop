@@ -11,18 +11,38 @@
 
 A self-improving multi-agent harness for Interactive Coding Agents. It grinds a ticket backlog across every repo in your product — a fresh headless agent per ticket, guarded auto-merge on green CI, and a durable lesson written into your tracked `CLAUDE.md` after every resolved ticket.
 
-### Where your tokens go
+### Built to spend fewer tokens
 
-On a subscription plan the binding constraint isn't your invoice — it's quota and wall-clock. Everything below exists to fit **more shipped tickets inside the same plan**, not to lower a bill.
+Every mechanism below exists for one goal: **the fewest tokens per shipped ticket.**
 
-- **The driver is bash, not a model.** `run-loop.sh` owns selection, state, and merges deterministically, and spends near-zero model context. Tokens burn only inside the workers it spawns.
-- **Every ticket gets a fresh worker.** Nothing carries over from the last ticket, so context — and cost — doesn't compound as the backlog drains.
-- **Workers start lean.** MCP servers, the slash-command and skill surface, and your project hooks are all left out of a worker's context by default. Per-machine sections (cwd, env, git status) are moved out of the system prompt so concurrent workers can share one cached prefix.
-- **The worker prompt fights context growth.** Workers are told to hand context-heavy sub-tasks to sub-agents, tail verbose output to a file instead of reading it inline, bound what a sub-agent hands back, and keep their own prose short.
-- **Each resolved ticket writes a lesson** into your git-tracked `CLAUDE.md`, so the next run re-derives less. Memory you can read, diff, and delete.
-- **You set the tier, the harness honors it.** Tickets carry `Model:` and `Effort:` fields — mechanical work on `haiku`, judgment-heavy work on `opus`. A ticket that names neither falls back to `GOVERN_WORKER_MODEL` (`opus`). Automatic right-sizing isn't built yet, so **setting these fields is where most of the saving actually comes from**.
+**Work it never starts.** The cheapest ticket is the one no worker was spawned for.
 
-Two more are off until you turn them on: **locality batching** (`GOVERN_BATCH_MAX`) groups same-directory tickets so exploration is paid once instead of per ticket, and a **token ceiling** (`GOVERN_WORKER_MAX_TOKENS`) hard-stops a worker that wanders. Note that batching and the dependency/failure-streak gates engage on a backlog pull, not when you name ticket numbers explicitly.
+- **The driver is bash, not a model.** `run-loop.sh` owns selection, state, and merges deterministically and spends near-zero model context. Tokens burn only inside the workers it spawns.
+- **It won't dispatch onto a red base branch**, so a worker can't spend a whole session writing correct code that could never go green.
+- **A ticket whose declared dependency is still open is deferred**, not attempted — and one that collides with an in-flight upstream port is skipped rather than sent into a guaranteed merge conflict.
+- **Consecutive failures trip a circuit breaker** (`GOVERN_MAX_TICKET_FAILS`, `GOVERN_MAX_BAD_STREAK`) instead of re-betting on a bad run.
+- **Under parallel, drivers share a run-scoped attempted list**, so a ticket that frees its claim mid-run can't be picked up and paid for twice.
+- **`config-check.sh` is a genuinely free preflight** — no tokens, no auth. (`--dry-run` is *not* free; it runs a real worker in plan mode.)
+
+**Cheaper per ticket.**
+
+- **Workers start lean.** No MCP servers, no slash-command or skill surface (~2,600 tokens off every turn), no project hooks.
+- **The prompt is built to cache.** Boilerplate is stable and the ticket text is substituted last, so the prefix is identical across workers; per-machine sections (cwd, env, git status) are moved out of the system prompt so concurrent workers can share it.
+- **The worker prompt fights context growth.** Reconnaissance goes to cheap sub-agents, verbose build output is tailed from a file instead of dumped inline, sub-agent returns are bounded, validation scales to the diff, and there's a floor on delegation — a sub-agent isn't free either.
+- **The supervisor that audits a run is cheap** — a `sonnet` session in plan mode that re-reads only what's new since its last pass.
+- **`Model:` and `Effort:` size the worker** — `haiku` for mechanical work, `opus` only for judgment. **Automatic right-sizing isn't built yet**, so setting these is where most of the saving comes from; a ticket naming neither runs at `opus`.
+
+**Never paid twice.**
+
+- **Every resolved ticket writes a durable lesson** into your git-tracked `CLAUDE.md`, so the next run re-derives less. Memory you can read, diff, and delete.
+- **Retries are classified, not blindly escalated.** A CI failure retries at the same tier with the log injected; only budget exhaustion buys a bigger model.
+- **A retry resumes the preserved worktree** instead of re-cloning and re-exploring, and worktrees are cut from a fresh `origin/main` so PRs aren't born pre-conflicted.
+- **Repeat lookups are cached per run** — CLI capability, repo visibility, `gh` identity — so a 100-PR pass doesn't re-ask 100 times, and run-start reconciliation happens once rather than once per parallel driver.
+- **Every attempt records model, effort, tokens and cost** to `ticket-history.jsonl`, so you tune from data instead of guesswork.
+
+**More in flight.** Parallel workers (`GOVERN_PARALLEL_DEFAULT`, default `4`) multiply what's running at once — throughput, not a cheaper ticket. Two levers are off until you turn them on: **locality batching** (`GOVERN_BATCH_MAX`) groups same-area tickets so discovery is paid once for the group, and a **token ceiling** (`GOVERN_WORKER_MAX_TOKENS`) hard-stops a worker that wanders.
+
+One caveat worth stating plainly: batching and the dependency and failure-streak gates engage on a backlog pull, not when you name ticket numbers explicitly.
 
 ## Install
 
@@ -146,7 +166,7 @@ Everything lives in one file — `scripts/lib/workspace.sh`. Advanced lanes ship
 | `GOVERN_AUTONOMY` | `pr-only` | Trust-ladder rung (`observe` / `pr-only` / `auto`); absent = `auto` for pre-knob installs |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_WORKER_MODEL` | `opus` | Fleet-wide worker default; per-ticket `Model:` line overrides first attempts |
-| `GOVERN_PARALLEL_DEFAULT` | `1` | Tickets a plain `run-loop.sh` works at once — `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
+| `GOVERN_PARALLEL_DEFAULT` | `4` | Tickets a plain `run-loop.sh` works at once — `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
 | `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm — a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB — additive migrations merge instead of parking |
