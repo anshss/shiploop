@@ -594,3 +594,26 @@ Done when:
 Ref: consolidation of #9, #10, #11, #12, #30, #36, #38 (evidence only, not deleted), #39, #42, #47, #50, #51, #53. See `git log --oneline --all | grep -iE "#33|#34"` for the #33/#34 resolution evidence (`ae36ed9`, `326aaca`).
 
 ---
+
+## #63 — Worker timeout watchdog orphans a bare sleep process when spawn-worker.sh is killed via a pipe
+
+**Severity:** Low
+**Model:** sonnet
+**Effort:** low
+
+**Severity:** Low
+**Model:** sonnet
+
+Where: `scripts/govern/spawn-worker.sh` (the `GOVERN_WORKER_TIMEOUT` watchdog, ~lines 675-679) and its hub counterpart `shiploop/templates/govern/spawn-worker.sh`.
+
+Observed: the worker timeout watchdog backgrounds a bare `sleep $to &`. When spawn-worker.sh is terminated via a plain pipe (rather than the SIGTERM path that runs `spawn_worker_cleanup`), that `sleep` is not reaped and survives as an orphan — a stray `sleep 3600` process left behind per spawn. Found incidentally while diagnosing PR #97's CI failures locally; it is PRE-EXISTING on `main` and unrelated to that PR's changes.
+
+Impact: low but cumulative — a long governor run, or repeated local test invocations, accumulates orphaned `sleep` processes. Harmless individually; untidy at volume and can confuse process-tree assertions in orphan/teardown tests (which is how it surfaced).
+
+Fix direction: record the watchdog's PID and kill it in `spawn_worker_cleanup` alongside `cpid`, and make the cleanup path cover pipe-termination as well as SIGTERM (trap on EXIT in addition to TERM/INT). Confirm against `test-orphan-teardown.sh`, which already asserts on orphan behaviour and is the natural place to add coverage.
+
+Done when: terminating spawn-worker.sh by any path (SIGTERM, SIGINT, pipe close, normal exit) leaves no orphaned `sleep` watchdog; a test asserts it; `bash -n` clean; hub-first — fix lands in `shiploop/templates/govern/spawn-worker.sh` and flows down via `/shiploop:update`.
+
+Ref: session 2026-07-26 — surfaced while diagnosing PR #97 CI failures; confirmed pre-existing on main, explicitly NOT caused by the `--exclude-dynamic-system-prompt-sections` probe.
+
+---
