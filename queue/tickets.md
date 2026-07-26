@@ -506,23 +506,6 @@ Ref: session 2026-07-26 — found while auditing logs/govern/ for a cost/turn me
 
 ---
 
-## #60 — Land the v1.13.0 token-efficiency branch
-
-**Severity:** Medium
-**Model:** sonnet
-
-Where: shiploop/ sub-repo.
-
-Observed: worktree `token-efficiency` (slot 7, branch `token-efficiency` in the `shiploop` sub-repo) holds three unpushed commits with no PR: `12189b4` (worker-prompt B1 conciseness / B3 delegation floor / C1 subagent return contract, 256→270 lines) and `e3cbd9d` (+ its predecessor) (P2 `--exclude-dynamic-system-prompt-sections` behind a capability probe, C4 `--forward-subagent-text` regression lock, new `test-spawn-exclude-dynamic-prompt.sh`). All tests green. The prompt-side changes are now justified by measurement (median session output 17,448 tokens; ~260 tokens/turn added cost repays against a ~20% output cut plus avoided re-read).
-
-Fix direction: push the branch, open a PR against the shiploop hub, land it, then `npm run worktree:rm -- token-efficiency`.
-
-Done when: PR merged and worktree removed.
-
-Ref: session 2026-07-26 — found while auditing the token-efficiency worktree during a cost/turn measurement pass over logs/govern/.
-
----
-
 ## #62 — Consolidated harness self-improvement duplicate cluster: dedup consumer, Depends-on/Blocks mechanism, CI-fix redispatch context, escalation fix
 
 **Severity:** High
