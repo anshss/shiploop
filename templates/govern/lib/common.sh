@@ -1056,15 +1056,26 @@ govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
   local bin="$1" secs="$2" needle="$3"
   local out="" rc=0
   _GOVERN_EDP_TIMED_OUT=0
-  if command -v timeout >/dev/null 2>&1; then
-    out="$(timeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
-  elif command -v gtimeout >/dev/null 2>&1; then
-    out="$(gtimeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
-  else
-    out="$(govern::_run_with_manual_timeout "$secs" "$bin" --help 2>/dev/null)" || rc=$?
-  fi
+  out="$(govern::run_bounded "$secs" "$bin" --help 2>/dev/null)" || rc=$?
   [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
   printf '%s' "$out" | grep -q -- "$needle"
+}
+
+# Run <cmd...> under a wall-clock bound, portably. Prefers the system `timeout` (always present on
+# Linux; also what a homebrew-coreutils macOS box exposes), then `gtimeout` (homebrew coreutils'
+# macOS-safe name), and falls back to the hand-rolled watchdog below when NEITHER is on PATH — so a
+# bare macOS box with no coreutils still gets a bound instead of an unbounded hang. Exits 124 on
+# expiry in every branch, mirroring GNU `timeout`, so the caller can tell "timed out" from "ran and
+# exited nonzero on its own". Shared by the capability probe above and scout-ticket.sh.
+govern::run_bounded() { # <secs> <cmd...>
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    govern::_run_with_manual_timeout "$secs" "$@"
+  fi
 }
 
 # Manual fallback timeout used only when neither `timeout` nor `gtimeout` is on PATH. Backgrounds

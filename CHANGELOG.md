@@ -4,6 +4,46 @@
 
 ### Added
 
+- **Scout-then-size — a ticket's tier is now MEASURED, not guessed.** Sizing was a prior, not a
+  measurement: the `Model:` field is decided before any evidence by whoever files the ticket, and a
+  ticket carrying no field fell through to a blanket `GOVERN_WORKER_MODEL` (default `opus`). That is
+  wrong in both directions — it overpays on easy tickets, and it cannot detect a hard one until an
+  attempt has already failed at full price. Reconnaissance costs roughly a thousandth of the work, so
+  spending a fraction of a cent to decide whether to spend three dollars or thirty is the best trade
+  available.
+
+  A new `scout-ticket.sh` runs **before** the worker is spawned, from the single `spawn_worker_tracked`
+  chokepoint in `run-loop.sh`. It has two deliberately separate halves. The first is one cheap
+  read-only `claude -p` pass at the **haiku** tier (`--permission-mode plan`, so it can grep and read
+  but never write) that greps the real code seeded from the ticket's `Where:` line and emits a small
+  scope object: files plausibly touched, repos involved, whether tests already cover the area, whether
+  git history holds a precedent commit, local edit vs structural (signature / schema / API contract)
+  change, and concrete vs vague fix direction. The second half is **pure bash** — a deterministic,
+  auditable, tunable scoring table, not a second model judgement call:
+
+  | measured scope                                              | model  | effort |
+  |-------------------------------------------------------------|--------|--------|
+  | 1 file, local, precedent + test exist                       | haiku  | low    |
+  | ≤5 files, 1 repo, concrete fix direction                    | sonnet | medium |
+  | cross-repo, or contract/schema change, or no test, or vague | opus   | high   |
+
+  **The scout never outranks a human.** An explicit ticket `Model:`/`Effort:` always wins, per axis —
+  the scout only decides what the brain left blank, replacing the blanket default rather than the
+  operator. The verdict is cached on the run dir, so a retry reuses it instead of re-scouting, and the
+  chosen tier and scope class are logged and recorded in the per-attempt ledger (`scopeClass`) so a
+  later analysis can join scope class to outcome.
+
+  Scout output is untrusted model output feeding a dispatch decision, so it is guarded on the way in:
+  structurally invalid output (not a JSON object, or a missing key) is **rejected** and sizing falls
+  back to `GOVERN_WORKER_MODEL`, loudly; an out-of-domain field (unknown enum, non-integer, absurd
+  count) is **clamped to the hard end** of its domain. Clamping is one-directional by construction, so
+  a malformed scout can only ever push a ticket up the ladder — never silently downgrade a hard ticket
+  to haiku. A timeout, a non-zero exit, or a reply with no JSON in it all cache nothing and fall back
+  the same way. `GOVERN_SCOUT=0` reverts dispatch to the pre-scout behavior exactly; `GOVERN_SCOUT_MODEL`
+  and `GOVERN_SCOUT_TIMEOUT` tune the pass. The scoring half is unit-tested in isolation via
+  `scout-ticket.sh --score` (no model call), alongside end-to-end precedence tests through the existing
+  dry-run seam.
+
 - **Retry memory — a worker's findings survive into its next attempt.** A failed or timed-out worker
   left its worktree preserved but its knowledge nowhere: the retry started from the same cold prompt
   and re-derived the whole exploration, which is the dominant cost term. Every worker now appends to
