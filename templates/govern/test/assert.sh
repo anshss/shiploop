@@ -35,6 +35,14 @@ export _GOVERN_ASSUME_MERGE_ALLOWED=1
 # it explicitly per case.
 unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
 
+# Hermetic sizing: the #21 scout runs a REAL `claude -p` pass on the dispatch path, so leaving it on
+# would (a) make every run-loop test issue an implicit model call and (b) burn one invocation of the
+# stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"
+# fixture by one and failing tests that have nothing to do with sizing. Off by default here; the
+# scout's own test (test-scout-sizing.sh) exercises the deterministic scorer directly and sets what
+# it needs explicitly.
+export GOVERN_SCOUT=0
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it
