@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.13.2 — 2026-07-26
+
+The cost release. Three levers, all aimed at the same target: the tokens a ticket spends on
+*exploration* rather than on the fix. Sizing stops being a guess, a failed attempt stops being a
+total loss, and a fix that already exists upstream stops being rediscovered from scratch.
 
 ### Added
 
@@ -57,6 +61,34 @@
   `16000`), with the full file left on disk. First attempts are unchanged apart from the standing
   instruction to keep notes; a retry with no notes file injects nothing. The scratchpad is
   git-ignored, so it never lands in a PR.
+
+- **Upstream-drift pre-gate — the harness stops paying to re-derive a fix the hub already has.** A
+  workspace that dogfoods shiploop as its own sub-repo has, for every mechanism script under
+  `scripts/govern/` (and `scripts/worktree/`, `scripts/lib/`, `governor/`), a template counterpart in
+  the hub — and another fleet may have already ported the identical fix upward. Root `CLAUDE.md`'s
+  "workspace ↔ hub drift" anti-pattern told a *human* to diff the two before authoring a fresh fix,
+  but nothing enforced it, so a worker could burn a full session (~$10) rediscovering a fix that was
+  one `/shiploop:update` away.
+
+  Before dispatch, the gate reads the ticket's `Where:`/`Files:` line and, for each live path it
+  names, asks whether the hub is ahead on that exact file. **The direction test is the whole trick:**
+  `live != tpl` proves the two sides disagree but says nothing about who moved. `sync-templates.sh`
+  already answers that — its marker records the harness commit the templates are synced through, and
+  `--paths` lists the mirrored files this workspace changed since then, i.e. unported *local* work.
+  So differs-and-in-`--paths` means the workspace is ahead (spawn normally), while
+  differs-and-not-in-`--paths` means the hub is ahead (surface it instead). Reusing
+  `sync-templates.sh` rather than re-deriving the live↔template mapping also inherits every exclusion
+  it already encodes, for free.
+
+  Four load-bearing safety properties, each asserted by tests: it is **deterministic** (pure file and
+  git reads — no LLM call, no network, no writes); it **can never mark a ticket resolved**, its only
+  outcome being park-and-escalate, which is strictly weaker than what a worker could have done; it
+  **fails open**, so anything unclear dispatches a worker exactly as before; and it is scoped to
+  tickets naming mirrored mechanism paths, leaving an ordinary product backlog untouched.
+
+  The codemod-detection half of the original proposal was **explicitly declined** rather than shipped
+  half-safe: a false positive that "resolves" a ticket without fixing it is far worse than a missed
+  optimization.
 
 ## 1.13.1 — 2026-07-26
 
