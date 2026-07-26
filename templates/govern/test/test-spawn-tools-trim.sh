@@ -170,13 +170,13 @@ assert_eq "$(printf '%s' "$out4" | jq -r '.tools')" "--tools Bash,Read" \
 # 6. Content lock on the recommended list. A worker that loses one of these fails its ticket, which
 # costs far more than the prefix saved — so the keeps are asserted, not assumed. The cuts are the
 # measured-largest tools a headless `-p` worker structurally cannot use.
-for t in Bash Read Edit Write Glob Grep Agent WebFetch WebSearch; do
+for t in Bash Read Edit Write Glob Grep Agent WebFetch WebSearch Monitor ScheduleWakeup SendMessage; do
   case ",${tools1#--tools }," in
     *",$t,"*) printf 'ok   - %s\n' "recommended allow-list keeps $t" ;;
     *) printf 'FAIL - %s\n' "recommended allow-list MUST keep $t"; ASSERT_FAILS=$((ASSERT_FAILS+1)) ;;
   esac
 done
-for t in Workflow ScheduleWakeup EnterWorktree ExitWorktree CronCreate DesignSync Monitor; do
+for t in Workflow EnterWorktree ExitWorktree CronCreate DesignSync; do
   case ",${tools1#--tools }," in
     *",$t,"*) printf 'FAIL - %s\n' "recommended allow-list MUST NOT include $t (measured dead weight)"
               ASSERT_FAILS=$((ASSERT_FAILS+1)) ;;
