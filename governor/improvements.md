@@ -227,3 +227,12 @@ Based on this run's supervisor notes, I found one concrete, well-grounded harnes
 - `governor/supervisor-prompt.md`: extend the "Output contract" to document `skipThisRun` (array of ticket #s), `attemptNext` (array of ticket #s), and `waitForMerge` (array of `{ticket, dependsOn}` or `{ticket, pr, repo}`) — `run-loop.sh:1826-1865` already fully implements all three, but the prompt never tells the supervisor they exist, so every finding can only go into free-text `concerns`, which is just logged for a human and never changes what `select-ticket.sh` picks next. Evidence: the identical "#44 is stale, re-verify before dispatch" finding was independently re-derived and re-logged in two consecutive supervisor passes (after #21 and after #24) — `skipThisRun: [44]` on the first pass would have prevented that. Same root cause explains why three same-file collision clusters (`#44/#52/#55`, `#40/#44/#52/#55`+`#62`D on `run-loop.sh`; `#59/#62`C/`#63` on `spawn-worker.sh`) were flagged in prose only, with no enforcement — `waitForMerge: [{ticket:55, dependsOn:52}]`-style entries already persist exactly this kind of ordering across runs via `pending-waits.json`, but the supervisor is never told the field exists.
 
 Full detail and verification steps are in the plan file. This run itself was clean (3/3 resolved, no fails/parks/escalations) — the friction is purely in how the supervisor's already-correct findings fail to reach an actionable mechanism.
+
+## 2026-07-26 17:29 — run run-20260726-165215-2261 (resolved/parked/failed observed)
+
+Two concrete, non-duplicative harness findings from this run:
+
+- `governor/supervisor-prompt.md`: the output contract doesn't document `skipThisRun`/`attemptNext`/`waitForMerge`, which `run-loop.sh` already fully implements — so this run's ordering notes (defer #38, sequence #52 before #40/#55) landed as inert prose instead of actionable, persisted deferrals.
+- `scripts/govern/lib/common.sh` + `lint-tickets.sh`: no mechanism acts on a consolidation ticket's own self-declared supersession — `#62` already states in its body that it supersedes `#38`, but nothing closes or flags `#38`, so it keeps getting manually re-flagged run after run.
+
+I left out the #25/#26 and #40/#52/#55 clustering issues since those are already thoroughly tracked (and unimplemented) in `governor/improvements.md` and `#62` itself — re-raising them would be the exact duplication anti-pattern this review is meant to catch.
