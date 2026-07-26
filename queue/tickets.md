@@ -605,3 +605,30 @@ Fix direction: edit #59's body to quote the measured figures and point at shiplo
 Done when: #59 no longer contains the 65.4% or 17.1% figures, cites the measured split with a pointer to PROOF.md section 5, and names measure-prefix.sh as the instrument to use.
 
 ---
+
+## #71 — Governor has per-attempt spend telemetry but no run-level ceiling — a bad run has no brake
+
+**Severity:** Medium
+**Model:** sonnet
+**Effort:** medium
+
+Where: `shiploop/templates/govern/run-loop.sh` (the backlog selection loop + the `spawn_worker_tracked` chokepoint at ~line 473, alongside the existing `MAX_TICKETS` / `PARALLEL_DEFAULT` bounds), plus a knob in `lib/common.sh` and a hub test under `templates/govern/test/`.
+
+Observed: the loop already MEASURES spend precisely — `history_enrich()` (~line 352) sums `tokens` and `costUsd` per ticket across all of a run's attempts, reading the per-spawn `attempts.jsonl` rows. Nothing consumes that number as a limit. The only bounds on a run are `GOVERN_MAX_TICKETS` (default 20) and `GOVERN_PARALLEL_DEFAULT` (default 4), which bound ticket COUNT and concurrency, not spend.
+
+Spend per ticket is not uniform enough for a count bound to substitute: #45 records a ~100x intra-session spread ($0.34 to $33.66 across 13 tickets, 181.6M tokens total). Failure is the expensive direction and it compounds — a `budget` or `judgment` retry class deliberately escalates the tier (`resolve_sizing` in `spawn-worker.sh`), so a ticket that keeps failing is re-attempted at progressively higher cost, and with a 4-way fan-out a systematically broken state (bad base, red CI, missing credential) burns that on four drivers at once before anyone looks. #56 is the same shape: a fleet-wide CLI-flag outage presented as N ordinary ticket failures with no signal.
+
+So the harness can currently observe, after the fact, that a run cost $100, but has no way to have been told to stop at $40. This is the gap between telemetry and a guardrail.
+
+Fix direction: add a run-level ceiling consumed by the selection loop, not by the worker.
+- `GOVERN_RUN_BUDGET_USD` and/or `GOVERN_RUN_BUDGET_TOKENS`, unset = off (no behavior change by default — the suite must stay green with the knob absent, per the `assert.sh` hermetic-default precedent for `GOVERN_FIX_CI`/`GOVERN_RETRY_CLASS`).
+- Check the accumulated run total at the TOP of the selection loop, before claiming the next ticket — a mid-worker kill would waste the spend already incurred and orphan a worktree. Stop selecting, let in-flight workers finish, then run the normal end-of-run blocks (bookkeeping, escalations, health, sync-port) so a budget stop is an orderly halt, not an abort.
+- Distinct terminal reason (`budget-halt`) in the run summary and `state.jsonl`, so a budget stop is never read as "backlog drained". Note #32 is adding a `budget-exceeded` bucket to `govern-health.sh` for the existing PER-WORKER status — this is a RUN-level reason and must not be conflated with it.
+- Under `--parallel`, the total is cross-driver, so the accumulator has to be the run-scoped file the drivers already share (`$RUNDIR`), not per-process state. Per the root CLAUDE.md fan-out note, do the arithmetic rather than dividing the ceiling by the driver count.
+- Log the halt loudly with the running total and the ceiling; a silent stop reads as a drained queue.
+
+Done when: a run with the knob set halts selection once the accumulated spend crosses the ceiling and reports a distinct budget-halt reason; in-flight workers are allowed to finish and every end-of-run block still executes; the accumulator is correct under `--parallel` (cross-driver, not per-process); the knob unset changes nothing and the full scaffolded suite stays green; a hub test under `templates/govern/test/` covers both the halt and the default-off path; hub and workspace copies stay in sync.
+
+Ref: session 2026-07-26 — surfaced while auditing shiploop's own token cost (PR anshss/shiploop#108, which cut the always-on context tax). Raised to the operator as the second of two suggested changes; the first (the retry-tier floor) was investigated and REJECTED as correct-by-design — `test-retry-escalation.sh` shows `infra`/`ci` classes deliberately hold their tier and `budget`/`judgment` are exactly where escalation is the right response. This ceiling is the part that remains a real gap. Related but distinct: #45 (measures cost, does not bound it), #32 (health-dashboard bucket for the per-worker status).
+
+---
