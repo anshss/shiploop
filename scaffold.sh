@@ -274,6 +274,7 @@ component_core_scripts() {
   cp "$T/hooks/router-posture-reminder.sh" scripts/
   cp "$T/hooks/router-posture-guard.sh" scripts/
   cp "$T/hooks/validations-pending-hook.sh" scripts/
+  cp "$T/hooks/learnings-digest.sh" scripts/
   chmod +x scripts/*.sh
   # sourced libs (no +x needed but harmless)
   cp "$T/lib/session-state.sh" scripts/lib/
@@ -370,6 +371,10 @@ component_seeds() {
   [ -f queue/tickets-parked.md ] || cp "$T/seed/tickets-parked.md" queue/
   [ -f learnings.md ]            || cp "$T/seed/learnings.md" .
   [ -f CLAUDE.md ]               || cp "$T/seed/CLAUDE.md" .
+  # The on-demand half of the CLAUDE.md split. CLAUDE.md is re-sent every turn; this is not, so it is
+  # where reference tables and rule rationale live. Seeded even on an existing fleet whose CLAUDE.md
+  # predates the split — an absent appendix is what makes operators keep growing the always-on file.
+  [ -f CLAUDE-APPENDIX.md ]      || cp "$T/seed/CLAUDE-APPENDIX.md" .
   # Flow registry (validations feature): .claude/shiploop/validation/flows.md + the evidence sink dir. Never overwrite.
   if [ ! -f .claude/shiploop/validation/flows.md ] && [ -f "$T/seed/.claude/shiploop/validation/flows.md" ]; then
     mkdir -p .claude/shiploop/validation/evidence/assets
@@ -541,7 +546,7 @@ component_settings() {
   "hooks": {
     "SessionStart": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
-      { "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 },
+      { "type": "command", "command": "bash $root/scripts/learnings-digest.sh 2>/dev/null || true", "timeout": 10 },
       { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 },
       { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
     ]}],
@@ -601,7 +606,7 @@ component_settings_merge() {
 EOF
 )
   ss_learn=$(cat <<EOF
-{ "type": "command", "command": "if [ -f $root/learnings.md ]; then echo '── workspace learnings ──'; head -30 $root/learnings.md; echo '...'; fi", "timeout": 5 }
+{ "type": "command", "command": "bash $root/scripts/learnings-digest.sh 2>/dev/null || true", "timeout": 10 }
 EOF
 )
   ss_main=$(cat <<EOF
@@ -641,7 +646,7 @@ EOF
     '[
       {event:"SessionStart", matcher:"*", items:[
         {marker:"session-snapshot\\.sh",         hook:$ss_snap},
-        {marker:"learnings\\.md",                hook:$ss_learn},
+        {marker:"learnings-digest\\.sh",         hook:$ss_learn},
         {marker:"check-main-on-main\\.sh",       hook:$ss_main},
         {marker:"validations-pending-hook\\.sh", hook:$ss_val}
       ]},
@@ -653,7 +658,21 @@ EOF
   local jq_prog
   jq_prog=$(cat <<'JQ'
 def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
-reduce $spec[] as $e (
+# MIGRATION (in place, not append): the SessionStart learnings slot used to be an inline
+# `head -30 learnings.md`, which injected the file's format preamble instead of its entries and
+# emitted 18 lines of "this file is empty" on a fresh fleet. Rewrite it to the digest script rather
+# than appending alongside it — appending would double the output, and the marker check below would
+# never fire on an existing fleet because the legacy command carries no `learnings-digest.sh`.
+( if .hooks.SessionStart then
+    .hooks.SessionStart |= map(
+      if .hooks then
+        .hooks |= map(
+          if ((.command? // "") | test("head +-n? *[0-9]+ +[^ ]*learnings\\.md"))
+          then (.command = $newlearn | .timeout = 10)
+          else . end)
+      else . end)
+  else . end )
+| reduce $spec[] as $e (
   (if .hooks == null then .hooks = {} else . end);
   event_cmds($e.event) as $have
   | ($e.items | map(. as $it | select(($have | test($it.marker)) | not) | $it.hook)) as $missing
@@ -664,7 +683,8 @@ reduce $spec[] as $e (
 JQ
 )
   local tmp; tmp="$(mktemp)"
-  if jq --argjson spec "$spec" "$jq_prog" "$target" > "$tmp"; then
+  local newlearn; newlearn="$(printf '%s' "$ss_learn" | jq -r '.command')"
+  if jq --argjson spec "$spec" --arg newlearn "$newlearn" "$jq_prog" "$target" > "$tmp"; then
     if ! diff -q "$target" "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$target"
       info "merged harness hook stanzas into $target"
@@ -691,7 +711,7 @@ probe_files() {
       for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard validations-pending-hook; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard validations-pending-hook learnings-digest; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks; do
@@ -968,13 +988,24 @@ if [ "$DO_GIT_INIT" -eq 1 ]; then
     log "git init"
     git init -q
     git config core.hooksPath .githooks
-    git add scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
-            queue learnings.md CLAUDE.md README.md \
-            .claude/settings.json .claude/commands .claude/skills .claude/workflows \
-            validation 2>/dev/null || true
-    git -c user.email=scaffold@shiploop -c user.name=scaffold \
-        commit -q -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)" || true
-    info "initial commit created"
+    # `git add` is ATOMIC over its pathspec: one missing path aborts the whole call and stages
+    # NOTHING. `validation` is not produced by any component, so this list always contained a
+    # non-existent path — and with `2>/dev/null || true` swallowing the error, `--git-init` has been
+    # silently producing an EMPTY initial commit. Filter to paths that exist before staging.
+    git_add_paths=""
+    for p in scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
+             queue learnings.md CLAUDE.md CLAUDE-APPENDIX.md README.md \
+             .claude/settings.json .claude/commands .claude/skills .claude/workflows validation; do
+      [ -e "$p" ] && git_add_paths="$git_add_paths $p"
+    done
+    # shellcheck disable=SC2086 — deliberate word splitting into a pathspec list.
+    if [ -n "$git_add_paths" ] && git add $git_add_paths; then
+      git -c user.email=scaffold@shiploop -c user.name=scaffold \
+          commit -q -m "chore: scaffold meta-repo workspace tooling (governor, worktrees, tickets, hooks)" || true
+      info "initial commit created ($(git ls-files | wc -l | tr -d ' ') files)"
+    else
+      warn "nothing staged — skipping the initial commit"
+    fi
   else
     info "git already initialized — skipping init"
   fi

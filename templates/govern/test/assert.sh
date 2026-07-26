@@ -87,4 +87,10 @@ assert_contains() { # haystack needle message
   if grep -qF "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
   else printf 'FAIL - %s\n       [%s] not found in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
 }
+assert_not_contains() { # haystack needle message
+  # Same here-string reasoning as assert_contains (#183) — never pipe the haystack into a -q grep.
+  if grep -qF "$2" <<<"$1"; then
+    printf 'FAIL - %s\n       [%s] unexpectedly PRESENT in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+  else printf 'ok   - %s\n' "$3"; fi
+}
 assert_done() { [[ "$ASSERT_FAILS" -eq 0 ]] || { printf '\n%d assertion(s) failed\n' "$ASSERT_FAILS"; exit 1; }; printf '\nall assertions passed\n'; }
