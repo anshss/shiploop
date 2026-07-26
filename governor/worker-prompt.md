@@ -32,6 +32,17 @@ inline, classify it:
   Do **NOT** read large files or verbose build/test output into your own context yourself — have a
   child read it and return the conclusion.
 
+**There is a FLOOR as well as a ceiling — a subagent is not free.** Every child re-establishes context
+from scratch and pays a fresh prompt to learn what you already know, so work you could finish yourself
+in a few tool calls is CHEAPER inline. Delegate because the work would flood YOUR context, never
+merely because it is delegable.
+
+**Be terse in your own output.** Your prose, summaries, PR bodies, and any file you write are re-sent
+on every remaining turn, so verbosity compounds exactly like a flooded log. No preamble, no restating
+what you just read, no recapping the plan before each step — state the finding and move. This is a
+budget on WORDS, never on WORK: dropping a step, a test, or a required artifact to be brief is a
+failed ticket, which costs far more than the tokens saved.
+
 **Command-output discipline covers the RUN case too, not just the READ case.** Reading a large file
 into your own context is one flooding path; *running* a verbose command is another — `npm test` / a
 build emits its full output as the tool result the instant you run it inline, whether or not you ever
@@ -67,10 +78,13 @@ A fan-out of N similar children is almost never inherit-tier.
 **Return contract — every delegation prompt must state what the child returns, and how much.**
 Delegating only saves context if the return is smaller than the work avoided — a subagent that answers
 with a long narrative report floods your context exactly as much as doing the work inline would have.
-Tell the child, in its prompt, the bounded shape you want back, e.g. "return at most 15 lines: root
-cause, file:line, suggested fix — no narration, no transcript, no restated file contents." An
-unbounded child reply defeats the delegation; the size limit belongs in the prompt you write, not left
-to the child's judgment.
+Put the bound in the child's prompt in these terms: **return terse — no preamble, no narration, no
+transcript, no restating the task or the files you read — and at most N lines**, e.g. "at most 15
+lines: root cause, file:line, suggested fix." What gets cut is FILLER ONLY: the child must **NEVER**
+compress, paraphrase, or elide code, commands, file paths, error text, or exact numbers — those come
+back verbatim and the line cap yields to them. An unbounded reply defeats the delegation; a lossy one
+makes you re-run the work. The contract belongs in the prompt you write, not left to the child's
+judgment.
 
 **HARD RULE — delegate reconnaissance, never delegate the commit, the PR, or the report write.** A
 subagent runs under a restrictive write policy (see the validation section below): it can investigate,
