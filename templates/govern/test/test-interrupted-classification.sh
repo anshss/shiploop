@@ -46,7 +46,8 @@ exit 0
 EOF
 chmod +x "$TMP/fake-claude-interrupted.sh"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the `claude --help` capability probe (common.sh test seam) — this
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the `claude --help` capability probe (common.sh test seam) — this
 # fake claude has no --help branch, and letting the probe fall through to the stub's stateful
 # call-counter logic would consume an extra invocation before the real attempt #1 runs.
 out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
@@ -57,6 +58,7 @@ out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
   GOVERN_CLAUDE_BIN="$TMP/fake-claude-interrupted.sh" \
   GOVERN_WORKER_TIMEOUT=30 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   "$SPAWN" 7 </dev/null)"
 
 assert_eq "$(printf '%s' "$out" | jq -r '.status')" "interrupted" "self-exit mid-stream drop → status:interrupted (NOT failed/infra) [#34]"
@@ -121,7 +123,8 @@ printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
 EOF
 chmod +x "$T/bin/claude"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe — the stub claude below is a
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe — the stub claude below is a
 # counter-driven fake with no --help branch; the probe would consume attempt #1 itself and shift
 # the counter-driven "first attempt drops, retry resolves" sequencing by one call.
 out2="$(PATH="$T/bin:$PATH" \
@@ -140,6 +143,7 @@ out2="$(PATH="$T/bin:$PATH" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=30 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   bash "$RL" 2>&1)"
 
 state="$(ls -t "$T"/logs/run-*/state.jsonl | head -1)"
@@ -196,7 +200,8 @@ exit 0
 EOF
 chmod +x "$T/bin/claude"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe — this stub always returns the
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe — this stub always returns the
 # mid-response drop and has no --help branch; the probe is an orthogonal invocation this harness
 # was never designed to answer.
 out3="$(PATH="$T/bin:$PATH" \
@@ -214,6 +219,7 @@ out3="$(PATH="$T/bin:$PATH" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=30 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   bash "$RL" 2>&1)"
 
 state="$(ls -t "$T"/logs/run-*/state.jsonl | head -1)"
@@ -288,7 +294,8 @@ exit 0
 EOF
 chmod +x "$T/bin/claude"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe (see earlier occurrences in this
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe (see earlier occurrences in this
 # file for the full rationale — this stub has no --help branch either).
 out4="$(PATH="$T/bin:$PATH" \
   ROOT_PM=npm \
@@ -306,6 +313,7 @@ out4="$(PATH="$T/bin:$PATH" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=30 \
   GOVERN_MAX_BAD_STREAK=2 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   bash "$RL" 2>&1)"
 
 assert_contains "$out4" "circuit breaker" "consecutive interrupts trip the in-run circuit breaker [#34 LOCKED]"

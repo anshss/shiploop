@@ -16,20 +16,18 @@
 # and can never be clobbered.
 #
 # Usage:
-#   scripts/govern/file-ticket.sh [--model haiku|sonnet|opus] [--effort low|medium|high|xhigh|max] \
+#   scripts/govern/file-ticket.sh [--flow <id[,id…]>] [--flow-op validate|remove] \
 #     "Short title" [Severity] < body.md
 #   printf 'Where: ...\nObserved: ...\nDone when: ...\n' | scripts/govern/file-ticket.sh "Title" Low
 #
-# --model pins the model the governor uses for THIS ticket's FIRST-attempt worker (any retry
-# escalates to GOVERN_WORKER_MODEL unconditionally). The brain filing the ticket decides —
-# haiku for mechanical/single-file work, sonnet for standard search+edit, opus for
-# judgment-heavy tickets. Unknown values are dropped with a warning (fail-safe).
-#
-# --effort pins the reasoning effort for THIS ticket's FIRST-attempt worker (same
-# first-attempt-only / retry-escalates-away rule as --model, via the ticket's Effort: field —
-# see spawn-worker.sh). Raising effort is far cheaper than raising model tier, so it's the
-# correct first rung on the escalation ladder. Unknown values are dropped with a warning
-# (fail-safe). Absent → no Effort: field is emitted, so the governor passes no --effort flag.
+# REMOVED — `--model` / `--effort`. Worker sizing is a MEASUREMENT now, not a filing-time guess: the
+# scout (scout-ticket.sh) greps the real code pre-dispatch and its verdict decides the tier. A field
+# written at filing time, before any evidence exists, by whoever happened to notice the bug used to
+# OUTRANK that measurement — backwards, and it is gone. Both flags are still ACCEPTED and ignored
+# with one log line so an older caller (or a `/setup` doc a fleet copied) degrades cleanly instead of
+# consuming its value as the ticket title; queue entries still carrying `**Model:**` / `**Effort:**`
+# are likewise inert. `GOVERN_MEASURED_SIZING=0` in spawn-worker.sh restores the old precedence for
+# entries that still have the fields.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -40,29 +38,18 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
-model_field=""
-effort_field=""
 flow_field=""
 flow_op_field=""
-# --model, --effort, --flow, --flow-op may appear in any order before the title. --flow <id[,id…]>
-# tags this ticket as a flow-registry validation; spawn-worker injects the flow block(s) and
-# bookkeep stamps the registry. --flow-op remove marks it a KILL removal ticket (bookkeep
-# tombstones the flow on resolve).
+# --flow, --flow-op may appear in any order before the title. --flow <id[,id…]> tags this ticket as
+# a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the
+# registry. --flow-op remove marks it a KILL removal ticket (bookkeep tombstones the flow on
+# resolve). --model/--effort are accepted-and-ignored (see the header).
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
-    --model)
-      case "${2:-}" in
-        haiku|sonnet|opus) model_field="$2" ;;
-        "") govern::die "--model requires a value (haiku|sonnet|opus)" ;;
-        *) govern::log "file-ticket: unknown model tier '$2' — ignoring (allowlist: haiku|sonnet|opus)" ;;
-      esac
-      shift 2 ;;
-    --effort)
-      case "${2:-}" in
-        low|medium|high|xhigh|max) effort_field="$2" ;;
-        "") govern::die "--effort requires a value (low|medium|high|xhigh|max)" ;;
-        *) govern::log "file-ticket: unknown effort tier '$2' — ignoring (allowlist: low|medium|high|xhigh|max)" ;;
-      esac
+    --model|--effort)
+      # Deprecated: sizing is measured, not guessed at filing time. Swallow the value so it can
+      # never be mistaken for the title, say so once, and carry on.
+      govern::log "file-ticket: $1 is no longer used — worker sizing is measured by the scout pre-dispatch; ignoring '${2:-}'"
       shift 2 ;;
     --flow)
       [[ -n "${2:-}" ]] || govern::die "--flow requires a value (flow-id[,flow-id…])"
@@ -85,22 +72,10 @@ title="${1:?ticket title required (arg 1)}"
 sev="${2:-Medium}"
 body="$(cat)"
 [[ -n "${body//[[:space:]]/}" ]] || govern::die "ticket body required on stdin"
-# Emit the Model: field DIRECTLY UNDER **Severity:** so ordering matches the seed tickets.md
-# example (Severity → Model → body fields) — same leading-field-block shape spawn-worker.sh
-# extracts from. `model_block` is spliced into the printf below.
+# Kept as an empty splice slot so the two printf call sites below (legacy append-only path and the
+# atomic path) stay identical in shape. No sizing field is ever emitted any more.
 model_block=""
-if [[ -n "$model_field" ]]; then
-  model_block="**Model:** $model_field
-"
-fi
-# Effort: field (parallel to Model: — an INDEPENDENT knob, NOT a reuse of the model plumbing).
-# Emitted in the same leading field block so spawn-worker's anchored latch can read it.
-if [[ -n "$effort_field" ]]; then
-  model_block="${model_block}**Effort:** $effort_field
-"
-fi
-# Flow: field (parallel to Model: — NOT a reuse of the model plumbing). Emitted in the same leading
-# field block so spawn-worker's anchored latch can read it.
+# Flow: field. Emitted in the leading field block so spawn-worker's anchored latch can read it.
 flow_block=""
 if [[ -n "$flow_field" ]]; then
   flow_block="**Flow:** $flow_field

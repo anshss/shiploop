@@ -25,7 +25,8 @@ scripts, the ticket queue, the governor, and shared AI context.
    **Size the child:** `haiku` = mechanical/extract/lookup · `sonnet` = search/investigate/standard
    edits · inherit only for judgment-heavy synthesis, architecture, or final review. A fan-out of N
    similar children is almost never inherit-tier. On a cheap-tier failure retry once higher — never the
-   reverse. Same guide applies to a ticket's `Model:` field.
+   reverse. (This is about children YOU spawn. Do not size a ticket when you file one — a governor
+   worker's tier is measured pre-dispatch by the scout, not declared in the ticket.)
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint.** Confirm it's
    real and locate the root cause first; a discussion turn ends with the finding, not a new `## #N`.

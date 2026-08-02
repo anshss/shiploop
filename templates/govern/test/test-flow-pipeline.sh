@@ -18,11 +18,19 @@ export GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_TICKET_SEQ_FILE="$T/.ticket-se
 : > "$GOVERN_TICKETS_FILE"
 n1="$(printf 'Where: x\nDone when: y\n' | "$DIR/../file-ticket.sh" --flow "deploy.correctness" "Validate deploy path" Low)"
 assert_contains "$(cat "$T/tickets.md")" "**Flow:** deploy.correctness" "file-ticket --flow emits the Flow: field"
-# --model + --flow together, in either order, both land.
-n2="$(printf 'body\n' | "$DIR/../file-ticket.sh" --flow "a.b,c.d" --model haiku "Two flows" Low)"
+# --model is RETIRED (worker sizing is measured by the scout pre-dispatch, not declared at filing
+# time) but must still be ACCEPTED and ignored: an older caller — or a `/setup` doc a fleet already
+# copied — would otherwise have its tier value consumed as the ticket TITLE. So: no Model: field is
+# emitted, the --flow that follows it still lands, and the title is intact.
+n2="$(printf 'body\n' | "$DIR/../file-ticket.sh" --model haiku --flow "a.b,c.d" "Two flows" Low)"
 tblk="$(govern::ticket_block "$n2" "$T/tickets.md")"
-assert_contains "$tblk" "**Model:** haiku" "file-ticket: --model still lands alongside --flow"
-assert_contains "$tblk" "**Flow:** a.b,c.d" "file-ticket: --flow comma-list lands"
+if printf '%s' "$tblk" | grep -qF "**Model:**"; then
+  printf 'FAIL - %s\n' "file-ticket: --model must NOT emit a Model: field any more"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  printf 'ok   - %s\n' "file-ticket: --model is accepted and ignored — no Model: field emitted"
+fi
+assert_contains "$tblk" "**Flow:** a.b,c.d" "file-ticket: --flow comma-list lands after an ignored --model"
+assert_contains "$tblk" "Two flows" "file-ticket: the deprecated flag's value was swallowed, not taken as the title"
 
 # ── ticket_flow_ids: parses the Flow field (comma → space), anchored to the leading block.
 assert_eq "$(govern::ticket_flow_ids "$n1" "$T/tickets.md")" "deploy.correctness" "ticket_flow_ids: single id"
