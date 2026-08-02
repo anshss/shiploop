@@ -45,7 +45,8 @@ chmod +x "$TMP/fake-claude.sh"
 
 run_worker() { # ticket  [extra env assignments...]
   local n="$1"; shift
-  # _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe (common.sh test seam). fake-claude.sh
+  # _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+  # one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe (common.sh test seam). fake-claude.sh
   # has no --help branch; letting the probe fall through would append an extra un-enriched line to
   # $OTEL_SINK on every spawn, shifting the `sed -n 1p/2p` reads below off by one.
   GOVERN_TICKETS_FILE="$TMP/tickets.md" \
@@ -56,6 +57,7 @@ run_worker() { # ticket  [extra env assignments...]
   GOVERN_CLAUDE_BIN="$TMP/fake-claude.sh" \
   OTEL_SINK="$SINK" \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   "$@" "$SPAWN" "$n" >/dev/null
 }
 

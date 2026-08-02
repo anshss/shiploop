@@ -479,6 +479,32 @@ spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in 
   if [[ "${GOVERN_SCOUT:-1}" != "0" && "${MODE:-live}" != "dry" ]]; then
     "$DIR/scout-ticket.sh" "$n" >/dev/null || true
   fi
+  # Not every ticket earns a full-autonomy worker. When the parent session has EXPLICITLY asserted it
+  # is already warm on this exact ticket (govern::warm_assertion — a per-invocation GOVERN_WARM naming
+  # one ticket number, never a heuristic), the worker is handed the STATED CHANGE instead of exploring
+  # its way to it, and runs cheap. spawn-worker.sh owns that branch (it both sizes the worker and
+  # assembles the prompt, so tier and brief cannot disagree); what run-loop owns is the case
+  # spawn-worker cannot express — NOT SPAWNING AT ALL. Every ticket with no warm assertion dispatches
+  # byte-identically to before.
+  if govern::warm_assertion "$n"; then
+    if [[ -z "${GOVERN_WARM_TEXT//[[:space:]]/}" ]]; then
+      # NO WORKER. The parent asserted it is warm on this ticket but stated no change to make, so
+      # there is nothing for a worker to execute. PARK with the assertion recorded — never
+      # auto-resolve: "the parent thinks nothing is needed" is a claim for a human to confirm, and a
+      # silently dropped ticket is the one outcome this must not produce. The ticket stays in the
+      # queue. Synthesised here rather than spawned so the whole downstream park/escalation path is
+      # reused unchanged.
+      govern::log "worker #$n: NO-DISPATCH — the parent asserted it is warm on this ticket and named no change; parking with the assertion instead of spawning a worker"
+      jq -nc --arg t "$n" '{status:"parked", pr:null, prs:[], newTickets:[], crossRefs:{overlaps:[],dependsOn:[]}, migration:null,
+        validation:{required:false,ranLiveTest:false,evidence:""},
+        escalation:{title:"warm parent dispatched no worker",
+          reason:"the session driving this run asserted it is already warm on #\($t) and named no change to make, so no worker was spawned (GOVERN_WARM with an empty stated change)",
+          question:"confirm nothing is needed and close the ticket, or restate the change so a worker can execute it",
+          options:[]}}' > "$SPAWN_OUT" 2>/dev/null || printf '{"status":"parked","escalation":null}' > "$SPAWN_OUT"
+      return 0
+    fi
+    govern::log "worker #$n: EXECUTE-ONLY dispatch — the parent asserted it is warm on this ticket; the worker gets the stated change and runs at the cheap tier (GOVERN_EXECUTE_ONLY=0 to disable this branch)"
+  fi
   # #23: extra args are the co-batched tickets of #n's locality group (empty for a plain single spawn).
   "$DIR/spawn-worker.sh" "$n" "$@" >"$SPAWN_OUT" &
   WORKER_PID=$!
@@ -897,6 +923,38 @@ else
   govern::log "[dry] would re-check governor/pending-waits.json + defer tickets whose blocker is unresolved (#119)"
 fi
 
+# Self-improvement (observe → propose, never auto-apply): when a run hit friction, a fresh
+# read-only reviewer proposes concrete harness improvements into governor/improvements.md.
+#
+# ONE PASS PER RUN, NOT ONE PER DRIVER. This used to fire at the end of every driver, so an N-way
+# parallel run produced N reviews of N slices of the same run and filed N near-identical tickets —
+# #75 and #76 are the same wall-clock run, two drivers, two duplicate tickets. It is the same
+# mistake the supervisor flush already documents: a whole-run pass belongs in the ORCHESTRATOR,
+# over the AGGREGATED state after reaping, where it can see the run as a whole. A child driver only
+# ever sees its own slice, so its "review of the run" is structurally a review of a fragment.
+#
+# So: a child (`--orchestrated`) skips this; the orchestrator calls govern::_improve_final once
+# after reaping, right beside the whole-run supervisor pass. A serial / single-driver run is
+# unaffected — it IS the orchestrator, and takes this path exactly as before.
+# GOVERN_IMPROVE_PER_RUN=0 restores per-driver filing.
+govern::_improve_final() { # <rundir> <label> <nfail> <npark> <review-file>
+  local rundir="$1" label="$2" _nfail="${3:-0}" _npark="${4:-0}" review="${5:-}"
+  [[ "${GOVERN_IMPROVE:-1}" == "1" && "$MODE" == "live" ]] || return 0
+  [[ "$_nfail" -gt 0 || "$_npark" -gt 0 || -s "$review" ]] || return 0
+  govern::log "self-improvement review ($label) → governor/improvements.md"
+  "$DIR/govern-improve.sh" "$rundir" >/dev/null 2>&1 || govern::log "improve step skipped (error)"
+  # CLASSIFIED promotion bridge: auto-file the SAFE/additive proposals govern-improve just appended
+  # as a ticket (via file-ticket.sh) so the governor drains them like any ticket, removing the manual
+  # promote step. Rail-touching / OPERATOR-DECISION proposals (GOVERN_MAX_* bounds, merge allowlist,
+  # permission mode, green-or-none gate) are NEVER auto-queued — they stay human-gated in
+  # improvements.md. Default ON; GOVERN_IMPROVE_TRIAGE=0 to disable. Scoped to THIS run's block by run-id.
+  if [[ "${GOVERN_IMPROVE_TRIAGE:-1}" == "1" ]]; then
+    "$DIR/govern-improve-triage.sh" "$(basename "$rundir")" >/dev/null 2>&1 \
+      || govern::log "improve-triage step skipped (error)"
+  fi
+  return 0
+}
+
 # ── out-of-loop supervisor pass (shared by the run-tail flush and the whole-run pool review) ─────
 # Runs ONE supervisor review over $1 (a run dir) and records its concerns into $REVIEW under label $2.
 # Only `concerns` are acted on here, deliberately: skipThisRun / attemptNext / waitForMerge / halt all
@@ -1048,6 +1106,16 @@ govern::_parallel_run() {
   if [[ "${GOVERN_SUPERVISOR_FLUSH:-1}" == "1" && "$PARALLEL_TRES" -gt 0 ]]; then
     govern::log "supervisor review (whole-run pool: $spawned driver(s), $PARALLEL_TRES resolved)"
     govern::_supervise_final "$RUNDIR" "whole-run"
+  fi
+  # The ONE whole-run self-improvement pass, for exactly the reason the supervisor flush above
+  # exists: a child driver reviewing "the run" is reviewing its own slice of it. Firing per driver
+  # made an N-way run file N near-identical self-improvement tickets (#75/#76 are one wall-clock
+  # run, two drivers, two duplicates). Here it runs once, over the orchestrator's AGGREGATED
+  # state.jsonl. Children skip their own pass via GOVERN_IMPROVE_PER_RUN (see govern::_improve_final).
+  # GOVERN_IMPROVE_PER_RUN=0 → children file per-driver as before and this pass is skipped.
+  if [[ "${GOVERN_IMPROVE_PER_RUN:-1}" != "0" ]]; then
+    govern::_improve_final "$RUNDIR" "whole-run pool: $spawned driver(s)" \
+      "$PARALLEL_TFAIL" "$PARALLEL_TPARK" "$REVIEW"
   fi
   nres="$PARALLEL_TRES"; npark="$PARALLEL_TPARK"; nfail="$PARALLEL_TFAIL"
   ntimeout="$PARALLEL_TTIME"; nintr="$PARALLEL_TINTR"
@@ -1948,21 +2016,12 @@ fi
 # truth; the single final emit below (search "#337: authoritative run-end emit") writes pending
 # exactly once, last.
 
-# Self-improvement (observe → propose, never auto-apply): when a run hit friction, a fresh
-# read-only reviewer proposes concrete harness improvements into governor/improvements.md.
-if [[ "${GOVERN_IMPROVE:-1}" == "1" && "$MODE" == "live" ]] \
-   && { [[ "${nfail:-0}" -gt 0 ]] || [[ "${npark:-0}" -gt 0 ]] || [[ -s "$REVIEW" ]]; }; then
-  govern::log "self-improvement review → governor/improvements.md"
-  "$DIR/govern-improve.sh" "$RUNDIR" >/dev/null 2>&1 || govern::log "improve step skipped (error)"
-  # CLASSIFIED promotion bridge: auto-file the SAFE/additive proposals govern-improve just appended
-  # as a ticket (via file-ticket.sh) so the governor drains them like any ticket, removing the manual
-  # promote step. Rail-touching / OPERATOR-DECISION proposals (GOVERN_MAX_* bounds, merge allowlist,
-  # permission mode, green-or-none gate) are NEVER auto-queued — they stay human-gated in
-  # improvements.md. Default ON; GOVERN_IMPROVE_TRIAGE=0 to disable. Scoped to THIS run's block by run-id.
-  if [[ "${GOVERN_IMPROVE_TRIAGE:-1}" == "1" ]]; then
-    "$DIR/govern-improve-triage.sh" "$(basename "$RUNDIR")" >/dev/null 2>&1 \
-      || govern::log "improve-triage step skipped (error)"
-  fi
+
+if [[ "$ORCHESTRATED" -eq 1 && "${GOVERN_IMPROVE_PER_RUN:-1}" != "0" ]]; then
+  govern::log "self-improvement review deferred to the orchestrator's whole-run pass (this driver is one slice of the run)"
+else
+  govern::_improve_final "$RUNDIR" "$([[ "$ORCHESTRATED" -eq 1 ]] && echo "per-driver" || echo "run tail")" \
+    "${nfail:-0}" "${npark:-0}" "$REVIEW"
 fi
 
 # Opt-in guarded auto-apply (GOVERN_SELF_APPLY=1): apply ONE proposal under strict guards; the

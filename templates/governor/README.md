@@ -80,9 +80,18 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   for a manual apply — it never merges code ahead of a schema it needs and forgets).
 
 ## Right-sizing + retry escalation (which model runs, and what a retry changes)
-- A ticket's `Model:` (`haiku|sonnet|opus`) and `Effort:` (`low|medium|high|xhigh|max`) fields are the
-  brain-decided sizing for its **first** attempt. `GOVERN_WORKER_MODEL` / `GOVERN_WORKER_EFFORT` are
-  the workspace floors, used when a ticket says nothing (an unknown value is dropped fail-safe).
+- Sizing is **measured, not declared**. Before dispatch, `scout-ticket.sh` runs a cheap read-only
+  `haiku` pass over the real code and answers six questions (files touched, repos involved, do tests
+  cover it, is there a precedent commit, is the change local or structural, is the fix direction
+  concrete or vague). A pure-bash scoring table — no second model call — turns that into
+  `(model, effort)`. `GOVERN_WORKER_MODEL` / `GOVERN_WORKER_EFFORT` are the workspace floors, used
+  when there is no usable verdict (scout disabled, timed out, or output rejected by the guard).
+- Tickets do **not** carry `Model:` / `Effort:` fields. They used to, and the filing-time guess
+  outranked the measurement — backwards, since the guess is made before any evidence exists. Legacy
+  entries still carrying them are inert. `GOVERN_MEASURED_SIZING=0` restores the old precedence.
+- The tier set is deliberately **coarse and must stay so**: the prompt cache is per-model and an
+  effort change invalidates the tools+system prefix, so spreading N tickets across N distinct
+  `(model, effort)` combinations fragments the cross-worker shared prefix that currently works.
 - A **retry** classifies *why* the prior attempt failed and escalates the axis that actually failed —
   it no longer always jumps to `GOVERN_WORKER_MODEL`, which used to re-bet the top tier on failures
   where the model was never the problem:
@@ -101,6 +110,37 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   `worker #N sizing: model=… effort=… retry-class=… — <reason>`.
 - `GOVERN_RETRY_CLASSIFY=0` — kill switch: pins every retry back to the old
   always-escalate-to-`GOVERN_WORKER_MODEL` behavior.
+- `GOVERN_MEASURED_SIZING=0` — kill switch: restores the old precedence in which a ticket's
+  `Model:`/`Effort:` field outranks the measured verdict.
+
+### Not every ticket earns a full worker
+Dispatch used to be unconditional: every ticket got a fresh headless worker that re-derived the
+codebase from scratch, however much the parent session already knew. The reason to spawn at all is
+that the work would flood the parent with output it will never reference again — so when the parent
+already holds the context, the spawn buys nothing and pays a cold start.
+
+The split is by **token weight, not by task**: the parent DECIDES (states the change it already
+knows), the worker EXECUTES (the edits, the test runs, the build errors, the retry loop, the PR —
+the verbose part, which stays in a throwaway context). "Let the parent do the work" would destroy
+the flat-parent property the governor exists for.
+
+    GOVERN_WARM="<ticket-number>|<what you read, and the change you believe is needed>" <run command>
+
+- The signal is **explicit and narrow, never inferred**: it names exactly ONE ticket, and it is
+  per-invocation, so it cannot rot in the queue the way a ticket field does. A malformed value is
+  ignored with a log line rather than guessed at.
+- With a stated change → an **execute-only worker**: it gets the change instead of exploring its way
+  to it, and runs at the cheapest existing tier (never a newly minted `(model, effort)` pair — that
+  would re-fragment the shared prompt-cache prefix). A retry escalates off that cheap tier as usual.
+- With an EMPTY change → **no worker at all**: the ticket is PARKED with the assertion recorded as an
+  escalation. Never auto-resolved — "the parent thinks nothing is needed" is a claim for a human to
+  confirm, and a silently dropped ticket is the one outcome this must not produce.
+- **The risk, stated plainly:** a warm parent can be stale or simply wrong, and an execute-only
+  worker will faithfully implement a wrong instruction where a cold worker would have re-derived the
+  truth. So the brief is falsifiable, not a command: it states what the parent *believes* and
+  instructs the worker to STOP and report rather than proceed if the code does not match.
+- `GOVERN_EXECUTE_ONLY=0` — kill switch: hard-disables the branch fleet-wide even when `GOVERN_WARM`
+  is set.
 
 ## Hard bounds (a run always ends; tune via env)
 - `GOVERN_MAX_TICKETS` (20) — stop after N tickets this run (caps a tickets-beget-tickets loop).
@@ -255,7 +295,14 @@ file, so even a stray Stop hook can't corrupt it — belt and suspenders.
 After a run that hit friction (any parked/failed ticket or supervisor concern), a fresh read-only
 reviewer (`govern-improve.sh`) appends concrete improvement proposals to `governor/improvements.md`. It
 only *proposes*; the operator reviews and applies. Safety rails (hard-stops, run bounds, permission
-gate, merge allowlist) are **never** auto-changed. Disable with `GOVERN_IMPROVE=0`. Opt-in guarded
+gate, merge allowlist) are **never** auto-changed. Disable with `GOVERN_IMPROVE=0`.
+
+The pass fires **once per run**, in the orchestrator, over the aggregated state after reaping — not
+once per driver. A child driver only ever sees its own slice of the run, so a per-driver "review of
+the run" is structurally a review of a fragment, and an N-way parallel run filed N near-identical
+tickets (two of them from the same wall-clock run). Triage also **appends to a standing ticket**
+rather than minting a new `## #N` each time, since the same friction recurs and produces the same
+proposal. `GOVERN_IMPROVE_PER_RUN=0` restores per-driver filing. Opt-in guarded
 auto-apply (`GOVERN_SELF_APPLY=1`, default OFF) applies ONE proposal under strict guards (edit-only
 agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-end so it takes effect
 next run.

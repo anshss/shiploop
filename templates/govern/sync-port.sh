@@ -444,7 +444,7 @@ for porter_attempt in 1 2; do
       -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
       GOVERN_RUN=1 GOVERN_REPORT_PATH="$report_path" "$CLAUDE_BIN" -p "$prompt" \
       --output-format stream-json --verbose \
-      --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
+      --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
       --permission-mode "${GOVERN_PERMISSION_MODE:-bypassPermissions}" \
       --model "$PORTER_MODEL" ) >"$jsonl" 2>&1 &
   cpid=$!

@@ -3,6 +3,14 @@
 # attempt's failure signature and escalates the axis that actually failed, instead of always
 # jumping to GOVERN_WORKER_MODEL and discarding the ticket's brain-decided Model:/Effort: fields.
 #
+# SIZING PRECEDENCE IS PINNED HERE ON PURPOSE. This file's subject is the RETRY CLASSIFIER — which
+# axis escalates, and by how much, given a failure signature. It needs a per-ticket BASELINE it can
+# state exactly, and the ticket Model:/Effort: fields are the cheapest way to fix one. Those fields
+# are inert in normal dispatch now (sizing is measured by the scout), so `run()` sets
+# GOVERN_MEASURED_SIZING=0 to select the legacy precedence deliberately. Two consequences worth
+# knowing: every baseline below is a FIXTURE, not a claim about default behavior; and this file
+# doubles as the regression test for that kill switch actually restoring the old path.
+#
 #   class      | evidence                                          | asserted response
 #   -----------|---------------------------------------------------|---------------------------
 #   infra      | GOVERN_RETRY_CLASS=infra (driver-declared)        | SAME tier + SAME effort
@@ -73,6 +81,7 @@ run() { # ticket force-retry [history-file] [worker-model] [worker-effort]
     GOVERN_HISTORY_FILE="$h" \
     GOVERN_WORKER_MODEL="$wm" \
     GOVERN_WORKER_EFFORT="$we" \
+    GOVERN_MEASURED_SIZING=0 \
     GOVERN_SPAWN_DRY_RUN=1 \
     GOVERN_SPAWN_FORCE_RETRY="$force" \
     "$SPAWN" "$n"
