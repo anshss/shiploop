@@ -42,7 +42,7 @@ MAX_LINES="${SHIPLOOP_LEARNINGS_MAX_LINES:-40}"      # hard ceiling on injected 
 # it grow unbounded is a permanent per-turn tax; this just flags the budget breach so a session
 # re-triages it (move topic-local narrative to CLAUDE-APPENDIX.md, delete anything the code/
 # tests/git history already record) rather than silently accreting forever.
-CLAUDE_MAX_CHARS="${SHIPLOOP_CLAUDEMD_MAX_CHARS:-20000}"
+CLAUDE_MAX_CHARS="${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}"
 CLAUDE_FILE="${2:-}"
 if [ -z "$CLAUDE_FILE" ]; then
   _claude_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || _claude_root=""
