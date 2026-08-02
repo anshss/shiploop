@@ -219,7 +219,8 @@ should have been one ticket; several findings out of one discussion are usually 
 A discovered gap goes to tickets.md, never learnings.md. If the operator rejected a filing decision \
 this session (\"that should be one ticket\", \"don't file that\"), that constraint binds here too. \
 (2) RESOLVED TICKETS — for any ticket whose fix PR you OPENED this session (PR opened = resolved, \
-not merged), DELETE its entry from tickets.md now; promote any durable lesson to CLAUDE.md first, \
+not merged), DELETE its entry from tickets.md now; promote any durable lesson to CLAUDE.md first \
+(only if settled, not already recorded, and statable in <=3 lines — otherwise CLAUDE-APPENDIX.md), \
 and name the PR number in the deletion commit. \
 If there is genuinely nothing to file and nothing to delete, say so in one line and stop. \
 Do not re-investigate or start new work — this is a bookkeeping pass only."
