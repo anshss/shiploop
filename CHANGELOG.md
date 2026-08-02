@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The internal ticket id is kept off PRs by default, in every workspace — not just public ones.**
+  `#N` is a local queue id: it means nothing to anyone reading the repo, and it advertises a private
+  tracker. Two controls existed, and both were narrower than the problem. The run-loop's
+  `govern::scrub_pr_ticket_ref` backstop ran on every PR but can only reach the **title and body** —
+  a **commit subject** is unreachable, because rewriting pushed history is a force-push and a hard
+  stop. The only control that ever covered commit subjects was the "PUBLIC-REPO PR HYGIENE" prompt
+  block, and that was injected only when some repo in the workspace was detected public. A
+  private-only fleet therefore shipped `#N` into commit subjects with nothing to stop it, and got its
+  titles fixed only after the worker had already written them.
+
+  Every worker prompt now carries a three-line default rule: no ticket id in the PR title, the PR
+  body, or any commit subject — describe the change on its own merits. The **branch is unchanged**
+  and still `ticket-<N>`; the governor links PRs to queue entries by branch, and the rule says so
+  explicitly so it cannot be read as contradicting `worker-prompt.md`. The public-repo block is
+  trimmed to what is now unique to it — the neutral `sl-<hex>` branch and the matching resource
+  naming — so no workspace pays for the same instruction twice.
+
+  `GOVERN_PR_TICKET_REF=1` restores the old behavior: the prompt block is dropped and the run-loop
+  scrub is skipped. It cannot weaken the existing public-repo guarantee — on a repo
+  `govern::repo_is_public` reports public, the scrub runs anyway and the prompt restates the rule.
+
 ## 1.14.0 — 2026-08-03
 
 The lighter release. The measured cost identity for a worker run is
