@@ -171,11 +171,9 @@ govern::valpending_apply_all() { # [validations-dir] [reader]
 # job's runner has typically stopped touching it — callers show the verdict instead, see the live
 # listing below).
 govern::valpending_heartbeat_age() { # jobdir -> seconds | "-"
-  local hb="$1/heartbeat" m
+  local hb="$1/heartbeat"
   [[ -f "$hb" ]] || { printf '%s' "-"; return 0; }
-  m="$(stat -c %Y "$hb" 2>/dev/null || stat -f %m "$hb" 2>/dev/null || echo 0)"
-  m="${m//[!0-9]/}"; [[ -n "$m" ]] || m=0
-  echo $(( $(date +%s) - m ))
+  echo $(( $(date +%s) - $(govern::mtime "$hb") ))
 }
 
 # Driver-facing live-jobs surface (spec §4 reader 3/3: `flows status` / `govern validations`).

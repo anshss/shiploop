@@ -98,7 +98,7 @@ set +e
     -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
     ANTHROPIC_BASE_URL="http://127.0.0.1:$port" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
-    --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
+    --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
     $strict_mcp $disable_slash_cmds $exclude_dyn $tools_flag \
     --permission-mode "$perm" --model "$model" $effort_flag ) >"$WORKER_JSONL" 2>&1
 rc=$?

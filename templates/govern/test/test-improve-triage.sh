@@ -118,4 +118,17 @@ new_annotated="$(awk '/run-NEW/{f=1} f' <<<"$impr_D" | grep -c 'AUTO-PROMOTED' |
 assert_eq "$old_annotated" "1" "D: OLD block annotated"
 assert_eq "$new_annotated" "0" "D: NEW block left un-annotated"
 
+# ── E. ONE STANDING TICKET — a later run APPENDS instead of minting a second `## #N` ──
+# Self-improvement proposals recur: the same friction produces the same proposal next run. Minting a
+# fresh ticket each time is how the queue accumulated #62/#67/#72/#75/#76 — five entries describing
+# one thing, reconciled by hand. The second triage below must reuse the first one's number.
+bash "$TRIAGE" run-NEW >/dev/null 2>&1 || true
+tickets_E="$(cat "$GOVERN_TICKETS_FILE")"
+assert_contains "$tickets_E" "SENTINEL_OLD_SAFE" "E: the first run's proposal is still there"
+assert_contains "$tickets_E" "SENTINEL_NEW_SAFE" "E: the second run's proposal was appended"
+assert_eq "$(grep -c '^## #' <<<"$tickets_E")" "1" \
+  "E: a second self-improvement run appends to the STANDING ticket — the queue gains no new entry"
+assert_contains "$tickets_E" "Also proposed after run run-NEW" \
+  "E: the appended block is attributed to the run that produced it"
+
 assert_done

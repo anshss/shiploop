@@ -21,10 +21,21 @@
 #                                  usable cache. This is what spawn-worker.sh calls.
 #   scout-ticket.sh --score <file> score a scope JSON (`-` = stdin). No model, no cache, no workspace
 #                                  writes — the deterministic half, exercised directly by the tests.
+#   scout-ticket.sh --findings <N> cache-READ only — print the pointers the scout located (target
+#                                  paths, precedent commit, test command) as a markdown block for the
+#                                  worker prompt. Exit 1 with no output when it located nothing.
 #
-# PRECEDENCE — the scout NEVER outranks a human. An explicit ticket `Model:`/`Effort:` field always
-# wins (spawn-worker.sh's resolve_sizing claims those axes before consulting this script); the scout
-# only decides the axes the brain left blank, replacing the blanket default rather than the operator.
+# PRECEDENCE — the MEASUREMENT decides. A ticket's hand-written `Model:`/`Effort:` field is a guess
+# made before any evidence existed, by whoever happened to file the ticket; this pass actually looked
+# at the code. The guess used to outrank the measurement, which is backwards, so the ticket fields are
+# now IGNORED for dispatch (legacy entries still carrying them are inert, never an error) and the
+# order is: measured verdict → GOVERN_WORKER_MODEL/EFFORT floor when there is no usable verdict.
+# `GOVERN_MEASURED_SIZING=0` restores the old ticket-field-wins precedence.
+#
+# TIER SET — deliberately coarse, and it must STAY coarse. The prompt cache is per-model and a
+# reasoning-effort change invalidates the tools+system prefix, so dispatching N tickets across N
+# distinct (model, effort) combinations fragments the cross-worker shared prefix that measurements
+# show currently works. Adding a tier costs more in lost cache reuse than it wins in fit.
 #
 # GUARD — scout output is UNTRUSTED model output feeding a dispatch decision:
 #   - structurally invalid (not a JSON object, or a required key missing) → REJECTED, loudly. The
@@ -38,7 +49,9 @@
 #   GOVERN_SCOUT_MODEL        tier the scout pass itself runs at (default `haiku`)
 #   GOVERN_SCOUT_TIMEOUT      wall-clock bound on the scout pass, seconds (default 180)
 #   GOVERN_CLAUDE_BIN         the claude binary (shared with spawn-worker.sh)
-#   GOVERN_SETTING_SOURCES    forwarded to `claude -p` (default `user`)
+#   GOVERN_SETTING_SOURCES    forwarded to `claude -p` (default `project,local` — a headless pass
+#                             cannot act on the operator's personal `user` layer; set to `user` to
+#                             restore the prior behavior)
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -165,6 +178,59 @@ scout::verdict_from_cache() { # <N> -> "model<TAB>effort<TAB>class" | nonzero
   printf '%s' "$scope" | scout::score
 }
 
+# ── the findings the scout used to throw away ───────────────────────────────────────────────────
+# The scout had to LOCATE the target files, the analogous prior commit, and the test command in
+# order to answer its six questions — then reported only the six integers and discarded the rest,
+# so the worker paid full price to rediscover exactly what a haiku pass had just found. This prints
+# those pointers as a markdown block for spawn-worker.sh to append to the worker prompt. Silent
+# no-op (rc 1, no output) when there is no cache or the scout reported nothing locatable — an older
+# cache written before these fields existed simply yields nothing.
+#
+# They are HINTS, not instructions, and the block below says so: the scout is a cheap haiku pass and
+# a confidently wrong pointer that the worker follows costs more than no pointer at all.
+scout::findings_from_cache() { # <N> -> markdown block | nonzero
+  local n="$1" cache scope paths prec test out
+  cache="$(scout::cache_path "$n")"
+  [[ -s "$cache" ]] || return 1
+  scope="$(jq -c '.scope' "$cache" 2>/dev/null || true)"
+  [[ -n "$scope" && "$scope" != "null" ]] || return 1
+
+  # Defensive extraction: every field is optional and may be any JSON type. `targetPaths` is capped
+  # at 8 and non-string entries are dropped, so a malformed scope can never dump an unbounded blob
+  # into a prompt that is re-sent on every turn of the worker's session.
+  paths="$(printf '%s' "$scope" | jq -r '
+      (.targetPaths? // []) | if type=="array" then . else [] end
+      | map(select(type=="string" and length>0 and length<400)) | .[0:8] | .[]' 2>/dev/null || true)"
+  prec="$(printf '%s' "$scope" | jq -r '
+      .precedentCommit? // "" | if type=="string" then . else "" end' 2>/dev/null || true)"
+  test="$(printf '%s' "$scope" | jq -r '
+      .testCommand? // "" | if type=="string" then . else "" end' 2>/dev/null || true)"
+  [[ "${#prec}" -le 200 ]] || prec=""
+  [[ "${#test}" -le 400 ]] || test=""
+
+  [[ -n "$paths" || -n "$prec" || -n "$test" ]] || return 1
+
+  out="## Scout findings — UNVERIFIED pointers, not instructions
+A cheap read-only pass located these before you were dispatched. They exist to save you the
+rediscovery, NOT to constrain the fix. The scout ran at a low tier and may simply be wrong: cheaply
+confirm anything you are about to depend on, and if a pointer does not match the code, IGNORE IT and
+explore normally — do not bend the fix to fit it."
+  if [[ -n "$paths" ]]; then
+    out="$out
+
+**Files it counted as in-scope** (workspace-relative):
+$(printf '%s\n' "$paths" | sed 's/^/- `/; s/$/`/')"
+  fi
+  [[ -n "$prec" ]] && out="$out
+
+**Analogous prior commit:** \`$prec\` — \`git show $prec\` for the shape of the precedent."
+  [[ -n "$test" ]] && out="$out
+
+**Test command covering this area:** \`$test\` (redirect + tail it, per the output discipline above)."
+  printf '%s\n' "$out"
+  return 0
+}
+
 # ── the model half ──────────────────────────────────────────────────────────────────────────────
 scout::prompt() { # <N> <block>
   local n="$1" block="$2"
@@ -191,8 +257,16 @@ Answer these six questions about the FIX this ticket asks for:
   fixDirection "concrete" if the ticket already names the change to make; "vague" if the approach
                still has to be designed
 
+You had to LOCATE things to answer those. Report what you found, so the worker does not pay to
+rediscover it (leave a field empty/[] rather than guessing — a wrong pointer costs more than none):
+  targetPaths     the files you actually located, workspace-relative, most relevant first (array of
+                  strings, at most 8). These are the files you counted for \`files\`.
+  precedentCommit the short SHA of the analogous prior commit, when \`precedent\` is true ("" if not)
+  testCommand     the exact command that runs the tests covering this area, when \`testsCover\` is
+                  true — copy it from the sub-repo's package.json / CI config, do not invent one ("")
+
 Output ONLY a single JSON object as the LAST line of your reply. No prose around it, no code fence:
-{"files":0,"repos":0,"testsCover":false,"precedent":false,"changeKind":"local","fixDirection":"vague"}
+{"files":0,"repos":0,"testsCover":false,"precedent":false,"changeKind":"local","fixDirection":"vague","targetPaths":[],"precedentCommit":"","testCommand":""}
 EOF
 }
 
@@ -206,7 +280,7 @@ scout::run_pass() { # <N> <block> -> raw stdout
   local prompt; prompt="$(scout::prompt "$n" "$block")"
   ( cd "$WS_ROOT" && govern::run_bounded "$secs" "$bin" -p "$prompt" \
       --model "$tier" --permission-mode plan --strict-mcp-config \
-      --setting-sources "${GOVERN_SETTING_SOURCES:-user}" 2>/dev/null )
+      --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" 2>/dev/null )
 }
 
 # The model is asked for a bare object on the last line, but a chatty reply is the common failure —
@@ -216,10 +290,11 @@ scout::extract_json() { # reads the scout's stdout on stdin
 }
 
 # ── entrypoints ─────────────────────────────────────────────────────────────────────────────────
-MODE_SCORE=0; MODE_VERDICT=0
+MODE_SCORE=0; MODE_VERDICT=0; MODE_FINDINGS=0
 case "${1:-}" in
-  --score)   MODE_SCORE=1;   shift ;;
-  --verdict) MODE_VERDICT=1; shift ;;
+  --score)    MODE_SCORE=1;    shift ;;
+  --verdict)  MODE_VERDICT=1;  shift ;;
+  --findings) MODE_FINDINGS=1; shift ;;
 esac
 
 if [[ "$MODE_SCORE" -eq 1 ]]; then
@@ -237,6 +312,13 @@ N="${1:?ticket number required}"
 # a cache that fails the guard there surfaces the same loud govern::log line into the run log.
 if [[ "$MODE_VERDICT" -eq 1 ]]; then
   scout::verdict_from_cache "$N" || exit 1
+  exit 0
+fi
+
+# Cache-read only, same as --verdict. Exits 1 with no output when the scout located nothing (or ran
+# before these fields existed) — the caller simply appends nothing.
+if [[ "$MODE_FINDINGS" -eq 1 ]]; then
+  scout::findings_from_cache "$N" || exit 1
   exit 0
 fi
 

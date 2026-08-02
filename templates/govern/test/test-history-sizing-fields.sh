@@ -68,10 +68,9 @@ T2="$(mktemp -d)"; trap 'rm -rf "$U" "$T2"' EXIT
 mk_ws_stub "$T2"
 mkdir -p "$T2/governor" "$T2/wt" "$T2/bin"
 cat > "$T2/tickets.md" <<'EOF'
-## #7 — a ticket that records its own sizing decision
+## #7 — a ticket whose ledger row records its MEASURED sizing decision
 **Severity:** Medium
-**Model:** sonnet
-**Effort:** low
+**Model:** haiku
 
 body
 ---
@@ -103,6 +102,16 @@ EOF
 chmod +x "$T2/bin/claude-hang"
 
 RUNDIR="$T2/logs/run-test"
+# Sizing is a MEASUREMENT now, so the ledger's model/effort must come from the scout verdict, not
+# from the ticket. Pre-seed the run-scoped cache: `--verdict` re-scores it deterministically and
+# never calls a model. The scope below (<=5 files, 1 repo, tests cover it, concrete direction, no
+# precedent) scores `small` → (sonnet, medium). Note the ticket ALSO carries a legacy
+# `**Model:** haiku` field, which must be inert — if it ever leaks back into the ledger this test
+# goes red.
+mkdir -p "$RUNDIR/ticket-7"
+cat > "$RUNDIR/ticket-7/scout.json" <<'EOF'
+{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete"},"verdict":{"model":"sonnet","effort":"medium","scopeClass":"small"},"ts":1}
+EOF
 spawn7() { # claude-bin [extra env assignments handled by caller]
   GOVERN_TICKETS_FILE="$T2/tickets.md" \
   GOVERN_PREFERENCES_FILE="$T2/governor/preferences.md" \
@@ -113,6 +122,7 @@ spawn7() { # claude-bin [extra env assignments handled by caller]
   GOVERN_CLAUDE_BIN="$1" \
   GOVERN_WORKER_MODEL=opus \
   GOVERN_WORKER_TIMEOUT="${2:-60}" \
+  GOVERN_SCOUT=1 \
   "$SPAWN" 7 </dev/null
 }
 
@@ -123,10 +133,10 @@ LEDGER="$RUNDIR/ticket-7/attempts.jsonl"
   || { printf 'FAIL - %s\n' "spawn-worker wrote the per-attempt ledger"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 r1="$(head -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r1")"      "1"                  "attempt is 1-based"
-assert_eq "$(jq -r '.model' <<<"$r1")"        "sonnet"             "ledger records the resolved model (ticket Model: field)"
-assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "ticket-Model-field" "ledger records WHERE the model came from"
-assert_eq "$(jq -r '.effort' <<<"$r1")"       "low"                "ledger records the resolved effort"
-assert_eq "$(jq -r '.effortSource' <<<"$r1")" "ticket-Effort-field" "ledger records WHERE the effort came from"
+assert_eq "$(jq -r '.model' <<<"$r1")"        "sonnet"             "ledger records the resolved model (the MEASURED verdict)"
+assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "scout (scope=small)" "ledger records WHERE the model came from — the scout, not the ticket"
+assert_eq "$(jq -r '.effort' <<<"$r1")"       "medium"             "ledger records the resolved effort"
+assert_eq "$(jq -r '.effortSource' <<<"$r1")" "scout (scope=small)" "ledger records WHERE the effort came from"
 assert_eq "$(jq -r '.isRetry' <<<"$r1")"      "false"              "attempt 1 is not a retry"
 assert_eq "$(jq -r '.status' <<<"$r1")"       "resolved"           "ledger records the attempt's outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r1")" "1500"               "ledger records the attempt's tokens"
@@ -141,7 +151,7 @@ assert_eq "$(awk 'END{print NR}' "$LEDGER")" "2" "the ledger is append-only (one
 r2="$(tail -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r2")" "2"        "attempt number increments across spawns"
 assert_eq "$(jq -r '.isRetry' <<<"$r2")" "true"     "attempt 2 is flagged as a retry"
-assert_eq "$(jq -r '.model' <<<"$r2")"   "opus"     "retry escalates off the ticket's cheap tier"
+assert_eq "$(jq -r '.model' <<<"$r2")"   "opus"     "retry escalates off the measured cheap tier"
 assert_eq "$(jq -r '.status' <<<"$r2")"  "timeout"  "the killed attempt records its real outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null (#19)"
 assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt's usage came from per-turn events"
@@ -159,8 +169,6 @@ cat > "$T/tickets.md" <<'EOF'
 ---
 ## #1 — a ticket whose history row carries its sizing decision
 **Severity:** Medium
-**Model:** sonnet
-**Effort:** high
 
 body1
 ---
@@ -214,7 +222,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_WORKER_MODEL=opus \
+  GOVERN_WORKER_MODEL=sonnet GOVERN_WORKER_EFFORT=high GOVERN_SCOUT=0 \
   GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
   bash "$RL" 1 </dev/null 2>&1)"
 rc=$?

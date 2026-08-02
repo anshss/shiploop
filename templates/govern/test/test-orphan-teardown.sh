@@ -70,7 +70,8 @@ sleep 300
 EOF
 chmod +x "$TMP/fake-claude"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe (common.sh test seam). Without it the
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe (common.sh test seam). Without it the
 # probe runs `fake-claude --help` BEFORE $cpid is assigned below — this stub has no arg handling,
 # so it forks its grandchild and sleeps regardless of args, and a probe invocation racing ahead of
 # the real spawn left the SIGTERM trap tearing down an empty $cpid (a no-op) while the probe's own
@@ -83,6 +84,7 @@ GOVERN_TICKETS_FILE="$TMP/tickets.md" \
   GOVERN_CLAUDE_BIN="$TMP/fake-claude" \
   GOVERN_WORKER_TIMEOUT=120 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   "$SPAWN" 7 >/dev/null 2>&1 </dev/null &
 sw_pid=$!
 wait_file "$TMP/marks/grandchild.pid" 50
@@ -145,7 +147,8 @@ sleep 300
 EOF
 chmod +x "$T/bin/claude"
 
-# _GOVERN_EDP_SUPPORTED=1: skip the --help capability probe — same rationale as the spawn-worker
+# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
+# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe — same rationale as the spawn-worker
 # invocation above; this stub claude has no --help branch and would fork+sleep on a probe call too.
 PATH="$T/bin:$PATH" \
   GOVERN_TICKETS_FILE="$T/tickets.md" \
@@ -161,6 +164,7 @@ PATH="$T/bin:$PATH" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=120 \
   _GOVERN_EDP_SUPPORTED=1 \
+  _GOVERN_TOOLS_SUPPORTED=1 \
   bash "$RL" 1 >"$T/loop.out" 2>&1 </dev/null &
 rl_pid=$!
 

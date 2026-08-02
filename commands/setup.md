@@ -380,12 +380,12 @@ The interview's extras question already collected consent (*"file a starter tick
 tractable one surfaces"*). If it was selected, file the best candidate now and describe it in one
 line of the Phase Z report; if deselected, put the proposal + the exact command in the report
 instead — either way, do NOT pause. File it with `file-ticket.sh` — reuse the existing mechanics,
-no new script — pinning a cheap model so the first run is fast and inexpensive:
+no new script. Do NOT try to pin a model: the scout measures the ticket's scope against the real code
+before dispatch and picks the tier from that.
 
 ```bash
-# Model: haiku for a truly mechanical one-file fix, sonnet for a small search+edit.
 printf 'Where: <sub-repo>/<path>\nObserved: <the small gap>\nFix direction: <the obvious fix>\nDone when: <observable check>\n' \
-  | scripts/govern/file-ticket.sh --model haiku "<short starter title>" Low
+  | scripts/govern/file-ticket.sh "<short starter title>" Low
 ```
 
 If scaffold surfaced nothing tractable, skip this — do NOT invent busywork. Tell the operator their

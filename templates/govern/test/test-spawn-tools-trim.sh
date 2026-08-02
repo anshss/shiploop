@@ -10,16 +10,18 @@
 # prefix. (Rewriting anything already in the conversation would do the opposite — invalidate from
 # that point and convert ~0.1x cache reads into ~1.25x writes.)
 #
-# The trim is OPT-IN (this repo's additive-union rule): a template bump must not silently change
-# what tools an existing fleet's workers get, because losing a needed tool costs a failed ticket.
+# The trim is DEFAULT-ON as of 2026-08-03. It was opt-in while the allow-list was a theory; a
+# re-derivation over all 125 worker transcripts under `logs/govern/` showed the set of tools the
+# fleet has ever invoked is a strict SUBSET of the allow-list, so default-on removes nothing in
+# live use. `GOVERN_WORKER_TOOLS=0` (or `off`) restores the pre-trim spawn byte-for-byte.
 #
 # Cases:
-#   1. Env UNSET + a capable CLI → flag ABSENT (opt-in default off) and no warning.
-#   2. GOVERN_WORKER_TOOLS=default + capable CLI → the recommended allow-list is passed.
+#   1. Env UNSET + a capable CLI → the recommended allow-list is passed (default-on) and no warning.
+#   2. GOVERN_WORKER_TOOLS=default + capable CLI → the same recommended allow-list, explicitly.
 #   3. Probe FAILS (older fake CLI) + =default → flag ABSENT, and a live spawn with that same CLI
 #      still runs and its real argv carries no `--tools` (an unknown flag would kill every worker at
 #      argument parsing — the fleet's CLI version is not ours).
-#   4. GOVERN_WORKER_TOOLS=off → absent, no probe warning.
+#   4. GOVERN_WORKER_TOOLS=off and =0 → absent, no probe warning (both kill-switch spellings).
 #   5. GOVERN_WORKER_TOOLS=<custom> → that list verbatim.
 #   6. Content lock on the recommended list: the tools a worker cannot work without are present, and
 #      the measured-largest unusable ones stay cut.
@@ -95,16 +97,20 @@ run() { # <ticket> <claude_bin> <cache_tag> [GOVERN_WORKER_TOOLS]
   fi
 }
 
-# 1. Env UNSET on a capable CLI → absent, and no probe warning (opt-in, additive-union rule).
+# 1. Env UNSET on a capable CLI → the recommended allow-list IS passed (default-on), no warning.
 err1="$TMP/err1.txt"
 out1u="$(run 401 "$TMP/fake-claude-new.sh" "unset-capable" 2>"$err1")"
-assert_eq "$(printf '%s' "$out1u" | jq -r '.tools')" "" \
-  "env unset + capable CLI → --tools absent (the trim is opt-in)"
+tools_unset="$(printf '%s' "$out1u" | jq -r '.tools')"
+case "$tools_unset" in
+  "--tools "*) printf 'ok   - %s\n' "env unset + capable CLI → --tools <recommended list> present (default-on)" ;;
+  *) printf 'FAIL - %s\n       got: %s\n' "env unset + capable CLI → --tools present (default-on)" "$tools_unset"
+     ASSERT_FAILS=$((ASSERT_FAILS+1)) ;;
+esac
 if grep -qi "does not support" "$err1"; then
-  printf 'FAIL - %s\n' "no warning expected when the trim is simply not opted into"
+  printf 'FAIL - %s\n' "no warning expected when the CLI supports --tools"
   ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
-  printf 'ok   - %s\n' "no spurious warning when the trim is not opted into"
+  printf 'ok   - %s\n' "no spurious warning on a capable CLI"
 fi
 
 # 2. GOVERN_WORKER_TOOLS=default + capable CLI → the recommended allow-list is passed.
@@ -161,6 +167,14 @@ if grep -qi "does not support" "$err3"; then
 else
   printf 'ok   - %s\n' "no spurious warning when explicitly disabled via off"
 fi
+
+# 4b. Kill switch, numeric spelling: GOVERN_WORKER_TOOLS=0 → same as `off`. This is the polarity
+# convention the hub follows everywhere else — `GOVERN_<FEATURE>=0` always means "restore the
+# previous behavior" — and it must hold for a knob that is now default-on.
+err3b="$TMP/err3b.txt"
+out3b="$(run 401 "$TMP/fake-claude-new.sh" "env-zero" "0" 2>"$err3b")"
+assert_eq "$(printf '%s' "$out3b" | jq -r '.tools')" "" \
+  "GOVERN_WORKER_TOOLS=0 → --tools absent (numeric kill switch)"
 
 # 5. Custom list passes through verbatim.
 out4="$(run 401 "$TMP/fake-claude-new.sh" "env-custom" "Bash,Read")"

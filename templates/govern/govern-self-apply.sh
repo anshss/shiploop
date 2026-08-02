@@ -66,7 +66,7 @@ if [[ -n "$agent_cmd" ]]; then
   ( cd "$WS_ROOT" && eval "$agent_cmd" ) || true
 else
   ( cd "$WS_ROOT" && "${GOVERN_CLAUDE_BIN:-claude}" -p "$prompt" --output-format stream-json --verbose \
-      --setting-sources "${GOVERN_SETTING_SOURCES:-user}" --permission-mode acceptEdits \
+      --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" --permission-mode acceptEdits \
       --model "${GOVERN_IMPROVE_MODEL:-sonnet}" >/dev/null 2>&1 ) || true
 fi
 

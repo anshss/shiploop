@@ -77,6 +77,21 @@ TICKET_FLOW="$(printf '%s' "$block" \
   | tr ',' ' ' | tr -s ' ' | sed -E 's/^ +//; s/ +$//')"
 export TICKET_FLOW
 
+# EXECUTE-ONLY latch. Resolved HERE, in the one place that both sizes the worker and assembles its
+# prompt, so the tier and the brief can never disagree about whether this is an execute-only
+# dispatch. `govern::warm_assertion` (lib/common.sh) reads the per-invocation GOVERN_WARM, which
+# names exactly ONE ticket number — so an assertion can never leak onto a different ticket, and it
+# cannot rot in the queue the way a ticket field does. run-loop owns only the NO-dispatch case (a
+# warm assertion with no stated change), since that decides whether to spawn at all.
+# GOVERN_EXECUTE_ONLY_BRIEF may also be set directly by a caller; an explicit value wins.
+if [[ -z "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]] && govern::warm_assertion "$N"; then
+  GOVERN_EXECUTE_ONLY_BRIEF="$GOVERN_WARM_TEXT"
+fi
+# A blank/whitespace-only brief is NOT an execute-only dispatch — it is the no-worker case, which
+# run-loop handles before ever reaching here. Normalize so nothing downstream half-takes the branch.
+[[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" && -n "${GOVERN_EXECUTE_ONLY_BRIEF//[[:space:]]/}" ]] \
+  || GOVERN_EXECUTE_ONLY_BRIEF=""
+
 # ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
 # ONE resolver, called by BOTH the dry-run observation seam and the live spawn — previously the two
 # paths carried copy-pasted resolution logic that could drift apart. Sets the globals
@@ -96,27 +111,39 @@ resolve_sizing() {
   retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
   SCOUT_CLASS=""
 
-  # Baseline = what the FIRST attempt would have used.
+  # Baseline = what the FIRST attempt would have used: the workspace floors.
   base_model="${GOVERN_WORKER_MODEL:-opus}"; model_source="GOVERN_WORKER_MODEL"
-  case "${TICKET_MODEL:-}" in
-    "") ;;
-    haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field" ;;
-    *) model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
-  esac
   base_effort="${GOVERN_WORKER_EFFORT:-}"; effort_source="GOVERN_WORKER_EFFORT"
   [[ -z "$base_effort" ]] && effort_source="none (unset)"
-  case "${TICKET_EFFORT:-}" in
-    "") ;;
-    low|medium|high|xhigh|max) base_effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field" ;;
-    *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
-  esac
-  # #21 scout-then-size: on the axes the brain left BLANK, prefer a MEASURED verdict over the blanket
-  # GOVERN_WORKER_MODEL default. run-loop ran scout-ticket.sh pre-dispatch (a cheap haiku pass that
-  # greps the real code) and cached its scope measurement on the run dir; `--verdict` re-scores that
-  # cache deterministically and never calls a model. An explicit ticket field always WINS — the cases
-  # above already claimed those axes, and the guards below only fire when they didn't. No cache, a
-  # malformed one, or GOVERN_SCOUT=0 → this block is a no-op and the floors stand, exactly as before
-  # (scout-ticket.sh logs the why on stderr, which is deliberately NOT suppressed here).
+
+  # SIZING IS A MEASUREMENT, NOT A FILING-TIME GUESS.
+  # The ticket's `Model:`/`Effort:` fields are written by whoever files the ticket, BEFORE any
+  # evidence exists. The scout is a cheap read-only pass that actually greps the code. The guess used
+  # to outrank the measurement — that is backwards, and it also meant the pass that DID look threw its
+  # findings away. So the ticket fields no longer participate in dispatch: an entry still carrying
+  # them is inert (ignored, never an error), and the order is measured verdict → workspace floor.
+  #
+  # `GOVERN_MEASURED_SIZING=0` restores the previous precedence exactly: ticket field wins, scout
+  # fills only the axes the field left blank.
+  local measured="${GOVERN_MEASURED_SIZING:-1}"
+  if [[ "$measured" == "0" ]]; then
+    case "${TICKET_MODEL:-}" in
+      "") ;;
+      haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field" ;;
+      *) model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
+    esac
+    case "${TICKET_EFFORT:-}" in
+      "") ;;
+      low|medium|high|xhigh|max) base_effort="$TICKET_EFFORT"; effort_source="ticket-Effort-field" ;;
+      *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
+    esac
+  fi
+  # #21 scout-then-size: run-loop ran scout-ticket.sh pre-dispatch (a cheap haiku pass that greps the
+  # real code) and cached its scope measurement on the run dir; `--verdict` re-scores that cache
+  # deterministically and never calls a model. No cache, a malformed one, or GOVERN_SCOUT=0 → this
+  # block is a no-op and the floors stand (scout-ticket.sh logs the why on stderr, which is
+  # deliberately NOT suppressed here). Under the default (measured) precedence the verdict claims
+  # BOTH axes; under GOVERN_MEASURED_SIZING=0 it claims only the axes a ticket field did not.
   if [[ "${GOVERN_SCOUT:-1}" != "0" ]]; then
     local scout_line scout_model scout_effort scout_class
     scout_line="$("$DIR/scout-ticket.sh" --verdict "$N" || true)"
@@ -130,6 +157,20 @@ resolve_sizing() {
         base_effort="$scout_effort"; effort_source="scout (scope=$scout_class)"
       fi
     fi
+  fi
+  # EXECUTE-ONLY dispatch (GOVERN_EXECUTE_ONLY_BRIEF, set by run-loop when the parent explicitly
+  # asserted it is warm on this ticket): the worker is no longer explore → decide → edit → verify,
+  # it is edit → verify against a change someone already decided. That is a genuinely smaller job,
+  # so it takes the cheapest tier — and this is where the right-sizing question gets answered from
+  # the SHAPE OF THE WORK rather than from a guess.
+  #
+  # "Cheapest" means the cheapest option in the EXISTING coarse tier set, never a new (model, effort)
+  # combination: the prompt cache is per-model and an effort change invalidates the tools+system
+  # prefix, so minting a tier here would re-fragment the shared prefix the coarse set exists to
+  # protect. A RETRY overrides this below — a failed cheap bet is never re-bet.
+  if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
+    base_model="haiku"; model_source="execute-only (parent stated the change)"
+    base_effort="low";  effort_source="execute-only (parent stated the change)"
   fi
   model="$base_model"; effort="$base_effort"
   [[ "${MODEL_IS_RETRY:-0}" -eq 1 ]] || return 0   # first attempt: the baseline IS the answer
@@ -173,10 +214,10 @@ resolve_sizing() {
       # fields and escalate to the workspace floor. Fail-safe by construction.
       model="${GOVERN_WORKER_MODEL:-opus}"
       effort="${GOVERN_WORKER_EFFORT:-}"
-      model_source="GOVERN_WORKER_MODEL (retry — ticket Model: '${TICKET_MODEL:-}' skipped)"
+      model_source="GOVERN_WORKER_MODEL (retry — baseline '$base_model' skipped)"
       effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
-      if [[ -n "${TICKET_EFFORT:-}" ]]; then
-        effort_source="${effort_source} (retry — ticket Effort: '$TICKET_EFFORT' skipped)"
+      if [[ -n "$base_effort" ]]; then
+        effort_source="${effort_source} (retry — baseline '$base_effort' skipped)"
       fi
       ;;
   esac
@@ -215,13 +256,14 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # which is why only the TAIL is ever safe to touch. `--allowedTools` is NOT a substitute: measured
 # no-change, because it gates permission rather than what gets loaded.
 #
-# OPT-IN, per this repo's additive-union rule: unset (or `off`) → no `--tools`, byte-identical to
-# the pre-trim spawn, so nobody's workspace changes behavior on a template bump. Losing a tool a
-# worker genuinely needed costs a failed ticket, which dwarfs the prefix saved — that asymmetry is
-# exactly what the rule protects, so the operator opts in knowingly.
-#   GOVERN_WORKER_TOOLS=default   → the measured recommended allow-list below
-#   GOVERN_WORKER_TOOLS=<list>    → that space/comma-separated list verbatim
-#   GOVERN_WORKER_TOOLS=off|unset → no `--tools` at all (default)
+# DEFAULT-ON since the allow-list was re-derived against measured transcripts (see below): every
+# tool the fleet has ever actually invoked is in the list, so the asymmetry the opt-in was
+# protecting against — losing a tool a worker genuinely needed costs a failed ticket, which dwarfs
+# the prefix saved — no longer applies to the committed list. The kill switch restores the old
+# spawn byte-for-byte.
+#   GOVERN_WORKER_TOOLS=unset|default → the measured recommended allow-list below (default)
+#   GOVERN_WORKER_TOOLS=<list>        → that space/comma-separated list verbatim
+#   GOVERN_WORKER_TOOLS=0|off         → no `--tools` at all (kill switch: the pre-trim spawn)
 # Unknown names in the list are tolerated by the CLI (verified: an unrecognised name does not fail
 # argument parsing), so naming a tool a given build lacks is safe — that is deliberate, it keeps
 # one hub list working across CLI versions that ship different tool sets.
@@ -249,15 +291,24 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # even though several of them measured zero invocations in that same scan (TaskGet/TaskList/
 # TaskOutput/TaskStop/NotebookEdit) — dropping them needs its own re-measure to confirm the byte
 # saving is worth the removal risk (see KEEP/PURGE GATE above); don't drop opportunistically.
+#
+# RE-DERIVED 2026-08-03 before flipping the default on, over all 125 worker transcripts under
+# `logs/govern/` (not just the 39 of the #73 scan). Every tool the fleet has ever invoked —
+# Bash 2194, Read 267, Edit 240, Write 64, Agent 35, TaskUpdate 24, Monitor 14, ToolSearch 13,
+# TaskCreate 13, ScheduleWakeup 9, SendMessage 3 — is already in the list below; the measured
+# invocation set is a strict SUBSET of the allow-list, so default-on removes nothing in live use.
+# Re-run that histogram before any future edit to this list:
+#   find logs/govern -name '*.jsonl' -print0 | xargs -0 grep -aoh \
+#     '"type":"tool_use","id":"[^"]*","name":"[^"]*"' | sed 's/.*"name":"//;s/"//' | sort | uniq -c
 GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
 # Sets the global `tools_flag` (empty, or `--tools <list>`) and always returns 0.
 resolve_tools_flag() { # <claude_bin>
   local bin="$1" list
   tools_flag=""
-  list="${GOVERN_WORKER_TOOLS:-off}"
+  list="${GOVERN_WORKER_TOOLS:-default}"
   [[ "$list" == "default" ]] && list="$GOVERN_WORKER_TOOLS_DEFAULT"
-  if [[ "$list" == "off" || -z "$list" ]]; then
-    return 0   # opt-out (the default) wins regardless of what the CLI supports
+  if [[ "$list" == "off" || "$list" == "0" || -z "$list" ]]; then
+    return 0   # kill switch wins regardless of what the CLI supports
   fi
   if govern::claude_supports_tools_flag "$bin"; then
     tools_flag="--tools $list"
@@ -327,7 +378,50 @@ $_bblock"
 fi
 
 # 2. Assemble the prompt: template (with {{TICKET_BLOCK}}/{{REPORT_PATH}} filled) + doctrine.
-template="$(cat "$WORKER_PROMPT_FILE")"
+#
+# 2a. Conditional sections. worker-prompt.md is sent to every worker and re-read on EVERY turn of
+# that worker's session, so a block that only ever applies to ONE ticket class is per-turn tax on
+# every other ticket. The validation block alone is 6,207 of the template's 24,216 bytes (25.6%) and
+# applies only to validation/spike tickets. Blocks fenced by `<!-- GOVERN:SECTION <name> -->` …
+# `<!-- GOVERN:END <name> -->` are kept only when this ticket is of that class; the marker lines
+# themselves are always stripped. Everything unfenced is always-on.
+#
+# The classifier must fail-CLOSED — a worker that needed a section it did not receive fails its
+# ticket, and a failed attempt is ~100% waste whose retry costs more than the original.
+# `govern::is_validation_ticket` is deliberately fail-closed (see lib/common.sh), and it is run over
+# the WHOLE assembled $block, so a locality batch containing one validation ticket keeps the section
+# for the entire group.
+#
+# GOVERN_PROMPT_SEGMENTED=0 → every section is kept regardless of class (the monolithic prompt).
+prompt_sections_keep=""   # space-separated section names to KEEP
+if [[ "${GOVERN_PROMPT_SEGMENTED:-1}" == "0" ]]; then
+  prompt_sections_keep="__all__"
+else
+  govern::is_validation_ticket "$block" && prompt_sections_keep="$prompt_sections_keep validation"
+fi
+# Drops a fenced block whose name is not in <keep>, and strips the marker lines always. Also strips
+# whole-line HTML comments (`<!-- … -->`, single- or multi-line): those are maintainer notes about
+# the template, and a comment left in the prompt is re-sent on every turn of the worker's session
+# for no benefit. Run over the RAW template only — before {{TICKET_BLOCK}} substitution — so a
+# ticket body containing `<!--` can never be eaten. An unterminated section (a `SECTION` with no
+# matching `END`) keeps its content: the same fail-toward-including bias as the classifier.
+prompt_apply_sections() { # <text> <keep-list>
+  awk -v keep=" ${2} " '
+    /^[[:space:]]*<!-- GOVERN:SECTION [A-Za-z0-9_-]+ -->[[:space:]]*$/ {
+      name = $3
+      skip = (keep ~ / __all__ /) ? 0 : (index(keep, " " name " ") ? 0 : 1)
+      next
+    }
+    /^[[:space:]]*<!-- GOVERN:END [A-Za-z0-9_-]+ -->[[:space:]]*$/ { skip = 0; next }
+    !skip && !incomment && /^[[:space:]]*<!--/ {
+      if ($0 ~ /-->[[:space:]]*$/) next     # one-line comment
+      incomment = 1; next
+    }
+    incomment { if ($0 ~ /-->[[:space:]]*$/) incomment = 0; next }
+    !skip
+  ' <<<"$1"
+}
+template="$(prompt_apply_sections "$(cat "$WORKER_PROMPT_FILE")" "$prompt_sections_keep")"
 prompt="${template//\{\{TICKET_BLOCK\}\}/$block}"
 prompt="${prompt//\{\{REPORT_PATH\}\}/$report_path}"
 prompt="$prompt
@@ -378,6 +472,57 @@ fi
 #     REPLACING any "Generated with" line so there is exactly one footer.
 # Both resolve through the workspace.sh knobs (defaults: autonomy pr-only for new scaffolds / auto for
 # pre-ladder installs; footer on) via the common.sh helpers, so behavior is uniform across every caller.
+# EXECUTE-ONLY brief. The parent session asserted it is already warm on this ticket and stated the
+# change, so this worker executes rather than explores. Appended LAST-ish (before the PR-shape
+# blocks) so it overrides the template's "explore, then decide" posture — last instruction wins.
+#
+# THE RISK, STATED IN THE BRIEF ITSELF: a warm parent's knowledge can be stale or simply wrong. A
+# cold worker at least re-derives and catches that; an execute-only worker will faithfully implement
+# a wrong instruction. So the brief is FALSIFIABLE, not a command — it says what the parent believes,
+# and instructs the worker to STOP AND REPORT rather than proceed if the code does not match. That
+# mismatch-stop is the whole safety property of this branch; do not soften it.
+if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
+  prompt="$prompt
+
+## ⚠ EXECUTE-ONLY — the change has already been decided (this supersedes \"explore, then decide\")
+The session that dispatched you has read this code THIS SESSION and states the change below. You are
+not being asked to design the fix — you are being asked to make it, validate it, and open the PR.
+Skip the discovery you would normally do to arrive at this conclusion; you have it.
+
+<parent-assertion>
+$GOVERN_EXECUTE_ONLY_BRIEF
+</parent-assertion>
+
+**This is a BELIEF, not a fact, and it is falsifiable.** The parent may be describing code that has
+since changed, or may simply be wrong — this exact failure mode is why a cold worker is the default.
+So, before you edit:
+1. Cheaply confirm the assertion against the real code — open the files it names, check the symbols
+   it names actually exist and mean what it says.
+2. **If the code does NOT match the description, STOP. Do not adapt the fix, do not explore your way
+   to a different change, and do not implement it anyway.** Report \`status:\"parked\"\` with an
+   \`escalation\` stating exactly what you expected from the assertion, what you found instead, and
+   at which file. A wrong change confidently landed costs far more than a parked ticket.
+3. If it matches, implement exactly that change, run the project's real validation, and open the PR
+   as normal. Everything else in this prompt — the report contract, park rules, PR shape — is
+   unchanged.
+
+Do NOT widen the scope. If you notice adjacent problems, they go in \`newTickets\`, not this diff."
+fi
+
+# Scout findings. The scout had to LOCATE the target files, the analogous prior commit and the test
+# command to answer its six scope questions, then reported only the six integers — so the worker paid
+# full exploration price to rediscover what a haiku pass had just found. Append them as UNVERIFIED
+# hints (the block says so itself: a wrong pointer the worker follows costs more than no pointer).
+# Silent no-op when there is no cache, the scout located nothing, or GOVERN_SCOUT=0.
+if [[ "${GOVERN_SCOUT:-1}" != "0" ]]; then
+  _scout_findings="$("$DIR/scout-ticket.sh" --findings "$N" 2>/dev/null || true)"
+  if [[ -n "$_scout_findings" ]]; then
+    prompt="$prompt
+
+$_scout_findings"
+  fi
+fi
+
 if govern::pr_draft; then
   prompt="$prompt
 
@@ -811,12 +956,18 @@ set +e
 # descendants that reparent. macOS has no `setsid`; `set -m` is the portable equivalent. set +m
 # right after so the watchdog and the rest of the script stay in spawn-worker's own group.
 set -m
+# --setting-sources defaults to `project,local`, NOT `user`. Every `claude -p` pass the governor
+# launches is headless and single-purpose; the operator's personal `user` layer (~5,000 tokens of
+# extended-thinking shortcuts, TodoWrite practice, PR-review workflow, interactive conventions) is
+# re-read on every turn of that worker's session and there is nothing in it a headless worker can
+# act on. `project`/`local` are kept because the workspace's own settings.json is what wires the
+# govern hooks. `GOVERN_SETTING_SOURCES=user` restores the prior behavior exactly.
 ( cd "$wtpath" && exec env \
     -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
     -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
-    --setting-sources "${GOVERN_SETTING_SOURCES:-user}" \
+    --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
     $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!

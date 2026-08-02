@@ -64,19 +64,28 @@ run() { # ticket-N [FORCE_RETRY] [GOVERN_WORKER_EFFORT]
     "$SPAWN" "$n"
 }
 
-# 1. First-attempt Effort: high, no env floor → --effort high.
+# 1. First-attempt Effort: high → the field is IGNORED (measured sizing). Effort is an independent
+# axis from model tier, but it inverted for the same reason: a filing-time guess must not outrank a
+# pass that read the code.
 out1="$(run 201 0 "")"
-assert_eq "$(printf '%s' "$out1" | jq -r '.effort')" "high" \
-  "first-attempt ticket with Effort: high → --effort high"
+assert_eq "$(printf '%s' "$out1" | jq -r '.effort')" "" \
+  "first-attempt ticket with Effort: high → field ignored, falls to the (unset) env floor"
 assert_eq "$(printf '%s' "$out1" | jq -r '.ticket_effort')" "high" \
-  "ticket_effort observed = high"
-assert_eq "$(printf '%s' "$out1" | jq -r '.effort_source')" "ticket-Effort-field" \
-  "effort source = ticket-Effort-field"
+  "the field is still OBSERVED in the dry-run output (inert, not erased)"
+assert_eq "$(printf '%s' "$out1" | jq -r '.effort_source')" "none (unset)" \
+  "effort source is NEVER ticket-Effort-field under measured sizing"
 
-# 2. Same ticket on RETRY → escalates AWAY from the ticket field, falls back to unset (no env floor).
+# 1b. Kill switch restores the old precedence exactly.
+out1b="$(GOVERN_MEASURED_SIZING=0 run 201 0 "")"
+assert_eq "$(printf '%s' "$out1b" | jq -r '.effort')" "high" \
+  "GOVERN_MEASURED_SIZING=0 → Effort: high wins again (prior behavior restored)"
+assert_eq "$(printf '%s' "$out1b" | jq -r '.effort_source')" "ticket-Effort-field" \
+  "GOVERN_MEASURED_SIZING=0 → effort source is ticket-Effort-field again"
+
+# 2. Same ticket on RETRY → escalates away from the baseline, falls back to unset (no env floor).
 out2="$(run 201 1 "")"
 assert_eq "$(printf '%s' "$out2" | jq -r '.effort')" "" \
-  "retry of Effort: high ticket with no env floor → falls back to unset (no flag)"
+  "retry with no env floor → falls back to unset (no flag)"
 
 # 3. No Effort: field, no GOVERN_WORKER_EFFORT → unset, NO flag at all (default behavior preserved).
 out3="$(run 202 0 "")"
@@ -98,5 +107,19 @@ assert_eq "$(printf '%s' "$out5" | jq -r '.effort')" "medium" \
   "unknown Effort: value → fail-safe to GOVERN_WORKER_EFFORT"
 assert_eq "$(printf '%s' "$out5" | jq -r '.ticket_effort')" "ultra" \
   "unknown ticket_effort still reported in the dry-run output"
+
+# 6. A MEASURED verdict sets the effort axis too. A trivial one-file fix with precedent and a
+# covering test scores (haiku, low) — the effort follows the measurement, not the env floor.
+mkdir -p "$TMP/logs-eff-scout/ticket-202"
+printf '{"ticket":202,"scope":{"files":1,"repos":1,"testsCover":true,"precedent":true,"changeKind":"local","fixDirection":"concrete"},"scoutModel":"haiku","ts":0}\n' \
+  > "$TMP/logs-eff-scout/ticket-202/scout.json"
+out6="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
+  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
+  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
+  GOVERN_LOG_ROOT="$TMP/logs-eff-scout" \
+  GOVERN_WORKER_MODEL="opus" GOVERN_WORKER_EFFORT="medium" \
+  GOVERN_SCOUT=1 GOVERN_SPAWN_DRY_RUN=1 "$SPAWN" 202)"
+assert_eq "$(printf '%s' "$out6" | jq -r '.effort')" "low" \
+  "a measured scout verdict sets the effort axis, overriding the GOVERN_WORKER_EFFORT floor"
 
 assert_done

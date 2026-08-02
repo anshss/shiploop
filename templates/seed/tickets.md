@@ -22,29 +22,21 @@ the top one, then deletes it on resolve. Keep entries in the shape below so the 
 
 ### Optional per-ticket fields
 
-- **`Model:`** — pin the model the governor uses for THIS ticket's worker (first attempt only).
-  Values: `haiku` (mechanical rename, doc edit, single-file lookup fix) · `sonnet` (standard search
-  + edit tickets — the workhorse default when a High-tier isn't warranted) · `opus` (judgment-heavy
-  refactors, architectural moves, hard tickets). If absent, the governor uses `GOVERN_WORKER_MODEL`
-  (default `opus`). Any retry unconditionally escalates to `GOVERN_WORKER_MODEL` — cheap tier is a
-  first-shot bet, never a retry ceiling. Unknown values are ignored (fail-safe). File with
-  `scripts/govern/file-ticket.sh --model sonnet "..."`.
+- **`Flow:`** — tag this ticket as a flow-registry validation (`--flow <id[,id…]>`); the worker gets
+  the flow block(s) injected and bookkeeping stamps the registry on resolve.
 
-- **`Effort:`** — pin the reasoning effort the governor uses for THIS ticket's worker (first attempt
-  only). Values: `low` · `medium` · `high` · `xhigh` · `max`. An INDEPENDENT knob from `Model:` —
-  raising effort is far cheaper than raising model tier, so it's the correct first rung on the
-  escalation ladder before reaching for a bigger model. If absent, the governor uses
-  `GOVERN_WORKER_EFFORT`; if that's also unset, no `--effort` flag is passed at all (the worker runs
-  at the CLI's session-default effort — unchanged from before this field existed). Same
-  first-attempt-only / retry-escalates-away rule as `Model:`. Unknown values are ignored (fail-safe).
-  File with `scripts/govern/file-ticket.sh --effort high "..."`.
+> **There is no `Model:` / `Effort:` field.** Worker sizing is a MEASUREMENT, not something you
+> declare at filing time. A cheap read-only scout pass greps the real code before dispatch and its
+> verdict picks the tier — it knows how many files the fix touches, whether tests cover the area, and
+> whether there is a precedent commit, none of which you know while writing the ticket. Entries in
+> older queues still carrying these fields are inert; they are not an error, they just do nothing.
+> (`GOVERN_MEASURED_SIZING=0` restores the old field-wins precedence if a fleet needs it.)
 
 ---
 
 ## #1 — Example ticket (delete me)
 
 **Severity:** Low
-**Model:** sonnet
 **Where:** `path/to/file.ts` (which sub-repo / area)
 **Observed:** What's wrong or missing, concretely.
 **Fix direction:** The intended approach (not a full design).
