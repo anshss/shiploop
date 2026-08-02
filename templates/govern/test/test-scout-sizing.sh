@@ -138,18 +138,18 @@ Observed: no Model / no Effort field — this is the case that used to default t
 
 ---
 
-## #202 — the brain stamped BOTH axes
+## #202 — a LEGACY entry still carrying both fields
 **Severity:** Medium
 **Model:** opus
 **Effort:** max
-Observed: an explicit operator decision that the scout must not touch.
+Observed: fields written under the old contract. They must be INERT, not fatal.
 
 ---
 
-## #203 — the brain stamped only Model
+## #203 — a LEGACY entry still carrying only Model
 **Severity:** Medium
 **Model:** opus
-Observed: Model is claimed; Effort is still the scout's to decide.
+Observed: same, one axis. Also inert.
 EOF
 : > "$T/escalations.md"
 
@@ -172,15 +172,31 @@ assert_eq "$(dry 201 '.model + " " + .effort + " " + .scope_class')" "haiku low 
 assert_contains "$(dry 201 '.model_source')" "scout" "the log/ledger names the scout as the source"
 assert_contains "$(dry 201 '.model_source')" "trivial" "and records the measured scope class"
 
-assert_eq "$(dry 202 '.model + " " + .effort')" "opus max" \
-  "an explicit ticket Model: AND Effort: both WIN over the scout"
-assert_eq "$(dry 202 '.model_source')" "ticket-Model-field" \
-  "the brain stays the recorded source for the axis it claimed"
+# THE INVERSION. These two used to assert the ticket field beating the scout. It is the other way
+# round now: the field is a guess made before any evidence existed, the scout actually read the
+# code. A legacy entry still carrying the fields is INERT — ignored, never an error.
+assert_eq "$(dry 202 '.model + " " + .effort')" "haiku low" \
+  "a legacy ticket Model: AND Effort: are IGNORED — the measured verdict decides both axes"
+assert_contains "$(dry 202 '.model_source')" "scout" \
+  "the scout is the recorded source even when the ticket carries a field"
+assert_eq "$(dry 202 '.ticket_model')" "opus" \
+  "the legacy field is still observable in the dry-run output (inert, not erased)"
 assert_eq "$(dry 202 '.scope_class')" "trivial" \
-  "the measured scope is still recorded even when the brain overrode it"
+  "the measured scope class is recorded"
 
-assert_eq "$(dry 203 '.model + " " + .effort')" "opus low" \
-  "a ticket that stamps only Model: keeps opus, and the scout decides the unclaimed Effort axis"
+assert_eq "$(dry 203 '.model + " " + .effort')" "haiku low" \
+  "a legacy ticket stamping only Model: is equally inert"
+
+# Kill switch: GOVERN_MEASURED_SIZING=0 restores the OLD precedence for every one of these.
+mdry() { GOVERN_MEASURED_SIZING=0 dry "$@"; }
+assert_eq "$(mdry 202 '.model + " " + .effort')" "opus max" \
+  "GOVERN_MEASURED_SIZING=0 → an explicit Model: AND Effort: win over the scout again"
+assert_eq "$(mdry 202 '.model_source')" "ticket-Model-field" \
+  "GOVERN_MEASURED_SIZING=0 → the ticket field is the recorded source again"
+assert_eq "$(mdry 203 '.model + " " + .effort')" "opus low" \
+  "GOVERN_MEASURED_SIZING=0 → a half-stamped ticket keeps opus and the scout fills Effort"
+assert_eq "$(mdry 201 '.model + " " + .effort')" "haiku low" \
+  "GOVERN_MEASURED_SIZING=0 → an unsized ticket is unaffected either way"
 
 # With the scout off, #201 must resolve EXACTLY as it did before this feature existed.
 assert_eq "$(GOVERN_SCOUT=0 GOVERN_SPAWN_DRY_RUN=1 GOVERN_WORKER_MODEL=opus \

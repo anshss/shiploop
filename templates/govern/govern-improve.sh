@@ -105,7 +105,7 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_IMPROVE_MODEL:-sonnet}"
 # TokenJam: tag this self-improve session with the run id so it groups with the run's workers (#tokenjam).
 out="$(env OTEL_RESOURCE_ATTRIBUTES="$(govern::otel_attrs self-improve)" "$claude_bin" -p "$prompt" --output-format stream-json --verbose \
-       --setting-sources "${GOVERN_SETTING_SOURCES:-user}" --permission-mode plan --model "$model" 2>/dev/null \
+       --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" --permission-mode plan --model "$model" 2>/dev/null \
        | grep '"type":"result"' | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
 
 # Nothing useful → don't touch the file.

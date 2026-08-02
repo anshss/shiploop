@@ -114,7 +114,69 @@ Done when: each safe proposal above is implemented via a harness PR or explicitl
 Ref: governor/improvements.md block "${block_ref}". ${nrail} rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
 EOF
 
-n="$("$DIR/file-ticket.sh" "Harness self-improvement: promote safe proposals from ${run_label}" Low < "$bodyfile" 2>/dev/null || true)"
+# ── ONE STANDING TICKET, not one per run ────────────────────────────────────────────────────────
+# This used to mint a fresh `## #N` every time it fired. Self-improvement proposals recur — the same
+# friction produces the same proposal next run — so the queue accumulated near-duplicate entries
+# that a human then had to reconcile by hand (#62/#67/#72/#75/#76 were five entries describing one
+# thing). They are the SAME work item, so they belong in the SAME ticket: if an open one is already
+# there, append this run's proposals to it and reuse its number.
+#
+# Matching is on the ticket TITLE prefix — deliberately not a marker comment or a side-file, so the
+# link is visible to anyone reading tickets.md and survives a hand-edit. Bookkeeping deletes the
+# block on resolve exactly as for any other ticket, and the next run then opens a fresh one.
+STANDING_TITLE="Harness self-improvement: promote safe proposals"
+
+# Appends under the bookkeep lock — the same lock file-ticket.sh takes — so a concurrent filer can
+# never interleave with this read-modify-write. Fail-open: if the lock can't be had, fall through to
+# filing a normal new ticket rather than dropping the proposals.
+append_to_standing() { # <ticket-number> <bodyfile> -> rc 0 on success
+  local num="$1" src="$2"
+  local lock tmp rc
+  local got=0
+  lock="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
+  govern::lock_acquire "$lock" 60 300 && got=1
+  [[ "$got" == "1" ]] || return 1
+  tmp="$(mktemp)"
+  # Insert immediately BEFORE the block's terminating boundary (the next `## #` heading or EOF), so
+  # the appended run sits inside the ticket it belongs to.
+  if awk -v num="$num" -v add="$(date +%Y-%m-%d\ %H:%M)" -v runl="$run_label" -v addfile="$src" '
+    function flush_add(   line) {
+      if (emitted) return
+      print ""
+      print "**Also proposed after run " runl " (" add "):**"
+      while ((getline line < addfile) > 0) print line
+      close(addfile)
+      emitted = 1
+    }
+    /^##[[:space:]]+#[0-9]+/ {
+      if (inblock) { flush_add(); inblock = 0 }
+      cur = $0; sub(/^##[[:space:]]+#/, "", cur); sub(/[^0-9].*/, "", cur)
+      if (cur == num) inblock = 1
+    }
+    { print }
+    END { if (inblock) flush_add() }
+  ' "$TICKETS_FILE" > "$tmp"; then
+    mv "$tmp" "$TICKETS_FILE"; rc=0
+  else
+    rm -f "$tmp"; rc=1
+  fi
+  govern::lock_release "$lock"
+  return "$rc"
+}
+
+# An OPEN standing ticket = a `## #N` heading whose title starts with STANDING_TITLE.
+standing_n="$(grep -oE "^##[[:space:]]+#[0-9]+[[:space:]]*[—-][[:space:]]*${STANDING_TITLE}" "$TICKETS_FILE" 2>/dev/null \
+  | tail -1 | sed -E 's/^##[[:space:]]+#([0-9]+).*/\1/' || true)"
+
+n=""
+if [[ "$standing_n" =~ ^[0-9]+$ ]] && append_to_standing "$standing_n" "$bodyfile"; then
+  n="$standing_n"
+  govern::log "improve-triage: appended ${#safe[@]} proposal(s) to the STANDING ticket #${n} instead of minting a new one"
+  govern::commit_meta_to_main "$(dirname "$TICKETS_FILE")" "$(govern::tickets_relpath)" \
+    "chore(govern): append run ${run_label} proposals to standing ticket #${n} (#274)" >/dev/null 2>&1 || true
+else
+  n="$("$DIR/file-ticket.sh" "${STANDING_TITLE} (from ${run_label})" Low < "$bodyfile" 2>/dev/null || true)"
+fi
 rm -f "$bodyfile"
 
 if [[ ! "$n" =~ ^[0-9]+$ ]]; then

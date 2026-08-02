@@ -355,16 +355,23 @@ govern::norm_disposition() { # raw -> canonical|""
 # can run > default stale window: worker + await-ci + CI-fix re-dispatch + conflict-resolve).
 # Only when the recorded holder pid is DEAD (crashed driver) or the pid file is missing do
 # we fall back to the mtime stale window as a backstop.
-govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
-  # GNU stat first (Linux, CI), then BSD stat (macOS). Order matters: on GNU stat,
-  # `stat -f %m file` treats `-f` as --file-system and prints multi-line "File: …"
-  # noise on stdout while exiting non-zero — the subshell would then concatenate that
-  # with the fallback's numeric output, breaking the arithmetic below.
+# Portable mtime in epoch seconds. ONE hardened copy — the `stat -c %Y || stat -f %m` idiom was
+# open-coded in three places and one of them (valjob::_mtime) had neither guard below.
+#
+# GNU stat first (Linux, CI), then BSD stat (macOS). Order matters, and BOTH guards are
+# load-bearing: on GNU stat, `stat -f %m file` treats `-f` as --file-system and prints multi-line
+# "File: …" noise on STDOUT while exiting non-zero — so a BSD-first order would "succeed" with
+# garbage on Linux, and even in this order a partial stdout can leak through and be concatenated
+# with the fallback's numeric output, poisoning any arithmetic downstream. Hence: strip non-digits,
+# and default to 0 rather than returning empty (an empty value turns `$(( now - m ))` into a syntax
+# error under `set -e`, which aborts the caller with no message).
+govern::mtime() { # <path> -> epoch seconds, or 0 when unavailable
   local m; m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0)"
-  # Belt-and-suspenders: strip any non-digits that snuck through, so a partial stdout
-  # from a stat variant we don't recognize can never poison the arithmetic.
   m="${m//[!0-9]/}"; [[ -n "$m" ]] || m=0
-  echo $(( $(date +%s) - m ))
+  printf '%s' "$m"
+}
+govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
+  echo $(( $(date +%s) - $(govern::mtime "$1") ))
 }
 # Read the holder pid recorded inside a claim/bookkeep lock dir. Returns "" when absent
 # (a pre-#pid-liveness lock or a partial write from a killed acquire).
@@ -820,6 +827,49 @@ govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate
 GOVERN_VALIDATION_TICKET_RE='^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif|[Aa]ctually work|PASS/FAIL'
 govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/spike ticket
   printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_TICKET_RE" 2>/dev/null
+}
+
+# ── warm-parent dispatch assertion (not every ticket earns a full worker) ────────────────────────
+# Dispatch is otherwise UNCONDITIONAL: every ticket gets a fresh headless worker that re-derives the
+# codebase from scratch, regardless of what the parent session already knows. The criterion for
+# reaching for a subagent at all is that the side task would flood the parent with search results,
+# logs and file contents it will not reference again — so when the parent ALREADY holds the context,
+# the spawn buys nothing and costs a cold start.
+#
+# The split is by TOKEN WEIGHT, not by task. The parent DECIDES (it states the change it already
+# knows); the worker EXECUTES (the edits, the test runs, the build errors, the retry loop, the PR) —
+# the verbose part, which stays in a throwaway context. That preserves the flat-parent property the
+# governor exists for; "let the parent do the work" would destroy it.
+#
+# The signal is EXPLICIT and NARROW by construction — never inferred, never a heuristic:
+#   GOVERN_WARM="<ticket-number>|<what the parent read, and the change it believes is needed>"
+# It names exactly ONE ticket, it is per-invocation (so it cannot rot in the queue the way a ticket
+# field does), and an empty change means "no worker at all". `GOVERN_EXECUTE_ONLY=0` hard-disables
+# the branch even when GOVERN_WARM is set, restoring unconditional dispatch fleet-wide.
+#
+# Returns rc 0 and sets GOVERN_WARM_TEXT when the assertion applies to <N>; rc 1 otherwise. A
+# malformed value (no `|`, non-numeric ticket) is IGNORED with a log line rather than guessed at —
+# the whole point is that this branch is never taken by accident.
+GOVERN_WARM_TEXT=""
+govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this ticket
+  GOVERN_WARM_TEXT=""
+  local n="${1:-}" raw="${GOVERN_WARM:-}" wn
+  [[ -n "$raw" ]] || return 1
+  [[ "${GOVERN_EXECUTE_ONLY:-1}" != "0" ]] || {
+    govern::log "warm assertion for #$n ignored: GOVERN_EXECUTE_ONLY=0 (branch disabled fleet-wide)"
+    return 1
+  }
+  case "$raw" in
+    *"|"*) ;;
+    *) govern::log "GOVERN_WARM is malformed (expected '<ticket>|<stated change>', got '${raw:0:40}…') — ignoring, dispatching normally"; return 1 ;;
+  esac
+  wn="${raw%%|*}"; wn="${wn//[[:space:]]/}"
+  [[ "$wn" =~ ^[0-9]+$ ]] || {
+    govern::log "GOVERN_WARM does not start with a ticket number — ignoring, dispatching normally"; return 1
+  }
+  [[ "$wn" == "$n" ]] || return 1      # scoped to exactly one ticket
+  GOVERN_WARM_TEXT="${raw#*|}"
+  return 0
 }
 
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines

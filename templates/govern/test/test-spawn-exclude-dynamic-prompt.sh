@@ -161,7 +161,10 @@ err4="$TMP/err4.txt"
 out4="$(run 301 "$TMP/fake-claude-new.sh" "env-off" "0" 2>"$err4")"
 assert_eq "$(printf '%s' "$out4" | jq -r '.exclude_dynamic_prompt')" "" \
   "GOVERN_EXCLUDE_DYNAMIC_PROMPT=0 → flag absent (kill switch wins over a supporting CLI)"
-if grep -qi "does not support" "$err4"; then
+# Scoped to THIS flag's message. A bare "does not support" also matches the sibling `--tools`
+# probe's warning, which the fake modern CLI here does advertise but other fixtures may not —
+# an unscoped grep makes this assertion fail for a reason that has nothing to do with EDP.
+if grep -qi "does not support --exclude-dynamic-system-prompt-sections" "$err4"; then
   printf 'FAIL - %s\n' "no warning expected when explicitly disabled via env=0"
   ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
