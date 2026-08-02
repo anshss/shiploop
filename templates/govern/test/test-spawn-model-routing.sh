@@ -94,8 +94,12 @@ assert_eq "$(printf '%s' "$out1" | jq -r '.is_retry')" "0" \
 assert_eq "$(printf '%s' "$out1" | jq -r '.model_source')" "GOVERN_WORKER_MODEL" \
   "model source is NEVER ticket-Model-field under measured sizing"
 
-# 2. Same ticket on RETRY (force flag mirrors the real preserved-worktree signal)
-#    → escalate to GOVERN_WORKER_MODEL unconditionally.
+# 2. Same ticket on RETRY (force flag mirrors the real preserved-worktree signal) → escalates to
+#    GOVERN_WORKER_MODEL. NOT because retries escalate unconditionally — they do not; `resolve_sizing`
+#    classifies WHY the prior attempt failed and an infra/CI cause deliberately re-bets the SAME tier
+#    (see test-retry-escalation.sh). There is no history here, so the class is `unknown`, whose
+#    documented fallback IS the escalate-to-floor path. Phrasing matters: the "retries escalate
+#    unconditionally" claim was stale doc text that propagated into the public README once already.
 out2="$(run 101 1)"
 assert_eq "$(printf '%s' "$out2" | jq -r '.model')" "opus" \
   "retry of Model: sonnet ticket → escalates to GOVERN_WORKER_MODEL=opus"
