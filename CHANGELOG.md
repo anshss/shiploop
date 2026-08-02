@@ -1,5 +1,182 @@
 # Changelog
 
+## 1.14.0 — 2026-08-03
+
+The lighter release. The measured cost identity for a worker run is
+`sessions × turns/session × context/turn × price/token`, and the accumulating term dominates: one
+resolved ticket ran 22.9M tokens of which 22.55M (98.4%) was cache-read of context the worker grew
+itself, against a ~7k starting prompt. So this release is weighted toward **deleting per-turn context
+and decoupling machinery that acted unconditionally** — not toward adding capability. Two of the
+spec's components were gated and correctly ship as *not built*; see "Deliberately not built" below.
+
+### Changed
+
+- **The tool-schema trim is ON by default** (`GOVERN_WORKER_TOOLS`). It shipped opt-in in 1.13.x while
+  the allow-list was still a theory. Before flipping it, the list was **re-derived over all 125 worker
+  transcripts** under `logs/govern/` (the earlier derivation covered 39): every tool the fleet has
+  ever invoked — Bash 2194, Read 267, Edit 240, Write 64, Agent 35, TaskUpdate 24, Monitor 14,
+  ToolSearch 13, TaskCreate 13, ScheduleWakeup 9, SendMessage 3 — is already in the list, so the
+  measured invocation set is a strict **subset** and default-on removes nothing in live use. The
+  reproducing histogram is committed in `spawn-worker.sh`'s header; re-run it before any future edit
+  to the list. Measured: turn-1 request 164,795 → 107,985 bytes (−34.5%); the tool block alone
+  85,260 → 28,417 (−66.7%). `GOVERN_WORKER_TOOLS=0` (or `off`) restores the pre-trim spawn.
+
+- **Headless passes no longer inherit the operator's personal config layer.**
+  `GOVERN_SETTING_SOURCES` now defaults to `project,local` instead of `user`, at all seven
+  `claude -p` call sites (`spawn-worker`, `scout-ticket`, `govern-supervise`, `govern-improve`,
+  `govern-self-apply`, `sync-port`, `measure-prefix`). None of them can act on extended-thinking
+  shortcuts, TodoWrite practice or PR-review workflow, yet all of it was re-sent on every turn of
+  every worker session (~5,000 tokens on the authoring machine). `project`/`local` are kept because
+  the workspace's own `settings.json` is what wires the govern hooks. Set
+  `GOVERN_SETTING_SOURCES=user` to restore the prior behavior.
+
+- **The worker prompt is conditionally assembled instead of one static blob.**
+  `templates/governor/worker-prompt.md` is sent to every worker and re-read on every turn, so a block
+  that only ever applies to one ticket class is pure per-turn tax on every other ticket. The
+  validation/spike section — 6,207 of 24,216 template bytes, 25.6% — is now fenced
+  `<!-- GOVERN:SECTION validation -->` and appended only for a validation ticket, classified by the
+  existing fail-closed `govern::is_validation_ticket`. Maintainer HTML comments are stripped from the
+  assembled prompt too. Measured through the real `GOVERN_SPAWN_PRINT_PROMPT=1` seam, including
+  doctrine and ticket block: **an ordinary ticket's prompt is 25,680 → 19,379 bytes (−24.5%,
+  ≈ −1,575 tokens per turn)**; a validation ticket's is byte-identical.
+  `GOVERN_PROMPT_SEGMENTED=0` restores the monolith exactly.
+
+  Segmentation uses in-place markers rather than a second template file, so this adds no file and no
+  scaffold wiring. The rules for adding a section are in the template's own header: only a block with
+  an existing, reliable, **fail-closed** classifier — a worker that needed a section it did not
+  receive fails its ticket, and a failed attempt is ~100% waste whose retry costs more than the
+  original. The asymmetry runs one way; when uncertain, include.
+
+- **Worker sizing is a measurement, not a filing-time guess.** `resolve_sizing`'s precedence is
+  inverted: the scout's measured verdict now decides both axes. Previously a hand-written ticket
+  `Model:`/`Effort:` field — written before any evidence existed, by whoever happened to notice the
+  bug — **outranked** the pass that actually greps the code, and the scout only filled axes the
+  ticket left blank. `GOVERN_MEASURED_SIZING=0` restores the old ticket-field-wins precedence.
+
+  The tier set stays deliberately coarse and must stay so: the prompt cache is per-model and an
+  effort change invalidates the tools+system prefix, so spreading N tickets across N distinct
+  `(model, effort)` combinations fragments the cross-worker shared prefix that measurements show
+  currently works.
+
+- **The scout stops throwing away what it found.** It had to locate the target files, the analogous
+  prior commit and the test command in order to answer its six scope questions — then reported only
+  the six integers, so the worker paid full exploration price to rediscover what a haiku pass had just
+  found. Those pointers now reach the worker (new `scout-ticket.sh --findings`), explicitly labelled
+  **unverified hints, not instructions**, with an instruction to ignore any pointer that does not
+  match the code. The six-scalar deterministic bash scorer is unchanged.
+
+- **Self-improvement fires once per run, not once per driver.** The pass now runs in the orchestrator
+  over the aggregated state after reaping — beside the whole-run supervisor flush, which exists for
+  exactly this reason — and a child driver (`--orchestrated`) skips its own. A child only ever sees
+  its own slice of a run, so a per-driver "review of the run" is structurally a review of a fragment;
+  an N-way parallel run filed N near-identical tickets, two of them from the same wall-clock run.
+  Triage now also **appends to a standing ticket** rather than minting a new `## #N` each time, since
+  the same friction recurs and produces the same proposal. `GOVERN_IMPROVE_PER_RUN=0` restores
+  per-driver filing.
+
+- **Worker prompt: task boundaries, and verify a delegated claim before acting on it.** The brief
+  shape a subagent needs is objective, output format, tool/source guidance **and clear task
+  boundaries**; the template had the first two. Boundaries are what stop a worker wandering — the fix
+  is contained in X, adjacent improvements go to `newTickets`, not into the diff. And workers delegate
+  too (34 `Agent` calls across 39 transcripts): a child's factual claim is now framed as a lead, not
+  a result, to be confirmed with one `grep` before it is acted on.
+
+### Added
+
+- **Dispatch is no longer unconditional — a ticket can resolve with no worker, or with an
+  execute-only worker.** Every ticket used to get a fresh headless worker that re-derived the codebase
+  from scratch regardless of what the parent session already knew. The criterion for spawning at all
+  is that the work would flood the parent with output it will never reference again; when the parent
+  already **holds** the context, the spawn buys nothing and pays a cold start.
+
+  The split is by **token weight, not by task** — the parent DECIDES (states the change it already
+  knows), the worker EXECUTES (the edits, the test runs, the build errors, the retry loop, the PR: the
+  verbose part, which stays in a throwaway context). "Let the parent do the work" would destroy the
+  flat-parent property the governor exists for.
+
+      GOVERN_WARM="<ticket-number>|<what you read, and the change you believe is needed>"
+
+  The signal is **explicit and narrow, never inferred**: it names exactly one ticket, it is
+  per-invocation so it cannot rot in the queue the way a ticket field does, and a malformed value is
+  ignored with a log line rather than guessed at. With a stated change the worker runs **execute-only**
+  at the cheapest *existing* tier (never a newly minted `(model, effort)` pair — that would
+  re-fragment the shared cache prefix). With an empty change **no worker is spawned** and the ticket
+  is parked with the assertion recorded — never auto-resolved, because "the parent thinks nothing is
+  needed" is a claim for a human to confirm and a silently dropped ticket is the one outcome this must
+  not produce.
+
+  **The risk, stated plainly:** a warm parent's knowledge can be stale or simply wrong, and an
+  execute-only worker will faithfully implement a wrong instruction where a cold worker would have
+  re-derived the truth. So the brief is **falsifiable, not a command**: it states what the parent
+  *believes* and instructs the worker to STOP and report rather than proceed if the code does not
+  match. `GOVERN_EXECUTE_ONLY=0` hard-disables the branch fleet-wide.
+
+### Removed
+
+- **The ticket `Model:` / `Effort:` contract.** Gone from the parser's dispatch path, from
+  `file-ticket.sh`, and from all four documentation sites (`templates/seed/tickets.md`,
+  `templates/seed/CLAUDE.md`, `templates/governor/README.md`, `commands/setup.md`). Sizing is measured
+  now; a guess made at filing time no longer participates.
+
+  **Upgrade note — this degrades cleanly and needs no action.** Existing queue entries still carrying
+  the fields are **inert**: ignored, never an error. `file-ticket.sh --model` / `--effort` are still
+  *accepted* and ignored with one log line, so an older caller — or a `/setup` doc a fleet already
+  copied — does not have its tier value consumed as the ticket title. `GOVERN_MEASURED_SIZING=0`
+  restores the old precedence for a fleet that wants it.
+
+### Fixed
+
+- **One hardened `govern::mtime`** replaces three open-coded copies of the portable
+  `stat -c %Y || stat -f %m` idiom. On GNU coreutils `stat -f` means `--file-system` and prints
+  multi-line noise on stdout while exiting non-zero, so both guards matter: strip non-digits, and
+  default to `0` rather than returning empty (an empty value makes a caller's `$(( now - m ))` a
+  syntax error that aborts it under `set -e`). Only `valjob::_mtime` actually lacked them —
+  `valpending.sh` has had them all along, contrary to an earlier audit note. `valjob.sh` delegates
+  when `common.sh` is loaded and keeps a local copy otherwise, preserving its deliberate standalone
+  property.
+
+- **The `--tools` capability probe is now wired into every spawning test.** Flipping the trim on by
+  default made the probe invoke `$claude_bin --help`, which consumed counter-driven fake CLIs and
+  shifted assertions in three tests. The `_GOVERN_TOOLS_SUPPORTED` pre-seed seam already existed but
+  was not used by those tests; it now sits alongside `_GOVERN_EDP_SUPPORTED`. This is the documented
+  "new `claude` invocation in the dispatch path perturbs the suite" anti-pattern, and it predicted the
+  failures exactly.
+
+### Deliberately not built
+
+Two components of the design spec were gated and the gates correctly refused them. Recorded here so
+they are not re-attempted from scratch.
+
+- **Decoupling ticket bookkeeping from PR merge.** The proposal was to delete a ticket's queue entry
+  as soon as its PR is open. The gate's letter passes — escalations and `state.jsonl` could carry
+  unmerged-PR tracking — but the change reintroduces `#42` (`test-merge-fail-park.sh` is its
+  regression test) and, worse, kills an *automatic* recovery path: run-loop's resume adopts an
+  existing open PR only when a ticket is re-**selected**, which requires its block to still be in
+  `tickets.md`. A red-CI ticket would stop being auto-retried and depend on a human answering an
+  escalation — a net loss of autonomy for a harness whose purpose is autonomous grinding. The part of
+  the complaint that survives is **latency, not ordering** (the driver still blocks on CI before
+  claiming the next ticket) and is tracked separately.
+
+- **A model-authored dispatch plan.** The diagnosis is sound — the harness mail-merges a template
+  rather than orchestrating — but the gate required the seam to be **net-negative**: it could only be
+  built if landing it let us delete the scout's scoring table, the `Model:`/`Effort:` parser and
+  `resolve_sizing`'s precedence ladder. All three are deliberately retained (the parser is what the
+  kill switch restores, the bash scorer is deterministic and auditable rather than a second judgement
+  handed to a model, and the ladder is retry escalation). So the seam would be purely additive — a
+  model in front of every worker that can author a wrong brief confidently, at scale, where today a
+  cold worker at least discovers the truth for itself.
+
+### Upgrade notes
+
+- Nothing to do. Every behavior change above is behind an env kill switch whose `=0` (or documented
+  value) restores the previous behavior exactly: `GOVERN_WORKER_TOOLS=0`,
+  `GOVERN_SETTING_SOURCES=user`, `GOVERN_PROMPT_SEGMENTED=0`, `GOVERN_MEASURED_SIZING=0`,
+  `GOVERN_IMPROVE_PER_RUN=0`, `GOVERN_EXECUTE_ONLY=0`.
+- Existing workspaces pick this up via `/shiploop:update`. Queue entries carrying `Model:`/`Effort:`
+  need no edit — they are inert.
+- Verified with the full scaffolded suite (CI's `scaffold-and-test` recipe in a throwaway workspace):
+  128 passed, 0 failed, 5 skipped, 133 total, against a 126/0/5/131 baseline.
+
 ## 1.13.3 — 2026-07-26
 
 ### Added
