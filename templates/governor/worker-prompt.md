@@ -17,8 +17,15 @@ operator doctrine below, then write a JSON report and exit.
    gap is exactly how two tickets have gotten filed for the same identical root cause before. If one
    already covers it, put its number in `crossRefs.overlaps` instead of minting a duplicate. Only if
    none exists, record it in the report's `newTickets` array (do not edit `queue/tickets.md` yourself).
-5. If a durable, reusable lesson emerged, put it in the report's `lessonPatch` (root-level) or edit
-   the sub-repo `CLAUDE.md` inside your PR (sub-repo-level).
+5. If a lesson emerged, gate it BOTH ways before promoting — "durable and reusable" alone says yes to
+   too much. Promote only if ALL hold: **settled** (not a live/undecided question — that's a ticket);
+   **not already recorded** (code/tests/git history/an open ticket doesn't already carry it);
+   **load-bearing for sessions that never touch this topic** (topic-local knowledge goes in the
+   sub-repo's own `CLAUDE.md` instead — there is no per-sub-repo appendix; `CLAUDE-APPENDIX.md` is
+   a root-level file only); **statable as a rule in ≤3 lines** (the rule, not the incident —
+   root-level narrative belongs in the root `CLAUDE-APPENDIX.md`). Passing lessons go in the
+   report's `lessonPatch` (root-level) or edited into the sub-repo `CLAUDE.md` inside your PR
+   (sub-repo-level).
 
 ## FINDINGS SCRATCHPAD — append to `.governor-notes.md` as you go
 If this attempt fails or times out, your worktree is PRESERVED and a retry runs inside it — but only
@@ -227,7 +234,7 @@ Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
   "status": "resolved | parked | failed",
   "pr": {"repo": "<sub-repo>", "number": 123, "url": "https://..."},
   "prs": [{"repo": "<sub-repo-a>", "number": 281, "url": "https://..."}, {"repo": "<sub-repo-b>", "number": 66, "url": "https://..."}],
-  "lessonPatch": {"file": "CLAUDE.md", "anchor": "## <existing heading to insert after>", "text": "the durable lesson, markdown"},
+  "lessonPatch": {"file": "CLAUDE.md", "anchor": "## <existing heading to insert after>", "text": "the RULE only, <=3 lines / ~600 chars — markdown"},
   "newTickets": [{"title": "short title", "severity": "High|Medium|Low", "body": "Where/Observed/Fix direction/Done when"}],
   "crossRefs": {"overlaps": [14], "dependsOn": [9]},
   "migration": {"needed": true, "destructive": false, "name": "20260610_add_x", "note": "ADD COLUMN x nullable"},
@@ -238,7 +245,9 @@ Also write the same JSON to `{{REPORT_PATH}}` if you are able to write files:
 Field rules:
 - `lessonPatch` is for a **root-level** durable lesson only (e.g. root `CLAUDE.md`) — the governor
   applies it deterministically. A **sub-repo** lesson must instead be edited **inside your PR**, not
-  reported here. `null` if there's no durable lesson.
+  reported here. `null` if there's no durable lesson. `lessonPatch.text` must be the RULE only — ≤3
+  lines / ~600 chars. Longer text is auto-routed to `CLAUDE-APPENDIX.md` by the governor, with only
+  the lead sentence kept in `CLAUDE.md`.
 - `prs`: **multi-repo tickets only.** If you open MORE THAN ONE PR for this ticket (e.g. a backend
   PR + a second-service PR + a frontend PR), list EVERY PR here as `{repo, number, url}` — including
   the one you also put in `pr`. The governor auto-merges every allowlisted-repo PR (backend-first) on
