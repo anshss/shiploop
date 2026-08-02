@@ -12,7 +12,8 @@ report="$(cat)"
 # the explicit assert below is the deterministic fail-closed guard (#28).
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # the queue/ folder (holds tickets.md)
 govern::assert_commit_dir "$commit_dir"                  # fail closed if the queue dir is missing (#28)
-patched=""
+declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/vdoc) to `git add` below —
+                              # holds the root lesson target AND, on an overflow split, CLAUDE-APPENDIX.md too.
 
 # Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers
 # (parallel sessions on disjoint tickets, #41) would otherwise race the mktemp→mv (lost
@@ -116,22 +117,45 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
   if [[ -f "$target" ]]; then
     anchor="$(printf '%s' "$report" | jq -r '.lessonPatch.anchor // empty')"
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
+    insert_text="$text"   # what actually gets inserted into $target — overridden below on overflow
+
+    # Overflow gate: CLAUDE.md is re-sent every turn, so an oversized lessonPatch inserted verbatim
+    # is a PERMANENT per-turn tax. Past GOVERN_LESSON_MAX_CHARS, keep only the LEAD rule (the first
+    # paragraph — text up to the first blank line; the first line if there's no blank line) in
+    # $target, pointing at the full text parked under its own heading in CLAUDE-APPENDIX.md. Falls
+    # back to the CURRENT insert-everything behavior when CLAUDE-APPENDIX.md doesn't exist at the
+    # meta-repo root — never silently lose the lesson.
+    lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
+    appendix="$meta_root/CLAUDE-APPENDIX.md"
+    if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
+      if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
+        lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
+      else
+        lead="$(printf '%s\n' "$text" | head -n1)"
+      fi
+      heading="#$N — ${ticket_title:-lesson}"
+      insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."
+      { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
+      patched_files+=("$appendix")
+      govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
+    fi
+
     if [[ -n "$anchor" ]] && grep -qF "$anchor" "$target"; then
       # Insert the (possibly multi-line) lesson AFTER the anchor line. Pass the text via a
       # FILE read with getline — NEVER `awk -v t="$text"`: awk's -v cannot hold literal
       # newlines, so multi-line lesson text dies with "awk: newline in string" and the patch
       # silently fails (the resolve then aborts before its commit under set -e).
-      tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$text" > "$tf"
+      tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$insert_text" > "$tf"
       awk -v a="$anchor" -v tf="$tf" '
         index($0,a) && !done { print; print ""; while ((getline line < tf) > 0) print line; close(tf); done=1; next }
         { print }
       ' "$target" > "$tmpf"
       mv "$tmpf" "$target"; rm -f "$tf"
     else
-      printf '\n%s\n' "$text" >> "$target"
+      printf '\n%s\n' "$insert_text" >> "$target"
     fi
-    patched="$target"   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
-                        # root-relative name would miss it; absolute resolves from anywhere in the repo.
+    patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
+                                  # root-relative name would miss it; absolute resolves from anywhere in the repo.
   fi
 fi
 
@@ -190,7 +214,8 @@ pr="$(printf '%s' "$report" | jq -r '
   | (map("\(.repo)#\(.number)") | join(", "))
   | if . == "" then "?#0" else . end' 2>/dev/null || echo '?#0')"
 ( cd "$commit_dir"
-  git add "$(basename "$TICKETS_FILE")" ${patched:+"$patched"}
+  git add "$(basename "$TICKETS_FILE")"
+  for pf in ${patched_files[@]+"${patched_files[@]}"}; do git add "$pf"; done   # lesson target + (on overflow) CLAUDE-APPENDIX.md
   git add "$SEQ_FILE" 2>/dev/null || true  # #54 high-water mark (absolute path; no-op if outside repo, e.g. tests)
   [[ -n "$vdoc" ]] && git add "$vdoc" 2>/dev/null || true  # #252 promoted validation summary (absolute path)
   git commit -q -m "docs(tickets): resolve #$N ($pr)" || true
@@ -259,4 +284,4 @@ if [[ -n "$vdoc_rel" ]]; then
     && govern::log "bookkeep #$N: recorded validation-evidence pointer → $vdoc_rel in $(basename "$HISTORY_FILE") (#252)" || true
 fi
 
-echo "bookkept #$N: block deleted; +$count ticket(s); lesson=${patched:-none}; validationDoc=${vdoc_rel:-none}; pr=$pr"
+echo "bookkept #$N: block deleted; +$count ticket(s); lesson=${target:-none}; validationDoc=${vdoc_rel:-none}; pr=$pr"

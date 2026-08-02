@@ -35,6 +35,26 @@ set -uo pipefail
 MAX_ENTRIES="${SHIPLOOP_LEARNINGS_MAX_ENTRIES:-3}"   # newest N entries
 MAX_LINES="${SHIPLOOP_LEARNINGS_MAX_LINES:-40}"      # hard ceiling on injected lines
 
+# --- free size-trigger: root CLAUDE.md over budget --------------------------
+# Pure `wc -c`, no model invocation — costs nothing when the file is healthy. Runs
+# unconditionally (before any of the learnings-entry logic/early-exits below) so it fires
+# regardless of whether learnings.md has entries. CLAUDE.md is re-sent every turn, so letting
+# it grow unbounded is a permanent per-turn tax; this just flags the budget breach so a session
+# re-triages it (move topic-local narrative to CLAUDE-APPENDIX.md, delete anything the code/
+# tests/git history already record) rather than silently accreting forever.
+CLAUDE_MAX_CHARS="${SHIPLOOP_CLAUDEMD_MAX_CHARS:-20000}"
+CLAUDE_FILE="${2:-}"
+if [ -z "$CLAUDE_FILE" ]; then
+  _claude_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || _claude_root=""
+  [ -n "$_claude_root" ] && CLAUDE_FILE="$_claude_root/CLAUDE.md"
+fi
+if [ -n "$CLAUDE_FILE" ] && [ -f "$CLAUDE_FILE" ]; then
+  claude_size="$(wc -c < "$CLAUDE_FILE" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$claude_size" ] && [ "$claude_size" -gt "$CLAUDE_MAX_CHARS" ] 2>/dev/null; then
+    printf '── root CLAUDE.md is over budget (%s chars, budget %s) — re-triage: move topic-local narrative to CLAUDE-APPENDIX.md, delete anything already recorded in code/tests/git history ──\n' "$claude_size" "$CLAUDE_MAX_CHARS"
+  fi
+fi
+
 # --- locate the file (arg wins; else the workspace root this script lives in) ---
 FILE="${1:-}"
 if [ -z "$FILE" ]; then

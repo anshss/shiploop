@@ -31,11 +31,25 @@ read `$GITHUB_ORG` + `$REPOS` — use them in the `gh` calls below.
    gh pr list --repo "$GITHUB_ORG/<sub-repo>" --state open --json number,title,url --limit 20
    ```
 
-3. **Promote the durable lesson FIRST (if any).** If fixing the ticket taught something stable and
-   reusable — an env var, a convention, an architecture gotcha, a load-bearing rule — add it to the
-   right `CLAUDE.md` (root for cross-repo, sub-repo for scoped) BEFORE deleting the ticket. The git
-   history + PR are the only record once the ticket is gone, so the lesson must land somewhere durable.
-   A pure "this was a bug, now fixed" with no reusable lesson gets no CLAUDE.md entry — just delete it.
+3. **Promote the durable lesson FIRST (if any) — gate it BOTH ways.** `CLAUDE.md` is re-sent on every
+   turn of every future session, so a promoted line is a permanent tax on all of them. "Is it durable
+   and reusable?" is only half the test — it says yes to far too much. Promote only if ALL FOUR hold:
+   - **Settled.** The decision is made and won't move. A live, undecided question (an unresolved
+     licensing choice, an unpicked approach) is a TICKET, not a lesson — filing both double-records
+     one finding, which the routing rules already forbid.
+   - **Not already recorded.** If the code, a test name, the git history, or an open ticket already
+     carries it, promoting duplicates something future sessions pay for forever.
+   - **Load-bearing for sessions that never touch this topic.** If only a session already working in
+     this area needs it, it belongs in `CLAUDE-APPENDIX.md` — read on demand, free until read.
+   - **Statable as a rule in ≤3 lines.** Promote the RULE, never the incident. If narrative is needed
+     to justify it, the rule goes in `CLAUDE.md` and the forensics go in `CLAUDE-APPENDIX.md`; the
+     rule may point at it.
+
+   Add the passing lesson to the right `CLAUDE.md` (root for cross-repo, sub-repo for scoped) BEFORE
+   deleting the ticket — the git history + PR are the only record once the ticket is gone. A pure
+   "this was a bug, now fixed" with no reusable rule gets no entry — just delete it. When in doubt the
+   appendix is the safe default: wrong-in-the-appendix costs one read, wrong-in-`CLAUDE.md` costs every
+   turn forever.
 
 4. **Delete the ticket entry.** Remove the entire `## #N — Title` block from `queue/tickets.md` (heading
    through its trailing `---`). Do NOT annotate it "RESOLVED" and do NOT renumber any other ticket —
