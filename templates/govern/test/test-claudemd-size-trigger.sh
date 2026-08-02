@@ -2,7 +2,7 @@
 # Regression: a free (zero-token) size-trigger detector on the SessionStart learnings-digest hook.
 # Root CLAUDE.md is re-sent every turn, so an unbounded CLAUDE.md is a permanent per-turn tax.
 # learnings-digest.sh must emit a re-triage reminder when CLAUDE.md exceeds
-# SHIPLOOP_CLAUDEMD_MAX_CHARS (default 20000) — using plain `wc -c`, no model call — and stay
+# SHIPLOOP_CLAUDEMD_MAX_CHARS (default 14000) — using plain `wc -c`, no model call — and stay
 # silent when it's under budget. This must fire independent of learnings.md's own content/entries
 # (an empty learnings.md must not suppress the CLAUDE.md check, and vice versa).
 set -euo pipefail
@@ -26,7 +26,7 @@ printf 'small file\n' > "$CLAUDE"
 out="$(bash "$DIGEST" "$LEARN" "$CLAUDE")"
 assert_eq "$out" "" "under budget: no output at all (learnings empty + CLAUDE.md small)"
 
-# ── over budget (default 20000): reminder fires, names the actual size ───────
+# ── over budget (default 14000): reminder fires, names the actual size ───────
 head -c 21000 /dev/zero | tr '\0' 'x' > "$CLAUDE"
 out="$(bash "$DIGEST" "$LEARN" "$CLAUDE")"
 assert_contains "$out" "CLAUDE.md" "over budget: reminder mentions CLAUDE.md"
