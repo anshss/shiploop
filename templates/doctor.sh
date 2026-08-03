@@ -270,7 +270,11 @@ if [ -f "$stamp" ]; then
       if [ "$_newer" = "$hub_v" ]; then behind="behind"; else behind="ahead"; fi
     fi
     if [ "$behind" = "behind" ]; then
-      warn "harness $stamp_v BEHIND hub $hub_v — run the setup upgrade: bash \$HUB/scaffold.sh --workspace-dir . --component <name>"
+      # Name the COMMAND, not the machinery. The old text pointed at a raw
+      # `scaffold.sh --component <name>` invocation with an unresolved $HUB and a literal
+      # `<name>` the operator had to guess — so the actionable step was effectively hidden,
+      # and workspaces sat many releases behind while doctor "warned" every run.
+      warn "harness $stamp_v BEHIND hub $hub_v — run /shiploop:update to converge (mechanism scripts, retired-file purge, and config)"
     elif [ "$behind" = "ahead" ]; then
       warn "harness $stamp_v AHEAD of installed hub $hub_v (dev checkout?)"
     else

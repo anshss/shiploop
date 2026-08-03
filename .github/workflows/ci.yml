@@ -7,7 +7,10 @@ name: CI
 # This workflow turns that into a real green gate: (1) every shell script must
 # parse; (2) no leftover conflict markers; (3) plugin + marketplace manifests
 # are valid JSON with required fields; (4) scaffold.sh + the full govern
-# test suite run green in a throwaway workspace on every PR.
+# test suite run green in a throwaway workspace on every PR; (5) the
+# purge/seed-hash manifests that make "update pulls everything" true stay
+# honest — a deleted template must be purge-able, a shipped seed must be
+# upgradable.
 
 on:
   pull_request:
@@ -108,6 +111,67 @@ jobs:
           fi
           echo "ok - marketplace=$m_name plugins=$plugins"
 
+  check-manifests:
+    name: Manifest guards (purge-manifest-complete + seed-hashes-current)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: fetch main (base for the templates/** deletion diff)
+        run: git fetch origin main 2>/dev/null || true
+      - name: run tools/check-manifests.sh
+        run: bash tools/check-manifests.sh
+
+  hub-context-tests:
+    name: Update-channel tests (run from the hub checkout, not a workspace)
+    runs-on: ubuntu-latest
+    # These tests assert on the hub itself — scaffold.sh, templates/, VERSION, purge.txt,
+    # seed-hashes.txt — so they resolve HUB as $DIR/../../.. and exit 77 ("skip") when that
+    # is not a hub checkout. `scaffold-and-test` COPIES the suite into a throwaway workspace,
+    # where that path is the workspace root, so every one of them has been silently skipping
+    # there: the entire update channel (purge, reconcile, converge) was ungated in CI. Run
+    # them from the checkout, where the path resolves, and treat a skip as a FAILURE — a
+    # skip here means the resolution broke, which is exactly the regression worth catching.
+    steps:
+      - uses: actions/checkout@v4
+      - name: install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: pin git default branch to main
+        run: git config --global init.defaultBranch main
+      - name: run hub-context tests
+        run: |
+          set -uo pipefail
+          rc_all=0
+          # Single source of truth, shared with scaffold-and-test's cross-check.
+          while read -r name; do
+            case "$name" in ''|\#*) continue ;; esac
+            quarantined=0
+            case "$name" in '!'*) quarantined=1; name="${name#!}" ;; esac
+            t="templates/govern/test/$name.sh"
+            if [ "$quarantined" -eq 1 ]; then
+              echo "::warning::$name is QUARANTINED (known-broken on this runner) — not gating; see tools/hub-context-tests.txt"
+              continue
+            fi
+            if [ ! -f "$t" ]; then
+              echo "::error::$name listed in tools/hub-context-tests.txt but no such test file"
+              rc_all=1; continue
+            fi
+            if bash "$t" >/tmp/out.log 2>&1; then
+              echo "ok   - $name"
+            else
+              rc=$?
+              if [ "$rc" -eq 77 ]; then
+                echo "::error::$name SKIPPED (exit 77) — hub resolution is broken in the CI checkout"
+              else
+                echo "::error::$name FAILED (exit $rc)"
+              fi
+              sed 's/^/    /' /tmp/out.log
+              rc_all=1
+            fi
+          done < tools/hub-context-tests.txt
+          exit "$rc_all"
+
   scaffold-and-test:
     name: Scaffold throwaway workspace + run govern test suite
     runs-on: ubuntu-latest
@@ -163,6 +227,7 @@ jobs:
           cd "$WS"
           passed=0; failed=0; skipped=0; total=0
           fails=()
+          skips=()
           for t in scripts/govern/test/test-*.sh; do
             total=$((total+1))
             name="$(basename "$t" .sh)"
@@ -173,6 +238,7 @@ jobs:
               rc=$?
               if [ "$rc" -eq 77 ]; then
                 skipped=$((skipped+1))
+                skips+=("$name")
                 echo "skip - $name (env not applicable)"
               else
                 failed=$((failed+1))
@@ -188,3 +254,17 @@ jobs:
             for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
             exit 1
           fi
+
+          # A test that skips HERE runs nowhere unless the hub-context-tests job picks it up.
+          # That is how five update-channel tests sat ungated while CI looked green. Every skip
+          # must be accounted for in tools/hub-context-tests.txt, or it is silently dead.
+          unaccounted=0
+          for s in ${skips[@]+"${skips[@]}"}; do
+            # `!name` (quarantined) still counts as listed — strip the marker before matching.
+            if ! sed 's/^!//' "$GITHUB_WORKSPACE/tools/hub-context-tests.txt" | grep -qxF "$s"; then
+              echo "::error::$s skipped here and is NOT in tools/hub-context-tests.txt — it runs in NO job. Add it there (and confirm it passes from a hub checkout)."
+              unaccounted=1
+            fi
+          done
+          [ "$unaccounted" -eq 0 ] || exit 1
+          echo "ok - all $skipped skip(s) are covered by the hub-context-tests job"
