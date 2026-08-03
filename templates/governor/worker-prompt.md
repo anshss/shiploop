@@ -123,6 +123,10 @@ validation (code-reading) does NOT mean escalate the moment real validation gets
   A device-login flow issues a user-code → sign in AS the test account and call the approve endpoint
   with that code yourself. OAuth / magic-link / API-key flows are the same — you own the
   inbox/account, so complete the flow rather than hand it off.
+<!-- Evaluated for GOVERN:SECTION fencing; deliberately left always-on — no reliable pre-dispatch
+classifier exists (the need surfaces mid-investigation, not from the ticket text), and a false
+negative fails SILENTLY: a worker abandons a live billable resource and it reads as a normal park.
+Do not re-fence without solving the classifier problem first. -->
 - **Real / billable resources → pick a FAST-provisioning provider, and RETRY on another** when one
   is slow, unavailable, or returns nothing. A slow provider is not "un-automatable"; do NOT time out
   and park "inconclusive / human-driven".
@@ -245,6 +249,10 @@ Field rules:
 - `crossRefs`: before finishing, skim the other open tickets (`grep '^## #' queue/tickets.md` in
   this worktree) and list any whose number this ticket **overlaps** (duplicate/mergeable) or
   **dependsOn** (should merge first). Empty arrays if none.
+<!-- Evaluated for GOVERN:SECTION fencing; deliberately left always-on — no reliable pre-dispatch
+classifier exists (the need surfaces mid-investigation, not from the ticket text), and a false
+negative fails SILENTLY: a worker can mark a destructive migration destructive:false, which
+auto-applies to prod. Do not re-fence without solving the classifier problem first. -->
 - `migration`: set if the ticket needs a **prod DB schema change**; create the migration in your PR
   and classify it. `destructive:false` = **additive/backward-compatible** (ADD a nullable-or-default
   COLUMN, ADD TABLE, CREATE INDEX) — the governor auto-applies these to prod after merge IF the

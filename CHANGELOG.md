@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.15.0 — 2026-08-03
 
 ### Removed
 
@@ -47,6 +47,26 @@
   can't reach outside the workspace. Seeded with everything removed above; when you delete a template
   from now on, add its installed path here (moves still go to `relocations.txt`). Locked in by
   `test-purge-removed.sh` (17 assertions).
+
+- **A sub-repo-scoped lesson now lands in that sub-repo's own `CLAUDE.md` instead of bloating root's.**
+  Root `CLAUDE.md` is re-sent every turn of every session, and `lessonPatch` had no placement check —
+  a worker's mis-scoped "root-worthy" lesson just accretes forever. Measured: one fleet's root file
+  went 7,319 → 47,075 bytes monotonically; another reached 99,261 B, needed a manual trim to 20,903 B,
+  then re-grew to 62,911 B and needed a second trim. `worker-prompt.md` already told workers to route
+  sub-repo facts into their own PR instead of `lessonPatch`, but that's a text instruction a worker can
+  get wrong — and it did.
+
+  `govern-bookkeep.sh` now re-derives placement itself (`govern::lesson_placement`) instead of
+  trusting the worker's claim, redirecting the insert to `<sub-repo>/CLAUDE.md` only when exactly one
+  `REPOS` entry is named as a path, no second sub-repo appears anywhere in the text, and no
+  cross-cutting signal word (governor/workspace.sh/meta-repo/…) is present — every less clear-cut case
+  stays at root, logged either way. Three guards keep the redirect safe: it requires the sub-repo tree
+  clean (`git status --porcelain` empty) before writing anything into it; it requires the sub-repo be
+  checked out on its own resolved default branch — no hardcoded `main`, it falls back through the
+  cached `origin/HEAD` symref, then `origin/main`/`origin/master`, then `main` as a last resort; and
+  the commit+push is one transactional unit — any failure, including a push failure and not just a
+  commit failure, rolls the sub-repo back to its pre-attempt HEAD and falls through to the original
+  root insert, so a lesson never lands nowhere and a sub-repo working tree is never left dirty.
 
 ### Changed
 
@@ -98,6 +118,54 @@
   `GOVERN_PR_TICKET_REF=1` restores the old behavior: the prompt block is dropped and the run-loop
   scrub is skipped. It cannot weaken the existing public-repo guarantee — on a repo
   `govern::repo_is_public` reports public, the scrub runs anyway and the prompt restates the rule.
+
+- **Every prompt surface the harness sends is compressed in place** — meaning preserved, every parse
+  contract byte-exact. Per dispatched ticket (multiplies by backlog size): `worker-prompt.md`
+  26,342 → 22,018 bytes, `preferences.md` 4,598 → 3,457, the `scout-ticket.sh` prompt 2,145 → 1,422 —
+  ~6.2 KB (~1,557 tokens) saved per ticket. Per turn, forever: installed command/skill `description:`
+  frontmatter 2,217 → 1,067 bytes — the manifest trim above only reached the hub-facing descriptions,
+  not the `templates/` copies `scaffold.sh` actually installs, so a fresh workspace was paying more
+  than the hub itself; this closes that gap. Per session: hook payloads cut 45-59%
+  (`router-posture-reminder.sh` 1,109 → 458). Per research run: `deep-research.js` prompts −31%, and
+  VERIFY fires up to 75×, so up to ~35.8 KB per run.
+
+  The recurring win was de-duplication, not prose trimming — `SKILL.md`, `router-posture-reminder.sh`
+  and `check-main-on-main.sh` each re-sent text the auto-loaded seed `CLAUDE.md` already carries at
+  zero marginal cost. Seed `CLAUDE.md` and the seed files are unchanged, already measured at their
+  floor. Verified: `GOVERN:SECTION` fences, `{{VAR}}` template vars, the report-schema keys and all six
+  scout keys intact byte-exact.
+
+- **The validation/Flow output-field rule is fenced too, closing a gap in 1.14.0's prompt
+  segmentation.** The `required`/`ranLiveTest`/`evidence` plus
+  `gatePassed`/`measured`/`validatedShas`/`environment`/`flowIds` field rules sat *after* the first
+  `GOVERN:END validation` marker, so they were unfenced and always-on — every worker paid for
+  output-contract rules only a validation/spike ticket could ever populate. Wrapped in a second
+  `GOVERN:SECTION validation` … `GOVERN:END validation` pair; `prompt_apply_sections()` already
+  keeps/drops a fenced block by name per-occurrence, so the existing `govern::is_validation_ticket`
+  classifier governs both spans identically with no `spawn-worker.sh` change. Measured: an ordinary
+  ticket's rendered prompt drops 16,010 → 14,484 bytes (−1,526 B, matching the span exactly); a
+  validation ticket's prompt is byte-identical with segmentation on or off.
+
+### Fixed
+
+- **5 govern tests asserted on exact prompt/hook wording that the compression pass above reworded,
+  and broke.** `govern-supervise.sh`'s "nothing new since last pass" marker lost its "no ticket has"
+  phrasing (`test-supervise-incremental`); `spawn-worker.sh`'s default PR-hygiene block dropped its
+  bolded **PR title**/**PR body**/**commit subject** markers and reworded "BRANCH is still"
+  (`test-pr-ticket-ref-default`); its retry-notes framing dropped "not instructions and not
+  established fact" (`test-retry-notes-injection`); and `learnings-digest.sh`'s size-budget reminders
+  dropped the "budget N" phrasing two override tests grep for (`test-claudemd-size-trigger`,
+  `test-manifest-size-trigger`). Restored the pre-compression wording for exactly these five strings;
+  the rest of the compression is untouched, and no test was changed.
+
+- **Two stale assumptions in scaffold / session-start housekeeping.** `scaffold.sh`'s
+  `component_govern()` still logged "installed govern scripts + tests + governor prompts", but the
+  govern test suite is deliberately hub-only now and is no longer installed into a fleet workspace —
+  dropped the false "+ tests" claim. `check-main-on-main.sh` assumed every sub-repo's default branch
+  is named "main", so a repo whose default is "master" (or anything else) reported constant false
+  drift; it now resolves each repo's actual default branch from the cached `origin/HEAD` symref,
+  falling back to whichever of `origin/main`/`origin/master` exists, then "main" as a last resort — no
+  network calls, so the SessionStart hook stays fast.
 
 ## 1.14.0 — 2026-08-03
 
