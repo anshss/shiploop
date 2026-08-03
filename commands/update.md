@@ -114,9 +114,36 @@ Safe to refresh without an interview — these only read `workspace.sh`. Must co
 for c in core-scripts worktrees govern githooks commands workflows; do
   bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component "$c" --yes
 done
-bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds --yes            # only fills absent seeds
-bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge         # idempotent jq hook insertion into an EXISTING settings.json
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component config-merge --yes
 ```
+
+`config-merge` is the **merge tier** — the components that converge an EXISTING workspace's config.
+None are byte-comparable, and until this landed none were reachable from `/update` at all, so a hub
+release that added an npm entrypoint or a `GOVERN_*` knob reached only brand-new installs. It bundles
+`seeds`, `readme`, `gitignore`, `package-json-merge`, `workspace-sh-merge`, `settings-merge`.
+Every one is additive and idempotent: a second run is a byte-level no-op. What each does:
+
+| Component | Converges | Never does |
+|---|---|---|
+| `package-json-merge` | adds harness script keys the hub ships and this `package.json` lacks (`govern:validations`, `govern:dry-run`, …) plus `dev:<repo>` per sub-repo | overwrite a key you defined, remove a key, reorder yours |
+| `workspace-sh-merge` | appends `GOVERN_*` knobs added to the hub seed since you scaffolded, each with its doc comment | touch an existing knob, your values, or the identity fields (`REPOS`, `GITHUB_ORG`, `ROOT_PM`, …) |
+| `settings-merge` | adds missing harness hooks **and repairs** a harness hook whose command string or timeout drifted from canonical | touch a hook whose command points outside this workspace (yours) |
+| `seeds` | fills an absent seed; upgrades one that is **byte-identical to a version shiploop shipped** (proof it was never edited) | modify a seed with even one byte of local content |
+| `gitignore` | appends missing patterns | remove or reorder your lines |
+| `readme` | writes `README.md` when absent, using the real PM + sub-repo list read from `workspace.sh` | overwrite an existing README |
+
+The seed rule is the load-bearing one. A hub seed trim (v1.14.0 cut `CLAUDE.md` 5,895 → 4,417 B) is
+worth propagating, but a real workspace's `CLAUDE.md` accumulates every promoted lesson — measured on
+one live fleet it had grown to 47 KB. Overwriting that to "save bytes" would be catastrophic, so the
+upgrade is gated on a sha256 hit against `templates/lib/seed-hashes.txt`, which records every version
+of every seed the hub has ever shipped. Byte-identity is the entire safety argument: no diff, no merge,
+no heuristic. Anything else is left untouched and silent.
+
+**Deletions already ride a separate channel** and need nothing here: `templates/lib/purge.txt` lists
+every path shiploop used to install and no longer ships, and `purge_removed` applies it on EVERY
+writer run — so the v1.15.0 install-footprint cut (7 cross-repo wrappers, 2 commands, the 134-file
+hub-only test suite) is removed from an old workspace by the Phase-3 loop above. CI guard
+`purge-manifest-complete` fails any PR that deletes a template without registering its installed path.
 
 **One-time (v1.10.0): relocate the validation sink.** Moved from `.claude/context/` to
 `.claude/shiploop/validation/`. A workspace converging past v1.10.0 must move its existing sink once,
@@ -130,14 +157,22 @@ BEFORE running the governor:
 Refs citing `.claude/context/validation/*.md` will flag as dangling via `lint-validation-refs.sh`
 (Stop hook) until repointed.
 
-**Never bump these without the operator's explicit ask** — they carry per-workspace customization:
-- `workspace-sh` — config sink. New knobs → warn + point at the diff, don't overwrite. Operator forces
-  via `bash "$HUB/scaffold.sh" --workspace-dir . --component workspace-sh --yes` after saving edits.
-- `package-json` — carries operator scripts. Same rule: warn, don't overwrite.
-- `settings` (full) — carries operator hook additions. Use `settings-merge` (already run above).
-- `gitignore` — intentionally excluded from `--diff-only`; merge-only (`component_gitignore` appends
-  missing lines, never overwrites), so a byte compare would false-report drift. New lines land via any
-  interview-driven scaffold run.
+**Never run the WHOLE-FILE writer for these without the operator's explicit ask** — they carry
+per-workspace customization, and the full component regenerates rather than merges. The merge-tier
+counterpart (run above, in `config-merge`) is always safe; only the full writer needs an ask:
+
+| Full writer (needs explicit ask) | Safe merge-tier counterpart |
+|---|---|
+| `workspace-sh` — regenerates the config sink from the interview answers | `workspace-sh-merge` |
+| `package-json` — rewrites the whole file | `package-json-merge` |
+| `settings` — rewrites the whole hook block | `settings-merge` |
+| `readme` (only overwrites if you pass `--yes` on an existing file) | `readme` (no-ops when present) |
+
+Force a full regen with e.g.
+`bash "$HUB/scaffold.sh" --workspace-dir . --component workspace-sh --yes` after saving your edits.
+
+`gitignore` stays excluded from `--diff-only` — it is merge-only by construction, so a byte compare
+would false-report drift forever.
 
 The knob-type migration guard (v1.1.0 → v1.2.0 array→string, inside `component_workspace_sh`) prints
 the mechanical migration if it detects the legacy shape — surface it in the report.
@@ -206,15 +241,22 @@ env with no worker auth it will fail. That's the auth caveat, not an update regr
 ── /shiploop:update ──
 Hub:         $HUB_V   ($HUB)
 Stamp:       $STAMP_V → $HUB_V
-Components:
+Mechanism:
   core-scripts   bumped     (N files)
   worktrees      in-sync
   govern         bumped     (M files)
   githooks       in-sync
   commands       bumped     (K files)
-  seeds          in-sync
-  settings-merge idempotent (no changes)
-Preserved:   scripts/lib/workspace.sh, package.json, .claude/settings.json (except added hook stanzas)
+  workflows      in-sync
+Config (merge tier):
+  package.json   +govern:validations, +govern:dry-run
+  workspace.sh   +GOVERN_PARALLEL_DEFAULT   ← review the default, it changes govern concurrency
+  settings.json  +1 hook, 1 stale command repaired
+  seeds          CLAUDE.md left as-is (customized) · CLAUDE-APPENDIX.md upgraded (was unedited)
+  .gitignore     +2 lines
+  README.md      created
+Preserved:   every operator-defined package.json script, every existing workspace.sh knob value,
+             every hook pointing outside this workspace, every seed carrying local edits
 Purged:      <retired paths removed this run, or "none">
 Verifiers:   config-check ok · bash -n ok · relocations ok
 Next:        review the diff, commit tooling paths explicitly:
@@ -224,9 +266,18 @@ Next:        review the diff, commit tooling paths explicitly:
 Stop. Do not push, do not commit — the operator reviews the diff and commits themselves (may want to
 split it or write a specific message).
 
+Call out a `workspace.sh` knob append explicitly — a new knob can change runtime behavior (
+`GOVERN_PARALLEL_DEFAULT` sets governor concurrency), so the operator should see and tune it rather
+than discover it on the next run.
+
 ## Guarantees
-- **Idempotent.** Re-running when in sync prints "up to date" and exits.
-- **`workspace.sh` preserved.** Never overwritten; new knobs surface as warnings.
+- **Idempotent.** Re-running when in sync prints "up to date" and exits. Every merge-tier component
+  is a byte-level no-op on a second run — verified by test-update-config-converge.sh.
+- **`workspace.sh` values preserved.** Existing knobs are never rewritten; only absent ones are
+  appended, with their doc comments.
+- **Operator content is never lost.** No package.json key you defined is overwritten, no hook of yours
+  is touched, and no seed carrying local edits is modified — a seed upgrade requires a sha256 match
+  against a version the hub actually shipped.
 - **No network required.** Runs against the local hub clone / plugin install; no `gh`, no `git fetch`.
 - **Fail-closed on dirty tree / live governor.** Refuses rather than clobbers your work.
 

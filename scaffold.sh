@@ -22,6 +22,8 @@
 #
 # Components: core-scripts, worktrees, govern, hooks, githooks, seeds,
 #             gitignore, package-json, settings, commands, workflows, all
+#   merge-tier (additive, idempotent, safe on an existing workspace — what /update runs):
+#             settings-merge, package-json-merge, workspace-sh-merge, config-merge
 #
 # The script is IDEMPOTENT: re-running it refreshes mechanism scripts from the
 # bundled templates without clobbering scripts/lib/workspace.sh (the ONE file
@@ -49,6 +51,7 @@ hub_version() {
 # ── Defaults ────────────────────────────────────────────────────────────────
 WORKSPACE_DIR=""
 PM="npm"
+PM_EXPLICIT=0          # --pm given? if not, hydrate_from_workspace_sh may override the default
 ORG=""
 REPOS_SPEC=""
 MERGE_ALLOWLIST=""
@@ -77,7 +80,7 @@ die()   { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --workspace-dir)     WORKSPACE_DIR="$2"; shift 2 ;;
-    --pm)                PM="$2"; shift 2 ;;
+    --pm)                PM="$2"; PM_EXPLICIT=1; shift 2 ;;
     --org)               ORG="$2"; shift 2 ;;
     --repos)             REPOS_SPEC="$2"; shift 2 ;;
     --merge-allowlist)   MERGE_ALLOWLIST="$2"; shift 2 ;;
@@ -160,6 +163,44 @@ if [ -n "$REPOS_SPEC" ]; then
   done
 fi
 
+# ── Hydrate repo/PM facts from an existing workspace.sh ─────────────────────
+# The config components (readme, gitignore, package-json-merge) need REPO_NAMES +
+# PM to render accurate content. A fresh scaffold passes --repos/--pm; /shiploop:update
+# passes NEITHER, because the operator's answers already live in scripts/lib/workspace.sh.
+# Without this, an update-driven README/gitignore would render the default PM ("npm") and
+# a generic repo list — the exact defect ticket #4 records. Read the real values instead.
+#
+# Sourced in a SUBSHELL so workspace.sh's exports (GOVERN_*, set -u interactions) can
+# never leak into the scaffolder's own environment; only the printed fields come back.
+hydrate_from_workspace_sh() {
+  [ "${#REPO_NAMES[@]}" -eq 0 ] || return 0        # explicit --repos always wins
+  [ -f scripts/lib/workspace.sh ] || return 0
+  local hydrated
+  hydrated="$(
+    # shellcheck disable=SC1091
+    . scripts/lib/workspace.sh >/dev/null 2>&1 || exit 0
+    printf 'PM\t%s\n' "${ROOT_PM:-}"
+    # `${REPOS[@]+...}` keeps this safe under `set -u` when workspace.sh is a stub
+    # that never defines the array (a half-scaffolded or hand-trimmed workspace).
+    for j in ${REPOS[@]+"${!REPOS[@]}"}; do
+      printf 'REPO\t%s\t%s\t%s\n' "${REPOS[$j]}" "${REPO_PORTS[$j]:-}" "${REPO_CMDS[$j]:-}"
+    done
+  )" || return 0
+  local kind a b c
+  while IFS=$'\t' read -r kind a b c; do
+    case "$kind" in
+      # Reject un-substituted placeholders. A workspace.sh copied straight from the
+      # template (a half-finished scaffold, or someone restoring the raw template) still
+      # reads REPOS=(__REPOS__), and taking that literally minted a bogus `dev:__REPOS__`
+      # npm script. Treat any __X__ value as "no answer recorded" and skip it.
+      PM)   case "$a" in ''|*__*__*) ;; *) [ "$PM_EXPLICIT" -eq 0 ] && PM="$a" ;; esac ;;
+      REPO) case "$a" in ''|*__*__*) ;; *) REPO_NAMES+=("$a"); REPO_PORTS+=("$b"); REPO_CMDS+=("$c") ;; esac ;;
+    esac
+  done <<<"$hydrated"
+  [ "${#REPO_NAMES[@]}" -gt 0 ] && [ "$VERBOSE" -eq 1 ] && \
+    info "hydrated ${#REPO_NAMES[@]} repo(s) + pm=$PM from scripts/lib/workspace.sh"
+  return 0
+}
 
 # ── Component implementations ───────────────────────────────────────────────
 
@@ -350,16 +391,52 @@ component_workflows() {
   fi
 }
 
+# seed_pristine — is $1 (an installed seed file) byte-identical to SOME version of
+# seed $2 that shiploop has shipped? Consults templates/lib/seed-hashes.txt.
+#
+# A hit proves the operator never edited the file, which is the ONLY condition under
+# which replacing it with the current seed is lossless. A miss (including "no manifest
+# available") means "assume customized" and is always safe — worst case the workspace
+# keeps a seed one version behind, which is exactly today's behavior.
+seed_pristine() {
+  local file="$1" name="$2"
+  local manifest="$T/lib/seed-hashes.txt"
+  [ -f "$file" ] || return 1
+  [ -f "$manifest" ] || return 1
+  local h
+  h="$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)" || return 1
+  [ -n "$h" ] || return 1
+  grep -Fq "$h  $name" "$manifest"
+}
+
+# seed_install — fill if absent; losslessly upgrade if provably unedited; else leave alone.
+seed_install() {
+  local template="$1" dest="$2" name="$3"
+  [ -f "$template" ] || return 0
+  if [ ! -f "$dest" ]; then
+    cp "$template" "$dest"
+    return 0
+  fi
+  diff -q "$dest" "$template" >/dev/null 2>&1 && return 0     # already current
+  if seed_pristine "$dest" "$name"; then
+    cp "$template" "$dest"
+    info "upgraded $dest (was an unedited shipped seed — no local content to lose)"
+  else
+    [ "$VERBOSE" -eq 1 ] && info "$dest differs from the current seed but carries local edits — left untouched"
+  fi
+  return 0
+}
+
 component_seeds() {
-  log "component: seeds (never overwrite)"
-  [ -f queue/tickets.md ]        || cp "$T/seed/tickets.md" queue/
-  [ -f queue/tickets-parked.md ] || cp "$T/seed/tickets-parked.md" queue/
-  [ -f learnings.md ]            || cp "$T/seed/learnings.md" .
-  [ -f CLAUDE.md ]               || cp "$T/seed/CLAUDE.md" .
+  log "component: seeds (fill if absent; upgrade only when provably unedited)"
+  seed_install "$T/seed/tickets.md"        queue/tickets.md        tickets.md
+  seed_install "$T/seed/tickets-parked.md" queue/tickets-parked.md tickets-parked.md
+  seed_install "$T/seed/learnings.md"      learnings.md            learnings.md
+  seed_install "$T/seed/CLAUDE.md"         CLAUDE.md               CLAUDE.md
   # The on-demand half of the CLAUDE.md split. CLAUDE.md is re-sent every turn; this is not, so it is
   # where reference tables and rule rationale live. Seeded even on an existing fleet whose CLAUDE.md
   # predates the split — an absent appendix is what makes operators keep growing the always-on file.
-  [ -f CLAUDE-APPENDIX.md ]      || cp "$T/seed/CLAUDE-APPENDIX.md" .
+  seed_install "$T/seed/CLAUDE-APPENDIX.md" CLAUDE-APPENDIX.md     CLAUDE-APPENDIX.md
   # Flow registry (validations feature): .claude/shiploop/validation/flows.md + the evidence sink dir. Never overwrite.
   if [ ! -f .claude/shiploop/validation/flows.md ] && [ -f "$T/seed/.claude/shiploop/validation/flows.md" ]; then
     mkdir -p .claude/shiploop/validation/evidence/assets
@@ -370,6 +447,11 @@ component_seeds() {
 
 component_readme() {
   log "component: README.md (workspace landing page)"
+
+  # /shiploop:update passes neither --pm nor --repos, so without this the README would
+  # render the default PM and "the repos under this workspace" instead of the real list
+  # (ticket #4, defect (1)). Read the operator's actual answers out of workspace.sh.
+  hydrate_from_workspace_sh
 
   # Never clobber an existing README — the workspace root's README is operator-owned
   # documentation once written. On a fresh scaffold the root has none (a wrapped repo's
@@ -428,6 +510,10 @@ EOF
 
 component_gitignore() {
   log "component: .gitignore"
+  # Same reason as component_readme: an update-driven run knows the repos + PM only
+  # through workspace.sh. Without hydration the merge would append the wrong lockfile
+  # ignores and no sub-repo lines at all.
+  hydrate_from_workspace_sh
   local subrepo_lines=""
   local i
   for i in "${!REPO_NAMES[@]}"; do
@@ -455,20 +541,29 @@ component_gitignore() {
   done < "$T/gitignore"
 
   if [ -f .gitignore ]; then
-    # Merge: append any missing lines from the generated content.
-    local tmp; tmp="$(mktemp)"
-    {
-      cat .gitignore
-      printf '\n# — shiploop scaffolded additions —\n'
-      # Append only lines not already present in existing .gitignore.
-      while IFS= read -r line; do
-        if ! grep -Fxq "$line" .gitignore 2>/dev/null; then
-          printf '%s\n' "$line"
-        fi
-      done <<<"$content"
-    } > "$tmp"
-    mv "$tmp" .gitignore
-    info "merged into existing .gitignore"
+    # Collect the genuinely-missing lines FIRST. The previous version appended a
+    # "scaffolded additions" banner on every run whether or not anything followed it,
+    # so each /shiploop:update grew the file by one dead header and reported a change —
+    # which made the whole component read as non-idempotent.
+    local missing=""
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      case "$line" in \#*) continue ;; esac        # never re-append template comments
+      grep -Fxq "$line" .gitignore 2>/dev/null || missing+="$line"$'\n'
+    done <<<"$content"
+
+    if [ -z "$missing" ]; then
+      info ".gitignore already covers every scaffolded pattern — no changes (idempotent)"
+    else
+      local tmp; tmp="$(mktemp)"
+      {
+        cat .gitignore
+        printf '\n# — shiploop scaffolded additions (v%s) —\n' "$(hub_version)"
+        printf '%s' "$missing"
+      } > "$tmp"
+      mv "$tmp" .gitignore
+      info "appended $(printf '%s' "$missing" | grep -c '') missing .gitignore line(s)"
+    fi
   else
     printf '%s\n' "$content" > .gitignore
     info "wrote .gitignore"
@@ -513,6 +608,133 @@ EOF
     printf '%s\n' "$content" > package.json
     info "wrote package.json"
   fi
+}
+
+# component_package_json_merge — add the harness's npm-script entrypoints that are
+# MISSING from an existing package.json, touching nothing else.
+#
+# component_package_json is all-or-nothing (rewrites the file, refuses without --yes),
+# so /shiploop:update has always skipped it — and a hub release that adds a new script
+# (govern:validations in v1.9, govern:dry-run, govern:health) could never reach an
+# already-installed fleet. Measured on 5 local workspaces: every one was missing at
+# least one, and a full successful /update left them missing.
+#
+# Rules: never overwrite a key the operator already defines (theirs may point at a
+# wrapper), never remove keys, never reorder. Only absent keys are added.
+component_package_json_merge() {
+  log "component: package-json-merge (add missing harness scripts to existing package.json)"
+  command -v jq >/dev/null 2>&1 || { warn "package-json-merge needs jq — skipping"; return 0; }
+  if [ ! -f package.json ]; then
+    warn "package.json absent — nothing to merge into; run --component package-json to create it"
+    return 0
+  fi
+  hydrate_from_workspace_sh
+
+  # Desired script set — must stay in step with component_package_json above.
+  local desired
+  desired=$(jq -n '{
+    "dev":                "bash scripts/dev.sh",
+    "doctor":             "bash scripts/doctor.sh",
+    "sync":               "bash scripts/sync.sh",
+    "tail":               "bash scripts/tail.sh",
+    "worktree":           "bash scripts/worktree/main.sh",
+    "worktree:new":       "bash scripts/worktree/new.sh",
+    "worktree:rm":        "bash scripts/worktree/rm.sh",
+    "worktree:status":    "bash scripts/worktree/status.sh",
+    "worktree:exec":      "bash scripts/worktree/exec.sh",
+    "govern":             "bash scripts/govern/run-loop.sh",
+    "govern:health":      "bash scripts/govern/govern-health.sh",
+    "govern:dry-run":     "bash scripts/govern/dry-run.sh",
+    "govern:validations": "bash scripts/govern/govern-validations.sh"
+  }') || { warn "package-json-merge: jq failed to build the script set"; return 0; }
+
+  # Per-repo dev:<name> entries, from --repos or hydrated workspace.sh.
+  local r
+  for r in ${REPO_NAMES[@]+"${REPO_NAMES[@]}"}; do
+    [ -n "$r" ] || continue
+    desired=$(printf '%s' "$desired" | jq --arg k "dev:$r" --arg v "bash scripts/dev.sh --only $r" '. + {($k): $v}')
+  done
+
+  # Which harness keys are absent? Computed against the CURRENT file, before any write.
+  # `|| true` is load-bearing: a jq failure here must not abort the component under
+  # `set -e` (an assignment takes the command substitution's exit status).
+  local added
+  added="$(jq -r --argjson want "$desired" \
+    '(.scripts // {}) as $have
+     | [$want | keys[]] | map(. as $k | select($have | has($k) | not)) | join(", ")' \
+    package.json 2>/dev/null)" || true
+
+  local tmp; tmp="$(mktemp)"
+  # Append ONLY the absent keys, after the operator's existing ones. Preserving their
+  # order is what makes this idempotent — `$want + $have` would rewrite the file on
+  # every run just to reshuffle keys, and each run would look like a real change.
+  if jq --argjson want "$desired" '
+        (.scripts // {}) as $have
+        | .scripts = ($have + ($want | with_entries(. as $e | select($have | has($e.key) | not))))
+      ' package.json > "$tmp" 2>/dev/null; then
+    if diff -q package.json "$tmp" >/dev/null 2>&1; then
+      rm -f "$tmp"
+      info "package.json already carries every harness script — no changes (idempotent)"
+    else
+      mv "$tmp" package.json
+      info "added missing script(s): ${added:-<none named>}"
+    fi
+  else
+    rm -f "$tmp"
+    warn "package.json is not valid JSON — skipping merge (fix it, then re-run /shiploop:update)"
+  fi
+  return 0
+}
+
+# component_workspace_sh_merge — append knobs the hub has ADDED since this workspace
+# was scaffolded, without touching a single existing line.
+#
+# workspace.sh is the one file /update must never regenerate (it holds the operator's
+# answers). But that also meant a new GOVERN_* knob shipped in the hub seed reached
+# only NEW fleets — ticket #44's finding: GOVERN_PARALLEL_DEFAULT landed in v1.11.0 and
+# every upgrading workspace silently kept running serial. Appending only absent knob
+# names is safe: the operator's values, ordering, and comments are all preserved.
+component_workspace_sh_merge() {
+  log "component: workspace-sh-merge (append knobs new since this workspace was scaffolded)"
+  local target="scripts/lib/workspace.sh"
+  if [ ! -f "$target" ]; then
+    warn "$target absent — not a scaffolded workspace; skipping"
+    return 0
+  fi
+  # Identity fields are per-workspace and are NEVER appended — they are answers, not knobs.
+  local identity=" META_NAME ROOT_PM GITHUB_ORG REPOS REPO_CMDS REPO_PORTS WORKTREE_BASE SLOT_PORT_STEP "
+  local added="" line var
+  local pending=""            # comment lines immediately above a knob travel with it
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      \#*)  pending+="$line"$'\n'; continue ;;
+      "")   pending=""; continue ;;
+    esac
+    var="$(printf '%s' "$line" | sed -nE 's/^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p')"
+    if [ -z "$var" ]; then pending=""; continue; fi
+    # Skip identity fields and any line still carrying an install-time placeholder.
+    case "$identity" in *" $var "*) pending=""; continue ;; esac
+    case "$line" in *__*__*) pending=""; continue ;; esac
+    if grep -qE "^[[:space:]]*(export[[:space:]]+)?$var=" "$target"; then
+      pending=""; continue
+    fi
+    if [ -z "$added" ]; then
+      printf '\n# ── knobs added by shiploop v%s (appended by /shiploop:update; edit freely) ──\n' \
+        "$(hub_version)" >> "$target"
+    fi
+    [ -n "$pending" ] && printf '%s' "$pending" >> "$target"
+    printf '%s\n' "$line" >> "$target"
+    added+="$var "
+    pending=""
+  done < "$T/lib/workspace.sh"
+
+  if [ -n "$added" ]; then
+    info "appended new knob(s): $added"
+    info "  defaults are conservative — review and tune in $target"
+  else
+    info "$target already carries every hub knob — no changes (idempotent)"
+  fi
+  return 0
 }
 
 component_settings() {
@@ -650,6 +872,29 @@ def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
           else . end)
       else . end)
   else . end )
+# REPAIR (in place): a hook already wired under this event but whose command string no
+# longer matches what the hub ships — the workspace path moved, a redirect/flag changed,
+# or the timeout was retuned. Marker-presence alone would call that "already installed"
+# and leave the stale invocation running forever, so match on the marker and rewrite the
+# command + timeout to the canonical pair. Only harness-owned hooks (ones whose command
+# references OUR script path under the workspace root) are ever touched.
+| reduce $spec[] as $e (
+  .;
+  reduce $e.items[] as $it (
+    .;
+    if (.hooks[$e.event] // null) == null then .
+    else .hooks[$e.event] |= map(
+      if .hooks then
+        .hooks |= map(
+          if (((.command? // "") | test($it.marker))
+              and ((.command? // "") != ($it.hook.command))
+              and ((.command? // "") | contains($root)))
+          then (.command = $it.hook.command | .timeout = $it.hook.timeout)
+          else . end)
+      else . end)
+    end
+  )
+)
 | reduce $spec[] as $e (
   (if .hooks == null then .hooks = {} else . end);
   event_cmds($e.event) as $have
@@ -662,7 +907,8 @@ JQ
 )
   local tmp; tmp="$(mktemp)"
   local newlearn; newlearn="$(printf '%s' "$ss_learn" | jq -r '.command')"
-  if jq --argjson spec "$spec" --arg newlearn "$newlearn" "$jq_prog" "$target" > "$tmp"; then
+  if jq --argjson spec "$spec" --arg newlearn "$newlearn" --arg root "$root/scripts/" \
+        "$jq_prog" "$target" > "$tmp"; then
     if ! diff -q "$target" "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$target"
       info "merged harness hook stanzas into $target"
@@ -873,6 +1119,66 @@ verify_scripts() {
 # Output: per component, prints "in-sync" (all installed files == template) or
 # "behind (N file(s) drift)" with a short per-file list. Exit 0 if nothing is
 # behind, exit 3 (drift) if anything is.
+# config_drift_report — read-only report on the components that are NOT byte-comparable
+# (config + seeds). Deliberately does NOT set the exit-3 drift flag and does NOT gate the
+# version stamp: a customized CLAUDE.md or an operator-added npm script is a permanent,
+# CORRECT difference, and folding it into the converge signal would leave every real
+# workspace reporting "behind" forever. This exists so the drift is VISIBLE — the old
+# behavior was silence, which is how a fleet stayed 3 releases behind on config without
+# any surface ever saying so.
+config_drift_report() {
+  local notes=""
+
+  if [ -f package.json ] && command -v jq >/dev/null 2>&1; then
+    local missing_scripts
+    missing_scripts="$(jq -r '
+      (.scripts // {}) as $have
+      | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:status",
+         "worktree:exec","govern","govern:health","govern:dry-run","govern:validations"]
+      | map(. as $k | select($have | has($k) | not)) | join(", ")
+    ' package.json 2>/dev/null)"
+    [ -n "$missing_scripts" ] && notes+="  package.json    missing script(s): $missing_scripts"$'\n'
+  fi
+
+  if [ -f scripts/lib/workspace.sh ]; then
+    local knobs="" kline kvar
+    while IFS= read -r kline || [ -n "$kline" ]; do
+      case "$kline" in \#*|"") continue ;; *__*__*) continue ;; esac
+      kvar="$(printf '%s' "$kline" | sed -nE 's/^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p')"
+      [ -n "$kvar" ] || continue
+      case " META_NAME ROOT_PM GITHUB_ORG REPOS REPO_CMDS REPO_PORTS WORKTREE_BASE SLOT_PORT_STEP " in
+        *" $kvar "*) continue ;;
+      esac
+      grep -qE "^[[:space:]]*(export[[:space:]]+)?$kvar=" scripts/lib/workspace.sh || knobs+="$kvar "
+    done < "$T/lib/workspace.sh"
+    [ -n "$knobs" ] && notes+="  workspace.sh    knob(s) added since scaffold: $knobs"$'\n'
+  fi
+
+  [ -f README.md ] || notes+="  README.md       absent (a bump would create one)"$'\n'
+
+  local sname sdest
+  for sname in CLAUDE.md CLAUDE-APPENDIX.md learnings.md tickets.md tickets-parked.md; do
+    case "$sname" in tickets.md|tickets-parked.md) sdest="queue/$sname" ;; *) sdest="$sname" ;; esac
+    [ -f "$T/seed/$sname" ] || continue
+    if [ ! -f "$sdest" ]; then
+      notes+="  $sdest — absent (a bump would seed it)"$'\n'
+    elif ! diff -q "$sdest" "$T/seed/$sname" >/dev/null 2>&1; then
+      if seed_pristine "$sdest" "$sname"; then
+        notes+="  $sdest — unedited older seed (a bump upgrades it losslessly)"$'\n'
+      fi
+      # Customized seeds are intentionally silent: that difference is the operator's work.
+    fi
+  done
+
+  if [ -n "$notes" ]; then
+    log "config + seeds (not byte-comparable; reported, not counted as drift):"
+    printf '%s' "$notes" >&2
+  else
+    log "config + seeds: nothing outstanding"
+  fi
+  return 0
+}
+
 diff_only() {
   local behind=0
   # probe_files + the mechanism-component list are defined at top level so this
@@ -894,6 +1200,7 @@ diff_only() {
       behind=1
     fi
   done
+  config_drift_report
   local stamp="scripts/lib/.harness-version" workspace_v="unknown"
   if [ -f "$stamp" ]; then workspace_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp")"; fi
   local hub_v; hub_v="$(hub_version)"
@@ -955,6 +1262,19 @@ case "$COMPONENT" in
   package-json)   component_package_json ;;
   settings)       component_settings ;;
   settings-merge) component_settings_merge ;;
+  # The merge-tier trio: additive, idempotent, never clobber operator content. These are
+  # what /shiploop:update runs so an EXISTING workspace converges on config too, not just
+  # on the byte-comparable mechanism scripts.
+  package-json-merge) component_package_json_merge ;;
+  workspace-sh-merge) component_workspace_sh_merge ;;
+  config-merge)   # convenience bundle: everything /update needs beyond MECH_COMPONENTS
+    component_seeds
+    component_readme
+    component_gitignore
+    component_package_json_merge
+    component_workspace_sh_merge
+    component_settings_merge
+    ;;
   stamp)          : ;;    # component_stamp runs below unconditionally
   hooks)          # convenience: hooks-related bundle
     component_core_scripts

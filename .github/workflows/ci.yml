@@ -7,7 +7,10 @@ name: CI
 # This workflow turns that into a real green gate: (1) every shell script must
 # parse; (2) no leftover conflict markers; (3) plugin + marketplace manifests
 # are valid JSON with required fields; (4) scaffold.sh + the full govern
-# test suite run green in a throwaway workspace on every PR.
+# test suite run green in a throwaway workspace on every PR; (5) the
+# purge/seed-hash manifests that make "update pulls everything" true stay
+# honest — a deleted template must be purge-able, a shipped seed must be
+# upgradable.
 
 on:
   pull_request:
@@ -107,6 +110,59 @@ jobs:
             exit 1
           fi
           echo "ok - marketplace=$m_name plugins=$plugins"
+
+  check-manifests:
+    name: Manifest guards (purge-manifest-complete + seed-hashes-current)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: fetch main (base for the templates/** deletion diff)
+        run: git fetch origin main 2>/dev/null || true
+      - name: run tools/check-manifests.sh
+        run: bash tools/check-manifests.sh
+
+  hub-context-tests:
+    name: Update-channel tests (run from the hub checkout, not a workspace)
+    runs-on: ubuntu-latest
+    # These tests assert on the hub itself — scaffold.sh, templates/, VERSION, purge.txt,
+    # seed-hashes.txt — so they resolve HUB as $DIR/../../.. and exit 77 ("skip") when that
+    # is not a hub checkout. `scaffold-and-test` COPIES the suite into a throwaway workspace,
+    # where that path is the workspace root, so every one of them has been silently skipping
+    # there: the entire update channel (purge, reconcile, converge) was ungated in CI. Run
+    # them from the checkout, where the path resolves, and treat a skip as a FAILURE — a
+    # skip here means the resolution broke, which is exactly the regression worth catching.
+    steps:
+      - uses: actions/checkout@v4
+      - name: install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: pin git default branch to main
+        run: git config --global init.defaultBranch main
+      - name: run hub-context tests
+        run: |
+          set -uo pipefail
+          rc_all=0
+          for t in templates/govern/test/test-update-channel.sh \
+                   templates/govern/test/test-update-config-converge.sh \
+                   templates/govern/test/test-purge-removed.sh \
+                   templates/govern/test/test-reconcile-update.sh \
+                   templates/govern/test/test-scaffold-verify-standalone.sh; do
+            name="$(basename "$t" .sh)"
+            if bash "$t" >/tmp/out.log 2>&1; then
+              echo "ok   - $name"
+            else
+              rc=$?
+              if [ "$rc" -eq 77 ]; then
+                echo "::error::$name SKIPPED (exit 77) — hub resolution is broken in the CI checkout"
+              else
+                echo "::error::$name FAILED (exit $rc)"
+              fi
+              sed 's/^/    /' /tmp/out.log
+              rc_all=1
+            fi
+          done
+          exit "$rc_all"
 
   scaffold-and-test:
     name: Scaffold throwaway workspace + run govern test suite
