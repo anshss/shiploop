@@ -119,25 +119,54 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
     insert_text="$text"   # what actually gets inserted into $target — overridden below on overflow
 
+    # ── Placement gate (#83 Part 1) ─────────────────────────────────────────
+    # A worker CLAIMS this lesson belongs at root (lessonPatch, not an in-PR sub-repo edit), but
+    # worker-prompt.md's instruction to route sub-repo-scoped facts into the PR instead is text a
+    # worker can get wrong — and it did, in measured practice (root CLAUDE.md growing monotonically
+    # across fleets). Re-derive placement from the TEXT ITSELF via govern::lesson_placement (lib/
+    # common.sh); redirect the insertion target to that sub-repo's own CLAUDE.md when the evidence
+    # is unambiguous. Every decision — redirect or stay — is logged, so the gate's behavior is
+    # auditable rather than a silent guess either way.
+    redirected=0
+    if command -v govern::lesson_placement >/dev/null 2>&1; then
+      placement_repo=""; placement_reason=""
+      IFS=$'\t' read -r placement_repo placement_reason < <(govern::lesson_placement "$text")
+      if [[ -n "$placement_repo" ]]; then
+        subrepo_dir="$meta_root/$placement_repo"
+        subrepo_claude="$subrepo_dir/CLAUDE.md"
+        if [[ -f "$subrepo_claude" ]] && git -C "$subrepo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          target="$subrepo_claude"; redirected=1
+          govern::log "bookkeep #$N: lessonPatch redirected root CLAUDE.md -> $placement_repo/CLAUDE.md ($placement_reason)"
+        else
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but $placement_repo/CLAUDE.md or its git repo isn't present here — staying at root CLAUDE.md ($placement_reason)"
+        fi
+      fi
+      [[ "$redirected" == "1" ]] || govern::log "bookkeep #$N: lessonPatch staying at root CLAUDE.md ($placement_reason)"
+    fi
+
     # Overflow gate: CLAUDE.md is re-sent every turn, so an oversized lessonPatch inserted verbatim
     # is a PERMANENT per-turn tax. Past GOVERN_LESSON_MAX_CHARS, keep only the LEAD rule (the first
     # paragraph — text up to the first blank line; the first line if there's no blank line) in
     # $target, pointing at the full text parked under its own heading in CLAUDE-APPENDIX.md. Falls
     # back to the CURRENT insert-everything behavior when CLAUDE-APPENDIX.md doesn't exist at the
-    # meta-repo root — never silently lose the lesson.
-    lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
-    appendix="$meta_root/CLAUDE-APPENDIX.md"
-    if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
-      if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
-        lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
-      else
-        lead="$(printf '%s\n' "$text" | head -n1)"
+    # meta-repo root — never silently lose the lesson. ROOT-ONLY: a redirected sub-repo lesson skips
+    # this (CLAUDE-APPENDIX.md is a root-level overflow sink, and a sub-repo CLAUDE.md isn't re-sent
+    # every turn the way root is, so the same permanent-tax argument doesn't apply there).
+    if [[ "$redirected" == "0" ]]; then
+      lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
+      appendix="$meta_root/CLAUDE-APPENDIX.md"
+      if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
+        if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
+          lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
+        else
+          lead="$(printf '%s\n' "$text" | head -n1)"
+        fi
+        heading="#$N — ${ticket_title:-lesson}"
+        insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."
+        { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
+        patched_files+=("$appendix")
+        govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
       fi
-      heading="#$N — ${ticket_title:-lesson}"
-      insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."
-      { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
-      patched_files+=("$appendix")
-      govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
     fi
 
     if [[ -n "$anchor" ]] && grep -qF "$anchor" "$target"; then
@@ -154,8 +183,35 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     else
       printf '\n%s\n' "$insert_text" >> "$target"
     fi
-    patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
-                                  # root-relative name would miss it; absolute resolves from anywhere in the repo.
+
+    if [[ "$redirected" == "1" ]]; then
+      # A redirected lesson lives in a DIFFERENT git repo than the meta-repo root (sub-repos are
+      # independent checkouts — see CLAUDE.md's "meta-repo" description), so it can never ride the
+      # root commit below (step 4's `git add` runs from the queue/ folder's toplevel = meta-repo
+      # root; a nested repo's path is invisible to it). Commit + push it here, scoped to that
+      # sub-repo, mirroring the root commit's own non-fatal push-retry shape (#108-style CAS loop) —
+      # best-effort: a failure is logged for manual reconciliation, never a hard abort of this
+      # ticket's bookkeeping (the tickets.md delete + PR record must still land either way).
+      ( cd "$subrepo_dir"
+        git add CLAUDE.md
+        git commit -q -m "docs(claude): promote lesson from ticket #$N" || true
+        if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
+          pushed=0
+          for _attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main >/dev/null 2>&1; then pushed=1; break; fi
+            git pull --rebase origin main >/dev/null 2>&1 || break
+          done
+          if [[ "$pushed" != "1" ]]; then
+            govern::log "bookkeep #$N: push of $placement_repo/CLAUDE.md failed after retries — commit is local-only in $subrepo_dir; reconcile manually ('git push origin main')"
+          fi
+        fi
+        true
+      ) || govern::log "bookkeep #$N: sub-repo lesson commit into $placement_repo failed unexpectedly — $subrepo_claude may be modified but uncommitted; check $subrepo_dir"
+      govern::log "bookkeep #$N: promoted lesson committed to $placement_repo/CLAUDE.md"
+    else
+      patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
+                                    # root-relative name would miss it; absolute resolves from anywhere in the repo.
+    fi
   fi
 fi
 
