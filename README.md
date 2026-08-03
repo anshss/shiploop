@@ -139,7 +139,7 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns s
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
 - **Right-sized models.** The interactive "brain" filing a ticket stamps it with a `Model:` field (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy) and an `Effort:`, and the spawn honors both on the first attempt. A ticket that names neither is sized by a **scout pass** instead of defaulting to opus: a cheap haiku recon run measures the real scope (files touched, repos involved, existing test coverage, a precedent commit in history, local edit vs contract change, concrete vs vague fix direction) and a deterministic bash scoring table maps that to `haiku`/`low`, `sonnet`/`medium`, or `opus`/`high`. The verdict is cached per run so a retry never re-scouts, and it is validated and clamped before use — a malformed scout falls back to `GOVERN_WORKER_MODEL` loudly, and clamping only ever pushes a ticket up the ladder, never down. Retries are classified rather than blindly escalated: an infra or CI failure retries at the same tier, running out of budget raises the tier, and a judgment failure raises both tier and effort.
 - **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
-- **It gets better over time.** `/shiploop:resolve` promotes each ticket's durable lesson into the right `CLAUDE.md` before deleting the ticket: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
+- **It gets better over time.** Every resolved ticket promotes its durable lesson into the right `CLAUDE.md` before the entry is deleted: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
 
 ## Trust
 
@@ -167,8 +167,6 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
 | `/shiploop:govern` | Ship your backlog: the bash-driven ticket loop, end to end |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
-| `/shiploop:investigate` | Triage a bug: seed notes, pull logs, form a hypothesis, propose a fix |
-| `/shiploop:resolve` | Close a ticket: confirm the PR, promote the lesson to `CLAUDE.md`, delete the entry, sweep for new tickets |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |
 
@@ -256,7 +254,7 @@ Devin, Cursor, Copilot, and Claude Code all do one task you hand them well. ship
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Everything the scaffolder installs lives under `templates/`; the seven slash commands under `commands/`; hermetic governor tests under `templates/govern/test/`.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Everything the scaffolder installs lives under `templates/`; the slash commands under `commands/`; hermetic governor tests under `templates/govern/test/` (hub-only — the suite is not installed into a workspace).
 
 ## License
 

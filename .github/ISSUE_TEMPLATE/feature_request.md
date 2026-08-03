@@ -17,7 +17,7 @@ Which component would grow the new capability?
 - [ ] `templates/govern/` (the governor loop, ticket selection, merging, supervision, escalations)
 - [ ] `templates/worktree/` (parallel worktrees, slots, ports)
 - [ ] `templates/githooks/` or `templates/hooks/` (git hooks or Claude Code hooks)
-- [ ] Cross-cutting workspace script (`status`, `doctor`, `dev`, `pull-all`, `push-prs`, `sync`, `health`, `tail`, `investigate`)
+- [ ] Cross-cutting workspace script (`doctor`, `dev`, `sync`, `tail`)
 - [ ] `templates/lib/workspace.sh` (a new opt-in variable)
 - [ ] Plugin packaging or install path
 - [ ] Documentation only

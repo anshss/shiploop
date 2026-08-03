@@ -1,0 +1,47 @@
+# File purge manifest — paths shiploop USED to install and no longer ships.
+#
+# Format: one workspace-relative path per non-comment line. A trailing `/` marks a
+# directory (removed recursively). scaffold.sh deletes every listed path from the
+# workspace on any writer run (fresh scaffold, `--component X`, `/shiploop:update`)
+# and merely WARNS about them under standalone `--verify` (which never writes).
+#
+# This is how an already-installed fleet sheds a retired file. When you DELETE a
+# template that earlier versions shipped, ADD its installed path here. When you MOVE
+# one, use relocations.txt instead (warn-only, from → to).
+#
+# Purge is unconditional: a listed path is removed even if locally edited. Only list
+# mechanism files shiploop owns — never operator data (workspace.sh, queue/, governor/
+# preferences, seed CLAUDE.md).
+
+# v1.15.0 — install-footprint purge. Cross-repo git wrappers: measured across 1,372
+# real sessions, agents ran the underlying git/curl commands directly (git status ×419,
+# git push ×285, curl localhost ×60) and never reached for a wrapper. No shiploop
+# wrapper appeared in the top 25 of 54,690 parsed bash sub-statements.
+scripts/status.sh
+scripts/branch.sh
+scripts/switch.sh
+scripts/pull-all.sh
+scripts/push-prs.sh
+scripts/health.sh
+scripts/investigate.sh
+
+# v1.15.0 — /investigate and /resolve: 0 invocations across both measured fleets via
+# either the typed-tag or the Skill-tool path. /resolve's underlying work still happens
+# through direct tickets.md edits + govern-bookkeep.sh, so cutting the command does not
+# cut the capability. Removing them also drops 2 always-on description lines from every
+# session's command listing.
+.claude/commands/investigate.md
+.claude/commands/resolve.md
+
+# v1.15.0 — the govern test suite is hub-only now. Nothing in a fleet workspace ever
+# executed it: no npm script, hook, command, or govern script. sync-port.sh builds its
+# own scratch copy straight from the hub tree, and hub CI copies the suite into the
+# workspace it scaffolds. 134 files / ~869 KB.
+scripts/govern/test/
+
+# v1.15.0 — the three `.example` project hooks were never referenced as installed:
+# doctor.sh, worktree/new.sh and workspace.sh all look for these filenames WITHOUT the
+# `.example` suffix, so a copy left at the `.example` path is inert by construction.
+scripts/lib/worktree-bootstrap.sh.example
+scripts/lib/session-cleanup.sh.example
+scripts/lib/doctor-extra.sh.example

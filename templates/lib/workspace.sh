@@ -34,7 +34,7 @@ fi
 META_NAME="__META_NAME__"           # e.g. aquanode
 ROOT_PM="npm"                        # npm | pnpm | yarn | bun
 
-# GitHub org/owner for `gh` operations (push-prs, governor merges, PR lookups).
+# GitHub org/owner for `gh` operations (governor merges, PR lookups).
 GITHUB_ORG="__GITHUB_ORG__"          # e.g. Aquanodeio
 
 # Sub-repos, dev commands, and base ports — three INDEX-ALIGNED arrays (parallel,

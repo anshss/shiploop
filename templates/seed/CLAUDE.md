@@ -56,7 +56,7 @@ removing a sub-repo is a one-file edit there.
 
 1. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files, and
    `git status` at the root proves nothing about sub-repo state.
-2. **Never assume sub-repos share a branch.** They drift — `npm run status` first.
+2. **Never assume sub-repos share a branch.** They drift — check each sub-repo's `git status` first.
 3. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
 4. **Never `git stash` to A/B a baseline** — the edits usually live in a nested sub-repo, so a
    root-level stash silently no-ops and the "baseline" run is worthless. Use a throwaway

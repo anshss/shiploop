@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Removed
+
+- **The install footprint drops 62% of its files (234 → 88) and 46% of its bytes, and an old install
+  now sheds the difference instead of carrying it forever.** Four groups came out, each traced from
+  1,372 real sessions (277 in one fleet, 174 in another) and then confirmed by a dependency trace
+  against every file that stays — usage data found the candidates, the trace is what justified the
+  cut.
+
+  **The cross-repo git wrappers** — `status.sh`, `branch.sh`, `switch.sh`, `pull-all.sh`,
+  `push-prs.sh`, `health.sh`, `investigate.sh` — and their `npm run` aliases. Across 54,690 parsed
+  bash sub-statements, not one shiploop wrapper reached the top 25. Agents ran the underlying command
+  instead: `git status` ×419, `git push` ×285, `git pull --ff-only` ×59, `git checkout` ×43,
+  `git switch -c` ×30, `curl localhost` ×60. A wrapper that has to be remembered loses to a command
+  that doesn't.
+
+  **`/investigate` and `/resolve`** (both the hub commands and their project-local copies) — 0
+  invocations across both fleets, by typed tag or Skill tool. The work `/resolve` describes still
+  happens constantly (67 direct `tickets.md` edits, 81 `govern-bookkeep.sh` calls), so the close-out
+  discipline moved into `SKILL.md` and the seed `tickets.md` as prose. Cutting the command does not
+  cut the capability, and it removes two always-on description lines from every session.
+
+  **The govern test suite is hub-only now** (134 files, ~869 KB — the single biggest item). Nothing in
+  a fleet workspace ever ran it: no npm script, no hook, no command, no govern script. `sync-port.sh`
+  already builds its own scratch copy straight from the hub tree, and hub CI now copies the suite into
+  the throwaway workspace it scaffolds. Two of the tests (`test-wrap-in-place`, `test-detect-inputs`)
+  `exit 77` on any fleet by design. `scaffold.sh --run-tests` went with it — there is nothing left to
+  run — as did `/setup`'s B3 test-suite step and `/update`'s mirror of it.
+
+  **The three `.example` project hooks.** `doctor.sh`, `worktree/new.sh` and `workspace.sh` all look
+  for `worktree-bootstrap.sh` / `session-cleanup.sh` / `doctor-extra.sh` *without* the suffix, so a
+  file left at the `.example` path was inert by construction. `/setup` now tells you to write the real
+  filename.
+
+### Added
+
+- **`templates/lib/purge.txt` — the removal channel installs never had.** scaffold's components only
+  copy IN; they have never removed anything. So every file the hub retires lives on forever in every
+  workspace that once installed it, and a deletion here would only have helped brand-new installs.
+  The manifest lists paths shiploop used to ship, and every writer run — fresh scaffold, single
+  `--component` refresh, `/shiploop:update` — deletes them, so an existing fleet converges on the
+  current footprint no matter which component is bumped. Standalone `--verify` only warns, because
+  it must never write. Absolute and `..`-bearing manifest lines are refused, so a malformed entry
+  can't reach outside the workspace. Seeded with everything removed above; when you delete a template
+  from now on, add its installed path here (moves still go to `relocations.txt`). Locked in by
+  `test-purge-removed.sh` (17 assertions).
+
 ### Changed
 
 - **The always-on cost of installing shiploop is cut 46%, and the half nothing was measuring is now
