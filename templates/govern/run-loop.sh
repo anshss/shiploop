@@ -176,7 +176,13 @@ MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-0}"   # 0 = no runtime cap (default)
 # against each other — past a point, bigger groups trade wall-clock for the token saving — so the
 # aggressiveness is an explicit operator knob, not a hard-coded policy. Only ever applies to a BACKLOG
 # pull; an explicit ticket set is dispatched exactly as the operator named it.
-BATCH_MAX="${GOVERN_BATCH_MAX:-1}"; BATCH_MAX="${BATCH_MAX//[^0-9]/}"; [[ -n "$BATCH_MAX" ]] || BATCH_MAX=1
+# §5.3: raised off 1 only AFTER the batch key was re-keyed onto MEASURED file overlap. Raising the cap
+# while the key was still a leaf-directory name derived from `Where:` prose would have made things
+# strictly worse — arbitrary grouping shares no discovery yet still pays full context accumulation,
+# and accumulation is superlinear, so a bad 3-batch costs more than 3 workers. It stays SMALL for the
+# same reason: a 5-ticket batch is nowhere near 5× cheaper than 5 workers. Tickets with no measured
+# paths are never batched at all, so this only engages where the scout actually surveyed files.
+BATCH_MAX="${GOVERN_BATCH_MAX:-2}"; BATCH_MAX="${BATCH_MAX//[^0-9]/}"; [[ -n "$BATCH_MAX" ]] || BATCH_MAX=1
 [[ "$BATCH_MAX" -ge 1 ]] || BATCH_MAX=1
 START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
 # #151: abnormal-abort + in-flight-ticket tracking. ABORTED/ABORT_RC are set by on_exit when the run
@@ -327,7 +333,8 @@ else
 fi
 export GOVERN_RUN_ATTEMPTED_FILE="$RUN_ATTEMPTED_FILE"
 : >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true   # `>>` never truncates a file inherited from a parent
-excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; done_count=0
+excludes="$EXCLUDE_INIT"; bad_streak=0; since_review=0; nres=0; npark=0; nfail=0; ntimeout=0; nbudget=0; nintr=0; nabort=0; done_count=0
+selfref_dispatched=0   # §4.8: harness-about-harness tickets dispatched this run (capped by GOVERN_SELFREF_MAX_PER_RUN)
 TARGETS_SEEN=","   # ticket-SET fix: every target this run actually SELECTED (any outcome), so the
                     # end-of-set diagnostic never re-labels an already-handled target "not found"/"not eligible"
 # #92: PRIORITY = comma list of ticket numbers a supervisor flagged "attempt-now" (e.g. a just-
@@ -468,14 +475,18 @@ WORKER_PID=""; SPAWN_OUT=""
 spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in $SPAWN_OUT; sets+clears WORKER_PID
   local n="$1"; shift
   SPAWN_OUT="$(mktemp)"
-  # #21 scout-then-size: MEASURE #n's scope with a cheap haiku pass BEFORE dispatch, so a ticket the
-  # brain left unsized is sized from evidence instead of falling through to the blanket opus default.
+  # #21 scout-then-SURVEY: MEASURE #n's scope with a cheap haiku pass BEFORE dispatch. The scout no
+  # longer decides a TIER — that verdict was deleted (§5.2: 4 of the 5 verdicts it ever cached were
+  # opus/high, and its HARD gate was a disjunction where `testsCover==false` alone forced opus, which
+  # is a rubber stamp rather than arbitrage). Tier is now the cheap floor GOVERN_WORKER_MODEL plus
+  # escalate-once-on-measured-failure. What the survey still produces is MEASUREMENT that several
+  # mechanisms consume: verified `targetPaths` (the batch key and the staleness gate's path list), the
+  # warm-start findings block, and the `deterministic` patch checked immediately below.
   # This is the ONE chokepoint every spawn goes through (plain dispatch, retry, CI-fix and
-  # conflict-resolve re-dispatch alike), and the verdict is cached on the run dir — so the retries
+  # conflict-resolve re-dispatch alike), and the survey is cached on the run dir — so the retries
   # below reuse it rather than re-scouting from scratch. Best-effort by construction: a failure caches
-  # nothing, spawn-worker's `--verdict` read comes back empty, and sizing falls back to today's
-  # GOVERN_WORKER_MODEL behavior with the reason logged. Skipped in dry mode (an observation run must
-  # stay free of model calls) and under GOVERN_SCOUT=0.
+  # nothing and every consumer degrades to its no-measurement path. Skipped in dry mode (an
+  # observation run must stay free of model calls) and under GOVERN_SCOUT=0.
   if [[ "${GOVERN_SCOUT:-1}" != "0" && "${MODE:-live}" != "dry" ]]; then
     "$DIR/scout-ticket.sh" "$n" >/dev/null || true
   fi
@@ -504,6 +515,28 @@ spawn_worker_tracked() { # ticket [batched-ticket...] -> spawn-worker stdout in 
       return 0
     fi
     govern::log "worker #$n: EXECUTE-ONLY dispatch — the parent asserted it is warm on this ticket; the worker gets the stated change and runs at the cheap tier (GOVERN_EXECUTE_ONLY=0 to disable this branch)"
+  fi
+  # §4.2 DETERMINISTIC LANE — model → no model, the one arbitrage with no ceiling. Tier arbitrage is
+  # bounded (opus→sonnet is ~5×); resolving a ticket with ZERO model turns is not. A real share of any
+  # backlog is mechanical: flip a default, add a key, bump a version, delete a stale line, apply a
+  # known rename. The scout above already read the real code, so the patch rides on an EXISTING model
+  # call — this lane adds none of its own.
+  #
+  # Placed AFTER the warm-assertion branch so an explicit parent assertion always wins, and skipped
+  # for a locality batch ($# > 0) because the report it emits carries no per-ticket `tickets` array
+  # and bookkeeping would mark the batch-mates resolved without them ever being touched.
+  # Conservative by construction: ANY ambiguity exits non-zero and we fall through to a real worker,
+  # which is exactly the status quo. Ships inert (GOVERN_DETERMINISTIC=0).
+  if [[ "$#" -eq 0 && "${GOVERN_DETERMINISTIC:-0}" == "1" ]]; then
+    # Build the flag list as an array — a bare `[[ ]] && printf` inside a command substitution returns
+    # the conditional's status and can abort this function under `set -e` (a known trap in this tree).
+    local -a det_flags=()
+    [[ "${MODE:-live}" == "dry" ]] && det_flags+=(--dry-run)
+    if "$DIR/deterministic-apply.sh" ${det_flags[@]+"${det_flags[@]}"} "$n" >"$SPAWN_OUT" 2>/dev/null; then
+      govern::log "worker #$n: ZERO-MODEL resolution — the scout named a deterministic transformation, the patch applied and verified, no worker was spawned"
+      return 0
+    fi
+    govern::log "worker #$n: deterministic lane declined (not confidently mechanical) — dispatching a normal worker"
   fi
   # #23: extra args are the co-batched tickets of #n's locality group (empty for a plain single spawn).
   "$DIR/spawn-worker.sh" "$n" "$@" >"$SPAWN_OUT" &
@@ -606,7 +639,7 @@ consecutive_fails() { # ticket -> count
     [ .[] | select(.ticket == $t) ] | reverse
     | (reduce .[] as $e ({n:0,stop:false};
         if .stop then .
-        elif ($e.status=="failed" or $e.status=="timeout" or $e.status=="budget-exceeded") then {n:(.n+1),stop:false}
+        elif ($e.status=="failed" or $e.status=="timeout" or $e.status=="budget-exceeded" or $e.status=="early-abort") then {n:(.n+1),stop:false}
         else {n:.n,stop:true} end)).n' "$HISTORY" 2>/dev/null || echo 0
 }
 
@@ -1072,15 +1105,33 @@ govern::_parallel_run() {
     # drivers re-select for themselves and contend on the per-ticket claim lock as usual.
     # #23: with locality batching on, one driver consumes up to GOVERN_BATCH_MAX tickets per worker,
     # so the fleet is sized in GROUPS, not tickets — `--parallel=N` means N groups. Probe up to
-    # N × BATCH_MAX tickets and start ceil(found / BATCH_MAX) drivers. At the default BATCH_MAX=1 this
-    # is arithmetically identical to the previous one-driver-per-ticket sizing.
-    pexcl="$excludes"; local found=0
+    # N × BATCH_MAX tickets, then count the groups those candidates ACTUALLY form.
+    #
+    # This used to be `ceil(found / BATCH_MAX)`, which assumed every driver fills a whole group. That
+    # held while the batch key was a coarse leaf-directory name derived from prose — nearly everything
+    # shared a key, so nearly everything batched. It is WRONG now: §5.3 re-keyed batching onto measured
+    # file overlap, and a ticket with no measured paths is never batched at all, so the common case is
+    # groups of one. The ratio would then size a 2-ticket backlog at 1 driver and silently halve
+    # throughput. Asking govern::locality_groups for the real partition costs one call and cannot drift
+    # from what the drivers themselves will do, because it IS the same function.
+    #
+    # Erring high is safe and erring low is not: a surplus driver finds nothing to claim and exits,
+    # whereas a missing driver is throughput nobody notices is gone.
+    pexcl="$excludes"; local found=0 pcands=""
     for (( i=0; i<PARALLEL_N*BATCH_MAX; i++ )); do
       pn="$("$DIR/select-ticket.sh" "$pexcl" 2>/dev/null || true)"
       [[ -n "$pn" ]] || break
-      pexcl="${pexcl:+$pexcl,}$pn"; found=$((found+1))
-      spawned=$(( (found + BATCH_MAX - 1) / BATCH_MAX ))
+      pexcl="${pexcl:+$pexcl,}$pn"; pcands="${pcands:+$pcands,}$pn"; found=$((found+1))
     done
+    if [[ "$found" -gt 0 ]]; then
+      if [[ "$BATCH_MAX" -gt 1 ]]; then
+        spawned="$(govern::locality_groups "$BATCH_MAX" "$pcands" "$TICKETS_FILE" 2>/dev/null | grep -c . || true)"
+        [[ "$spawned" =~ ^[0-9]+$ && "$spawned" -gt 0 ]] || spawned="$found"
+      else
+        spawned="$found"
+      fi
+      [[ "$spawned" -le "$PARALLEL_N" ]] || spawned="$PARALLEL_N"
+    fi
     if [[ "$spawned" -eq 0 ]]; then
       govern::log "parallel: nothing eligible — no target set given and no eligible backlog ticket found; not spawning anything"
       return 0
@@ -1142,6 +1193,26 @@ while :; do
   if [[ "$done_count" -ge "$MAX_TICKETS" ]]; then govern::log "reached GOVERN_MAX_TICKETS=$MAX_TICKETS — stopping"; break; fi
   elapsed=$(( $(date +%s) - START_EPOCH ))
   if [[ "$MAX_RUNTIME" -gt 0 && "$elapsed" -ge "$MAX_RUNTIME" ]]; then govern::log "reached GOVERN_MAX_RUNTIME=${MAX_RUNTIME}s (elapsed ${elapsed}s) — stopping"; break; fi
+  # §5.7 RUN-LEVEL SPEND CEILING (#71). The governor had per-ATTEMPT spend telemetry and per-attempt
+  # bounds (GOVERN_WORKER_MAX_TOKENS) but no brake on the RUN — so a pathological backlog could burn
+  # without limit as long as each individual worker stayed inside its own budget. This matters more
+  # now, not less: removing the `/govern` command lowered dispatch friction to a sentence, and a rail
+  # that used to be "the operator had to deliberately type a command" has to become an actual number.
+  # Deterministic — sums this run's own worker streams, no model call. 0 = off (the default), so this
+  # ships inert.
+  if [[ "${GOVERN_RUN_MAX_TOKENS:-0}" -gt 0 ]]; then
+    _run_tok=0
+    while IFS= read -r _wj; do
+      [[ -n "$_wj" ]] || continue
+      _t="$(govern::cumulative_tokens "$_wj" 2>/dev/null || echo 0)"
+      [[ "$_t" =~ ^[0-9]+$ ]] || _t=0
+      _run_tok=$(( _run_tok + _t ))
+    done < <(find "$RUNDIR" -name 'worker*.jsonl' -type f 2>/dev/null || true)
+    if [[ "$_run_tok" -ge "${GOVERN_RUN_MAX_TOKENS}" ]]; then
+      govern::log "reached GOVERN_RUN_MAX_TOKENS=${GOVERN_RUN_MAX_TOKENS} (run total ${_run_tok}) — stopping cleanly before dispatching another ticket"
+      break
+    fi
+  fi
   # Pre-flight disk guard (#48): never cascade phantom fast-fails on a full disk. If free space
   # is below the worktree headroom, stop CLEANLY with a distinct reason — a disk artifact must
   # not masquerade as worker failures and trip the bad-streak brake. Preserved worktrees are
@@ -1263,6 +1334,40 @@ while :; do
       excludes="$excludes,$N"; continue
     fi
   fi
+
+  # §4.8 SELF-REFERENTIAL DISPATCH CAP. The loop files tickets about the harness, pays full worker
+  # price for them, and files more — a closed circuit that can consume a whole run's budget while
+  # shipping nothing a user asked for. root CLAUDE.md already states the principle ("gate dispatch
+  # cost, never discovery") but nothing enforced it; this is the enforcement, and it deliberately caps
+  # DISPATCH only — discovery, filing and triage are untouched, so nothing is lost, only deferred to a
+  # later run. 0 = unlimited (the default), so this ships inert.
+  if [[ "${#TARGETS[@]}" -eq 0 && "${GOVERN_SELFREF_MAX_PER_RUN:-0}" -gt 0 ]] \
+     && govern::is_selfref_ticket "$N" "$TICKETS_FILE"; then
+    if [[ "${selfref_dispatched:-0}" -ge "${GOVERN_SELFREF_MAX_PER_RUN}" ]]; then
+      govern::log "#$N is self-referential (harness work) and this run already dispatched ${selfref_dispatched} of GOVERN_SELFREF_MAX_PER_RUN=${GOVERN_SELFREF_MAX_PER_RUN} — deferring to a later run, no worker burned (#4.8)"
+      govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
+      excludes="$excludes,$N"; continue
+    fi
+    selfref_dispatched=$(( ${selfref_dispatched:-0} + 1 ))
+  fi
+
+  # §4.5 STALENESS GATE. The queue is partly machine-generated (worker `newTickets[]`,
+  # govern-improve-triage proposals), so it accumulates duplicates and already-fixed entries.
+  # Discovering that today costs a FULL worker — 100% waste, not a factor, and it multiplies against
+  # every other saving in this file. Bash only, no model fallback (§10: deterministic or it doesn't
+  # ship). FAIL-OPEN by construction: only exit 10 means "confidently stale"; every inconclusive case
+  # dispatches, because a false "stale" silently drops real work. Sits AFTER the claim lock so
+  # concurrent drivers can't race the same probe, and follows the same TARGETS convention as the gates
+  # above — an operator naming tickets explicitly gets them dispatched.
+  if [[ "${#TARGETS[@]}" -eq 0 && "${GOVERN_STALENESS_GATE:-0}" == "1" ]]; then
+    _sg_out=""; _sg_rc=0
+    _sg_out="$("$DIR/staleness-gate.sh" "$N" 2>/dev/null)" || _sg_rc=$?
+    if [[ "$_sg_rc" -eq 10 ]]; then
+      govern::log "#$N ${_sg_out:-confidently stale} — skipping, no worker burned (#4.5)"
+      govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""
+      excludes="$excludes,$N"; continue
+    fi
+  fi
   govern::log "=== ticket #$N (elapsed ${elapsed}s, done $done_count/$MAX_TICKETS) ==="
   CUR_TICKET="$N"; CUR_TICKET_MERGED=""   # #151: mark in-flight so an abnormal abort/interrupt surfaces #N (+ any merged-but-unbookkept PR)
   RETRY_CLASS_HINT=""                     # retry-class: per-ticket failure signature the driver observes (see record())
@@ -1368,7 +1473,7 @@ while :; do
         done
       fi
       [[ "${#BATCH[@]}" -eq 0 ]] \
-        || govern::log "batch: #$N + $(printf '#%s ' "${BATCH[@]}")— one worker, one PR, locality '$(govern::ticket_locality "$N" "$TICKETS_FILE" 2>/dev/null || true)' (GOVERN_BATCH_MAX=$BATCH_MAX)"
+        || govern::log "batch: #$N + $(printf '#%s ' "${BATCH[@]}")— one worker, one PR, sharing $(govern::ticket_paths "$N" "$TICKETS_FILE" 2>/dev/null | tr '\n' ' ' || true)(GOVERN_BATCH_MAX=$BATCH_MAX)"
     fi
     GOVERN_MODE="$MODE" spawn_worker_tracked "$N" ${BATCH[@]+"${BATCH[@]}"} 2>/dev/null || true
     report="$(cat "$SPAWN_OUT" 2>/dev/null || true)"; rm -f "$SPAWN_OUT"
@@ -1707,6 +1812,16 @@ while :; do
       [[ -n "$_vnote" ]] && _rnote="${_rnote:+$_rnote — }validation evidence: $_vnote"
       record "$N" resolved "$_rnote"
       nres=$((nres+1)); since_review=$((since_review+1)); bad_streak=0
+      # §4.3: refresh the codebase index now that the tree has actually MOVED. Exploration is the
+      # dominant cost of a resolved ticket and every worker pays it cold (Read is 7.7% of a worker's
+      # tool calls but 31% of its returned bytes, at 6,145 B/call); the index converts per-ticket
+      # O(explore) into O(read index) across the whole backlog. Deterministic — git/grep/ctags, never
+      # model-generated, because a model-generated digest would be a recurring bill AND would rot.
+      # Once per RESOLVED ticket rather than per PR, so a multi-repo ticket rebuilds once. Best-effort:
+      # it must never fail a resolution that already landed.
+      if [[ "${GOVERN_INDEX:-1}" != "0" && "$MODE" == "live" ]]; then
+        "$DIR/codebase-index.sh" build >/dev/null 2>&1 || true
+      fi
       # A cleanly-resolved worktree is torn down (live, real worktree only). This ALSO fires for a
       # resume-adopted resolution (the "found existing PR — resuming" path): a resumed ticket is
       # bookkept + recorded resolved identically to a fresh one, and worktree:rm --force is a no-op if
@@ -1794,6 +1909,24 @@ while :; do
       govern::log "#$N TIMEOUT — killed before verdict; recorded INCOMPLETE (not failed), worktree PRESERVED at $(wt_path "$N") (re-run resumes) [#241]"
       slim_worktree "$N"
       excludes="$excludes,$N"; ntimeout=$((ntimeout+1)); bad_streak=$((bad_streak+1))
+      ;;
+    early-abort)
+      # §4.4: the in-flight watchdog killed the worker on a DETERMINISTIC pathology — no file edits in
+      # N turns, the same command repeated M times, or a rising tool-error rate — rather than letting
+      # it run out a ceiling it was never going to reach usefully. A worker session is 218 assistant
+      # turns; a doomed one burns nearly all of them before failing. Killing at ~turn 30 is the whole
+      # point of the mechanism, so this must NOT be recorded as a feature failure.
+      #
+      # Treated exactly like `timeout`/`budget-exceeded`: INCOMPLETE, not failed; worktree PRESERVED so
+      # the escalated retry resumes warm from the handoff block the dying worker wrote; counted toward
+      # both the in-run bad-streak and the cross-run #60 streak, so a ticket that keeps stalling is
+      # still auto-parked instead of retried forever. It gets its own status because "stalled out" and
+      # "ran out of clock" are different systemic signals — the first says the tier or the scope is
+      # wrong, the second says the work was simply long.
+      record "$N" early-abort "killed mid-run by the early-abort watchdog (no progress signal) — INCOMPLETE, not failed; re-run resumes warm. worktree preserved: $(wt_path "$N")${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}"
+      govern::log "#$N EARLY-ABORT — no progress signal; killed before burning the full budget, worktree PRESERVED at $(wt_path "$N") (retry resumes from the handoff block) [#4.4]"
+      slim_worktree "$N"
+      excludes="$excludes,$N"; nabort=$((nabort+1)); bad_streak=$((bad_streak+1))
       ;;
     budget-exceeded)
       # #16: the worker was HARD-KILLED by GOVERN_WORKER_MAX_TOKENS before it could write a verdict —
@@ -2058,7 +2191,7 @@ if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
   GOVERN_HISTORY_FILE="$HISTORY" "$DIR/govern-health.sh" --run "$(basename "$RUNDIR")" 2>/dev/null \
     | while IFS= read -r _hl; do govern::log "health | $_hl"; done || true
 fi
-govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout budget-exceeded=$nbudget interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
+govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout budget-exceeded=$nbudget early-aborted=$nabort interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 
 # Auto-trigger sync-port at run-end IFF (a) the mechanism script is present in

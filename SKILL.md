@@ -53,7 +53,7 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
 | `npm run worktree:status` | Slot table (`-- --gc` prunes orphans) |
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
-| `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
+| `npm run govern` | Launch the autonomous ticket loop over the whole backlog (or say "work through the queue" — see Dispatch below) |
 | `/shiploop:flows extract` | Inventory every user-facing path that might break (staged, no billing) |
 
 **Pass args/flags after the script with `--`** — npm/pnpm need it or they swallow the flags; yarn
@@ -115,11 +115,40 @@ Learnings routing (queue vs CLAUDE.md vs learnings.md vs project memory) follows
 root `CLAUDE.md` — that file auto-loads every session; this skill doesn't restate its table. Bar
 either way: would knowing this save a future session 5+ min?
 
-## Governor (autonomous ticket loop)
+## Dispatch — natural language onto the governor loop
 
-`npm run govern` / `/govern` launches a **pure-bash driver** (`scripts/govern/run-loop.sh`) that
-spends ~zero Claude context itself and dispatches a fresh **headless `claude -p` worker** per ticket
-— what lets the workspace grind a backlog unattended.
+There is no `/govern` command — the trigger is gone, but the **loop stays**. The substrate under it
+(detached workers, claim locks, verdict files, resumable worktrees, reaping) is what survives a closed
+laptop, and dispatch is just natural language mapped straight onto that substrate:
+`scripts/govern/run-loop.sh` — a **pure-bash driver** that spends ~zero Claude context itself and
+dispatches a fresh **headless `claude -p` worker** per ticket.
+
+| You say | Run |
+|---|---|
+| "work on 414 156 234 235" | `scripts/govern/run-loop.sh 414 156 234 235` — that exact ticket SET, in severity order |
+| "work on ticket 152" | `scripts/govern/run-loop.sh 152` — that one ticket only, always sequential |
+| "work on all the tickets on the queue" / "work through the queue" | `scripts/govern/run-loop.sh` — whole eligible backlog, no args |
+| "work through the queue while I'm out" | same backlog call, unattended — add `--parallel[=N]` if the workspace is set up for fan-out |
+| "dry-run the queue" / "prove it, ship nothing" | `scripts/govern/run-loop.sh --dry-run` |
+| "one ticket at a time" | `--serial` (`--parallel=1` is identical) |
+| "skip N, N — another run owns them" | `--exclude N,N` |
+
+These differ **only in selection and count** — a later session can reap workers an earlier session
+launched, because the state (claim locks, `state.jsonl`, worktrees) lives on disk, not in this
+session's context. Launch it, relay its log lines, and report the final `resolved / parked / failed`
+tally. **Do not re-implement the loop in-context** — driving tickets by hand is the anti-pattern this
+design replaces; if the driver halts (circuit breaker / supervisor halt), report why, don't take over.
+
+Lowering the trigger friction from a typed command to a sentence RAISES the need for a run-level
+ceiling — typing `/govern` was a deliberate act, a sentence is not. The concurrency cap below is
+enforced by the substrate (`GOVERN_MAX_TICKETS` etc.), not by how hard it is to say "go".
+
+Run from the **main checkout** (not a worktree), in a **plain terminal** — NOT nested inside an
+interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env and the
+headless worker never finalizes (answers but emits no `result`, hangs to timeout); `spawn-worker.sh`
+scrubs those vars defensively, but a manual preflight ping won't survive nesting. Before a live run:
+`claude -p "ping" --model sonnet --strict-mcp-config` should print text, not a 401 (`claude login`
+once if it 401s) — `--strict-mcp-config` matches how workers actually launch (no MCP servers).
 
 **Autonomy is a ladder — observe → pr-only → auto**, set by `GOVERN_AUTONOMY` in
 `scripts/lib/workspace.sh`. A new workspace starts on **pr-only**: workers open normal PRs but the
@@ -133,15 +162,24 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   worker implements + validates + opens a PR and returns a JSON report → for an auto-merge repo,
   await CI and merge on **green-or-no-checks** → deterministic `queue/tickets.md` bookkeeping (worker
   never writes it). Frontend/PR-only repos stop at the open PR.
-- **Ticket selection:** no args = whole eligible backlog; one number = that ticket only; several
-  numbers (`run-loop.sh 152 153 154`) = that ticket SET, in severity order.
 - **Concurrency.** Sequential by default; `GOVERN_PARALLEL_DEFAULT=N` (or `--parallel[=N]`) fans out.
   A backlog pull spawns **N full backlog drivers**, each grinding the queue and contending on the
   per-ticket claim lock — every backlog mechanism (dependency gate, streak breaker, periodic
   supervisor) keeps working inside it. A named ticket SET fans out one single-ticket child per
-  ticket, capped at the set size; naming exactly ONE ticket stays sequential. `--serial` forces
-  one-at-a-time. Precedence: `--serial` › `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` ›
-  `GOVERN_PARALLEL_DEFAULT`. Bounds are per driver, so ceiling = N × `GOVERN_MAX_TICKETS`, spend = N×.
+  ticket, capped at the set size; naming exactly ONE ticket stays sequential. Precedence: `--serial` ›
+  `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` › `GOVERN_PARALLEL_DEFAULT`. Bounds are per
+  driver, so ceiling = N × `GOVERN_MAX_TICKETS`, spend = N×.
+- **Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Concurrency governs how many workers
+  run at once; batching governs how many tickets each one takes. `GOVERN_BATCH_MAX=N` groups up to N
+  same-area tickets (keyed on the leaf directory of `Files:`/`Where:`) into ONE worker — it explores
+  once and opens ONE PR (per-ticket commits), since exploration is the dominant cost of a resolved
+  ticket. Groups are disjoint by construction and never co-batch two tickets in a dependency
+  relation. Backlog pulls only.
+- **Run-start reconcile runs once, in the orchestrator.** Apply escalation answers → regenerate
+  `pending-escalations.json` → `preflight-main.sh` → externalization lane → NA-skip streak
+  bookkeeping — this is whole-run state reconciliation against the one shared meta checkout, so it
+  happens once before anything spawns, while the orchestrator holds the single-run lock. Each spawned
+  child gets the internal `--orchestrated` flag and skips it. Never pass `--orchestrated` by hand.
 - **Worker autonomy:** `--permission-mode bypassPermissions` scoped to throwaway worktrees, with
   `--setting-sources user` (drops the project's own hooks). `governor/preferences.md` defines the
   **hard-stops** (destructive git; prod data / destructive schema / secrets) that make a worker
@@ -155,14 +193,22 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
 - **Supervisor** every N resolved tickets (+ on anomaly) audits for duplicates/dependency-
   ordering/failure-patterns and can `halt`. **Self-improvement** proposes harness fixes to
   `governor/improvements.md` (observe→propose; opt-in guarded auto-apply).
-- **Escalations** land in `governor/escalations.md` for the operator. Answer inline; mark "make this
-  a rule" to grow the doctrine.
 
-Before a live run, from a **plain terminal** (not nested in a Claude session): `claude -p "ping"
---model sonnet --strict-mcp-config` should print text, not a 401 (`claude login` once if it 401s).
-Workers run lean (`--strict-mcp-config`, no MCP) and scrub inherited `CLAUDE_CODE_*` env — a worker
-that inherits `CLAUDE_CODE_ENTRYPOINT` from a parent session never finalizes (hangs to timeout), so
-`spawn-worker.sh` strips it; a manual nested `claude -p` won't.
+**Escalations — surface and answer them when a run finishes.**
+1. Read `governor/pending-escalations.json` (the driver writes it at run-end). `count: 0` → nothing
+   needed, just summarize.
+2. Present **ALL** pending escalations in a **single batched `AskUserQuestion` call** (4 questions per
+   prompt limit → one entry per question; `count > 4` → chunk into `ceil(count/4)` calls). For each
+   entry use its `question` + `options`, and always include: **Do the work** (un-park → governor
+   retries), **Defer / keep-manual** (moves to `tickets-parked.md`), **Keep open** (decide later).
+   Don't fragment asks across a phased run — one whole-backlog invocation (or deferring surfacing to
+   the final phase) keeps a run's blocked tickets in one batched ask. By design, the headless driver
+   can't pause mid-run for an answer, so any answer applies at the NEXT run-start — that two-run drain
+   (run → answer → re-run) is expected.
+3. Write the answer into `governor/escalations.md` under that `### #N` entry via
+   `scripts/govern/record-escalation-answer.sh <N> --answer "<their words>" --disposition <token>
+   [--rule "<rule text>"]` (`<token>` = `do-the-work` | `defer` | `mitigated` | `keep-open`). The next
+   `run-loop.sh` start applies these automatically — you only record the answers.
 
 ## Hooks (deterministic session scaffolding)
 

@@ -39,9 +39,35 @@ unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
 # would (a) make every run-loop test issue an implicit model call and (b) burn one invocation of the
 # stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"
 # fixture by one and failing tests that have nothing to do with sizing. Off by default here; the
-# scout's own test (test-scout-sizing.sh) exercises the deterministic scorer directly and sets what
+# scout's own test (test-scout-survey.sh) exercises the sanitize/clamp guard directly and sets what
 # it needs explicitly.
 export GOVERN_SCOUT=0
+
+# Dispatch-path mechanisms added by the token-efficiency work, forced OFF for the whole suite.
+#
+# This follows the GOVERN_FIX_CI precedent and the standing rule it produced: a new mechanism on the
+# dispatch path perturbs this suite, because the suite drives stateful fake-`claude` stubs that COUNT
+# and TRACK every invocation and script per-attempt outcomes. A mechanism that resolves a ticket
+# without spawning a worker (deterministic lane), skips a dispatch entirely (staleness gate, self-ref
+# cap), or kills a worker early (early abort) shifts those fixtures by one and reddens tests that have
+# nothing to do with it. Each feature's OWN test enables what it needs explicitly — never a per-test
+# patch here.
+#
+# All of these already default to the same value in their scripts; setting them here is the seam that
+# stops a LIVE governor session's exported env from leaking into a suite run inside it (the documented
+# failure mode where GOVERN_ALLOW_CONCURRENT=1 leaks in and reddens the orphan sweep by design).
+export GOVERN_DETERMINISTIC=0        # §4.2 zero-model resolution lane
+export GOVERN_STALENESS_GATE=0       # §4.5 pre-dispatch staleness skip
+export GOVERN_STALENESS_RUN_TESTS=0  # §4.5 never execute a queue-authored command in a test run
+export GOVERN_EARLY_ABORT=0          # §4.4 in-flight worker watchdog
+export GOVERN_SELFREF_MAX_PER_RUN=0  # §4.8 self-referential dispatch cap (0 = unlimited)
+export GOVERN_PRODUCT_FIRST=0        # §4.8 product-before-harness ordering
+export GOVERN_RUN_MAX_TOKENS=0       # §5.7 run-level spend ceiling (0 = off)
+
+# §4.3 index rebuild fires post-resolve in run-loop.sh. It is git/grep only — no model call — but it
+# walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
+# that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
+export GOVERN_INDEX=0
 
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without

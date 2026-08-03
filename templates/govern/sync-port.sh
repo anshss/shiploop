@@ -74,7 +74,10 @@ SYNC_TEMPLATES="$DIR/sync-templates.sh"
 MERGE_CMD="${GOVERN_MERGE_CMD:-$DIR/merge-pr.sh}"
 GH_BIN="${GOVERN_GH_BIN:-gh}"
 CLAUDE_BIN="${GOVERN_CLAUDE_BIN:-claude}"
-PORTER_MODEL="${GOVERN_SYNC_PORTER_MODEL:-${GOVERN_WORKER_MODEL:-opus}}"
+# Pinned to opus rather than inheriting GOVERN_WORKER_MODEL: that variable is now the cheap
+# FIRST-ATTEMPT floor for ticket workers (sonnet), and porting a mechanism fix across repos is a
+# judgment-heavy job that should not silently downgrade when the worker floor moves.
+PORTER_MODEL="${GOVERN_SYNC_PORTER_MODEL:-opus}"
 PORTER_PROMPT_FILE="${GOVERN_SYNC_PORTER_PROMPT:-$GOVERNOR_DIR/sync-porter-prompt.md}"
 PORTER_TIMEOUT="${GOVERN_SYNC_PORTER_TIMEOUT:-1800}"
 LOCK="${GOVERN_SYNC_PORT_LOCK:-$GOVERNOR_DIR/.locks/sync-port}"

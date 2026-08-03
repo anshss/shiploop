@@ -312,14 +312,14 @@ the output; else note it skipped in the Phase Z report.
 
 Mention optional next steps: hand-write `scripts/lib/worktree-bootstrap.sh` for per-worktree setup
 (`worktree/new.sh` sources it when present; same for `session-cleanup.sh` and `doctor-extra.sh`);
-customize `governor/preferences.md`; before the first `/govern`, from a **plain terminal** run
-`claude -p "ping" --model sonnet --strict-mcp-config` to confirm worker auth.
+customize `governor/preferences.md`; before the first "work through the queue" dispatch, from a
+**plain terminal** run `claude -p "ping" --model sonnet --strict-mcp-config` to confirm worker auth.
 
 ### Starter ticket
 
 After verification passes, look for ONE small guaranteed-tractable item surfaced during scaffold to
-become ticket #1, so the first `/govern` run has a real target instead of an empty queue. Priority
-order:
+become ticket #1, so the first "work through the queue" run has a real target instead of an empty
+queue. Priority order:
 1. A `doctor`/`config-check` warning the governor can fix (missing `.env.example` key, script alias
    gap, lint nit).
 2. A missing `.env.example` entry for a referenced env var.
@@ -377,7 +377,7 @@ Build a `component | status` table (`present (current)` / `present (outdated)` /
 | core-scripts | `scripts/{doctor,dev,sync,tail}.sh` |
 | worktrees | `scripts/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh` + `lib/registry.sh` |
 | tickets | `queue/tickets.md` present (old workspaces: root-level `tickets.md` — migrate) |
-| commands | `.claude/commands/{govern,flows}.md` present |
+| commands | `.claude/commands/flows.md` present |
 | workflows | `.claude/workflows/*.js` + bundled `.claude/skills/*/SKILL.md` (tracked by `--diff-only`) |
 | govern | `scripts/govern/` + `governor/` present |
 | hooks | `scripts/{check-main-on-main,ticket-sweep-reminder,session-snapshot,router-posture-*}.sh` + `.claude/settings.json` wiring |
@@ -487,13 +487,13 @@ EOF
 ── meta-repo workspace ready ──
 Mode:        <fresh | wrapped | bumped>
 Sub-repos:   <name (port)> …
-Installed:   core scripts · worktrees · tickets · governor · /govern + /flows commands · hooks · README
+Installed:   core scripts · worktrees · tickets · governor · /flows command · hooks · README
 Decisions:   autonomy=<rung> · allowlist=<repos|none> · remote=<created|skipped> ·
              starter ticket=<filed #N|proposed below|none> · externalization=<on|off>
              (everything above came from the single interview — one recap, no re-asks)
 Try:
   <ROOT_PM> run worktree:new -- try-it && cd <worktree-base>/try-it
-  /govern --dry-run
+  scripts/govern/run-loop.sh --dry-run   # or just say "dry-run the queue"
 Still needs you:
   - per-sub-repo .env files (see <repo>/.env.example)
   - enable optional hooks: write scripts/lib/{worktree-bootstrap,session-cleanup,doctor-extra}.sh

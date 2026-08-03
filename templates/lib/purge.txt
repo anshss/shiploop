@@ -45,3 +45,9 @@ scripts/govern/test/
 scripts/lib/worktree-bootstrap.sh.example
 scripts/lib/session-cleanup.sh.example
 scripts/lib/doctor-extra.sh.example
+
+# v1.17.0 — /govern removed as a trigger; the loop (run-loop.sh, worktrees, claim locks,
+# verdict files, reaping) stays and is unchanged. Dispatch is now natural language mapped
+# directly onto scripts/govern/run-loop.sh (see SKILL.md) — the workspace-local /govern
+# twin command is retired.
+.claude/commands/govern.md

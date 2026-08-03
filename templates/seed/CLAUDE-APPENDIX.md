@@ -1,14 +1,28 @@
 # <workspace> — appendix
 
-Reference material and rationale for the hard rules in `CLAUDE.md`.
-
-**This file is NOT auto-loaded.** `CLAUDE.md` is re-sent to the model on every turn, so anything parked
-here costs nothing until a session actually opens it. That is the whole point of the split: the core
-stays scannable and cheap, the depth lives here. When a `CLAUDE.md` rule grows a paragraph of
-justification, the rule stays there and the paragraph moves here.
+**This is the DEFAULT sink for durable knowledge.** `CLAUDE.md` is re-sent to the model on every turn;
+this file costs nothing until a session actually opens it. So a lesson lands *here* unless it has
+earned the always-on slot — the core stays scannable and cheap, the depth lives here. When a
+`CLAUDE.md` rule grows a paragraph of justification, the rule stays there and the paragraph moves here.
 
 Read this file when you need the *why* behind a rule, the full command reference, or a deep gotcha
 writeup. Append freely — there is no length budget on this file.
+
+**What earns the always-on slot in `CLAUDE.md` instead: frequency × severity, never frequency alone.**
+Something that fires rarely still earns it when missing it fails *silently* or *irreversibly* (a
+command that reports success while changing nothing). Something that fires often but fails loudly and
+recoverably does not — you will rediscover it in one turn. Take the cheapest rung that works: make it
+impossible (a guard) > make it caught (a lint or a test) > make it retrievable (**here**) > make it
+always-on. A promotion into `CLAUDE.md` at budget should also name what it *displaces*: without an
+eviction, "is this useful?" is always yes, and the always-on file only ever ratchets upward.
+
+**This file is not a rot reservoir.** Moving a line here fixes COST, never WRONGNESS — a wrong line
+parked here is still wrong, it has just gone from *injected always* to *retrieved unpredictably,
+reviewed never*. Rot has exactly three fixes: be right, supersede in place, delete. None of them is a
+move. So entries here carry the same discipline as `learnings.md`: write **observations, not
+recommendations**, keep the **date, source, and n** that make a claim checkable, **rewrite** an entry
+when you re-measure it rather than appending a second one beside it, and if something cannot be made
+self-correcting and does not clear the bar, **delete it rather than demote it**.
 
 ---
 
@@ -76,6 +90,21 @@ The three files fail in different directions when misused:
 The SessionStart digest reads only the **root** `learnings.md`, and only the newest few entries. It is
 tuned by `SHIPLOOP_LEARNINGS_MAX_ENTRIES` (default 3) and `SHIPLOOP_LEARNINGS_MAX_LINES` (default 40).
 When working inside a sub-repo, open that sub-repo's `learnings.md` yourself.
+
+Two optional digest gates, both **off** by default:
+
+- `SHIPLOOP_LEARNINGS_TTL=1` degrades an entry older than `SHIPLOOP_LEARNINGS_TTL_DAYS` (default 14)
+  to a **title-only** line. Not a delete — a still-true measurement that vanishes just gets re-derived
+  at full cost by a future session.
+- `SHIPLOOP_LEARNINGS_LINT=1` prints one line when `learnings.md` is structurally broken (a heading
+  with no body, or body text orphaned before the first heading) and stays silent when it is healthy.
+  The digest slices the file at headings, so appending an entry *between* a heading and its body
+  injects a garbled fragment into every session until someone notices.
+
+Be aware of what the ranking actually is: entries are ordered by the date **typed into the heading** —
+a self-report about when someone wrote it, not evidence that it is still true — with same-date ties
+broken by file position. That ranking can promote an entry into every session forever and can never
+demote one, which is why the TTL exists and why re-measuring means **rewriting the entry in place**.
 
 ---
 

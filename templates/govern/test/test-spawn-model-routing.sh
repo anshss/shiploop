@@ -13,7 +13,16 @@
 #   5. NO leading `Model:` field but a fenced `Model: haiku` in the body → still NOT parsed as the
 #      field (the anchored latch survives for the kill-switch path)
 #   6. GOVERN_MEASURED_SIZING=0 → the OLD precedence is restored exactly: the field wins again
-#   7. A cached scout verdict decides the tier, and it beats a ticket field that disagrees
+#
+# The scout used to also SCORE its measurement into a cached (model, effort) verdict that outranked
+# even a disagreeing ticket field — that is GONE (§5.2, see scout-ticket.sh's header). Tier now comes
+# from exactly two knobs (GOVERN_WORKER_MODEL floor, GOVERN_WORKER_ESCALATION_MODEL ceiling via the
+# retry rail); the scout survives only as a pointer-locating surveyor with no vote on cost. That
+# demotion — including "a cached verdict changes nothing" and the escalate-exactly-once stamp — is
+# covered in test-spawn-sizing-no-scout.sh; the per-class retry escalation table (infra/ci/budget/
+# judgment/unknown) is covered in test-retry-escalation.sh. Case 7 here, which asserted a scout
+# verdict overriding a ticket field, tested a mechanism that can no longer happen and was deleted
+# rather than patched.
 #
 # Uses GOVERN_SPAWN_DRY_RUN=1 to short-circuit BEFORE worktree creation / worker
 # launch — pure observation of the assembled invocation params. No auth, no
@@ -144,27 +153,9 @@ out6b="$(GOVERN_MEASURED_SIZING=0 run 103 0)"
 assert_eq "$(printf '%s' "$out6b" | jq -r '.model')" "opus" \
   "GOVERN_MEASURED_SIZING=0 → an unknown Model: value is still dropped fail-safe"
 
-# 7. THE POINT OF THE COMPONENT: a MEASURED verdict decides, and it beats a disagreeing ticket
-# field. Ticket #101 says `Model: sonnet`; the scout measured a trivial one-file fix with precedent
-# and a covering test, which scores `haiku`. The measurement must win.
-mk_scout_cache() { # <ticket> <logroot> <scope-json>
-  local dir="$2/ticket-$1"
-  mkdir -p "$dir"
-  printf '{"ticket":%s,"scope":%s,"scoutModel":"haiku","ts":0}\n' "$1" "$3" > "$dir/scout.json"
-}
-mk_scout_cache 101 "$TMP/logs-scout" \
-  '{"files":1,"repos":1,"testsCover":true,"precedent":true,"changeKind":"local","fixDirection":"concrete"}'
-out7="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
-  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
-  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
-  GOVERN_LOG_ROOT="$TMP/logs-scout" \
-  GOVERN_WORKER_MODEL="opus" \
-  GOVERN_SCOUT=1 \
-  GOVERN_SPAWN_DRY_RUN=1 \
-  "$SPAWN" 101)"
-assert_eq "$(printf '%s' "$out7" | jq -r '.model')" "haiku" \
-  "a measured scout verdict decides the tier, overriding the ticket's Model: sonnet"
-assert_eq "$(printf '%s' "$out7" | jq -r '.scope_class')" "trivial" \
-  "the measured scope class is reported alongside it"
+# Case 7 used to assert that a cached scout verdict decides the tier, overriding a disagreeing ticket
+# field — that mechanism is gone (§5.2). The regression guard for "a scout cache must never silently
+# start influencing dispatch again" already lives in test-spawn-sizing-no-scout.sh (cases 1/2/4), so
+# it is not re-derived here rather than kept as a near-duplicate assertion.
 
 assert_done

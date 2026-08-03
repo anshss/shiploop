@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shiploop",
   "displayName": "shiploop",
-  "version": "1.16.0",
-  "description": "Self-improving multi-agent harness that grinds your ticket backlog across every repo in your product — brain-decided right-sized agent per ticket (haiku/sonnet/opus), guarded auto-merge on green CI, every resolved ticket writes a lesson into your git-tracked CLAUDE.md. Model and effort are set per ticket, so mechanical work runs cheap and only judgment-heavy work pays for opus.",
+  "version": "2.0.0",
+  "description": "Self-improving multi-agent harness that grinds your ticket backlog across every repo in your product — guarded auto-merge on green CI, and every resolved ticket writes a lesson into your git-tracked CLAUDE.md. Every ticket starts on a cheap tier and escalates once, on measured failure, instead of being predicted expensive up front; deterministic fixes skip the model entirely; and the lessons file evicts rather than accumulates, so always-on context stays a fixed budget.",
   "author": {
     "name": "anshss",
     "url": "https://github.com/anshss"

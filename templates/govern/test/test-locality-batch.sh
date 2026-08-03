@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # #23 — locality batching. Exploration is the dominant cost of a resolved ticket (~98% cacheRead), so
 # tickets touching the same area are grouped into ONE worker that explores once. Proves:
-#   (A) govern::ticket_locality derives a key from `Where:` (and prefers a measured `Files:` list),
-#       ignores shell-variable interpolations, and returns "" when the ticket declares no path.
-#   (B) GOVERN_BATCH_MAX=1 (the default) partitions into SINGLETONS — today's exact behavior.
-#   (C) max>1 partitions into DISJOINT, order-preserving, size-capped locality groups.
-#   (D) an UNLOCALIZED ticket is never batched on a guess.
+#   (A) govern::ticket_paths returns MEASURED file paths only (`Files:`, or the scout's verified
+#       targetPaths), ignores shell-variable interpolations and globs, and returns "" for a ticket
+#       whose only scope signal is `Where:` PROSE — prose is not a measurement, and keying on it
+#       forced a leaf-directory approximation that collapsed the backlog into a couple of buckets.
+#       govern::paths_overlap then batches on EXACT shared paths.
+#   (B) GOVERN_BATCH_MAX=1 partitions into SINGLETONS — the pre-re-key behavior.
+#   (C) max>1 partitions into DISJOINT, order-preserving, size-capped groups sharing real files.
+#   (D) an UNMEASURED ticket is never batched on a guess — no measurement means no batch.
 #   (E) dependency-related tickets are NEVER co-batched — in EITHER direction, including the implicit
 #       `**Blocks:**` edge — so a group can never be worked out of dependency order.
 #   (F) per-ticket outcome mapping is FAIL-CLOSED: only an explicit `resolved` entry in the report's
@@ -33,59 +36,70 @@ cat > "$TF" <<'EOF'
 ## #1 — run-loop knob
 **Severity:** High
 
-Where: shiploop/templates/govern/run-loop.sh (+ workspace mirror) and templates/govern/lib/common.sh
+**Files:** templates/govern/run-loop.sh templates/govern/lib/common.sh
 
-Body prose mentioning some/other/path.ts that must not outvote the two govern hits.
+Body prose mentioning some/other/path.ts that must not enter the measured set.
 ---
 ## #2 — bookkeep field
 **Severity:** High
 
-Where: scripts/govern/govern-bookkeep.sh — the resolve/delete path
+**Files:** templates/govern/lib/common.sh templates/govern/govern-bookkeep.sh
 ---
 ## #3 — spawn-worker retry
 **Severity:** Medium
 
-Where: shiploop/templates/govern/spawn-worker.sh (retry escalation) at $WORKTREE_BASE/ticket-N
+**Files:** templates/govern/run-loop.sh templates/govern/spawn-worker.sh $WORKTREE_BASE/ticket-N
 ---
 ## #4 — test flake
 **Severity:** Medium
 
-Where: templates/govern/test/test-wrap-in-place.sh section 5
+**Files:** templates/govern/test/test-wrap-in-place.sh
 ---
 ## #5 — no paths at all
 **Severity:** Medium
 
 Where: the operator's judgment about how aggressive the default should be
 ---
-## #6 — measured scope wins
+## #6 — prose is not a measurement
 **Severity:** Low
 
-**Files:** queue/tickets.md
-Where: shiploop/templates/govern/run-loop.sh
+Where: templates/govern/run-loop.sh and templates/govern/lib/common.sh
 ---
 ## #7 — depends on #1
 **Severity:** Low
 
 **Depends on:** #1
 
-Where: shiploop/templates/govern/run-loop.sh
+**Files:** templates/govern/run-loop.sh
 ---
 ## #8 — blocks #2 from the other side
 **Severity:** Low
 
 **Blocks:** #2
 
-Where: scripts/govern/govern-bookkeep.sh
+**Files:** templates/govern/govern-bookkeep.sh
 ---
 EOF
 
-# ── (A) locality key derivation ────────────────────────────────────────────
-assert_eq "$(govern::ticket_locality 1 "$TF")" "govern"  "A1: dominant dir wins over a one-off prose path"
-assert_eq "$(govern::ticket_locality 2 "$TF")" "govern"  "A2: hub/workspace mirror pair share one key"
-assert_eq "$(govern::ticket_locality 3 "$TF")" "govern"  "A3: \$VAR interpolation is not treated as a path"
-assert_eq "$(govern::ticket_locality 4 "$TF")" "test"    "A4: nested dir resolves to its leaf name"
-assert_eq "$(govern::ticket_locality 5 "$TF")" ""        "A5: a ticket declaring no path is unlocalized"
-assert_eq "$(govern::ticket_locality 6 "$TF")" "queue"   "A6: measured **Files:** outranks prose Where:"
+# ── (A) measured-path derivation + exact overlap ────────────────────────────
+assert_eq "$(govern::ticket_paths 1 "$TF" | tr '\n' ' ')" \
+  "templates/govern/run-loop.sh templates/govern/lib/common.sh " \
+  "A1: **Files:** yields the measured path list, in order"
+assert_eq "$(govern::ticket_paths 3 "$TF" | tr '\n' ' ')" \
+  "templates/govern/run-loop.sh templates/govern/spawn-worker.sh " \
+  "A2: \$VAR interpolation is dropped, not treated as a measured path"
+assert_eq "$(govern::ticket_paths 5 "$TF")" "" "A3: a ticket declaring no path is unmeasured"
+assert_eq "$(govern::ticket_paths 6 "$TF")" "" \
+  "A4: prose Where: is NOT a measurement — no key, so no batch"
+# Body prose must never leak into the measured set.
+assert_absent "$(govern::ticket_paths 1 "$TF")" "some/other/path.ts" \
+  "A5: body prose paths are not measured scope"
+assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "$(govern::ticket_paths 2 "$TF")" && echo yes || echo no)" \
+  "yes" "A6: #1 and #2 share lib/common.sh ⇒ overlap"
+assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "$(govern::ticket_paths 4 "$TF")" && echo yes || echo no)" \
+  "no"  "A7: disjoint file sets do not overlap"
+assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "" && echo yes || echo no)" \
+  "no"  "A8: an unmeasured ticket never overlaps anything"
 
 # ── (B) GOVERN_BATCH_MAX=1 preserves today's behavior exactly ───────────────
 assert_eq "$(govern::locality_groups 1 "1,2,3,4,5,6" "$TF" | tr '\n' ' ')" \
@@ -95,17 +109,17 @@ assert_eq "$(govern::locality_groups 0 "1,2,3" "$TF" | tr '\n' ' ')" \
 
 # ── (C) disjoint, order-preserving, size-capped groups ─────────────────────
 groups="$(govern::locality_groups 2 "1,2,3,4" "$TF")"
-assert_eq "$(printf '%s' "$groups" | tr '\n' ' ')" "1,2 3 4" "C1: max=2 caps the govern group at two, in candidate order"
+assert_eq "$(printf '%s' "$groups" | tr '\n' ' ')" "1,2 3 4" "C1: max=2 caps the shared-file group at two, in candidate order"
 groups3="$(govern::locality_groups 3 "1,2,3,4" "$TF")"
-assert_eq "$(printf '%s' "$groups3" | tr '\n' ' ')" "1,2,3 4" "C2: max=3 batches all three govern tickets; 'test' stays separate"
+assert_eq "$(printf '%s' "$groups3" | tr '\n' ' ')" "1,2,3 4" "C2: max=3 batches all three file-sharing tickets; the test-only ticket stays separate"
 # Disjointness: every input ticket appears exactly once across all groups.
 flat="$(printf '%s' "$groups3" | tr ',\n' '  ' | tr -s ' ' '\n' | grep -c . || true)"
 uniq_n="$(printf '%s' "$groups3" | tr ',\n' '  ' | tr -s ' ' '\n' | grep . | sort -u | wc -l | tr -d ' ')"
 assert_eq "$flat" "4" "C3: every candidate is emitted"
 assert_eq "$uniq_n" "4" "C3b: …exactly once — the groups are disjoint"
 
-# ── (D) an unlocalized ticket is never batched ─────────────────────────────
-assert_eq "$(govern::locality_groups 4 "5,1,2" "$TF" | tr '\n' ' ')" "5 1,2 " "D: unlocalized #5 stays a singleton"
+# ── (D) an UNMEASURED ticket is never batched ──────────────────────────────
+assert_eq "$(govern::locality_groups 4 "5,1,2" "$TF" | tr '\n' ' ')" "5 1,2 " "D: unmeasured #5 stays a singleton"
 
 # ── (E) dependency-related tickets are never co-batched ────────────────────
 # #7 declares **Depends on:** #1 and shares #1's locality — the batcher must still split them.
@@ -115,7 +129,7 @@ assert_eq "$(govern::locality_groups 3 "1,7" "$TF" | tr '\n' ' ')" "1 7 " "E1: d
 assert_eq "$(govern::locality_groups 3 "2,8" "$TF" | tr '\n' ' ')" "2 8 " "E2: implicit **Blocks:** edge blocks co-batching"
 # Sanity: with the dependency removed from the candidate set, the same tickets DO batch — proving E1/E2
 # split on the dependency, not on some unrelated locality mismatch.
-assert_eq "$(govern::locality_groups 3 "1,3" "$TF" | tr '\n' ' ')" "1,3 " "E3: same locality with NO dep edge does batch"
+assert_eq "$(govern::locality_groups 3 "1,3" "$TF" | tr '\n' ' ')" "1,3 " "E3: shared file with NO dep edge does batch"
 
 # ── (F) per-ticket outcome mapping is fail-closed ──────────────────────────
 report='{"status":"resolved","pr":{"repo":"alpha","number":7},"tickets":[

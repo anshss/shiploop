@@ -488,9 +488,17 @@ next run is smarter and cheaper.
 
 ## Ship the backlog
 
-\`\`\`bash
-/shiploop:govern          # launch the governor loop over queue/tickets.md
+\`\`\`text
+Just say what you want worked, in plain language:
+
+  "work on 42"                        one ticket
+  "work on 42 51 63"                  an explicit set
+  "work on all the tickets on queue"  the whole eligible backlog
+  "work through the queue while I'm out"   unattended
 \`\`\`
+
+That maps onto \`scripts/govern/run-loop.sh\` — the loop, worktrees, claim locks and reaping are
+unchanged, so a later session can reap workers an earlier one launched.
 
 Everyday commands:
 

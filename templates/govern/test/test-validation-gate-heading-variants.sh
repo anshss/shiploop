@@ -5,6 +5,13 @@
 # yielded an empty tblock — the VALIDATION|SPIKE grep then missed, and a validation ticket
 # auto-resolved on static code analysis with no live-test evidence, defeating the gate. The fix
 # routes the gate through the shared tolerant parser (govern::ticket_block).
+#
+# #84 audit note: same finding as test-validation-gate.sh — every assertion here is on run-loop.sh's
+# own log vocabulary ("resolved=N parked=N") and on the synthetic tickets.md/git-log fixtures this
+# test writes itself, never on templates/governor/worker-prompt.md prose (the stubbed `claude`
+# below scripts its report off $GOVERN_REPORT_PATH, not the prompt text). No rewrite was needed for
+# #84; it stays as a real-file-input test (not the sentinel-fixture pattern) because its subject —
+# the ticket-heading tolerant parser — has nothing to do with worker-prompt.md's section fencing.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"

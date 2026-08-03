@@ -21,7 +21,7 @@ until answered. The driver + relay close the loop automatically:
 1. **Surface (run-end).** `run-loop.sh` writes `governor/pending-escalations.json` — the still-
    unanswered `## Open` entries — and fires `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session
    run still signals that decisions are waiting.
-2. **Ask (relay).** The launching `/govern` session reads that JSON and presents the pending entries
+2. **Ask (relay).** The launching session reads that JSON and presents the pending entries
    in a **single batched `AskUserQuestion`** (#89 — `AskUserQuestion` takes up to **4 questions per
    prompt**, so one entry → one question and a whole run's blocked tickets are asked **at once**;
    chunk into ceil(count/4) calls if >4, never one prompt per ticket), then writes each chosen
