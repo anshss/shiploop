@@ -19,7 +19,7 @@ Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [<ticket>..
 The trigger changed; the **loop did not**. Detached workers, claim locks, verdict files, resumable
 worktrees and reaping are the only things that survive a closed laptop, and they are untouched — so a
 later session can reap workers an earlier one launched. Note that lowering trigger friction *raises*
-the need for the run-level ceiling (`GOVERN_RUN_MAX_WORKERS`): a slash command was a deliberate act,
+the need for the run-level ceiling (`GOVERN_MAX_TICKETS`): a slash command was a deliberate act,
 a sentence is not.
 
 ## Worker authentication (do this once before a live run)
@@ -192,7 +192,7 @@ worker is spawned — no LLM call, no network, no writes.
 Codemod auto-detection is deliberately **not** implemented: a false positive that "resolves" a ticket
 without fixing it is far worse than a missed opportunity, and no narrow, safe detector was found.
 
-## Locality batching (`GOVERN_BATCH_MAX`, default `1` = off)
+## Locality batching (`GOVERN_BATCH_MAX`, default `2`; set to `1` to turn it off)
 
 Exploration is the dominant cost of a resolved ticket (~98% cacheRead): three tickets that all touch
 `scripts/govern/` mean three workers each paying full discovery cost on the same code — three repo
@@ -218,8 +218,11 @@ take up to N tickets from the **same area** so that discovery is paid once.
   run. A group's verdict can never mark an unfixed ticket resolved.
 
 Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for the
-token saving. Hence the conservative default of `1` (one ticket per worker — today's behavior). Only
-applies to a **backlog** pull; an explicit ticket set is dispatched exactly as named.
+token saving. Hence the default of `2` (small groups, most of the token saving, little wall-clock
+risk) — set `GOVERN_BATCH_MAX=1` to turn batching off and go back to one ticket per worker. No
+production A/B measurement of the default exists yet; today's `2` is a starting point, not a
+validated optimum. Only applies to a **backlog** pull; an explicit ticket set is dispatched exactly
+as named.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees

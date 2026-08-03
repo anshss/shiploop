@@ -33,12 +33,17 @@ self-correcting and does not clear the bar, **delete it rather than demote it**.
 | `npm run dev` | Boot all sub-repos (`-- --only a,b` to scope); tee output to `logs/<name>.log` |
 | `npm run dev:<name>` | Boot one sub-repo |
 | `npm run doctor` | Health audit: tooling, env, ports, repo presence |
+| `npm run sync` | Pull/rebase every sub-repo onto its origin `main`, pruning dead branches |
+| `npm run tail` | Tail sub-repo dev logs, interleaved and prefixed by name |
 | `npm run worktree:new -- <slug>` | Allocate a slot; create isolated worktrees on branch `<slug>` |
 | `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
 | `npm run worktree:status` | List allocated worktree slots |
-| `npm run govern` | Launch the autonomous ticket loop (or `/govern`) |
+| `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
+| `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
+| `npm run govern` | Launch the autonomous ticket loop (or just say "work through the queue") |
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run` | Governor dispatch plan without spawning workers |
+| `npm run govern:validations` | Run the governor validation suite |
 
 **Pass args and flags after the script with `--`** — `npm run worktree:new -- <slug>`,
 `npm run dev -- --only console`. npm and pnpm require the `--`; yarn classic tolerates it. Substitute
