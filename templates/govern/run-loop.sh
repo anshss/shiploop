@@ -1435,10 +1435,12 @@ while :; do
   fi
 
   # PR-HYGIENE BACKSTOP: whenever a PR now exists for this ticket, (a) strip any leaked internal
-  # ticket-id (#N) from its title/body — a local id must not sit on the public repo — and (b) surface
+  # ticket-id (#N) from its title/body — a local id has no meaning on the repo — and (b) surface
   # any Claude spec/plan file that leaked into the diff (those belong in the root harness, never a
   # public PR). Deterministic net under the worker prompt; idempotent (no #N left → no-op). The branch
   # stays ticket-<N> (the governor tracks by it); only title+body are rewritten.
+  # GOVERN_PR_TICKET_REF=1 opts out of (a) — but ONLY for a PRIVATE repo: on a public repo the scrub
+  # runs regardless, so the opt-out can never weaken the public-repo guarantee. (b) always runs.
   if [[ "$MODE" == "live" ]]; then
     _pr_num="$(printf '%s' "$report" | jq -r '.pr.number // ""' 2>/dev/null || true)"
     _pr_url="$(printf '%s' "$report" | jq -r '.pr.url // ""' 2>/dev/null || true)"
@@ -1447,7 +1449,13 @@ while :; do
       _pr_slug="$(printf '%s' "$_pr_url" | sed -nE 's#https?://github.com/([^/]+/[^/]+)/pull/.*#\1#p')"
       [[ -n "$_pr_slug" ]] || _pr_slug="$(govern::repo_slug "$_pr_repo" 2>/dev/null || true)"
       if [[ -n "$_pr_slug" ]]; then
-        govern::scrub_pr_ticket_ref "$_pr_slug" "$_pr_num" "$N"
+        _scrub=1
+        if [[ "${GOVERN_PR_TICKET_REF:-0}" == "1" ]] && ! govern::repo_is_public "$_pr_repo" 2>/dev/null; then
+          _scrub=0
+        fi
+        if [[ "$_scrub" == "1" ]]; then
+          govern::scrub_pr_ticket_ref "$_pr_slug" "$_pr_num" "$N"
+        fi
         _specs="$(govern::pr_spec_files "$_pr_slug" "$_pr_num" 2>/dev/null || true)"
         [[ -n "$_specs" ]] && govern::log "WARN $_pr_slug#$_pr_num includes Claude spec/plan artifact(s) that must NOT be on a public PR — strip before merge: $(printf '%s' "$_specs" | tr '\n' ' ')"
       fi

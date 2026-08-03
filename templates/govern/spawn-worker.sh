@@ -543,13 +543,29 @@ commit hook adds):
 🤖 shipped by [shiploop](https://github.com/anshss/shiploop)"
 fi
 
+# DEFAULT PR hygiene (every ticket, public or private): `#N` is a LOCAL-queue id — meaningless to
+# anyone reading the repo, and the run-loop's post-hoc scrub can only reach the PR title+body.
+# COMMIT SUBJECTS are unreachable (rewriting pushed history = force-push = hard stop), so the only
+# control for those is telling the worker up front. The BRANCH keeps the id — the governor links PRs
+# to queue entries by branch. `GOVERN_PR_TICKET_REF=1` opts out (public repos still covered below).
+if [[ "${GOVERN_PR_TICKET_REF:-0}" != "1" ]]; then
+  prompt="$prompt
+
+## PR hygiene — keep the internal ticket id off the PR
+\`#$N\` is a local queue id. Put NO ticket id (\`#$N\`, \`ticket $N\`, \`ticket-$N\`) in the
+**PR title**, the **PR body**, or any **commit subject** — describe the change on its own merits.
+Your BRANCH is still \`ticket-$N\` (unchanged; the governor finds the PR by it)."
+fi
+
 # Public-repo PR hygiene: on a PUBLIC target repo the branch MUST NOT carry the internal ticket id
 # (an outsider seeing `ticket-<N>` infers a private tracker). Resolve which of this workspace's repos
 # are public (GOVERN_PUBLIC_REPOS knob wins; else `gh repo view` auto-detect, cached per run) and, if
 # any are, OVERRIDE the worker-prompt's "branch MUST be ticket-<N>" instruction for those repos with
-# the neutral `sl-<hex>` scheme (govern::neutral_branch) plus a no-ticket-ids-in-PR/commits rule. The
-# override appends LAST so it supersedes the static prompt. Private-only workspaces inject nothing —
-# zero behavior change and zero extra context in the common case.
+# the neutral `sl-<hex>` scheme (govern::neutral_branch) + the matching resource-naming rule. The
+# override appends LAST so it supersedes both the static prompt and the default block above. The
+# no-ids-on-the-PR rule itself now lives in that default block, so it is NOT repeated here — except
+# under the GOVERN_PR_TICKET_REF=1 opt-out, where it is restated so an opt-out can never weaken the
+# public-repo guarantee. Private-only workspaces inject nothing beyond the default block.
 _pub_repos=""
 for _r in ${GOVERN_MERGE_REPOS:-} ${GOVERN_FRONTEND_REPOS:-}; do
   govern::repo_is_public "$_r" 2>/dev/null && _pub_repos="${_pub_repos:+$_pub_repos }$_r"
@@ -560,16 +576,20 @@ if [[ -n "$_pub_repos" ]]; then
 
 ## ⚠ PUBLIC-REPO PR HYGIENE — overrides the \"branch MUST be ticket-<N>\" rule for these repos
 These repos in this workspace are **PUBLIC**: ${_pub_repos}. On a public repo an internal ticket id
-must NOT be visible to outsiders. So **in any repo listed above ONLY**:
-1. Name your branch **\`${_neutral_branch}\`** — NOT \`ticket-$N\`. (It is a deterministic opaque token
-   for this ticket; the governor still finds + merges the PR by it. Create it with
-   \`git switch -c ${_neutral_branch}\`.)
-2. Put **NO** internal ticket id anywhere an outsider can read it: not in the **PR title**, not in the
-   **PR body**, and not in any **commit subject** (no \`#$N\`, no \`ticket $N\`, no \`ticket-$N\`).
-   Describe the change on its own merits.
-In every OTHER (private) repo you touch, keep the classic \`ticket-$N\` branch and normal messages.
+must NOT be visible to outsiders. So **in any repo listed above ONLY**: name your branch
+**\`${_neutral_branch}\`** — NOT \`ticket-$N\`. (It is a deterministic opaque token for this ticket;
+the governor still finds + merges the PR by it. Create it with \`git switch -c ${_neutral_branch}\`.)
+In every OTHER (private) repo you touch, keep the classic \`ticket-$N\` branch.
 When a resource name is required, use \`${_neutral_branch}-<label>\` in public repos (\`ticket-$N-<label>\`
 elsewhere) so the orphan sweep still reaps it."
+  # The default no-ids block above was skipped by the opt-out — restate the rule for the PUBLIC
+  # repos so GOVERN_PR_TICKET_REF=1 never weakens the public-repo guarantee.
+  if [[ "${GOVERN_PR_TICKET_REF:-0}" == "1" ]]; then
+    prompt="$prompt
+On those PUBLIC repos also put **NO** internal ticket id anywhere an outsider can read it: not in the
+**PR title**, not in the **PR body**, and not in any **commit subject** (no \`#$N\`, no \`ticket $N\`,
+no \`ticket-$N\`). Describe the change on its own merits."
+  fi
 fi
 
 # Flow-registry injection: a ticket carrying a `Flow:` field validates one or more registered flows.
