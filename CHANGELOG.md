@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.15.1 — 2026-08-03
+
+### Fixed
+
+- **`/shiploop:update` now converges an existing workspace's CONFIG, not just its mechanism scripts.**
+  The bump loop only ever touched the six byte-comparable components, so anything the hub shipped
+  outside them reached brand-new installs only. Measured across five installed workspaces (stamped
+  1.2.1 → 1.14.0 against hub 1.15.0): every one was missing at least one npm entrypoint, and a full
+  successful `/update` left them missing — `govern:validations` had been unreachable since it shipped.
+
+  New merge-tier components, all additive and idempotent (a second run is a byte-level no-op):
+  `package-json-merge` adds absent harness scripts without overwriting, removing, or reordering the
+  operator's; `workspace-sh-merge` appends `GOVERN_*` knobs added since the workspace was scaffolded,
+  each with its doc comment, never touching an existing value (this is what made `GOVERN_PARALLEL_DEFAULT`
+  unreachable, so upgrading fleets silently kept running serial); `settings-merge` now also **repairs**
+  a harness hook whose command or timeout drifted from canonical, where before marker-presence alone
+  counted as "installed" and a stale invocation ran forever. `readme` and `gitignore` joined the loop,
+  and both now read the real PM + sub-repo list out of `workspace.sh` instead of rendering defaults.
+  `--component config-merge` runs the set; `--diff-only` reports config drift without counting it as
+  drift (a customized file is a permanent, correct difference and must not gate the version stamp).
+
+- **Seed improvements reach workspaces that never edited the seed.** `component_seeds` was
+  fill-if-absent, so the 1.14.0 `CLAUDE.md` trim benefited new installs only. It now upgrades a seed
+  whose sha256 appears in the new `templates/lib/seed-hashes.txt` — proof the file was never touched,
+  which is the only condition under which replacing it is lossless. Anything else is left untouched and
+  silent: byte-identity is the entire safety argument, with no diff, merge, or heuristic. One live
+  workspace's `CLAUDE.md` had grown to 47 KB of promoted lessons; overwriting that to save bytes would
+  be catastrophic, and the guard is what prevents it.
+
+- **`doctor.sh` names the command that fixes staleness.** The BEHIND warning pointed at
+  `bash $HUB/scaffold.sh --workspace-dir . --component <name>` — an unresolved variable and a literal
+  `<name>` to guess. It now says `/shiploop:update`.
+
+### Added
+
+- `tools/check-manifests.sh` + CI job `check-manifests` — fails a PR that deletes a template without
+  registering its installed path in `purge.txt` (the channel that makes deletions propagate), or that
+  changes a seed without regenerating `seed-hashes.txt`.
+- `tools/gen-seed-hashes.sh` — regenerates the seed hash manifest from git history.
+- CI job `hub-context-tests`. Five update-channel tests resolve the hub as `$DIR/../../..` and exit 77
+  when that is not a hub checkout — which is exactly what `scaffold-and-test` gives them, so all five
+  had been skipping in CI and the machinery behind `/update` was ungated while appearing gated. They
+  now run from the checkout, and a skip there is a hard failure.
+- `templates/govern/test/test-update-config-converge.sh` — 30 assertions over the merge tier, including
+  the critical safety case that a seed with one byte of local content is never modified.
+
 ## 1.15.0 — 2026-08-03
 
 ### Removed
