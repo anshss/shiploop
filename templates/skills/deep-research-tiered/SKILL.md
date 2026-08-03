@@ -1,6 +1,6 @@
 ---
 name: deep-research-tiered
-description: Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. In this workspace, prefer `Workflow({name: 'deep-research-tiered', args: {question, models?}})` over the built-in `deep-research` — same output shape, brain-decided model plan, cheap defaults (scope=sonnet · search=sonnet · fetch=haiku · verify=sonnet · synthesize=inherit) so a brainless invocation never repeats the all-inherit token burn. Use when the user wants a deep, multi-source, fact-checked research report on any topic. BEFORE invoking, check if the question is specific enough to research directly — if underspecified (e.g. "what car to buy" without budget/use-case/region), ask 2-3 clarifying questions to narrow scope. Then pass the refined question as `args.question`, weaving the answers in.
+description: Deep research harness: fan-out search, fetch, adversarially verify, synthesize a cited report. Prefer `Workflow({name:'deep-research-tiered', args:{question, models?}})` over built-in `deep-research` — same output, cheap tiered defaults (scope/search=sonnet, fetch=haiku, verify=sonnet, synthesize=inherit). Use for deep multi-source fact-checked research; if the question is underspecified, ask 2-3 clarifying questions first, then pass the refined question.
 ---
 
 # deep-research-tiered — model-tiered deep-research (workspace override)

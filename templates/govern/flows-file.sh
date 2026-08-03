@@ -166,11 +166,8 @@ while IFS= read -r key || [[ -n "$key" ]]; do   # `|| [[ -n ]]` — read the fin
     body="$(cat <<EOF
 Where: flow(s) $gids (.claude/shiploop/validation/flows.md)
 Observed: registry status warrants a real validation run.
-Fix direction: drive the REAL user path for each flow (rule #12 — real UI/API, headless browser, real
-  deploy where needed), then fill the report validation.{validatedShas,environment,gatePassed,
-  measured,flowIds}. Name every provisioned resource ticket-<N>-<label> so the orphan sweep can reap it.
-Done when: each flow above is stamped in .claude/shiploop/validation/flows.md with a fresh verdict (PASS/FAIL or
-  EFFECTIVE/INEFFECTIVE/MEASURING) pinned to the validated SHAs, with a promoted evidence summary.
+Fix direction: drive the REAL user path for each flow (rule #12 — real UI/API, headless browser, real deploy where needed), then fill report validation.{validatedShas,environment,gatePassed,measured,flowIds}. Name every provisioned resource ticket-<N>-<label> so the orphan sweep can reap it.
+Done when: each flow above is stamped in .claude/shiploop/validation/flows.md with a fresh verdict (PASS/FAIL or EFFECTIVE/INEFFECTIVE/MEASURING) pinned to the validated SHAs, with a promoted evidence summary.
 EOF
 )"
     n="$(printf '%s' "$body" | "$DIR/file-ticket.sh" --flow "$csv" "$title" Medium)" \

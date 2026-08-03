@@ -5,36 +5,33 @@ allowed-tools: Bash, Read
 
 # /shiploop:update
 
-**The pull direction of the harness-code update channel.** Reconciles this workspace against the
-latest installed hub — the ongoing-maintenance path after `/shiploop:setup` has scaffolded
-the workspace once. Think of it as `git pull` for harness code: `scaffold.sh` is the machinery, this
-command wraps it into a one-command action with reachability resolution + safety guards +
-verification.
+The **pull direction** of the harness-code update channel — `git pull` for harness code. Reconciles
+this workspace against the latest installed hub, the ongoing-maintenance path after
+`/shiploop:setup` has scaffolded once. `scaffold.sh` is the machinery; this command wraps it with
+reachability resolution + safety guards + verification.
 
-## What it does (procedure)
-
-1. **Locate the hub** (same priority order as `/setup` — see "Locate the plugin" in that command).
-2. **Verify workspace preconditions** — you're in a meta-repo workspace, the harness paths aren't
-   dirty, no governor is running.
+## Procedure
+1. **Locate the hub** (same priority as `/setup`, see "Locate the plugin" there).
+2. **Verify preconditions** — meta-repo workspace, harness paths not dirty, no governor running.
 3. **Cheap version + diff check** (writes nothing).
-4. **Component-by-component bump** via `scaffold.sh --component <name> --yes` — refreshes mechanism
-   scripts, PRESERVES `scripts/lib/workspace.sh` (never overwritten without an explicit ask).
-5. **Run the no-auth verifiers** — `config-check.sh` + `bash -n` sweep + stale-relocations warning.
-6. **Update the `.harness-version` stamp** (scaffold does this on every run — no separate step).
+4. **Component-by-component bump** via `scaffold.sh --component <name> --yes` — PRESERVES
+   `scripts/lib/workspace.sh` (never overwritten without explicit ask).
+5. **Run no-auth verifiers** — `config-check.sh` + `bash -n` sweep + stale-relocations warning.
+   The bump itself also **purges retired files**: every writer run applies `templates/lib/purge.txt`,
+   so files an older shiploop installed and no longer ships are deleted from this workspace. Report
+   what went, since a purge can remove something the operator was still opening by habit.
+6. **Update `.harness-version` stamp** (scaffold does this every run).
 7. **Report** a concise per-component `in-sync | bumped | skipped` summary.
 
 ## Phase 0 — Locate the hub
 
-Templates + `scaffold.sh` live in the same directory. Resolve `HUB` in this priority order:
-
-1. `${CLAUDE_PLUGIN_ROOT}` — set when this command runs as a plugin.
-2. `${GOVERN_UPSTREAM_HARNESS_DIR}` sourced from `scripts/lib/workspace.sh` — an operator with a local
-   fork clone pointed the workspace at it for the sync channel; the same clone is a valid hub source.
-3. `~/.claude/skills/shiploop/` — legacy clone-into-skills install.
-4. Glob `~/.claude/plugins/**/shiploop/VERSION` — plugin-cache install.
+Resolve `HUB` in priority order:
+1. `${CLAUDE_PLUGIN_ROOT}` (plugin run)
+2. `${GOVERN_UPSTREAM_HARNESS_DIR}` from `scripts/lib/workspace.sh` (operator's local fork clone)
+3. `~/.claude/skills/shiploop/` (legacy clone-into-skills)
+4. Glob `~/.claude/plugins/**/shiploop/VERSION` (plugin-cache install)
 
 If none resolve, STOP and print:
-
 ```
 Cannot locate the shiploop hub.
 
@@ -47,21 +44,16 @@ Options:
       GOVERN_UPSTREAM_HARNESS_DIR=/path/to/shiploop   (workspace.sh)
 ```
 
-Otherwise let `SCAFFOLD=$HUB/scaffold.sh`. Confirm `bash "$SCAFFOLD" --version` prints a version and
-that `$HUB/templates` is a directory. If either check fails, treat the hub as unresolvable and print
-the same guidance.
+`SCAFFOLD=$HUB/scaffold.sh`. Confirm `bash "$SCAFFOLD" --version` prints a version and `$HUB/templates`
+is a directory — either check failing means the hub is unresolvable; print the same guidance.
 
 ## Phase 0.5 — Hub freshness probe (network, best-effort)
 
-`/update` is otherwise a **no-network LOCAL reconcile** — it compares this workspace against the hub
-clone on disk. But that clone can itself be behind GitHub: if it is, `/update` would happily report
-"already at hub VERSION" while both the clone AND this workspace are stale (observed live: a clone 1
-commit behind, missing a merged PR). Nothing else nudges the device clone to refresh — workspaces get
-doctor staleness warnings; the clone has no equivalent. This probe closes that gap (K5).
-
-Only when `$HUB` is a git clone (`git -C "$HUB" rev-parse --git-dir` succeeds — a plugin-cache or
-tarball install may not be), do a **best-effort** upstream check. It must degrade gracefully with no
-network and never block the update:
+`/update` is otherwise a no-network LOCAL reconcile — it compares this workspace against the hub clone
+on disk, which can itself be behind GitHub (observed: a clone 1 commit behind a merged PR would report
+"already at hub VERSION" while both are stale). Only when `$HUB` is a git clone
+(`git -C "$HUB" rev-parse --git-dir` succeeds), do a best-effort upstream check that degrades
+gracefully with no network and never blocks the update:
 
 ```bash
 if git -C "$HUB" rev-parse --git-dir >/dev/null 2>&1; then
@@ -78,29 +70,27 @@ if git -C "$HUB" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 ```
 
-If the clone is behind, WARN with the count and OFFER to `git -C "$HUB" pull --ff-only origin main`
-before continuing — do NOT auto-pull (the operator may be pinned intentionally). If the operator
-declines, proceed against the clone as-is and note in the Phase 5 report that the hub itself may be
-stale. Offline / non-git hub → skip silently and carry on with the local reconcile.
+If behind, WARN with the count and OFFER to pull `--ff-only` — do NOT auto-pull (operator may be
+pinned intentionally). If declined, proceed against the clone as-is and note in Phase 5 that the hub
+itself may be stale. Offline / non-git hub → skip silently.
 
 ## Phase 1 — Workspace preconditions
 
-Must be a meta-repo workspace: `scripts/lib/workspace.sh` exists. Else STOP and tell the operator to
-run `/shiploop:setup` first (fresh scaffold).
+Must be a meta-repo workspace (`scripts/lib/workspace.sh` exists) — else STOP, tell operator to run
+`/shiploop:setup` first.
 
 **Branch guard.** Root must be on its default branch (`main`) — same rationale as setup.md Phase 0.5.
-If not, STOP and offer to `git switch` first.
+Not on it → STOP, offer `git switch` first.
 
-**Dirty-tree guard.** `git status --porcelain` on the harness-owned paths — `scripts`, `.githooks`,
-`governor`, `.claude/settings.json`, `.claude/commands`, `package.json`, `.gitignore` — must be
-clean. If dirty, STOP and print the paths. The operator commits/stashes first; the command overwrites
-mechanism scripts and would clobber uncommitted changes to them.
+**Dirty-tree guard.** `git status --porcelain` on harness-owned paths (`scripts`, `.githooks`,
+`governor`, `.claude/settings.json`, `.claude/commands`, `package.json`, `.gitignore`) must be clean —
+else STOP and print the paths; the command overwrites mechanism scripts and would clobber uncommitted
+changes.
 
-**Governor lock guard.** If the single-run lock `governor/.govern.lock` is held, or any per-ticket
-claim lock `governor/.locks/ticket-<N>` exists (both under `governor/`, never under `scripts/govern/`),
-a live governor is running — STOP and tell the operator to wait for the run to end (or reclaim a stale
-lock with `bash scripts/govern/lock-release.sh`). A bump that overwrites `govern/lib/common.sh` while a
-governor run is live is a real hazard — the reference-instance doctrine documents this.
+**Governor lock guard.** If `governor/.govern.lock` or any `governor/.locks/ticket-<N>` claim lock is
+held, a live governor is running — STOP, tell the operator to wait (or reclaim a stale lock with
+`bash scripts/govern/lock-release.sh`). A bump overwriting `govern/lib/common.sh` mid-run is a real
+hazard.
 
 ## Phase 2 — Version + diff check (no writes)
 
@@ -112,71 +102,52 @@ echo "stamp:  $STAMP_V"
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --diff-only    # exit 3 = drift, 0 = clean
 ```
 
-Save the diff-only output. If it exits 0 AND stamps match, the workspace is fully in sync. Print
-`── /update: workspace is up to date (hub=$HUB_V) ──` and stop; nothing to do.
-
-Otherwise proceed to Phase 3 with the list of `behind` components as the bump plan.
+Exit 0 + stamps match → print `── /update: workspace is up to date (hub=$HUB_V) ──` and stop. Else
+proceed to Phase 3 with the `behind` components as the bump plan.
 
 ## Phase 3 — Component-by-component bump
 
-Bump every mechanism component reported behind. These are safe to refresh without an
-interview — they only read `workspace.sh`. The loop MUST cover every component `--diff-only`
-tracks (`core-scripts worktrees govern githooks commands workflows`), or an untracked component
-loops "behind" forever (N5):
+Safe to refresh without an interview — these only read `workspace.sh`. Must cover every component
+`--diff-only` tracks, or an untracked one loops "behind" forever:
 
 ```bash
 for c in core-scripts worktrees govern githooks commands workflows; do
   bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component "$c" --yes
 done
-# seeds: only fills absent seeds (never overwrites operator data).
-bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds --yes
-# settings-merge: idempotent jq-driven hook insertion into an EXISTING settings.json.
-bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds --yes            # only fills absent seeds
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component settings-merge         # idempotent jq hook insertion into an EXISTING settings.json
 ```
 
-**One-time (v1.10.0): relocate the validation sink.** The governor-owned validation sink moved out of
-the co-tenant `.claude/context/` namespace to `.claude/shiploop/validation/`. A workspace converging
-PAST v1.10.0 must move its existing sink once, BEFORE running the governor, so promoted summaries and
-the flow registry keep resolving:
+**One-time (v1.10.0): relocate the validation sink.** Moved from `.claude/context/` to
+`.claude/shiploop/validation/`. A workspace converging past v1.10.0 must move its existing sink once,
+BEFORE running the governor:
 
 ```bash
-# flow registry + evidence (root-level sink in pre-1.10.0 layouts)
 [ -e validation/flows.md ] && { mkdir -p .claude/shiploop/validation; git mv validation/flows.md .claude/shiploop/validation/flows.md; }
 [ -e validation/evidence ] && git mv validation/evidence .claude/shiploop/validation/evidence
-# #252 promoted summaries (if this workspace kept them under .claude/context/)
 [ -d .claude/context/validation ] && { mkdir -p .claude/shiploop/validation; git mv .claude/context/validation/* .claude/shiploop/validation/ 2>/dev/null; rmdir .claude/context/validation 2>/dev/null; }
 ```
-
-Refs in `CLAUDE.md` / founder-os context that cite `.claude/context/validation/*.md` now flag as
-dangling via `lint-validation-refs.sh` (Stop hook) until repointed at `.claude/shiploop/validation/`.
+Refs citing `.claude/context/validation/*.md` will flag as dangling via `lint-validation-refs.sh`
+(Stop hook) until repointed.
 
 **Never bump these without the operator's explicit ask** — they carry per-workspace customization:
+- `workspace-sh` — config sink. New knobs → warn + point at the diff, don't overwrite. Operator forces
+  via `bash "$HUB/scaffold.sh" --workspace-dir . --component workspace-sh --yes` after saving edits.
+- `package-json` — carries operator scripts. Same rule: warn, don't overwrite.
+- `settings` (full) — carries operator hook additions. Use `settings-merge` (already run above).
+- `gitignore` — intentionally excluded from `--diff-only`; merge-only (`component_gitignore` appends
+  missing lines, never overwrites), so a byte compare would false-report drift. New lines land via any
+  interview-driven scaffold run.
 
-- `workspace-sh` — `scripts/lib/workspace.sh` (config sink). If new knobs landed in the hub, warn and
-  point at the diff; do NOT overwrite. To force the regen, the operator runs
-  `bash "$HUB/scaffold.sh" --workspace-dir . --component workspace-sh --yes` themselves after saving
-  their edits. This is a hard preservation guarantee — the update path never silently overwrites
-  their config.
-- `package-json` — carries operator-added scripts. Same rule: warn, don't overwrite.
-- `settings` (full) — carries operator hook additions. Use `settings-merge` (already run above) to
-  add missing harness stanzas without touching the rest of the file.
-- `gitignore` — intentionally **not** a bump target and intentionally absent from the `--diff-only`
-  drift set. `.gitignore` is placeholder-filled (sub-repo names, lockfile ignores per package
-  manager) and **merge-only** — `component_gitignore` appends any missing scaffolded lines but never
-  overwrites operator entries, so a byte-for-byte template compare would false-report drift. New
-  scaffolded ignore lines land automatically the next time any interview-driven scaffold runs; there
-  is nothing to reconcile here.
-
-The knob-type migration guard (v1.1.0 → v1.2.0 array→string) inside `component_workspace_sh` prints
-the mechanical migration when it detects the legacy shape. If it fires, surface it in the report.
+The knob-type migration guard (v1.1.0 → v1.2.0 array→string, inside `component_workspace_sh`) prints
+the mechanical migration if it detects the legacy shape — surface it in the report.
 
 ## Phase 3b — Re-assert sub-repo commit hooks
 
-The `githooks` component above refreshes the harness root's `.githooks/` — but each sub-repo is an
-INDEPENDENT git repo that does NOT inherit the root's `core.hooksPath`. A framework reinstall in a
-sub-repo (husky's `prepare` on `npm install`) silently regenerates its hooks dir and WIPES the
-attribution/pre-commit hooks the harness installed there. `/update` therefore RE-RUNS the installers
-across every sub-repo (not fresh-setup-only) so a wiped hook is restored on each converge:
+`githooks` above only refreshes the harness root's `.githooks/`. Each sub-repo is an INDEPENDENT git
+repo not inheriting `core.hooksPath`; a framework reinstall (husky's `prepare`) silently WIPES the
+attribution/pre-commit hooks installed there. `/update` re-runs the installers across every sub-repo
+every converge (not just fresh-setup) to restore a wiped hook:
 
 ```bash
 source scripts/lib/workspace.sh
@@ -187,28 +158,25 @@ for repo in "${REPOS[@]}"; do
   install_subrepo_pre_commit_hook "$(pwd)" "$(pwd)/$repo"
 done
 ```
+The pre-commit installer is chain-safe (leaves a non-ours pre-commit in place) and a no-op unless
+`WSP_LINT_FIX_CMD` is set. `doctor.sh` flags a sub-repo whose resolved hook still differs — re-run when
+it warns.
 
-The pre-commit installer is chain-safe (a non-ours pre-commit is left in place) and a no-op unless
-`WSP_LINT_FIX_CMD` is set. `doctor.sh`'s "sub-repo commit hooks" section flags any sub-repo whose
-resolved hook still differs from `.githooks/` — run this step when it warns.
+## Phase 3.5 — Advance the sync marker
 
-## Phase 3.5 — Advance the sync marker (converge bookkeeping)
+A hub→workspace bump rewrites mirrored mechanism scripts, so the converge commit touches mirrored
+files. `sync-templates.sh` is marker-based and would otherwise count the pull as harness→hub "drift" —
+a later `/shiploop:push` would try to port the hub's own code back to itself. Advance the marker
+through the converge so a pull doesn't masquerade as unported local work.
 
-A hub→workspace bump REWRITES mirrored mechanism scripts, so the converge commit you're about to
-make touches mirrored files. `sync-templates.sh` is marker-based, so it would otherwise count that
-pull as harness→hub "drift" — a `/shiploop:push` run would then try to port the hub's own code back
-to the hub (`drift_commits`' content-aware skip catches most of this, but the marker is the durable
-fix). Advance the marker THROUGH the converge so a pull doesn't masquerade as unported local work.
-
-**Guard — only auto-advance when there was NO pre-existing local drift.** Record the drift state
-BEFORE the Phase-3 bump:
+**Guard — only auto-advance when there was NO pre-existing local drift.** Record drift state BEFORE
+the Phase-3 bump:
 
 ```bash
 bash scripts/govern/sync-templates.sh --check >/dev/null 2>&1; PRE_DRIFT=$?   # 3 = had local drift, 0 = clean
 ```
 
-Then, AFTER the operator commits the converge (Phase 5), advance the marker to that commit **only if
-`PRE_DRIFT` was 0**:
+AFTER the operator commits the converge (Phase 5), advance the marker only if `PRE_DRIFT` was 0:
 
 ```bash
 if [ "${PRE_DRIFT:-0}" -eq 0 ]; then
@@ -218,33 +186,21 @@ else
   echo "  Run /shiploop:push to port your local mechanism improvements first, then --mark by hand."
 fi
 ```
-
-If `PRE_DRIFT` was 3 there were genuine local mechanism improvements not yet pushed to the hub;
-auto-advancing would silently bury them. Warn and leave the marker for `/shiploop:push`.
+`PRE_DRIFT=3` means genuine unpushed local mechanism improvements exist; auto-advancing would silently
+bury them — warn and leave the marker for `/shiploop:push`.
 
 ## Phase 4 — Verify (no auth needed)
 
-Cheap no-auth smoke — resolves every knob + helper, prints them, exits nonzero on any missing
-required:
-
 ```bash
-bash scripts/govern/config-check.sh
+bash scripts/govern/config-check.sh                                              # cheap no-auth smoke
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verify # bash -n + stale-relocation check
 ```
+The govern test suite is hub-only (never installed into a workspace) — there is nothing to run here.
 
-Full `bash -n` verify + stale-relocation check:
-
-```bash
-bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verify
-```
-
-Optionally the full govern test suite (per setup.md B3's pipe-stall-safe idiom for headless envs).
-
-**`dry-run.sh` spawns a live authenticated Claude worker** — from inside a nested Claude session or
-a headless env with no worker auth, it will fail. That's the auth caveat, not an update regression.
+**`dry-run.sh` spawns a live authenticated Claude worker** — inside a nested Claude session or headless
+env with no worker auth it will fail. That's the auth caveat, not an update regression.
 
 ## Phase 5 — Report
-
-Print a compact summary:
 
 ```
 ── /shiploop:update ──
@@ -259,25 +215,23 @@ Components:
   seeds          in-sync
   settings-merge idempotent (no changes)
 Preserved:   scripts/lib/workspace.sh, package.json, .claude/settings.json (except added hook stanzas)
+Purged:      <retired paths removed this run, or "none">
 Verifiers:   config-check ok · bash -n ok · relocations ok
 Next:        review the diff, commit tooling paths explicitly:
              git add scripts .githooks governor package.json .claude/settings.json .claude/commands
              git commit -m "chore(harness): converge to shiploop v$HUB_V"
 ```
-
-Stop. Do not push, do not commit. The operator reviews the diff and commits themselves — a bump
-touches many files and they may want to split it or write a specific commit message.
+Stop. Do not push, do not commit — the operator reviews the diff and commits themselves (may want to
+split it or write a specific message).
 
 ## Guarantees
-
-- **Idempotent.** Re-running when everything is in sync prints "up to date" and exits.
-- **`workspace.sh` preserved.** Never overwritten by `/update`. New knobs surface as warnings.
-- **No network required.** Everything runs against the local hub clone / plugin install. No `gh`,
-  no `git fetch` — this is a LOCAL reconcile of files.
-- **Fail-closed on dirty tree / live governor.** Refuses to proceed rather than clobber your work.
+- **Idempotent.** Re-running when in sync prints "up to date" and exits.
+- **`workspace.sh` preserved.** Never overwritten; new knobs surface as warnings.
+- **No network required.** Runs against the local hub clone / plugin install; no `gh`, no `git fetch`.
+- **Fail-closed on dirty tree / live governor.** Refuses rather than clobbers your work.
 
 ## Pair with the push direction
 
-Once you've made improvements to a mechanism script inside this workspace and want to contribute
-them back to the hub, run `/shiploop:push` — the mirror of this command. It reuses the same
-`GOVERN_UPSTREAM_HARNESS_DIR` knob to find the hub clone and opens a PR against your fork.
+Once you've improved a mechanism script here and want to contribute it back, run `/shiploop:push` —
+the mirror of this command, reusing the same `GOVERN_UPSTREAM_HARNESS_DIR` knob to find the hub clone
+and open a PR against your fork.

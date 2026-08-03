@@ -51,16 +51,13 @@ open_esc="$(awk '/^## Open/{o=1;next} /^## /{o=0} o' "$ESCALATIONS_FILE" 2>/dev/
 
 prompt="$(cat "$PROMPT_FILE")
 
-## Your own verdict from the previous supervisor pass this run (compressed summary of every
-## ticket outcome reviewed before this pass — treat it as already-seen, not as something to
-## re-derive)
-${prev_verdict:-(none — this is the first supervisor pass this run)}
+## Your previous verdict this run (already-seen — don't re-derive)
+${prev_verdict:-(none — first supervisor pass this run)}
 
-## Ticket outcomes since your previous pass (newest last; anything earlier was already reviewed
-## and is summarized in the verdict above)
-${new_since_last:-(none — no ticket has resolved/parked/failed since your last pass)}
+## Ticket outcomes since your last pass (newest last; earlier ones are folded into the verdict above)
+${new_since_last:-(none — nothing resolved/parked/failed since your last pass)}
 
-## Open tickets — full blocks (bodies included; these are the upcoming candidates)
+## Open tickets — full blocks (upcoming candidates)
 $blocks
 
 ## Open escalations
