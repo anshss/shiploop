@@ -143,12 +143,14 @@ jobs:
         run: |
           set -uo pipefail
           rc_all=0
-          for t in templates/govern/test/test-update-channel.sh \
-                   templates/govern/test/test-update-config-converge.sh \
-                   templates/govern/test/test-purge-removed.sh \
-                   templates/govern/test/test-reconcile-update.sh \
-                   templates/govern/test/test-scaffold-verify-standalone.sh; do
-            name="$(basename "$t" .sh)"
+          # Single source of truth, shared with scaffold-and-test's cross-check.
+          while read -r name; do
+            case "$name" in ''|\#*) continue ;; esac
+            t="templates/govern/test/$name.sh"
+            if [ ! -f "$t" ]; then
+              echo "::error::$name listed in tools/hub-context-tests.txt but no such test file"
+              rc_all=1; continue
+            fi
             if bash "$t" >/tmp/out.log 2>&1; then
               echo "ok   - $name"
             else
@@ -161,7 +163,7 @@ jobs:
               sed 's/^/    /' /tmp/out.log
               rc_all=1
             fi
-          done
+          done < tools/hub-context-tests.txt
           exit "$rc_all"
 
   scaffold-and-test:
@@ -219,6 +221,7 @@ jobs:
           cd "$WS"
           passed=0; failed=0; skipped=0; total=0
           fails=()
+          skips=()
           for t in scripts/govern/test/test-*.sh; do
             total=$((total+1))
             name="$(basename "$t" .sh)"
@@ -229,6 +232,7 @@ jobs:
               rc=$?
               if [ "$rc" -eq 77 ]; then
                 skipped=$((skipped+1))
+                skips+=("$name")
                 echo "skip - $name (env not applicable)"
               else
                 failed=$((failed+1))
@@ -244,3 +248,16 @@ jobs:
             for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
             exit 1
           fi
+
+          # A test that skips HERE runs nowhere unless the hub-context-tests job picks it up.
+          # That is how five update-channel tests sat ungated while CI looked green. Every skip
+          # must be accounted for in tools/hub-context-tests.txt, or it is silently dead.
+          unaccounted=0
+          for s in ${skips[@]+"${skips[@]}"}; do
+            if ! grep -qxF "$s" "$GITHUB_WORKSPACE/tools/hub-context-tests.txt"; then
+              echo "::error::$s skipped here and is NOT in tools/hub-context-tests.txt — it runs in NO job. Add it there (and confirm it passes from a hub checkout)."
+              unaccounted=1
+            fi
+          done
+          [ "$unaccounted" -eq 0 ] || exit 1
+          echo "ok - all $skipped skip(s) are covered by the hub-context-tests job"
