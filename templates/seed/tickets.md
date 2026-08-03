@@ -13,7 +13,9 @@ highest `## #N` + 1**.
 **Resolved = a fix PR is opened** (not merged). DELETE the entry in the same session the PR opens
 (git history + the PR are the record); reference the PR# in the deletion commit. Before deleting,
 promote any durable lesson to `CLAUDE.md` — only if settled, not already recorded, and statable in
-≤3 lines; otherwise it belongs in `CLAUDE-APPENDIX.md`. Use `/resolve <N>` to do this the disciplined way.
+≤3 lines; otherwise it belongs in `CLAUDE-APPENDIX.md`. Then sweep the session diff for gaps the fix
+uncovered — fold them into open tickets by default, minting a new number only for work that is
+independently dispatchable.
 
 The governor reads this file: severity-orders the open tickets (High > Medium > Low > unknown), works
 the top one, then deletes it on resolve. Keep entries in the shape below so the parser finds them.

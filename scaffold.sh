@@ -57,7 +57,6 @@ COMPONENT="all"
 COMPONENT_EXPLICIT=0
 DO_GIT_INIT=0
 DO_VERIFY=0
-RUN_TESTS=0
 YES=0
 VERBOSE=0
 DIFF_ONLY=0
@@ -87,7 +86,6 @@ while [ "$#" -gt 0 ]; do
     --component)         COMPONENT="$2"; COMPONENT_EXPLICIT=1; shift 2 ;;
     --git-init)          DO_GIT_INIT=1; shift ;;
     --verify)            DO_VERIFY=1; shift ;;
-    --run-tests)         RUN_TESTS=1; shift ;;
     --yes|-y)            YES=1; shift ;;
     --verbose|-v)        VERBOSE=1; shift ;;
     --diff-only)         DIFF_ONLY=1; shift ;;
@@ -166,7 +164,7 @@ fi
 # ── Component implementations ───────────────────────────────────────────────
 
 component_dirs() {
-  mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib scripts/govern/test
+  mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib
   mkdir -p governor .worktrees .claude/commands .claude/workflows .claude/skills .githooks queue
   touch .worktrees/.gitkeep
 }
@@ -243,16 +241,12 @@ component_workspace_sh() {
   chmod 644 scripts/lib/workspace.sh
   info "wrote scripts/lib/workspace.sh"
 
-  # Example project hooks (safe: only .example files, user renames to enable).
-  cp "$T/lib/worktree-bootstrap.sh.example" scripts/lib/ 2>/dev/null || true
-  cp "$T/lib/session-cleanup.sh.example" scripts/lib/ 2>/dev/null || true
-  cp "$T/lib/doctor-extra.sh.example" scripts/lib/ 2>/dev/null || true
 }
 
 component_core_scripts() {
   log "component: core scripts"
   local s
-  for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
+  for s in doctor dev sync tail; do
     cp "$T/$s.sh" "scripts/$s.sh"
     chmod +x "scripts/$s.sh"
   done
@@ -291,8 +285,10 @@ component_govern() {
   if compgen -G "$T/govern/lib/*.mjs" >/dev/null 2>&1; then
     cp "$T"/govern/lib/*.mjs scripts/govern/lib/
   fi
-  cp "$T"/govern/test/*.sh scripts/govern/test/
-  chmod +x scripts/govern/*.sh scripts/govern/test/*.sh
+  # NOTE: govern/test/ is deliberately NOT installed. The suite is hub-only — nothing in a
+  # fleet workspace executes it (sync-port.sh builds its own scratch copy from the hub tree,
+  # and hub CI scaffolds a throwaway workspace and copies the suite in itself).
+  chmod +x scripts/govern/*.sh
   # governor/*.md — refresh prompt templates only; preserve operator data.
   local mf
   for mf in worker-prompt.md supervisor-prompt.md README.md sync-porter-prompt.md; do
@@ -322,7 +318,7 @@ component_githooks() {
 }
 
 component_project_commands() {
-  log "component: project-local /govern + /resolve + /investigate"
+  log "component: project-local slash commands"
   cp "$T"/.claude/commands/*.md .claude/commands/ 2>/dev/null || true
   info "installed .claude/commands/"
 }
@@ -417,10 +413,9 @@ next run is smarter and cheaper.
 Everyday commands:
 
 \`\`\`bash
-$PM run status            # what's dirty / ahead / behind across every repo
 $PM run doctor            # health-check the workspace
-/shiploop:investigate     # triage a bug into a ticket
-/shiploop:resolve         # close a ticket and promote its lesson into CLAUDE.md
+$PM run dev               # boot every sub-repo's dev server
+/shiploop:flows           # inventory + validate your product's user-facing paths
 \`\`\`
 
 Backlog lives in \`queue/tickets.md\`; per-workspace config in \`scripts/lib/workspace.sh\`.
@@ -496,15 +491,9 @@ component_package_json() {
   "scripts": {
     "dev": "bash scripts/dev.sh",
 $(printf "$dev_lines" | sed '/^$/d')
-    "status": "bash scripts/status.sh",
     "doctor": "bash scripts/doctor.sh",
-    "branch": "bash scripts/branch.sh",
-    "switch": "bash scripts/switch.sh",
-    "pull": "bash scripts/pull-all.sh",
-    "push": "bash scripts/push-prs.sh",
     "sync": "bash scripts/sync.sh",
     "tail": "bash scripts/tail.sh",
-    "health": "bash scripts/health.sh",
     "worktree": "bash scripts/worktree/main.sh",
     "worktree:new": "bash scripts/worktree/new.sh",
     "worktree:rm": "bash scripts/worktree/rm.sh",
@@ -697,7 +686,7 @@ MECH_COMPONENTS="core-scripts worktrees govern githooks commands workflows"
 probe_files() {
   case "$1" in
     core-scripts)
-      for s in status doctor branch switch dev pull-all push-prs health sync tail investigate; do
+      for s in doctor dev sync tail; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
       for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard validations-pending-hook learnings-digest; do
@@ -723,10 +712,7 @@ probe_files() {
         [ -f "$f" ] || continue
         printf 'scripts/govern/lib/%s\t%s\n' "$(basename "$f")" "$f"
       done
-      for f in "$T"/govern/test/*.sh; do
-        [ -f "$f" ] || continue
-        printf 'scripts/govern/test/%s\t%s\n' "$(basename "$f")" "$f"
-      done ;;
+      ;;
     githooks)
       for h in pre-push prepare-commit-msg pre-commit; do
         printf '.githooks/%s\t%s/githooks/%s\n' "$h" "$T" "$h"
@@ -795,6 +781,44 @@ component_stamp() {
   return 0
 }
 
+# ── Purge (retired files an older shiploop installed) ───────────────────────
+
+# purge_removed — delete paths the hub used to ship and no longer does. Reads
+# templates/lib/purge.txt (one workspace-relative path per non-comment line; a
+# trailing `/` means "directory, remove recursively"). This is what lets an
+# ALREADY-installed fleet shed a retired file: scaffold's components only copy
+# IN, they never remove, so without this a purged template lives forever in
+# every workspace that ever installed it.
+#
+# Two modes: "apply" (writer runs) removes; "warn" (standalone --verify, which
+# must not write) only reports. Paths are relative to the workspace root, and
+# every one is guarded against absolute/parent-escaping forms so a malformed
+# manifest line can never reach outside the workspace.
+purge_removed() {
+  local mode="${1:-apply}"
+  local manifest="$T/lib/purge.txt"
+  [ -f "$manifest" ] || return 0
+  local line count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+    case "$line" in /*|*..*) warn "purge: ignoring unsafe manifest path: $line"; continue ;; esac
+    [ -e "$line" ] || continue
+    if [ "$count" -eq 0 ]; then log "purge: removing files retired by the hub"; fi
+    count=$((count+1))
+    if [ "$mode" = "warn" ]; then
+      warn "retired-but-present: $line (a writer run — scaffold/update — removes it)"
+    else
+      rm -rf -- "$line"
+      info "removed $line"
+    fi
+  done < "$manifest"
+  if [ "$count" -gt 0 ] && [ "$mode" != "warn" ]; then
+    info "purged $count retired path(s)"
+  fi
+  return 0
+}
+
 # ── Verification ────────────────────────────────────────────────────────────
 
 # verify_relocations — warn about files the hub moved (from-path → to-path) but
@@ -840,36 +864,6 @@ verify_scripts() {
   else
     die "workspace.sh failed to source"
   fi
-}
-
-verify_run_tests() {
-  log "verify: govern test suite"
-  local passed=0 failed=0 skipped=0 t name status
-  local -a fails=()
-  local total; total="$(find scripts/govern/test -name 'test-*.sh' -maxdepth 1 | wc -l | tr -d ' ')"
-  info "running $total tests…"
-  for t in scripts/govern/test/test-*.sh; do
-    [ -x "$t" ] || chmod +x "$t"
-    name="$(basename "$t" .sh)"
-    if bash "$t" >/tmp/test-out.log 2>&1; then
-      passed=$((passed+1))
-    else
-      status=$?
-      if [ "$status" -eq 77 ] || grep -q 'SKIP' /tmp/test-out.log; then
-        skipped=$((skipped+1))
-      else
-        failed=$((failed+1))
-        fails+=("$name")
-        [ "$VERBOSE" -eq 1 ] && { warn "FAIL $name"; sed 's/^/         /' /tmp/test-out.log >&2; }
-      fi
-    fi
-  done
-  info "tests: passed=$passed failed=$failed skipped=$skipped total=$total"
-  if [ "$failed" -gt 0 ]; then
-    for name in "${fails[@]}"; do warn "failed: $name"; done
-    return 1
-  fi
-  return 0
 }
 
 # ── --diff-only mode ────────────────────────────────────────────────────────
@@ -920,9 +914,7 @@ if [ "$VERIFY_ONLY" -eq 1 ]; then
   log "verify-only mode (no writes) — probing existing scaffold at $WORKSPACE_DIR"
   verify_scripts
   verify_relocations
-  if [ "$RUN_TESTS" -eq 1 ]; then
-    verify_run_tests || die "govern tests failed"
-  fi
+  purge_removed warn
   log "verify: standalone check complete"
   exit 0
 fi
@@ -930,6 +922,10 @@ fi
 # ── Main dispatch ───────────────────────────────────────────────────────────
 
 component_dirs
+# Shed anything the hub used to install and has since retired. Runs on EVERY writer
+# invocation (fresh scaffold, single-component refresh, /shiploop:update) so an old
+# install converges on the current footprint no matter which component is bumped.
+purge_removed apply
 
 case "$COMPONENT" in
   all)
@@ -1034,13 +1030,10 @@ if [ "$SKIP_SUBREPO_HOOKS" -eq 0 ] && [ "$COMPONENT" = "all" ] \
   ) || true
 fi
 
-# ── Verify (bash -n + optional test suite) ──────────────────────────────────
+# ── Verify (bash -n over the installed tree) ────────────────────────────────
 if [ "$DO_VERIFY" -eq 1 ]; then
   verify_scripts
   verify_relocations
-  if [ "$RUN_TESTS" -eq 1 ]; then
-    verify_run_tests || die "govern tests failed"
-  fi
 fi
 
 log "scaffold: done (component=$COMPONENT workspace=$WORKSPACE_DIR)"

@@ -152,8 +152,14 @@ jobs:
             --verify \
             --yes
       - name: run all govern tests in the scaffolded workspace
+        # The suite is hub-only — scaffold.sh no longer installs it into a fleet
+        # workspace — so copy it in here, exactly like sync-port.sh does for its
+        # own scratch build.
         run: |
           set -euo pipefail
+          mkdir -p "$WS/scripts/govern/test"
+          cp templates/govern/test/*.sh "$WS/scripts/govern/test/"
+          chmod +x "$WS"/scripts/govern/test/*.sh
           cd "$WS"
           passed=0; failed=0; skipped=0; total=0
           fails=()
