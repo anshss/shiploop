@@ -58,8 +58,18 @@ flush
 
 [[ "${#rows[@]}" -gt 0 ]] || exit 0   # no tickets → empty output, exit 0
 
+# §4.8 VALUE ORDERING. The cheapest ticket is the one never dispatched, and dispatch order was
+# severity-then-number — never worth. The one worth distinction the harness can make DETERMINISTICALLY
+# (no model call) is product work vs. work the loop filed about ITSELF: the loop auto-files harness
+# tickets, pays full worker price for them, and files more. Cost per successful ticket can improve
+# while TOTAL spend rises, if the loop simply grinds more of its own backlog more cheaply — so product
+# tickets sort ahead of self-referential ones, severity breaking ties within each class exactly as
+# before. Off by default (GOVERN_PRODUCT_FIRST=0) so ordering is unchanged until an operator opts in.
+product_first="${GOVERN_PRODUCT_FIRST:-0}"
 for r in "${rows[@]}"; do
   n="${r#* }"
   case "$exclude" in *",$n,"*) continue;; esac
-  printf '%s\n' "$r"
-done | sort -k1,1n -k2,2n | head -1 | awk '{print $2}'
+  cls=0
+  if [[ "$product_first" == "1" ]] && govern::is_selfref_ticket "$n" "$TICKETS_FILE"; then cls=1; fi
+  printf '%s %s\n' "$cls" "$r"
+done | sort -k1,1n -k2,2n -k3,3n | head -1 | awk '{print $3}'

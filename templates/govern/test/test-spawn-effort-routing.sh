@@ -7,6 +7,14 @@
 #   4. No `Effort:` field, GOVERN_WORKER_EFFORT set → uses the env floor
 #   5. Unknown `Effort:` value → fail-safe, run continues with the pre-existing resolution
 #
+# The scout used to also SCORE its measurement into a cached (model, effort) verdict that decided
+# BOTH axes — that is GONE (§5.2, see scout-ticket.sh's header). Effort now comes from exactly
+# GOVERN_WORKER_EFFORT (or the retry-class judgment bump); a scout cache sitting alongside the ticket
+# has no field left for resolve_sizing to read. That regression guard — "a cached verdict changes
+# nothing" — already lives in test-spawn-sizing-no-scout.sh; case 6 here, which asserted a scout
+# verdict setting the effort axis, tested a mechanism that can no longer happen and was deleted
+# rather than patched.
+#
 # Uses GOVERN_SPAWN_DRY_RUN=1 to short-circuit BEFORE worktree creation / worker
 # launch — pure observation of the assembled invocation params. No auth, no
 # claude binary, no state on disk beyond the tmp workspace.
@@ -107,19 +115,5 @@ assert_eq "$(printf '%s' "$out5" | jq -r '.effort')" "medium" \
   "unknown Effort: value → fail-safe to GOVERN_WORKER_EFFORT"
 assert_eq "$(printf '%s' "$out5" | jq -r '.ticket_effort')" "ultra" \
   "unknown ticket_effort still reported in the dry-run output"
-
-# 6. A MEASURED verdict sets the effort axis too. A trivial one-file fix with precedent and a
-# covering test scores (haiku, low) — the effort follows the measurement, not the env floor.
-mkdir -p "$TMP/logs-eff-scout/ticket-202"
-printf '{"ticket":202,"scope":{"files":1,"repos":1,"testsCover":true,"precedent":true,"changeKind":"local","fixDirection":"concrete"},"scoutModel":"haiku","ts":0}\n' \
-  > "$TMP/logs-eff-scout/ticket-202/scout.json"
-out6="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
-  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
-  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
-  GOVERN_LOG_ROOT="$TMP/logs-eff-scout" \
-  GOVERN_WORKER_MODEL="opus" GOVERN_WORKER_EFFORT="medium" \
-  GOVERN_SCOUT=1 GOVERN_SPAWN_DRY_RUN=1 "$SPAWN" 202)"
-assert_eq "$(printf '%s' "$out6" | jq -r '.effort')" "low" \
-  "a measured scout verdict sets the effort axis, overriding the GOVERN_WORKER_EFFORT floor"
 
 assert_done

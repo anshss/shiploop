@@ -87,7 +87,7 @@ export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────
 # How much the governor is allowed to do on its own. Flip ONE knob as trust builds — the graduation
-# is observe → pr-only → auto (see commands/govern.md + governor/README.md):
+# is observe → pr-only → auto (see SKILL.md "Dispatch" + governor/README.md):
 #   observe   Workers do the work, commit, push their `ticket-<N>` branch, and open a DRAFT PR — but
 #             the governor NEVER merges. Everything is VISIBLE (a PR to read) yet INERT. The safest
 #             first setting: watch what the harness produces without a single line landing on `main`.
