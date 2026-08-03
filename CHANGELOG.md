@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 — 2026-08-03
+## 1.17.0 — 2026-08-03
 
 The cost of a run is `Σ(bytes × turns_remaining) × tier_price`. Only the tier is a number you can set;
 the rest is growth rate. This release reprices the tier, removes work that never needed a model, and
