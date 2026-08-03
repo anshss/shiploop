@@ -154,7 +154,20 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
           # state could be sitting there, and this gate has no business touching any of it. A dirty
           # tree is exactly the situation where we must back off, not write behind someone's back.
           govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its working tree is DIRTY (uncommitted changes present) — refusing to write/commit into it; staying at root CLAUDE.md ($placement_reason)"
+        elif [[ "$(git -C "$subrepo_dir" symbolic-ref --short -q HEAD 2>/dev/null || true)" != "$(govern::subrepo_default_branch "$subrepo_dir")" ]]; then
+          # SAFETY (#83 review): govern-bookkeep.sh runs against the MAIN checkout (run-loop.sh
+          # invokes it from the same tree that owns queue/tickets.md — never a worker's worktree,
+          # which lives under a separate WORKTREE_BASE), and the workspace convention is that the
+          # main checkout's sub-repos always sit on their default branch (root CLAUDE.md rule #8;
+          # check-main-on-main.sh warns on drift, but only as an advisory SessionStart hook — it
+          # never blocks). If that convention has been violated for any reason (a human manually
+          # switched it, a bug elsewhere left it mid-op) and HEAD is on a ticket/feature branch,
+          # `push HEAD:<default>` would push that branch's entire tip — including unmerged work —
+          # straight onto the default branch, bypassing its PR and CI. Refuse instead: same shape
+          # as the dirty-tree check above. Detached HEAD (symbolic-ref returns empty) also refuses.
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its checkout is not on its default branch — refusing to redirect (would push the wrong branch's tip); staying at root CLAUDE.md ($placement_reason)"
         else
+          subrepo_default_branch="$(govern::subrepo_default_branch "$subrepo_dir")"
           subrepo_prehead="$(git -C "$subrepo_dir" rev-parse HEAD 2>/dev/null || true)"
           subrepo_ok=0
           if [[ -n "$subrepo_prehead" ]]; then
@@ -170,8 +183,8 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
                       git remote get-url origin >/dev/null 2>&1 || exit 0
                       pushed=0
                       for _attempt in 1 2 3 4 5; do
-                        if git push origin HEAD:main >/dev/null 2>&1; then pushed=1; break; fi
-                        git pull --rebase origin main >/dev/null 2>&1 || break
+                        if git push origin "HEAD:$subrepo_default_branch" >/dev/null 2>&1; then pushed=1; break; fi
+                        git pull --rebase origin "$subrepo_default_branch" >/dev/null 2>&1 || break
                       done
                       [[ "$pushed" == "1" ]]
                     }

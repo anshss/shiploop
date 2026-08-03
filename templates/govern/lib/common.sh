@@ -873,6 +873,21 @@ govern::insert_lesson() { # <file> <anchor> <text>
   fi
 }
 
+# Resolve <dir>'s DEFAULT branch (what its origin's HEAD points at) — never touches the network
+# (no `git remote show`/`ls-remote`; this must stay fast on the dispatch path). Prefers the cached
+# `refs/remotes/origin/HEAD` symref (set at clone time, or by `git remote set-head origin -a`);
+# falls back to whichever of main/master exists as a remote-tracking ref when that symref is
+# absent (common for a shallow/CI clone), then "main" as a last resort — this codebase's own
+# convention (the root lesson commit already hardcodes `git push origin HEAD:main`).
+govern::subrepo_default_branch() { # <dir> -> branch name
+  local dir="$1" b
+  b="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+  if [[ -n "$b" ]]; then printf '%s' "$b"; return 0; fi
+  if git -C "$dir" rev-parse --verify -q origin/main >/dev/null 2>&1; then printf 'main'; return 0; fi
+  if git -C "$dir" rev-parse --verify -q origin/master >/dev/null 2>&1; then printf 'master'; return 0; fi
+  printf 'main'
+}
+
 # ── validation gate decision (#67 + #73) ─────────────────────────────────────
 # Given a worker's resolved report for a VALIDATION-type ticket, decide the gate action. Pure — no
 # side effects; the caller applies it. Prints exactly one of:

@@ -136,5 +136,21 @@ assert_contains "$(cd "$T/alpha" && git status --porcelain)" "scratch-wip.txt" "
 assert_contains "$(cat /tmp/bk-log.$$)" "DIRTY" "dirty-tree: skip reason logged"
 ( cd "$T/alpha" && git reset -q -- scratch-wip.txt && rm -f scratch-wip.txt )
 
+# ── 8. sub-repo checked out on a NON-DEFAULT branch → redirect SKIPPED, root used, nothing pushed ──
+# Simulates the exact hazard a hardcoded `push HEAD:main` would create: if the main checkout's
+# sub-repo ever drifted onto a ticket/feature branch (convention violation, but not code-enforced —
+# check-main-on-main.sh only warns), a redirect must never push THAT branch's tip onto the default
+# branch. The gate must refuse instead of assuming HEAD is on main.
+reset_all
+( cd "$T/alpha" && git checkout -q -b ticket-99 )
+lesson8='Bump the alpha/package.json engines.node field to 20 before the next release.'
+rpt8=$(jq -n --arg t "$lesson8" '{status:"resolved",pr:{repo:"alpha",number:1},newTickets:[],lessonPatch:{file:"CLAUDE.md",anchor:null,text:$t}}')
+run_bk "$rpt8"
+assert_contains "$(cat "$T/CLAUDE.md")" "$lesson8" "non-default-branch: lesson landed in root CLAUDE.md instead"
+assert_not_contains "$(cat "$T/alpha/CLAUDE.md")" "$lesson8" "non-default-branch: alpha/CLAUDE.md NOT touched (redirect never attempted)"
+assert_eq "$(cd "$T/alpha" && git branch --show-current)" "ticket-99" "non-default-branch: alpha still on its own branch, untouched"
+assert_contains "$(cat /tmp/bk-log.$$)" "not on its default branch" "non-default-branch: skip reason logged"
+( cd "$T/alpha" && git checkout -q main )
+
 rm -f /tmp/bk-out.$$ /tmp/bk-log.$$
 assert_done
