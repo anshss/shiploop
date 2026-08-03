@@ -301,7 +301,7 @@ component_govern() {
       cp "$T/governor/$pref" "governor/$pref"
     fi
   done
-  info "installed govern scripts + tests + governor prompts"
+  info "installed govern scripts + governor prompts"
 }
 
 component_githooks() {
