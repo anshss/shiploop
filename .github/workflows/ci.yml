@@ -146,7 +146,13 @@ jobs:
           # Single source of truth, shared with scaffold-and-test's cross-check.
           while read -r name; do
             case "$name" in ''|\#*) continue ;; esac
+            quarantined=0
+            case "$name" in '!'*) quarantined=1; name="${name#!}" ;; esac
             t="templates/govern/test/$name.sh"
+            if [ "$quarantined" -eq 1 ]; then
+              echo "::warning::$name is QUARANTINED (known-broken on this runner) — not gating; see tools/hub-context-tests.txt"
+              continue
+            fi
             if [ ! -f "$t" ]; then
               echo "::error::$name listed in tools/hub-context-tests.txt but no such test file"
               rc_all=1; continue
@@ -254,7 +260,8 @@ jobs:
           # must be accounted for in tools/hub-context-tests.txt, or it is silently dead.
           unaccounted=0
           for s in ${skips[@]+"${skips[@]}"}; do
-            if ! grep -qxF "$s" "$GITHUB_WORKSPACE/tools/hub-context-tests.txt"; then
+            # `!name` (quarantined) still counts as listed — strip the marker before matching.
+            if ! sed 's/^!//' "$GITHUB_WORKSPACE/tools/hub-context-tests.txt" | grep -qxF "$s"; then
               echo "::error::$s skipped here and is NOT in tools/hub-context-tests.txt — it runs in NO job. Add it there (and confirm it passes from a hub checkout)."
               unaccounted=1
             fi
