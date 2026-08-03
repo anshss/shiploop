@@ -44,10 +44,8 @@ check "(root)" "$MAIN_CHECKOUT"
 for r in "${REPOS[@]:-}"; do check "$r" "$MAIN_CHECKOUT/$r"; done
 
 if [ "${#OFF[@]}" -gt 0 ]; then
-  echo "⚠ main checkout is NOT all-on-main ($MAIN_CHECKOUT):"
+  echo "⚠ off-main ($MAIN_CHECKOUT):"
   for o in "${OFF[@]}"; do echo "    $o"; done
-  echo "  Workspace rule: the main checkout stays on main; do branch work in a worktree:"
-  echo "    ${ROOT_PM:-npm} run worktree:new -- <slug>"
-  echo "  To restore: ${ROOT_PM:-npm} run switch -- main   (or per-repo: git -C <repo> switch main)"
+  echo "  Restore: ${ROOT_PM:-npm} run switch -- main"
 fi
 exit 0

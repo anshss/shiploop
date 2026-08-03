@@ -52,9 +52,8 @@ if [ -x "$lint" ]; then
   if ! dups="$("$lint" "$MAIN/queue/tickets.md" 2>/dev/null)" && [ -n "${dups:-}" ]; then
     dups_flat="$(printf '%s' "$dups" | tr '\n' ' ')"
     reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number (#73): \
-${dups_flat}. Fix now: renumber the LATER duplicate to the live max + 1 \
-(scripts/govern/file-ticket.sh prints the next safe number), commit, then stop. \
-Do not start other work — this is the only blocker."
+${dups_flat}. Renumber the LATER duplicate to live max+1 (file-ticket.sh prints the next safe \
+number), commit, then stop. Only blocker — do not start other work."
     esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
     printf '{"decision":"block","reason":"%s"}\n' "$esc"
     exit 0
@@ -82,12 +81,12 @@ if [ -x "$vlint" ]; then
     case "$lint_out" in
       *'DANGLING .claude/shiploop/validation'*)
         reason="A .claude/shiploop/validation/*.md evidence summary is MISSING but still cited (#252): \
-${lint_flat} Fix now: restore the deleted summary (git show <migration>^:<path>) or correct the \
-reference, commit, then stop. A migration likely orphaned it. This is the only blocker."
+${lint_flat} Restore it (git show <migration>^:<path>) or fix the reference, commit, then stop. \
+Likely a migration orphaned it. Only blocker."
         ;;
       *)
-        reason="validation lint failed at session end: ${lint_flat} Fix the issue above, commit, \
-then stop. This is the only blocker."
+        reason="validation lint failed at session end: ${lint_flat} Fix it, commit, then stop. \
+Only blocker."
         ;;
     esac
     esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -173,9 +172,8 @@ if [ -f "$MAIN/.claude/shiploop/validation/flows.md" ]; then
   staled_ids="$(printf '%s' "${staled_ids:-}" | sed -E 's/ +$//; s/^ +//')"
   if [ -n "$staled_ids" ]; then
     n_staled="$(printf '%s' "$staled_ids" | wc -w | tr -d ' ')"
-    flows_note="FLOW STALENESS (advisory, non-blocking): this session's landed code appears to STALE \
-${n_staled} validated flow(s) — ${staled_ids}. No action needed now; the governor's staleness sweep \
-records the STALE degrade on its next pass (or run /shiploop:flows). "
+    flows_note="FLOW STALENESS (advisory): landed code appears to STALE ${n_staled} flow(s) — \
+${staled_ids}. Governor's staleness sweep records it next pass (or run /shiploop:flows). "
   fi
 fi
 
@@ -199,31 +197,23 @@ if [ -f "$MAIN/queue/tickets.md" ]; then
   )"
   outscope_ids="$(printf '%s' "${outscope_ids:-}" | sed -E 's/ +$//; s/^ +//')"
   if [ -n "$outscope_ids" ]; then
-    outscope_note="QUEUE ISOLATION (advisory, non-blocking): ticket(s) #$(printf '%s' "$outscope_ids" | sed 's/ /, #/g') \
-have a **Where:** targeting NEITHER a sub-repo NOR the harness — likely about an EXTERNAL tool/skill \
-that shared this terminal. The queue admits only this project's sub-repos and the harness itself; an \
-external tool's follow-ups belong in ITS OWN tracker. Consider migrating or deleting (operator's call — \
-never auto-removed). "
+    outscope_note="QUEUE ISOLATION (advisory): #$(printf '%s' "$outscope_ids" | sed 's/ /, #/g') \
+target neither a sub-repo nor the harness — likely an EXTERNAL tool's follow-up (its own tracker, \
+not this queue). Migrate or delete at operator's call. "
   fi
 fi
 
-reason="${outscope_note}${flows_note}Before ending: reconcile tickets.md (root meta-repo). \
-(1) NEW TICKETS — review what you touched/discovered this session. THIS is where filing belongs: a \
-finding surfaced mid-discussion should have been carried here, not filed inline. For each bug, gap, \
-missing capability, or follow-up not already tracked, CONSOLIDATE FIRST — look for an OPEN ticket it \
-belongs inside and fold it in (rewriting that ticket's body is expected, not a compromise). Mint a \
-new numbered ## #N entry in $MAIN/queue/tickets.md (Severity / Where / Observed / Fix direction / \
-Done when / Ref) only when the work is independently dispatchable — a different area, or something a \
-worker could ship without touching the other ticket. Two tickets one worker would fix in one PR \
-should have been one ticket; several findings out of one discussion are usually one ticket. \
-A discovered gap goes to tickets.md, never learnings.md. If the operator rejected a filing decision \
-this session (\"that should be one ticket\", \"don't file that\"), that constraint binds here too. \
-(2) RESOLVED TICKETS — for any ticket whose fix PR you OPENED this session (PR opened = resolved, \
-not merged), DELETE its entry from tickets.md now; promote any durable lesson to CLAUDE.md first \
-(only if settled, not already recorded, and statable in <=3 lines — otherwise CLAUDE-APPENDIX.md), \
-and name the PR number in the deletion commit. \
-If there is genuinely nothing to file and nothing to delete, say so in one line and stop. \
-Do not re-investigate or start new work — this is a bookkeeping pass only."
+reason="${outscope_note}${flows_note}Reconcile tickets.md before ending. \
+(1) NEW: for each bug/gap/follow-up from this session not already tracked, first look for an OPEN \
+ticket to fold it into (rewriting its body is fine); mint a new ## #N (Severity/Where/Observed/Fix \
+direction/Done when/Ref) only when independently dispatchable — a different area, or shippable \
+without touching another ticket. Never split one discussion's findings into tickets a single worker \
+would fix in one PR. An operator rejection this session (\"that should be one ticket\", \"don't file \
+that\") binds here too. \
+(2) RESOLVED: for any ticket whose fix PR you opened this session, delete it from tickets.md now; \
+promote a durable lesson to CLAUDE.md first only if settled/new/<=3 lines (else CLAUDE-APPENDIX.md); \
+name the PR# in the deletion commit. \
+Nothing to file/delete -> say so in one line and stop. Bookkeeping only, no new work."
 
 # JSON-escape the reason and emit the block decision.
 esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')

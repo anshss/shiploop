@@ -68,20 +68,16 @@ while IFS= read -r pn; do
   fi
 done <<< "$pn_list"
 
-prompt="GOVERN-IMPROVE. You are reviewing one run of the meta-repo 'governor' ticket harness to
-propose improvements to the HARNESS ITSELF (not the tickets). You are read-only — just propose.
+prompt="GOVERN-IMPROVE: read-only review of one governor run. Propose improvements to the HARNESS itself (not the tickets).
 
-Below: this run's per-ticket outcomes, the supervisor's notes, the open escalations, and the
-harness file list. Identify friction the harness hit (failures, parks, awkward flows, caveats)
-and propose **concrete, specific** changes — name the file and the change.
+Below: this run's per-ticket outcomes, supervisor notes, open escalations, harness file list. Identify friction (failures, parks, awkward flows) and propose concrete, specific changes — name the file and the change.
 
 RULES:
-- Propose harness mechanics/robustness/ergonomics improvements only.
-- NEVER propose weakening a safety rail (the hard-stops, the run bounds, the permission gate, the
-  merge allowlist). If one of those seems to cause friction, label it 'OPERATOR DECISION' and
-  explain the trade-off — do not propose silently changing it.
-- If the run was clean and you see nothing worth changing, output exactly: NONE
-- Otherwise output a short markdown bullet list, each: '- <file>: <specific change> — <why>'.
+- Harness mechanics/robustness/ergonomics only.
+- NEVER propose weakening a safety rail (hard-stops, run bounds, permission gate, merge allowlist). If one causes friction, label it 'OPERATOR DECISION' and explain the trade-off instead of proposing to change it.
+- Clean run, nothing worth changing → output exactly: NONE
+- Otherwise: a short markdown bullet list, each '- <file>: <specific change> — <why>'.
+
 
 ## Per-ticket outcomes (state.jsonl)
 $state

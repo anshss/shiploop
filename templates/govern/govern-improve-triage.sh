@@ -102,16 +102,16 @@ bodyfile="$(mktemp)"
 cat > "$bodyfile" <<EOF
 Where: scripts/govern/* and/or governor/* (per the proposals below).
 
-Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run ${run_label}. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they are drained like any ticket instead of waiting on a manual promote-remember step (same remember-vs-mechanism class as #271).
+Observed: govern-improve.sh proposed these SAFE/additive harness improvements after run ${run_label}. Auto-promoted from governor/improvements.md by govern-improve-triage.sh (#274) so they're drained like any ticket instead of waiting on a manual promote step.
 
 Proposals (classified safe/additive — none touches a governor safety rail):
 ${safe_list}
 
-Fix direction: implement each proposal above as a normal harness PR (a PR on the meta-repo itself), or explicitly decline it in the PR description if on closer look it is not worth doing.
+Fix direction: implement each proposal as a normal harness PR, or explicitly decline it in the PR description if not worth doing on closer look.
 
 Done when: each safe proposal above is implemented via a harness PR or explicitly declined.
 
-Ref: governor/improvements.md block "${block_ref}". ${nrail} rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED by the classifier and remain human-gated in improvements.md — a harness-self-change auto-merges on the harness repo (no PR-level CI), so it must stay behind the human gate (#274).
+Ref: governor/improvements.md block "${block_ref}". ${nrail} rail-touching / OPERATOR DECISION proposal(s) from the same block were intentionally EXCLUDED and remain human-gated in improvements.md — a harness-self-change auto-merges here (no PR-level CI), so it must stay behind the human gate.
 EOF
 
 # ── ONE STANDING TICKET, not one per run ────────────────────────────────────────────────────────

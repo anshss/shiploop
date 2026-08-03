@@ -150,12 +150,12 @@ const scope = await agent(
   "Decompose this research question into complementary search angles.\n\n" +
   "## Question\n" + QUESTION + "\n\n" +
   "## Task\n" +
-  "Generate 5 distinct web search queries that together cover the question from different angles. Pick angles that suit the question's domain. Examples:\n" +
-  "- broad/primary  · academic/technical  · recent news  · contrarian/skeptical  · practitioner/implementation\n" +
-  "- For medical: anatomy · common causes · serious differentials · authoritative refs · red flags\n" +
-  "- For tech: state-of-art · benchmarks · limitations · industry adoption · cost/tradeoffs\n\n" +
-  "Make queries specific enough to surface high-signal results. Avoid redundancy.\n" +
-  "Return: the question (verbatim or lightly normalized), a 1-2 sentence decomposition strategy, and the angles.\n\nStructured output only.",
+  "Generate 5 distinct web search queries covering the question from different angles, suited to its domain, e.g.:\n" +
+  "- broad/primary · academic/technical · recent news · contrarian/skeptical · practitioner/implementation\n" +
+  "- medical: anatomy · causes · serious differentials · authoritative refs · red flags\n" +
+  "- tech: state-of-art · benchmarks · limitations · adoption · cost/tradeoffs\n\n" +
+  "Specific enough to surface high-signal results; avoid redundancy.\n" +
+  "Return: the question (verbatim/lightly normalized), a 1-2 sentence decomposition strategy, and the angles.\n\nStructured output only.",
   stageOpts('scope', { label: "scope", schema: SCOPE_SCHEMA })
 )
 if (!scope) {
@@ -187,23 +187,18 @@ const SEARCH_PROMPT = (angle) =>
   "Research question: \"" + QUESTION + "\"\n\n" +
   "Your angle: **" + angle.label + "** — " + (angle.rationale || "") + "\n" +
   "Search query: `" + angle.query + "`\n\n" +
-  "## Task\nUse WebSearch with the query above (or a refined version). Return the top 4-6 most relevant results.\n" +
-  "Rank by relevance to the ORIGINAL question, not just the search query. Skip obvious SEO spam/content farms.\n" +
-  "Include a short snippet capturing why each result is relevant.\n\nStructured output only."
+  "## Task\nWebSearch the query above (or a refinement). Return the top 4-6 most relevant results, ranked by relevance to the ORIGINAL question (not just the query). Skip SEO spam/content farms. Include a short why-relevant snippet.\n\nStructured output only."
 
 const FETCH_PROMPT = (source, angle) =>
   "## Source Extractor\n\n" +
   "Research question: \"" + QUESTION + "\"\n\n" +
   "Fetch and extract key claims from this source:\n" +
   "**URL:** " + source.url + "\n**Title:** " + source.title + "\n**Found via:** " + angle + " search\n\n" +
-  "## Task\n1. Use WebFetch to retrieve the page content.\n" +
-  "2. Assess source quality: primary research/institution? secondary reporting? blog/opinion? forum? unreliable?\n" +
-  "3. Extract 2-5 FALSIFIABLE claims that bear on the research question. Each claim must:\n" +
-  "   - be a concrete, checkable statement (not vague generalities)\n" +
-  "   - include a direct quote from the source as support\n" +
-  "   - be rated central/supporting/tangential to the research question\n" +
+  "## Task\n1. WebFetch the page.\n" +
+  "2. Assess source quality: primary/institution, secondary reporting, blog/opinion, forum, or unreliable.\n" +
+  "3. Extract 2-5 FALSIFIABLE claims bearing on the question. Each: concrete/checkable, backed by a direct quote, rated central/supporting/tangential.\n" +
   "4. Note publish date if available.\n\n" +
-  "If the fetch fails or the page is irrelevant/paywalled, return claims: [] and sourceQuality: \"unreliable\".\n\nStructured output only."
+  "Fetch fails or page irrelevant/paywalled → return claims: [] and sourceQuality: \"unreliable\".\n\nStructured output only."
 
 const VERIFY_PROMPT = (claim, v) =>
   "## Adversarial Claim Verifier (voter " + (v + 1) + "/" + VOTES_PER_CLAIM + ")\n\n" +
@@ -214,14 +209,13 @@ const VERIFY_PROMPT = (claim, v) =>
   "**Published:** " + (claim.publishDate || "unknown — treat recency as unverified") + "\n" +
   "**Supporting quote:** \"" + claim.quote + "\"\n\n" +
   "## Checklist\n" +
-  "1. Is the claim actually supported by the quote, or is it an overreach/misread?\n" +
-  "2. WebSearch for contradicting evidence — does any credible source dispute or heavily qualify this?\n" +
-  "3. Is the source quality sufficient for the claim's strength? (extraordinary claims need primary sources)\n" +
-  "4. Is the claim outdated? (check dates — old claims about fast-moving fields are suspect)\n" +
-  "5. Is this a marketing claim / press release / cherry-picked benchmark / forum speculation?\n\n" +
-  "**refuted=true** if: unsupported by quote / contradicted / low-quality source for strong claim / outdated / marketing fluff.\n" +
-  "**refuted=false** ONLY if: claim is well-supported, current, and source quality matches claim strength.\n" +
-  "Default to refuted=true if uncertain.\n\nStructured output only. Evidence MUST be specific."
+  "1. Actually supported by the quote, or an overreach/misread?\n" +
+  "2. WebSearch for contradicting evidence — does a credible source dispute or heavily qualify this?\n" +
+  "3. Is source quality sufficient for the claim's strength? (extraordinary claims need primary sources)\n" +
+  "4. Outdated? (old claims about fast-moving fields are suspect)\n" +
+  "5. Marketing claim / press release / cherry-picked benchmark / forum speculation?\n\n" +
+  "**refuted=true** if: unsupported by quote / contradicted / low-quality source for a strong claim / outdated / marketing fluff.\n" +
+  "**refuted=false** ONLY if: well-supported, current, and source quality matches claim strength. Default refuted=true if uncertain.\n\nStructured output only. Evidence MUST be specific."
 
 // ─── Pipeline: search → dedup → fetch+extract (no barrier) ───
 const searchResults = await pipeline(
@@ -405,12 +399,12 @@ const report = await agent(
   confirmed.length + " claims survived " + VOTES_PER_CLAIM + "-vote adversarial verification. Merge semantic duplicates and synthesize.\n\n" +
   "## Confirmed claims\n" + block + "\n" + killedBlock + unverifiedBlock + "\n\n" +
   "## Instructions\n" +
-  "1. Identify claims that say the same thing — merge them, combine their sources.\n" +
-  "2. Group related claims into coherent findings. Each finding should directly address the research question.\n" +
-  "3. Assign confidence per finding: high (multiple primary sources, unanimous votes), medium (secondary sources or split votes), low (single source or blog-quality).\n" +
-  "4. Write a 3-5 sentence executive summary answering the research question.\n" +
-  "5. Note caveats: what's uncertain, what sources were weak, what time-sensitivity applies.\n" +
-  "6. List 2-4 open questions that emerged but weren't answered.\n\nStructured output only.",
+  "1. Merge claims that say the same thing; combine their sources.\n" +
+  "2. Group related claims into coherent findings, each addressing the research question.\n" +
+  "3. Confidence per finding: high (multiple primary sources, unanimous votes), medium (secondary sources or split votes), low (single source or blog-quality).\n" +
+  "4. 3-5 sentence executive summary answering the question.\n" +
+  "5. Caveats: what's uncertain, weak sources, time-sensitivity.\n" +
+  "6. 2-4 open questions that emerged but weren't answered.\n\nStructured output only.",
   stageOpts('synthesize', { label: "synthesize", schema: REPORT_SCHEMA })
 )
 

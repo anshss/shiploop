@@ -51,7 +51,7 @@ fi
 if [ -n "$CLAUDE_FILE" ] && [ -f "$CLAUDE_FILE" ]; then
   claude_size="$(wc -c < "$CLAUDE_FILE" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$claude_size" ] && [ "$claude_size" -gt "$CLAUDE_MAX_CHARS" ] 2>/dev/null; then
-    printf '── root CLAUDE.md is over budget (%s chars, budget %s) — re-triage: move topic-local narrative to CLAUDE-APPENDIX.md, delete anything already recorded in code/tests/git history ──\n' "$claude_size" "$CLAUDE_MAX_CHARS"
+    printf '── CLAUDE.md over budget (%s/%s chars) — move narrative to CLAUDE-APPENDIX.md, drop what code/tests/git already record ──\n' "$claude_size" "$CLAUDE_MAX_CHARS"
   fi
 fi
 
@@ -106,7 +106,7 @@ if [ -n "$PLUGIN_DIR" ] && [ -f "$PLUGIN_DIR/SKILL.md" ]; then
     ' "${_manifest_files[@]}"
   )"
   if [ -n "$manifest_size" ] && [ "$manifest_size" -gt "$MANIFEST_MAX_CHARS" ] 2>/dev/null; then
-    printf '── plugin manifest description surface is over budget (%s chars, budget %s) — re-triage: move prose from SKILL.md/commands/*.md `description:` frontmatter into the command body, which only loads on invocation ──\n' "$manifest_size" "$MANIFEST_MAX_CHARS"
+    printf '── plugin manifest description surface over budget (%s/%s chars) — move prose from description: frontmatter into command bodies ──\n' "$manifest_size" "$MANIFEST_MAX_CHARS"
   fi
 fi
 
