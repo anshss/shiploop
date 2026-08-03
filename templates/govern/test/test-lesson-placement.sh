@@ -121,5 +121,20 @@ assert_eq "$(cd "$T/alpha" && git status --porcelain | wc -l | tr -d ' ')" "0" "
 assert_contains "$(cat /tmp/bk-log.$$)" "falling BACK TO ROOT" "push-fails: fallback logged"
 ( cd "$T/alpha" && git remote remove origin )
 
+# ── 7. sub-repo tree is DIRTY (unrelated uncommitted work) → redirect SKIPPED, root used, ──
+#      the unrelated file is left exactly as it was (never written/committed/touched at all).
+reset_all
+printf 'unrelated in-progress edit — not part of this test\n' > "$T/alpha/scratch-wip.txt"
+( cd "$T/alpha" && git add scratch-wip.txt )   # staged, uncommitted — mimics an operator mid-edit
+lesson7='Remember to run alpha/scripts/lint.sh with --fix before committing.'
+rpt7=$(jq -n --arg t "$lesson7" '{status:"resolved",pr:{repo:"alpha",number:1},newTickets:[],lessonPatch:{file:"CLAUDE.md",anchor:null,text:$t}}')
+run_bk "$rpt7"
+assert_contains "$(cat "$T/CLAUDE.md")" "$lesson7" "dirty-tree: lesson landed in root CLAUDE.md instead"
+assert_not_contains "$(cat "$T/alpha/CLAUDE.md")" "$lesson7" "dirty-tree: alpha/CLAUDE.md NOT touched (redirect never attempted)"
+assert_eq "$(cat "$T/alpha/scratch-wip.txt")" "unrelated in-progress edit — not part of this test" "dirty-tree: the unrelated uncommitted file is unmodified"
+assert_contains "$(cd "$T/alpha" && git status --porcelain)" "scratch-wip.txt" "dirty-tree: the unrelated file is STILL staged exactly as it was (untouched)"
+assert_contains "$(cat /tmp/bk-log.$$)" "DIRTY" "dirty-tree: skip reason logged"
+( cd "$T/alpha" && git reset -q -- scratch-wip.txt && rm -f scratch-wip.txt )
+
 rm -f /tmp/bk-out.$$ /tmp/bk-log.$$
 assert_done

@@ -130,12 +130,13 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     # TRANSACTIONAL: a redirect is a WRITE + COMMIT + (best-effort) PUSH into a git repo that is
     # NOT the one this script's own lock/CAS-retry machinery protects — a sub-repo push can fail for
     # reasons entirely outside our control (branch protection on its default branch, no push
-    # credential in a headless context, a dirty/detached checkout, a non-fast-forward race with
-    # another worker). If ANY step of the redirect fails, the sub-repo's working tree is reset back
-    # to its pre-attempt HEAD (clean — no stray commit, no dirty file) and the lesson falls through
-    # to the ORIGINAL root insert below. A lesson must always land SOMEWHERE; a failed redirect must
-    # never be a silently lost lesson (worse than the bloat this gate exists to fix). Every outcome
-    # (redirect success / redirect attempted-then-fell-back / never attempted) is logged.
+    # credential in a headless context, a non-fast-forward race with another worker). We refuse to
+    # even ATTEMPT a redirect unless the sub-repo's tree is already clean (never write/commit behind
+    # something else that's mid-edit there), and if the attempt still fails, we undo ONLY what we
+    # touched — never a `reset --hard` of a repo this script doesn't exclusively own — before falling
+    # through to the ORIGINAL root insert below. A lesson must always land SOMEWHERE; a failed
+    # redirect must never be a silently lost lesson (worse than the bloat this gate exists to fix).
+    # Every outcome (redirect success / dirty-skip / attempted-then-fell-back / never attempted) is logged.
     redirected=0
     if command -v govern::lesson_placement >/dev/null 2>&1; then
       placement_repo=""; placement_reason=""
@@ -147,6 +148,12 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         subrepo_claude="$subrepo_dir/CLAUDE.md"
         if [[ ! -f "$subrepo_claude" ]] || ! git -C "$subrepo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
           govern::log "bookkeep #$N: placement gate picked '$placement_repo' but $placement_repo/CLAUDE.md or its git repo isn't present here — staying at root CLAUDE.md ($placement_reason)"
+        elif [[ -n "$(git -C "$subrepo_dir" status --porcelain 2>/dev/null)" ]]; then
+          # SAFETY (#83 review): never write/commit into a sub-repo whose tree isn't already clean —
+          # an operator mid-edit in the main checkout, a concurrent session, or a worker's leftover
+          # state could be sitting there, and this gate has no business touching any of it. A dirty
+          # tree is exactly the situation where we must back off, not write behind someone's back.
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its working tree is DIRTY (uncommitted changes present) — refusing to write/commit into it; staying at root CLAUDE.md ($placement_reason)"
         else
           subrepo_prehead="$(git -C "$subrepo_dir" rev-parse HEAD 2>/dev/null || true)"
           subrepo_ok=0
@@ -176,10 +183,16 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
             redirected=1
             govern::log "bookkeep #$N: lessonPatch redirected root CLAUDE.md -> $placement_repo/CLAUDE.md ($placement_reason)"
           else
-            # Roll back to a CLEAN working tree — undoes both the file write and any local commit
-            # that failed to push, so a half-applied sub-repo edit never lingers in a worktree.
-            git -C "$subrepo_dir" reset --hard "$subrepo_prehead" >/dev/null 2>&1 || true
-            govern::log "bookkeep #$N: sub-repo commit/push into $placement_repo/CLAUDE.md failed — reverted its working tree to a clean state and falling BACK TO ROOT CLAUDE.md instead ($placement_reason)"
+            # NARROW rollback — restore ONLY what we touched (CLAUDE.md + our own commit, if we made
+            # one), never `reset --hard` a repo we don't exclusively own. The tree was verified clean
+            # before we started, so the only possible diff from $subrepo_prehead at this point is our
+            # own add/commit: `reset --mixed` moves HEAD back (a no-op if we never got as far as
+            # committing) and resets the INDEX to match it (un-staging our `git add` either way),
+            # then `checkout --` restores the WORKING TREE for that one path from that index. Neither
+            # step touches any other file.
+            git -C "$subrepo_dir" reset --mixed "$subrepo_prehead" >/dev/null 2>&1 || true
+            git -C "$subrepo_dir" checkout -- CLAUDE.md 2>/dev/null || true
+            govern::log "bookkeep #$N: sub-repo commit/push into $placement_repo/CLAUDE.md failed — reverted CLAUDE.md + our commit only (working tree otherwise untouched) and falling BACK TO ROOT CLAUDE.md instead ($placement_reason)"
           fi
         fi
       fi
