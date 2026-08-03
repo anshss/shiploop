@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.17.2 — 2026-08-03
+
+### Fixed
+
+Documentation drift: six places where a shipped doc described a command, env-var default, or
+slash command that the code stopped honouring some releases ago. No behavior changes — but four
+of the six ship into every scaffolded workspace, and two of those land in an always-loaded
+`CLAUDE.md`, so a model paid for the wrong fact on every turn.
+
+- **The seed `CLAUDE.md` advertised `npm run status`, which no longer exists.** `scripts/status.sh`
+  was deleted in v1.15.0's install-footprint cut; the Commands line was never updated. A freshly
+  scaffolded workspace therefore told its own model to run a script the same version had removed.
+  The line also omitted `sync` and `tail`, which *are* shipped — wrong in both directions. Note
+  that `component_package_json` never overwrites an existing `package.json`, so workspaces
+  scaffolded before the cut still carry a working `status` entry locally and never tripped over
+  this; only new scaffolds did.
+
+- **`GOVERN_BATCH_MAX` was documented as `default 1 = off` in two places.** The real default has
+  been `2` since batching was re-keyed onto measured file overlap (`run-loop.sh:185`). `README.md`
+  had it right, `SKILL.md` and `templates/governor/README.md` did not — a genuine cross-doc
+  contradiction about whether a token-spend mechanism is on or off by default. A stale comment in
+  `run-loop.sh` itself claimed batching only fires "when the operator raised it above 1", which
+  described pre-re-key behavior. All four now agree: default `2`, `1` disables.
+
+- **`GOVERN_RUN_MAX_WORKERS` does not exist.** `templates/governor/README.md` cited it as the
+  run-level ceiling that low-friction triggers make more necessary. No shipped script reads it.
+  The knob that actually bounds a run's ticket count is `GOVERN_MAX_TICKETS`.
+
+- **Three references to commands retired in v1.15.0.** `CONTRIBUTING.md` listed `govern` among
+  `commands/*.md` (there is no `govern.md`; the trigger was cut deliberately, the loop was not),
+  the seed appendix pointed at `/govern`, and both the seed `CLAUDE.md` and the shipped
+  `flows` command pointed at `/resolve` — purged in v1.15.0 for zero measured invocations.
+
+- **Command tables under-documented the shipped script set.** `SKILL.md` and the seed appendix
+  each omitted several scripts the scaffolder really does emit (`sync`, `tail`, bare `worktree`,
+  `worktree:exec`, `govern:health`, `govern:dry-run`, `govern:validations`). Both tables now match
+  `component_package_json` exactly.
+
+Because seed upgrades are gated on byte-identity, an already-scaffolded workspace whose seed files
+are untouched will pick these up on the next `/shiploop:update`; one that edited them keeps its
+local copy and should re-check the two lines by hand.
+
 ## 1.17.1 — 2026-08-03
 
 ### Fixed

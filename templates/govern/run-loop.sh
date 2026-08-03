@@ -1430,8 +1430,8 @@ while :; do
     # #23 LOCALITY BATCHING — grow #N into a locality group before spawning. Exploration is the
     # dominant cost of a resolved ticket (~98% cacheRead), so three tickets in the same directory
     # handled by one worker pay discovery ONCE instead of three times. Only on a BACKLOG pull, only
-    # when the operator raised GOVERN_BATCH_MAX above its conservative default of 1, and never on the
-    # resume / #60-auto-escalate paths above (neither spawns a worker).
+    # when GOVERN_BATCH_MAX is above 1 (it defaults to 2, so batching is ON unless the operator turns
+    # it off), and never on the resume / #60-auto-escalate paths above (neither spawns a worker).
     #
     # Candidates come from the SAME selector the loop itself uses, probed with a growing exclude list
     # — so every eligibility filter (open escalation, not-automatable, already-an-issue, cross-run

@@ -20,8 +20,8 @@
    mechanical/lookup · `sonnet` = search/investigate/standard edits · inherit only for judgment-heavy
    synthesis or final review. Never size a ticket when filing one — the scout measures that.
 
-4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep,
-   `/resolve`, or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
+4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
+   or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
    **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
 
 ## Where knowledge goes
@@ -49,7 +49,7 @@ removing a sub-repo is a one-file edit there.
 
 ## Commands
 
-`npm run dev` · `status` · `doctor` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` · `govern`.
+`npm run dev` · `doctor` · `sync` · `tail` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` · `govern`.
 **Pass args after `--`.** Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list.
 
 ## Anti-patterns (load-bearing)

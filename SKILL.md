@@ -49,11 +49,17 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run dev` | Boot all sub-repos; tee output to `logs/<name>.log`. `-- --only a,b` to scope |
 | `npm run dev:<name>` | Boot one sub-repo |
 | `npm run doctor` | Health audit: tooling, env files, ports, sub-repo presence (+ project `doctor-extra.sh`) |
+| `npm run sync` | Pull/rebase every sub-repo onto its origin `main`, pruning dead branches |
+| `npm run tail` | Tail sub-repo dev logs, interleaved and prefixed by name |
 | `npm run worktree:new -- <slug>` | Allocate a slot; create isolated worktrees on branch `<slug>` |
 | `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
 | `npm run worktree:status` | Slot table (`-- --gc` prunes orphans) |
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
+| `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
 | `npm run govern` | Launch the autonomous ticket loop over the whole backlog (or say "work through the queue" — see Dispatch below) |
+| `npm run govern:health` | Governor health audit |
+| `npm run govern:dry-run` | Governor dispatch plan, nothing spawned |
+| `npm run govern:validations` | Run the governor validation suite |
 | `/shiploop:flows extract` | Inventory every user-facing path that might break (staged, no billing) |
 
 **Pass args/flags after the script with `--`** — npm/pnpm need it or they swallow the flags; yarn
@@ -169,12 +175,12 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   ticket, capped at the set size; naming exactly ONE ticket stays sequential. Precedence: `--serial` ›
   `--parallel=N` › bare `--parallel` › `GOVERN_PARALLEL=N` › `GOVERN_PARALLEL_DEFAULT`. Bounds are per
   driver, so ceiling = N × `GOVERN_MAX_TICKETS`, spend = N×.
-- **Locality batching (`GOVERN_BATCH_MAX`, default `1` = off).** Concurrency governs how many workers
-  run at once; batching governs how many tickets each one takes. `GOVERN_BATCH_MAX=N` groups up to N
-  same-area tickets (keyed on the leaf directory of `Files:`/`Where:`) into ONE worker — it explores
-  once and opens ONE PR (per-ticket commits), since exploration is the dominant cost of a resolved
-  ticket. Groups are disjoint by construction and never co-batch two tickets in a dependency
-  relation. Backlog pulls only.
+- **Locality batching (`GOVERN_BATCH_MAX`, default `2`; set to `1` to turn it off).** Concurrency
+  governs how many workers run at once; batching governs how many tickets each one takes.
+  `GOVERN_BATCH_MAX=N` groups up to N same-area tickets (keyed on the leaf directory of
+  `Files:`/`Where:`) into ONE worker — it explores once and opens ONE PR (per-ticket commits), since
+  exploration is the dominant cost of a resolved ticket. Groups are disjoint by construction and
+  never co-batch two tickets in a dependency relation. Backlog pulls only.
 - **Run-start reconcile runs once, in the orchestrator.** Apply escalation answers → regenerate
   `pending-escalations.json` → `preflight-main.sh` → externalization lane → NA-skip streak
   bookkeeping — this is whole-run state reconciliation against the one shared meta checkout, so it
