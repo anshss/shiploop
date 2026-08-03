@@ -55,7 +55,7 @@ prompt="$(cat "$PROMPT_FILE")
 ${prev_verdict:-(none — first supervisor pass this run)}
 
 ## Ticket outcomes since your last pass (newest last; earlier ones are folded into the verdict above)
-${new_since_last:-(none — nothing resolved/parked/failed since your last pass)}
+${new_since_last:-(none — no ticket has resolved/parked/failed since your last pass)}
 
 ## Open tickets — full blocks (upcoming candidates)
 $blocks
