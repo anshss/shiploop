@@ -4,6 +4,34 @@
 
 ### Changed
 
+- **The always-on cost of installing shiploop is cut 46%, and the half nothing was measuring is now
+  measured.** Two surfaces load into every session of a workspace that has the plugin installed and are
+  re-sent every turn. The seed `CLAUDE.md` was the known one, and the SessionStart digest has warned
+  when it exceeded 14,000 chars since it landed. The other was invisible: the plugin's own manifest
+  metadata — the `description:` frontmatter of `SKILL.md` and of every `commands/*.md` — which had
+  grown to ~4.4 KB, nearly as much as `CLAUDE.md` itself, with nothing watching it. `/setup`'s
+  description alone was 737 bytes of feature tour. A description's only job is to let the model decide
+  whether to invoke the command; the prose belongs in the body, which loads on invocation. Trimmed to
+  ~1.1 KB, preserving the routing signal that actually distinguishes siblings — `/push` and `/update`
+  now name each other as opposite directions of the same sync channel, and `/setup` points at both.
+
+  The seed `CLAUDE.md` was re-audited by **frequency of need**, not topic. A rule earns a place in a
+  file re-sent every turn if it fires often, **or** if violating it fails silently and unrecoverably —
+  nobody consults an appendix before `reset --hard`. Rules that are both rare *and* mechanically
+  backstopped moved to `CLAUDE-APPENDIX.md`: MCP-servers-at-root, one-root-package-manager (the root
+  `.gitignore` already blocks a second lockfile), and main-checkout-on-main (`check-main-on-main.sh`
+  re-checks it every session start). Rare-but-silent rules stayed — including never committing `.env`,
+  which is the sole control there, since `githooks/pre-commit` has no `.env` guard. The delegation rule
+  shrank because `router-posture-reminder.sh` already injects the full posture once per session, so the
+  core was paying twice for one instruction. The appendix now records the audit *test*, not just its
+  outcome. Net: seed `CLAUDE.md` 5,895 → 4,417 bytes, manifest 4,412 → 1,155, total 10,307 → 5,572.
+
+  So the manifest can't silently regrow, the free `wc -c` size-trigger in `learnings-digest.sh` now
+  covers it too, via `SHIPLOOP_MANIFEST_MAX_CHARS` (default 1400, measured against the summed
+  `description:` values). It resolves the plugin directory through the same candidate order as
+  `doctor.sh` and degrades completely silently when none resolves — a workspace without the plugin
+  installed pays nothing and sees nothing. Still no model invocation: the alarm costs zero when healthy.
+
 - **The internal ticket id is kept off PRs by default, in every workspace — not just public ones.**
   `#N` is a local queue id: it means nothing to anyone reading the repo, and it advertises a private
   tracker. Two controls existed, and both were narrower than the problem. The run-loop's

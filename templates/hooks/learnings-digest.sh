@@ -55,6 +55,61 @@ if [ -n "$CLAUDE_FILE" ] && [ -f "$CLAUDE_FILE" ]; then
   fi
 fi
 
+# --- free size-trigger: plugin manifest description surface over budget ----
+# CLAUDE.md isn't the only always-on tax: the INSTALLED PLUGIN's own manifest metadata —
+# the `description:` frontmatter of SKILL.md plus every commands/*.md — is loaded into
+# every session and re-sent every turn too (a command body only loads on invocation; its
+# frontmatter description does not wait for that). Nothing measured this surface before,
+# so it can silently regrow after a trim (precedent: the harness's own core-CLAUDE-30%
+# trim). Same pure `wc -c`-style measurement, no model call: sum just the description
+# field VALUES (not whole files — the body text only counts against budget on invocation).
+#
+# Locating the plugin dir is inherently best-effort — a user's workspace may have shiploop
+# installed as a plugin elsewhere on disk, checked out as a sub-repo, or not installed at
+# all. Mirror doctor.sh's hub-resolution candidate order (CLAUDE_PLUGIN_ROOT env, then the
+# known install paths, then a glob fallback) and DEGRADE SILENTLY — no output, no error —
+# the moment none of them resolve. Never let "I couldn't find the plugin" become an error
+# in what is otherwise a zero-cost, always-succeeds hook.
+MANIFEST_MAX_CHARS="${SHIPLOOP_MANIFEST_MAX_CHARS:-1400}"
+PLUGIN_DIR="${3:-${CLAUDE_PLUGIN_ROOT:-}}"
+if [ -z "$PLUGIN_DIR" ]; then
+  for _cand in "$HOME/.claude/skills/shiploop" \
+               "$HOME/.claude/plugins/cache/claude-plugins-official/shiploop"; do
+    [ -f "$_cand/SKILL.md" ] && { PLUGIN_DIR="$_cand"; break; }
+  done
+fi
+if [ -z "$PLUGIN_DIR" ]; then
+  for _cand in "$HOME"/.claude/plugins/*/shiploop "$HOME"/.claude/plugins/*/*/shiploop; do
+    [ -f "$_cand/SKILL.md" ] 2>/dev/null && { PLUGIN_DIR="$_cand"; break; }
+  done
+fi
+if [ -n "$PLUGIN_DIR" ] && [ -f "$PLUGIN_DIR/SKILL.md" ]; then
+  _manifest_files=("$PLUGIN_DIR/SKILL.md")
+  if [ -d "$PLUGIN_DIR/commands" ]; then
+    for _f in "$PLUGIN_DIR"/commands/*.md; do
+      [ -f "$_f" ] && _manifest_files+=("$_f")
+    done
+  fi
+  # FNR==1 resets `fence` per file, so each file's OWN frontmatter block is scoped
+  # independently — without this, concatenating multiple files' `---` delimiters
+  # would misalign which lines awk treats as "inside frontmatter".
+  manifest_size="$(
+    awk '
+      FNR == 1 { fence = 0 }
+      /^---[ \t]*$/ { fence++; next }
+      fence == 1 && /^description:[ \t]*/ {
+        val = $0
+        sub(/^description:[ \t]*/, "", val)
+        total += length(val)
+      }
+      END { print total + 0 }
+    ' "${_manifest_files[@]}"
+  )"
+  if [ -n "$manifest_size" ] && [ "$manifest_size" -gt "$MANIFEST_MAX_CHARS" ] 2>/dev/null; then
+    printf '── plugin manifest description surface is over budget (%s chars, budget %s) — re-triage: move prose from SKILL.md/commands/*.md `description:` frontmatter into the command body, which only loads on invocation ──\n' "$manifest_size" "$MANIFEST_MAX_CHARS"
+  fi
+fi
+
 # --- locate the file (arg wins; else the workspace root this script lives in) ---
 FILE="${1:-}"
 if [ -z "$FILE" ]; then
