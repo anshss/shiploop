@@ -20,27 +20,32 @@ done
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 LEARN="$T/learnings.md"; : > "$LEARN"   # entry-less — must not affect the CLAUDE.md check either way
 CLAUDE="$T/CLAUDE.md"
+# A nonexistent plugin dir, passed as $3 on every call below, to isolate this test from
+# whatever the CURRENT MACHINE happens to have installed at ~/.claude/skills/shiploop (or
+# CLAUDE_PLUGIN_ROOT) — otherwise the manifest-size check (see test-manifest-size-trigger.sh)
+# would bleed its own output into these CLAUDE.md-only assertions.
+NO_PLUGIN="$T/no-plugin-here"
 
 # ── under budget: silent ──────────────────────────────────────────────────────
 printf 'small file\n' > "$CLAUDE"
-out="$(bash "$DIGEST" "$LEARN" "$CLAUDE")"
+out="$(bash "$DIGEST" "$LEARN" "$CLAUDE" "$NO_PLUGIN")"
 assert_eq "$out" "" "under budget: no output at all (learnings empty + CLAUDE.md small)"
 
 # ── over budget (default 14000): reminder fires, names the actual size ───────
 head -c 21000 /dev/zero | tr '\0' 'x' > "$CLAUDE"
-out="$(bash "$DIGEST" "$LEARN" "$CLAUDE")"
+out="$(bash "$DIGEST" "$LEARN" "$CLAUDE" "$NO_PLUGIN")"
 assert_contains "$out" "CLAUDE.md" "over budget: reminder mentions CLAUDE.md"
 assert_contains "$out" "CLAUDE-APPENDIX.md" "over budget: reminder points at CLAUDE-APPENDIX.md as the overflow destination"
 assert_contains "$out" "21000" "over budget: reminder names the measured size"
 
 # ── SHIPLOOP_CLAUDEMD_MAX_CHARS override honored ─────────────────────────────
 printf 'twelve chars\n' > "$CLAUDE"   # 13 bytes incl newline
-out="$(SHIPLOOP_CLAUDEMD_MAX_CHARS=5 bash "$DIGEST" "$LEARN" "$CLAUDE")"
+out="$(SHIPLOOP_CLAUDEMD_MAX_CHARS=5 bash "$DIGEST" "$LEARN" "$CLAUDE" "$NO_PLUGIN")"
 assert_contains "$out" "budget 5" "override: a lowered SHIPLOOP_CLAUDEMD_MAX_CHARS trips on a normally-small file"
 
 # ── missing CLAUDE.md: no error, no output from this check ───────────────────
 rm -f "$CLAUDE"
-out="$(bash "$DIGEST" "$LEARN" "$CLAUDE" 2>&1)"
+out="$(bash "$DIGEST" "$LEARN" "$CLAUDE" "$NO_PLUGIN" 2>&1)"
 assert_not_contains "$out" "CLAUDE.md is over budget" "missing CLAUDE.md: never fabricates a size warning"
 
 assert_done
