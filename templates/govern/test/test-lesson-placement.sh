@@ -93,5 +93,33 @@ run_bk "$rpt4"
 assert_contains "$(cat "$T/CLAUDE.md")" "$lesson4" "no-signal: lesson stayed in root CLAUDE.md"
 assert_contains "$(cat /tmp/bk-log.$$)" "no sub-repo path signal" "no-signal: reason logged as no-signal"
 
+# ── 5. lesson recommends itself be added to its OWN sub-repo's CLAUDE.md → STILL REDIRECTED ──
+# A lesson naming "<repo>/CLAUDE.md" is ordinary self-referential phrasing ("put this rule in
+# alpha/CLAUDE.md"), not a cross-cutting signal — only a BARE/root "CLAUDE.md" mention, or another
+# repo's CLAUDE.md, should force root (govern::lesson_placement's self-reference scrub).
+reset_all
+lesson5='Document in alpha/CLAUDE.md that alpha/scripts/deploy.sh needs AWS_PROFILE set first.'
+rpt5=$(jq -n --arg t "$lesson5" '{status:"resolved",pr:{repo:"alpha",number:1},newTickets:[],lessonPatch:{file:"CLAUDE.md",anchor:null,text:$t}}')
+run_bk "$rpt5"
+assert_not_contains "$(cat "$T/CLAUDE.md")" "$lesson5" "self-reference: root CLAUDE.md NOT touched"
+assert_contains "$(cat "$T/alpha/CLAUDE.md")" "$lesson5" "self-reference: lesson still redirected into alpha/CLAUDE.md"
+assert_contains "$(cat /tmp/bk-log.$$)" "redirected root CLAUDE.md -> alpha/CLAUDE.md" "self-reference: redirect logged"
+
+# ── 6. sub-repo push fails (e.g. branch protection / no credential / rejected) → FALLS BACK TO ROOT ──
+# Give alpha a real-looking origin that can never be reached, and DON'T set GOVERN_NO_PUSH so the
+# push actually gets attempted (and fails). The redirect must roll back alpha's working tree to
+# clean AND still land the lesson in root CLAUDE.md — never silently lost.
+reset_all
+( cd "$T/alpha" && git remote add origin "file:///nonexistent/$$/alpha.git" )
+lesson6='Always vendor the alpha/vendor/lockfile.json before running alpha/scripts/build.sh.'
+rpt6=$(jq -n --arg t "$lesson6" '{status:"resolved",pr:{repo:"alpha",number:1},newTickets:[],lessonPatch:{file:"CLAUDE.md",anchor:null,text:$t}}')
+printf '%s' "$rpt6" \
+  | GOVERN_TICKETS_FILE="$T/tickets.md" bash "$BK" 9 >/tmp/bk-out.$$ 2>/tmp/bk-log.$$
+assert_contains "$(cat "$T/CLAUDE.md")" "$lesson6" "push-fails: lesson FELL BACK to root CLAUDE.md"
+assert_not_contains "$(cat "$T/alpha/CLAUDE.md")" "$lesson6" "push-fails: alpha/CLAUDE.md NOT left with the lesson"
+assert_eq "$(cd "$T/alpha" && git status --porcelain | wc -l | tr -d ' ')" "0" "push-fails: alpha working tree left CLEAN (no dirty/half-applied edit)"
+assert_contains "$(cat /tmp/bk-log.$$)" "falling BACK TO ROOT" "push-fails: fallback logged"
+( cd "$T/alpha" && git remote remove origin )
+
 rm -f /tmp/bk-out.$$ /tmp/bk-log.$$
 assert_done

@@ -838,12 +838,39 @@ govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
       "${name_hits[*]}" "${path_hits[0]}"
     return 0
   fi
-  if printf '%s\n' "$text" | grep -qiE "$GOVERN_LESSON_CROSSCUT_RE"; then
+  # Scrub "<the matched repo>/CLAUDE.md" before the cross-cutting check — a lesson that legitimately
+  # recommends itself be added to ITS OWN sub-repo's CLAUDE.md (very common, ordinary phrasing) must
+  # not be forced to root just because it names that file. A BARE "CLAUDE.md" / "root CLAUDE.md"
+  # (the orchestration doc itself) or a DIFFERENT repo's CLAUDE.md still counts as cross-cutting
+  # signal — only the self-reference is exempted. Lowercase first (sed has no portable case-insensitive
+  # flag across GNU/BSD); GOVERN_LESSON_CROSSCUT_RE is written in lowercase to match.
+  local lower_text scrubbed
+  lower_text="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
+  scrubbed="$(printf '%s\n' "$lower_text" | sed "s#${path_hits[0]}/claude\\.md##g")"
+  if printf '%s\n' "$scrubbed" | grep -qE "$GOVERN_LESSON_CROSSCUT_RE"; then
     printf '\tcross-cutting signal word present alongside %s — staying at root\n' "${path_hits[0]}"
     return 0
   fi
   printf '%s\tunambiguous: only %s referenced, as a path, no second sub-repo or cross-cutting word\n' \
     "${path_hits[0]}" "${path_hits[0]}"
+}
+
+# Insert lesson TEXT into FILE: after ANCHOR's line if ANCHOR is non-empty and present in FILE,
+# else appended at EOF. Shared by the root and sub-repo lesson-insert paths in govern-bookkeep.sh
+# so the two never drift. Pass TEXT via a FILE read with getline — NEVER `awk -v t="$text"`: awk's
+# -v cannot hold literal newlines, so multi-line lesson text dies with "awk: newline in string".
+govern::insert_lesson() { # <file> <anchor> <text>
+  local file="$1" anchor="$2" text="$3" tmpf tf
+  if [[ -n "$anchor" ]] && grep -qF "$anchor" "$file"; then
+    tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$text" > "$tf"
+    awk -v a="$anchor" -v tf="$tf" '
+      index($0,a) && !done { print; print ""; while ((getline line < tf) > 0) print line; close(tf); done=1; next }
+      { print }
+    ' "$file" > "$tmpf"
+    mv "$tmpf" "$file"; rm -f "$tf"
+  else
+    printf '\n%s\n' "$text" >> "$file"
+  fi
 }
 
 # ── validation gate decision (#67 + #73) ─────────────────────────────────────
