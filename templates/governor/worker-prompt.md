@@ -251,6 +251,7 @@ Field rules:
   project configured a migrate command. `destructive:true` = DROP / rename / type-change /
   NOT-NULL-without-default / data-backfill — the governor will NOT auto-merge; it escalates. **Be
   conservative: if unsure, mark `destructive:true`.** `null` if no schema change.
+<!-- GOVERN:SECTION validation -->
 - `validation`: set for a **validation / test / spike** ticket (see the section above).
   `required:true` + `ranLiveTest:true` + a concrete `evidence` string ONLY if you actually ran the
   test this run; if you could not run it, `ranLiveTest:false` and PARK (don't report `resolved`).
@@ -268,6 +269,7 @@ Field rules:
   - `environment` (`"local"` | `"prod"`) — where the run happened. A local pass is NOT a
     prod-liveness claim; a flow marked `Env-required: prod` only stamps PASS on a prod run.
   - `flowIds` (array) — echo of the ticket's `Flow:` ids you validated (cross-check for the stamp).
+<!-- GOVERN:END validation -->
 - Use `null` for `pr`/`prs`/`lessonPatch`/`escalation`/`migration`/`validation` when N/A; `[]` for empty arrays.
 - `status` MUST reflect reality: `resolved` only if a PR is open; `parked` if you escalated; `failed`
   if you could not complete and did not cleanly escalate. A validation ticket is `resolved` ONLY with
