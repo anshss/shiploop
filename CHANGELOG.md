@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.16.0 — 2026-08-03
+
+### Changed
+
+- **Relicensed from MIT to the Apache License 2.0.** The project is still permissively licensed and
+  commercial use is still permitted — Apache 2.0 grants the same freedoms MIT did. What it adds is an
+  express patent grant (§3, with reciprocal termination if a user sues a contributor for patent
+  infringement over the work), a trademark reservation (§6, so a fork cannot keep calling itself
+  shiploop), a requirement that modified files carry a change notice (§4b), and NOTICE-file
+  propagation into derivatives (§4d). A `NOTICE` file now ships alongside `LICENSE`.
+
+  MIT left the patent question unanswered — an implied license is arguable but untested — and its only
+  condition was retaining the copyright line. For a plugin distributed through a marketplace, where
+  fork-and-rebrand is the realistic failure mode, the attribution and trademark terms are the practical
+  gain; the patent grant is the legal one. The one real cost is GPLv2 incompatibility: Apache's patent
+  and indemnity terms count as additional restrictions under GPLv2, so shiploop can no longer be
+  combined into a GPLv2-only project. Nothing here links against GPLv2 code.
+
+  **Releases up to and including v1.15.1 remain under MIT** and stay available under those terms —
+  relicensing binds future releases only. Sole authorship meant no contributor consent was required.
+
 ## 1.15.1 — 2026-08-03
 
 ### Fixed

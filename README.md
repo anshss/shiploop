@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/anshss/shiploop/actions/workflows/ci.yml"><img src="https://github.com/anshss/shiploop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
 A self-improving multi-agent harness for Interactive Coding Agents. It grinds a ticket backlog across every repo in your product: a fresh headless agent per ticket, guarded auto-merge on green CI, and a durable lesson written into your tracked `CLAUDE.md` after every resolved ticket.
@@ -258,4 +258,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Everything the scaffolder installs lives
 
 ## License
 
-MIT.
+[Apache License 2.0](LICENSE). Includes an express patent grant and a
+trademark reservation; redistributions must carry the [NOTICE](NOTICE) file
+and state any changes made. Releases up to and including v1.15.1 were
+published under the MIT license and remain available under those terms.
