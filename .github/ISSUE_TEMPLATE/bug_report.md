@@ -27,13 +27,13 @@ If the bug reproduces inside an already-scaffolded workspace (not against a fres
 Which part of the harness does the bug live in? Pick the closest.
 
 - [ ] `scaffold.sh` — scaffolding a fresh or existing workspace
-- [ ] `commands/*.md` — a slash command's behavior (`setup`, `govern`, `investigate`, `resolve`)
+- [ ] `commands/*.md` — a slash command's behavior (`setup`, `update`, `govern`, `flows`, `push`)
 - [ ] `templates/govern/` — the governor driver, ticket selector, merge-PR, supervisor
 - [ ] `templates/worktree/` — worktree allocation, slots, ports
 - [ ] `templates/githooks/` — `pre-push`, `prepare-commit-msg`, `pre-commit`
 - [ ] `templates/hooks/` — SessionStart / UserPromptSubmit / PreToolUse / Stop / SessionEnd
 - [ ] `templates/lib/workspace.sh` — the config file
-- [ ] A cross-cutting workspace script (`status.sh`, `doctor.sh`, `dev.sh`, `pull-all.sh`, `push-prs.sh`, `sync.sh`, `health.sh`, `tail.sh`, `investigate.sh`)
+- [ ] A cross-cutting workspace script (`doctor.sh`, `dev.sh`, `sync.sh`, `tail.sh`)
 - [ ] CI (`.github/workflows/ci.yml`)
 - [ ] Plugin packaging (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `install.sh`)
 - [ ] Documentation (`README.md`, `SKILL.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`)

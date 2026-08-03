@@ -93,7 +93,7 @@ tickets on its next pass and stamps each flow's verdict back into the registry.
 
 An INEFFECTIVE flow (measured worthless) is a **deletion candidate, not a fix candidate**. When a gated
 validation parks gate-failed, the governor raises a disposition escalation whose options include
-**`kill`**. Answer it `kill` (via `/resolve` / the escalation answer flow) and at the next run-start
+**`kill`**. Answer it `kill` (via the escalation answer flow) and at the next run-start
 `escalations-apply-answers.sh` marks the flow kill-pending and files a normal removal ticket; when that
 ticket's PR opens, bookkeep **tombstones** the flow (history survives — a revived feature starts from its
 record, re-extraction can't resurrect it as new). A pending kill whose flow goes STALE first is

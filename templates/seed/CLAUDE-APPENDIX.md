@@ -18,13 +18,7 @@ writeup. Append freely — there is no length budget on this file.
 |---------|---------|
 | `npm run dev` | Boot all sub-repos (`-- --only a,b` to scope); tee output to `logs/<name>.log` |
 | `npm run dev:<name>` | Boot one sub-repo |
-| `npm run status` | Branch / dirty / ahead / behind / PR# / CI per repo |
 | `npm run doctor` | Health audit: tooling, env, ports, repo presence |
-| `npm run branch -- <name>` | Create a branch across repos (`--only a,b` to scope) |
-| `npm run switch -- <name>` | Checkout a branch across all (tracks origin if local missing) |
-| `npm run pull` | `git pull --ff-only` per repo |
-| `npm run push` | Push changed repos and open PRs |
-| `npm run health` | curl each dev server |
 | `npm run worktree:new -- <slug>` | Allocate a slot; create isolated worktrees on branch `<slug>` |
 | `npm run worktree:rm -- <slug>` | Clean up + remove a worktree, free its slot |
 | `npm run worktree:status` | List allocated worktree slots |
