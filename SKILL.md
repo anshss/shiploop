@@ -94,10 +94,19 @@ A durable, file-based backlog the whole harness reads.
 - **`tickets-parked.md`** — defer a ticket by moving it here; the governor ignores it. Independent
   serial numbering (renumber to destination max+1 when moving).
 - **Resolved = a fix PR is OPENED** (not merged). DELETE the entry the same session the PR opens,
-  referencing the PR# in the deletion commit. Promote any durable lesson to `CLAUDE.md` first.
+  referencing the PR# in the deletion commit. Promote any durable lesson first — root-worthy via
+  `lessonPatch`, sub-repo-scoped by editing that sub-repo's own `CLAUDE.md` inside the PR.
 - **Close-out discipline** — when the PR opens: promote the durable lesson, delete the entry, then
   sweep the session diff for newly-discovered gaps (fold into open tickets by default; mint a new
   number only for independently dispatchable work).
+- **Placement gate on `lessonPatch` (#83)** — root `CLAUDE.md` is re-sent every turn of every
+  session, so a lesson that is really one sub-repo's internals permanently taxes sessions that never
+  touch that sub-repo. `govern-bookkeep.sh` doesn't trust the reporting worker's placement claim: it
+  re-derives scope from the lesson text itself (`govern::lesson_placement` in `lib/common.sh`) and
+  redirects — committing straight into `<sub-repo>/CLAUDE.md` — ONLY when exactly one sub-repo is
+  referenced as a path, no second sub-repo is named anywhere in the text, and no cross-cutting signal
+  (governor / workspace.sh / meta-repo / …) is present. Any less clear-cut case stays at root; either
+  outcome is logged for audit.
 - The **Stop hook** (`ticket-sweep-reminder.sh`) fires once at the end of a code-touching session
   (marker-gated on session_id, honors `stop_hook_active`) reminding you to file/delete tickets.
   Read-only sessions stop silently.
