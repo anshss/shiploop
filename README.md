@@ -69,7 +69,7 @@ Two things worth knowing up front. Running four agents at once is the default (`
 /plugin install shiploop@shiploop
 ```
 
-This installs the plugin once, globally: commands appear as `/shiploop:setup`, `/shiploop:govern`, `/shiploop:flows`, etc. in every session. Each project you want shiploop on then gets its own one-time setup (next section). Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Same commands, same layout.
+This installs the plugin once, globally: commands appear as `/shiploop:setup`, `/shiploop:flows`, etc. in every session — the ticket loop itself isn't a command, it's natural language ("work through the queue") onto `scripts/govern/run-loop.sh` (see [Quickstart](#3-file-one-ticket-watch-it-ship)). Each project you want shiploop on then gets its own one-time setup (next section). Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Same commands, same layout.
 
 ## Quickstart
 
@@ -119,9 +119,9 @@ From the workspace root:
 scripts/govern/file-ticket.sh "Fix empty-state copy on /settings"   # into queue/tickets.md
 bash scripts/govern/config-check.sh   # free smoke test, no tokens, no Claude auth
 ```
-```
-/shiploop:govern                      # fresh worker → edits → PR → waits for CI
-```
+
+Then just say **"work on that ticket"** (or "work through the queue" for the whole backlog) — Claude
+maps it straight onto `scripts/govern/run-loop.sh`: fresh worker → edits → PR → waits for CI.
 
 New workspaces start on the **pr-only** rung: workers open PRs, the governor never merges. You click merge. When you've read enough of a repo's PRs to trust the pattern, add it to `GOVERN_MERGE_REPOS` and its green-CI PRs auto-merge, guarded ([Trust](#trust)).
 
@@ -158,14 +158,14 @@ What makes the top rung safe to reach for:
 - **Bounded blast radius.** Workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
 - **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
 
-Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample skews `opus`-heavy on self-referential harness tickets; right-sizing (haiku/sonnet on tickets that don't need opus) pushes it down. `config-check.sh` is the only truly free smoke ($0, no auth); `/shiploop:govern --dry-run` runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
+Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample skews `opus`-heavy on self-referential harness tickets; right-sizing (haiku/sonnet on tickets that don't need opus) pushes it down. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
-| `/shiploop:govern` | Ship your backlog: the bash-driven ticket loop, end to end |
+| *(say "work on \<tickets\>" / "work through the queue")* | Ship your backlog: natural language onto the bash-driven ticket loop (`scripts/govern/run-loop.sh`), end to end |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |

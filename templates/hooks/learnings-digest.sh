@@ -35,6 +35,29 @@ set -uo pipefail
 MAX_ENTRIES="${SHIPLOOP_LEARNINGS_MAX_ENTRIES:-3}"   # newest N entries
 MAX_LINES="${SHIPLOOP_LEARNINGS_MAX_LINES:-40}"      # hard ceiling on injected lines
 
+# TTL demotion (#87). Past the ~2-week window the seed documents, an entry degrades to a
+# TITLE-ONLY line instead of being dropped: deleting a still-true measurement just makes a future
+# session re-derive it, while re-injecting its full body forever is the ratchet we're trying to
+# stop. Ships INERT — SHIPLOOP_LEARNINGS_TTL=0 is today's behaviour exactly; set it to 1 to enable.
+TTL_ON="${SHIPLOOP_LEARNINGS_TTL:-0}"                # 0 = off (no behaviour change)
+TTL_DAYS="${SHIPLOOP_LEARNINGS_TTL_DAYS:-14}"        # the window the seed documents
+# Structure lint (#87): ONE line, and only when the file is actually malformed. Ships INERT;
+# set SHIPLOOP_LEARNINGS_LINT=1 to enable. Silent when healthy — that is the whole contract.
+LINT_ON="${SHIPLOOP_LEARNINGS_LINT:-0}"              # 0 = off (no behaviour change)
+# Test seam: pin "today" so TTL assertions don't drift with the wall clock.
+TODAY="${SHIPLOOP_LEARNINGS_TODAY:-$(date +%Y-%m-%d 2>/dev/null || echo 0000-00-00)}"
+
+# Day number for a YYYY-MM-DD, for DIFFERENCES only. Deliberately not `date -d` (GNU-only) or
+# `date -j -f` (BSD-only) — this hook runs on both. Prints nothing for an unparseable date.
+_ld_days() { # YYYY-MM-DD -> integer
+  awk -v d="$1" 'BEGIN {
+    if (d !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) exit 1
+    y = substr(d,1,4) + 0; m = substr(d,6,2) + 0; dd = substr(d,9,2) + 0
+    if (m < 3) { y--; m += 12 }
+    printf "%d\n", int(365.25 * y) + int(30.6001 * (m + 1)) + dd
+  }' 2>/dev/null
+}
+
 # --- free size-trigger: root CLAUDE.md over budget --------------------------
 # Pure `wc -c`, no model invocation — costs nothing when the file is healthy. Runs
 # unconditionally (before any of the learnings-entry logic/early-exits below) so it fires
@@ -118,9 +141,65 @@ if [ -z "$FILE" ]; then
 fi
 [ -f "$FILE" ] || exit 0
 
+# --- structure lint: orphaned heading / orphaned body ------------------------
+# The digest slices the file at headings, so a heading whose body drifted away from it (a later
+# entry appended BETWEEN the two — a real, observed failure) gets injected as a garbled slice at
+# every single SessionStart, silently, forever. Two shapes are detectable without judgement:
+#   * ORPHANED HEADING — an entry whose body has no non-blank line at all.
+#   * ORPHANED BODY    — non-blank content sitting after the preamble's last `---` rule but BEFORE
+#                        the first entry heading, in a file that DOES have entries. (The seed's
+#                        `_(empty — …)_` placeholder is excluded, and a file with no entries at all
+#                        is never linted — neither is a defect.)
+# One line, only when broken, never an error. Off unless SHIPLOOP_LEARNINGS_LINT=1.
+if [ "$LINT_ON" = "1" ]; then
+  lint="$(awk '
+    {
+      if ($0 ~ /^[ \t]*(```|~~~)/) { fence = !fence; next }
+      if (!fence && $0 ~ /^##+[ \t]/) {
+        if (nh > 0 && body == 0) { oh++; if (ohl == 0) ohl = curline }
+        nh++; curline = NR; body = 0; next
+      }
+      if (nh == 0) {
+        if (!fence && $0 ~ /^---[ \t]*$/) { ob = 0; obl = 0; rule = NR; next }
+        if (rule > 0 && !fence && $0 !~ /^[ \t]*$/ && $0 !~ /^_\(/) {
+          ob++; if (obl == 0) obl = NR
+        }
+        next
+      }
+      if ($0 !~ /^[ \t]*$/) body++
+    }
+    END {
+      if (nh > 0 && body == 0) { oh++; if (ohl == 0) ohl = curline }
+      if (nh == 0) { oh = 0; ob = 0 }
+      printf "%d\t%d\t%d\t%d\n", oh + 0, ohl + 0, ob + 0, obl + 0
+    }
+  ' "$FILE" 2>/dev/null)" || lint=""
+  if [ -n "$lint" ]; then
+    l_oh="$(printf '%s' "$lint" | cut -f1)"; l_ohl="$(printf '%s' "$lint" | cut -f2)"
+    l_ob="$(printf '%s' "$lint" | cut -f3)"; l_obl="$(printf '%s' "$lint" | cut -f4)"
+    l_msg=""
+    [ "${l_oh:-0}" -gt 0 ] 2>/dev/null && l_msg="${l_oh} heading(s) with no body (first at line ${l_ohl})"
+    if [ "${l_ob:-0}" -gt 0 ] 2>/dev/null; then
+      [ -n "$l_msg" ] && l_msg="$l_msg, "
+      l_msg="${l_msg}${l_ob} orphaned body line(s) before the first heading (first at line ${l_obl})"
+    fi
+    [ -n "$l_msg" ] && printf '── %s is malformed: %s — the digest slices at headings, so this injects garbled every session; reunite the heading with its body ──\n' "$FILE" "$l_msg"
+  fi
+fi
+
 # --- index the entries: "date<TAB>start<TAB>end", one per heading -------------
 # Zero-padded line numbers so a plain `sort -r` orders by date DESC and then by
 # position DESC (later entry = newer) without a second numeric key.
+#
+# KNOWN, DELIBERATELY UNFIXED FLAW — read this before trusting the ranking. The date below is the
+# one TYPED INTO THE HEADING: a self-report about when someone wrote the entry, not a fact about
+# whether the entry is still TRUE. When several entries share a date, ties break by file position,
+# so "3 newest of 7" really means "whichever same-date entries sit lowest in the file". The
+# consequence is asymmetric: this ranking can promote an entry into every session forever, and it
+# can never demote one. The TTL demotion above is a MITIGATION of that asymmetry, not a fix — the
+# fix is the convention the seed documents (entries are dated OBSERVATIONS carrying source and n; a
+# new measurement REWRITES the old entry in place rather than sitting beside it), because no TTL
+# can tell "was true, now false" apart from "was never true".
 index="$(awk '
   # Fenced code blocks are NOT entry boundaries. Learnings routinely quote shell (`## comment`) or
   # markdown, and the seed itself documents the entry format inside a fence — without this guard the
@@ -148,9 +227,22 @@ total="$(printf '%s\n' "$index" | grep -c .)"
 picked="$(printf '%s\n' "$index" | sort -r | head -n "$MAX_ENTRIES")"
 [ -n "$picked" ] || exit 0
 
+TODAY_DAYS="$(_ld_days "$TODAY")"
+
 body="$(
   printf '%s\n' "$picked" | while IFS="$(printf '\t')" read -r _d s e; do
     [ -n "$s" ] || continue
+    # TTL demotion: past TTL_DAYS the entry degrades to its TITLE ONLY. Never deleted — a still-true
+    # measurement that vanishes just gets re-derived at full cost by a future session. Undated
+    # entries (0000-00-00) are never aged out: there is no date to age them against.
+    if [ "$TTL_ON" = "1" ] && [ "$_d" != "0000-00-00" ] && [ -n "$TODAY_DAYS" ]; then
+      _ed="$(_ld_days "$_d")"
+      if [ -n "$_ed" ] && [ "$((TODAY_DAYS - _ed))" -gt "$TTL_DAYS" ] 2>/dev/null; then
+        sed -n "${s}p" "$FILE" 2>/dev/null
+        printf '  _(older than %s days — title only; body in %s)_\n' "$TTL_DAYS" "$FILE"
+        continue
+      fi
+    fi
     sed -n "${s},${e}p" "$FILE" 2>/dev/null
   done | sed -e 's/[[:space:]]*$//' | cat -s | head -n "$MAX_LINES"
 )"

@@ -63,7 +63,7 @@ govern::pregate_live_root() { # -> abs path of the workspace root ("" if undeter
 }
 
 # Extract candidate live FILE paths from #N's Where:/Files: line. Unlike
-# govern::ticket_locality (which peels down to a leaf DIRECTORY key for batching) this keeps
+# govern::ticket_paths (which yields MEASURED file paths for batching) this keeps
 # the full path — the drift question is per-file. Conservative on purpose: a token must be a
 # literal, glob-free, prefix-allowed path, and every filter below drops rather than guesses.
 govern::pregate_where_paths() { # N [tickets-file] -> repo-relative paths, one per line

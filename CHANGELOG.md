@@ -1,5 +1,148 @@
 # Changelog
 
+## 2.0.0 — 2026-08-03
+
+The cost of a run is `Σ(bytes × turns_remaining) × tier_price`. Only the tier is a number you can set;
+the rest is growth rate. This release reprices the tier, removes work that never needed a model, and
+puts a ceiling on the one file that was allowed to grow forever.
+
+All measurements below are first-party, taken 2026-08-03 from `governor/ticket-history.jsonl`, the five
+cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assistant turns).
+
+### Removed
+
+- **The `/govern` and `/shiploop:govern` commands are gone. The loop is not.** Dispatch is now plain
+  language onto the same substrate — `"work on 42 51 63"`, `"work on all the tickets on queue"`,
+  `"work through the queue while I'm out"`. These differ only in selection and count, so a later
+  session still reaps workers an earlier one launched. Detached workers, claim locks, verdict files,
+  resumable worktrees and reaping — the only things that survive a closed laptop — are untouched. The
+  command's doctrine moved into `SKILL.md`; the retired workspace-local twin is listed in
+  `templates/lib/purge.txt`, so `/shiploop:update` removes it from existing fleets.
+
+  Lowering trigger friction *raises* the need for a ceiling: a slash command was a deliberate act, a
+  sentence is not. See `GOVERN_RUN_MAX_TOKENS` below.
+
+- **The scout no longer decides a tier.** `scout::score()`, the HARD gate, the scoring table, and the
+  `--verdict` / `--score` modes are deleted. Its gate was a disjunction, so one disqualifier won
+  outright and `testsCover==false` alone forced opus — a rubber stamp, not arbitrage. **4 of the 5
+  verdicts it ever cached were `opus/high`.** Three tickets it sized `opus` were run at sonnet and
+  resolved on attempt 1 for $1.34–$2.95; the one actually dispatched at opus cost **$20.18**.
+
+  The scout stays, as a **surveyor**: it still greps real code and now emits verified `targetPaths`
+  (`--paths`) plus a `deterministic` patch field (`--deterministic`). Net less code.
+
+### Changed
+
+- **Tier floor split from escalation ceiling — sonnet-first.** `GOVERN_WORKER_MODEL` is now `sonnet`
+  (the first-attempt floor) and the new `GOVERN_WORKER_ESCALATION_MODEL` is `opus` (the retry
+  ceiling). These were one variable, so lowering it alone would have silently made a failed sonnet
+  attempt "escalate" to sonnet — disabling the rail that makes sonnet-first safe.
+
+  Measured cost per ticket: opus **$8.94** · sonnet **$2.22** · haiku **$0.59**. Failures are also
+  cheap relative to successes (2.28M tokens vs 11.25M) because a worker out of its depth dies early —
+  so a wrong cheap bet costs far less than a right expensive one. Absence of evidence now routes
+  **down**; escalation is the only way up. `GOVERN_SYNC_PORTER_MODEL` is pinned to `opus` rather than
+  inheriting the worker floor.
+
+- **Escalation now provably fires at most once per ticket.** It previously held only by accident: the
+  cap was on consecutive *runs*, not on escalations, and nothing recorded "already escalated".
+  `GOVERN_RESOLVE_CONFLICT` could buy the ceiling tier a second time inside one run under a single
+  failure count. It is now pinned to class `ci` (tier unchanged, as `GOVERN_FIX_CI` already was), and
+  a `.governor-escalated` stamp lives in the preserved worktree — the same artifact whose existence is
+  the retry signal, so the two cannot rot apart. Kill switch `GOVERN_ESCALATE_ONCE=0`.
+
+- **Batching re-keyed onto measured file overlap.** `govern::ticket_locality` is replaced by
+  `govern::ticket_paths` + `govern::paths_overlap`. The old key parsed the `Where:` **prose** line for
+  a leaf directory name — prose written before anything was measured, the same failure that retired
+  the `Model:`/`Effort:` fields — and leaf names collapse a backlog into a couple of buckets, making
+  grouping arbitrary. Arbitrary grouping is the losing side of the trade: no discovery shared, full
+  accumulation paid, and accumulation is superlinear. Now a candidate joins a group only if it shares
+  an **exact file path** with the group's seed, and **no measurement means no batch**. Only with that
+  fixed did `GOVERN_BATCH_MAX` rise from `1` to `2`; raising the cap first would have made it worse.
+
+- **The worker prompt is 34.3% smaller — 22,819 → 14,988 bytes.** It is injected on every turn of a
+  218-turn session, so a byte here is paid ~218 times. It had never been compressed because three
+  tests pinned its exact prose; those now assert structure and machine contract (marker counts, JSON
+  keys their consumers actually read) instead, so the lever stays unlocked rather than re-breaking on
+  the next pass. The rendered per-turn prompt for an ordinary ticket falls 14,779 → 11,042 bytes.
+
+### Added
+
+- **Zero-model resolution (`deterministic-apply.sh`).** The largest arbitrage is not opus→sonnet (~5×)
+  but **model → no model**, which is unbounded. When the scout can name a fully mechanical change —
+  flip a default, add a key, bump a version, delete a stale line, apply a known rename — the patch
+  applies, the suite runs, the PR opens, and no worker is spawned. It rides on the scout's existing
+  call and adds no model call of its own. Aggressively conservative: any ambiguity falls through to a
+  normal worker. Reports carry `"zeroModel": true`. `GOVERN_DETERMINISTIC=1` to enable.
+
+- **A persistent, deterministic codebase index (`codebase-index.sh`).** file→symbols, test→files
+  covered, module→dependents, built from git/grep/ctags and rebuilt after each resolved ticket.
+  Exploration is the dominant cost of a resolved ticket and every worker paid it cold: `Read` is 7.7%
+  of a worker's tool calls but **31% of returned bytes, at 6,145 B/call**. Never model-generated — that
+  would be a recurring bill *and* would rot.
+
+- **A staleness gate (`staleness-gate.sh`).** The queue is partly machine-generated, so it accumulates
+  duplicates and already-fixed entries; discovering that cost a **full worker**. Bash only, fail-open —
+  only positive evidence (every named path gone, or the named failing test now passing) skips a ticket.
+  `GOVERN_STALENESS_GATE=1`. Executing a test command read out of the queue is a **separate** opt-in
+  (`GOVERN_STALENESS_RUN_TESTS=1`), because the queue is machine-written and a stat() is not a `bash -c`.
+
+- **Early abort + warm escalation.** A doomed worker burned nearly its whole budget before failing. A
+  third watchdog reads the live JSONL for deterministic pathologies — no file edits in N turns, the
+  same command repeated M times, a rising tool-error rate — and kills at ~turn 30 instead of 218.
+  Because retries are **cold** (no `--resume`; a retry is a fresh `-p` in the preserved worktree), the
+  dying worker now writes a structured *ruled out / stopped at / would try next* handoff block that the
+  escalated attempt starts from. `GOVERN_EARLY_ABORT=1`.
+
+- **Verification output filtered to failures (`verify-filter.sh`).** `Bash` returns 64.6% of a worker's
+  tool bytes and a worker is an edit→test→edit loop; a passing run's output carries near-zero
+  information and is re-read every later turn. A green suite becomes one line; failures print in full;
+  the exit code passes through. This *prevents* bytes entering rather than truncating them after —
+  capping tool results was explicitly rejected, since the size distribution has no upper tail (a 100 KB
+  cap saves 0.0%).
+
+- **The failing CI log is handed to the CI-fix retry (`ci-log.sh`).** Workers verify on macOS while CI
+  runs Linux. `GOVERN_FIX_CI` was read in exactly one place — to pin the retry class — so the
+  redispatched worker got a byte-identical prompt and rediscovered the failure at full price with the
+  answer sitting in a log file. `gh` only, fail-open, bounded excerpt.
+
+- **Allocation gates.** `GOVERN_SELFREF_MAX_PER_RUN` caps how many harness-about-harness tickets one
+  run may dispatch, and `GOVERN_PRODUCT_FIRST=1` sorts product work ahead of it. The loop files
+  tickets about itself, pays full worker price, and files more; `CLAUDE.md` stated the principle —
+  *gate dispatch cost, never discovery* — but nothing enforced it. Discovery, filing and triage are
+  untouched; only dispatch is capped.
+
+- **A run-level spend ceiling.** `GOVERN_RUN_MAX_TOKENS` stops a run cleanly before dispatching another
+  ticket. The governor had per-attempt telemetry and per-attempt bounds but no brake on the run.
+
+- **The context ratchet has a ceiling (§6).** Promotion into always-on context was automatic; removal
+  required a human noticing. There was no admission test, no eviction, and no expiry. Now:
+  `CLAUDE-APPENDIX.md` is the **default** sink and the always-on slot is opt-in
+  (`GOVERN_LESSON_SINK=appendix`); claiming it requires an explicit frequency **and** reversibility
+  argument, because the bar is frequency × severity, never frequency alone; at budget a promotion must
+  **name the entry it displaces** (`GOVERN_LESSON_EVICT=1`), which turns *"is this useful?"* (always
+  yes → ratchet) into *"is this more useful than the weakest incumbent?"* (a comparison → steady
+  state); and a ladder check prefers make-it-impossible > make-it-caught > make-it-retrievable >
+  make-it-always-on.
+
+  In `learnings-digest.sh`, entries past `SHIPLOOP_LEARNINGS_TTL_DAYS` (14) degrade to a **title-only**
+  line rather than being deleted — deleting a still-true measurement just makes a future session
+  re-derive it. A structure lint (`SHIPLOOP_LEARNINGS_LINT=1`) reports a heading with no body or a body
+  with no heading, and is silent when healthy: a real orphaned heading had been injected at every
+  SessionStart, unnoticed, since it was created.
+
+### Notes
+
+- Every new mechanism is **deterministic** — the whole release adds no new `claude` invocation to any
+  path. `deterministic-apply.sh` rides on a field added to the scout's existing call.
+- Every new knob defaults to today's behaviour, so upgrading changes nothing until each is enabled
+  deliberately. The two exceptions are stated above and are the point of the release: the worker tier
+  floor (`opus` → `sonnet`, with the escalation rail behind it) and `GOVERN_BATCH_MAX` (`1` → `2`,
+  gated by measured overlap).
+- This release also carries **v1.16.0's relicense from MIT to Apache 2.0**, which was committed but
+  never tagged or published. See the 1.16.0 entry below for its terms; releases up to and including
+  v1.15.1 remain under MIT.
+
 ## 1.16.0 — 2026-08-03
 
 ### Changed

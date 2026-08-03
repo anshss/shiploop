@@ -15,6 +15,127 @@ govern::assert_commit_dir "$commit_dir"                  # fail closed if the qu
 declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/vdoc) to `git add` below —
                               # holds the root lesson target AND, on an overflow split, CLAUDE-APPENDIX.md too.
 
+# ── Always-on context ratchet controls (#87) ────────────────────────────────────────────────────
+# Promotion into root CLAUDE.md is AUTOMATIC; removal is a human noticing. That asymmetry is a
+# ratchet: every individual promotion is defensible, and the aggregate is a permanent per-turn tax
+# charged to every session forever. GOVERN_LESSON_MAX_CHARS (below) only caps how BIG one lesson may
+# be and moves the overflow to the appendix — there is no admission test, no eviction, no expiry.
+#
+# THE BAR IS FREQUENCY x SEVERITY, NEVER FREQUENCY ALONE. A ~350-600 byte entry is ~90-150 tokens
+# re-sent across ~30 turns ≈ 270-450 effective tokens per session, charged to EVERY session. If a hit
+# averts a ~5-turn wrong path (~20K tokens) the break-even is a ~2.3% hit rate — about 1 session in 44.
+# That per-hit figure is an ASSUMPTION, not a measurement, and it dominates the arithmetic, which is
+# exactly why severity has to multiply in: a rare but irreversible rule still pays (e.g. a `gh pr edit
+# --base` that reports success while changing nothing).
+#
+# BLOAT AND ROT ARE DIFFERENT PROBLEMS. Bloat is cost — placement fixes it. Rot is wrongness —
+# placement does NOTHING for it. Demoting a wrong line to the appendix moves it from "injected always"
+# to "retrieved unpredictably, reviewed never", which makes the appendix a rot reservoir. Rot has
+# exactly three fixes: be right, supersede in place, delete. None of them is a move. COROLLARY: if
+# something cannot be made self-correcting and does not clear the bar, DELETE it rather than demote it.
+#
+# The three gates below add admission + eviction. Each SHIPS INERT — the default is byte-for-byte
+# today's behaviour — and each is reverted by a single env var:
+#
+#   GOVERN_LESSON_SINK=claude-md|appendix        (default claude-md = today)
+#       `appendix` inverts the default sink: CLAUDE-APPENDIX.md becomes the DEFAULT target and an
+#       always-on CLAUDE.md slot becomes opt-in, requiring an explicit CLAIM in the patch —
+#       `lessonPatch.alwaysOn: true` plus a non-empty `.frequency` (how often this fires) and a
+#       non-empty `.reversibility` (what it costs when missed). Both halves of frequency x severity.
+#
+#   GOVERN_LESSON_LADDER=0|1                     (default 0 = off)
+#       Documented precedence, cheapest rung first:
+#         guard (make it impossible) > lint/test (make it caught) > appendix (make it retrievable)
+#         > always-on (make it re-sent every turn, forever).
+#       A lesson may claim the always-on rung only if it DECLARES `lessonPatch.rung: "always-on"` AND
+#       says why the cheaper rungs cannot cover it (`lessonPatch.rungWhyNot`). This is a gate on the
+#       SHAPE of what was submitted — no model call, no judgement, no new `claude` invocation.
+#
+#   GOVERN_LESSON_EVICT=0|1                      (default 0 = off)
+#       Forced eviction at budget: when the target is at/over GOVERN_LESSON_BUDGET_CHARS, a new
+#       always-on line must NAME the entry it displaces (`lessonPatch.evicts`, matching exactly one
+#       existing heading or rule line in the target). This is the load-bearing item — it converts
+#       "is this useful?" (always yes -> ratchet) into "is this more useful than the weakest
+#       incumbent?" (a comparison -> steady state). No name, or a name matching zero/many lines: the
+#       lesson goes to the appendix instead of growing the always-on file.
+#
+#   GOVERN_LESSON_BUDGET_CHARS                   (default: $SHIPLOOP_CLAUDEMD_MAX_CHARS, else 14000)
+#       The budget the eviction gate measures against — deliberately the SAME number the SessionStart
+#       digest already warns on, so the warning and the gate can never disagree.
+
+# Does this lessonPatch CLAIM an always-on slot? Both halves of the bar must be stated explicitly:
+# frequency (how often it fires) AND reversibility (what it costs when missed). Returns 0 on a
+# complete claim, 1 otherwise. Callers use it in a boolean context — no bare `[[ ]] &&` tail here.
+govern_bk::claims_always_on() { # <report-json>
+  local rpt="$1"
+  local ao freq rev
+  ao="$(printf '%s' "$rpt" | jq -r '.lessonPatch.alwaysOn // false' 2>/dev/null || echo false)"
+  freq="$(printf '%s' "$rpt" | jq -r '.lessonPatch.frequency // ""' 2>/dev/null || true)"
+  rev="$(printf '%s' "$rpt" | jq -r '.lessonPatch.reversibility // ""' 2>/dev/null || true)"
+  if [[ "$ao" == "true" && -n "$freq" && -n "$rev" ]]; then return 0; fi
+  return 1
+}
+
+# Ladder check: the patch must claim the TOP rung explicitly and justify skipping the cheaper ones.
+# An absent/lower `rung` is not a failure of the lesson — it is a statement that a guard, a lint, or
+# the appendix already covers it, which is precisely where it should go.
+govern_bk::ladder_ok() { # <report-json>
+  local rpt="$1"
+  local rung why
+  rung="$(printf '%s' "$rpt" | jq -r '.lessonPatch.rung // ""' 2>/dev/null || true)"
+  why="$(printf '%s' "$rpt" | jq -r '.lessonPatch.rungWhyNot // ""' 2>/dev/null || true)"
+  if [[ "$rung" == "always-on" && -n "$why" ]]; then return 0; fi
+  return 1
+}
+
+# Remove the entry NAMED by <needle> from <file>. The needle is a literal substring and must match
+# EXACTLY ONE line — zero matches means the worker named something that isn't there, many matches
+# means it named something ambiguous; both are refusals, never a guess at which entry to delete.
+#   * a HEADING match removes the heading through the line before the next heading of the same or a
+#     shallower level (or EOF);
+#   * a RULE/BULLET/paragraph match removes that line plus its INDENTED continuation lines (fenced
+#     snippets under a bullet included), stopping at the next flush-left line.
+# Blank lines inside the removed span are swallowed and a single separator blank is restored.
+# Returns 0 only when exactly one entry was removed; the file is left byte-identical otherwise.
+govern_bk::evict_entry() { # <file> <needle>
+  local file="$1" needle="$2"
+  local hits tmpf
+  if [[ -z "$needle" || ! -f "$file" ]]; then return 1; fi
+  hits="$(grep -cF -- "$needle" "$file" 2>/dev/null || true)"
+  if [[ "$hits" != "1" ]]; then return 1; fi
+  tmpf="$(mktemp)"
+  if awk -v needle="$needle" '
+      function hlevel(s,   n) { n = 0; while (substr(s, n + 1, 1) == "#") n++; return n }
+      BEGIN { found = 0; removing = 0; lvl = 0; blank = 0 }
+      {
+        if (!found && index($0, needle)) {
+          found = 1; removing = 1; blank = 0
+          lvl = ($0 ~ /^#+[ \t]/) ? hlevel($0) : 0
+          next
+        }
+        if (removing) {
+          if ($0 ~ /^[ \t]*$/) { blank = 1; next }
+          if (lvl > 0) {
+            if (($0 ~ /^#+[ \t]/) && hlevel($0) <= lvl) { removing = 0 }
+            else { blank = 0; next }
+          } else {
+            if ($0 ~ /^[ \t]/) { blank = 0; next }   # indented continuation of the evicted rule
+            removing = 0
+          }
+          if (blank) print ""
+          blank = 0
+        }
+        print
+      }
+      END { if (!found) exit 3 }
+    ' "$file" > "$tmpf"; then
+    mv "$tmpf" "$file"
+    return 0
+  fi
+  rm -f "$tmpf"
+  return 1
+}
+
 # Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers
 # (parallel sessions on disjoint tickets, #41) would otherwise race the mktemp→mv (lost
 # block-delete) and the git index. mkdir-mutex; reclaim if a crashed holder left it >5min.
@@ -222,7 +343,53 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     if [[ "$redirected" == "0" ]]; then
       lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
       appendix="$meta_root/CLAUDE-APPENDIX.md"
-      if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
+
+      # ── Admission gates (#87): sink inversion, ladder, forced eviction ────────────────────────
+      # All three can only DEMOTE to the appendix, never lose a lesson, and all three are skipped
+      # entirely when CLAUDE-APPENDIX.md is absent (there is nowhere to demote TO — the pre-existing
+      # "insert everything into CLAUDE.md" behaviour is the fallback, exactly as for overflow below).
+      lesson_route="always-on"
+      route_reason="default sink (GOVERN_LESSON_SINK=claude-md)"
+      if [[ -f "$appendix" ]]; then
+        sink_mode="${GOVERN_LESSON_SINK:-claude-md}"
+        if [[ "$sink_mode" == "appendix" ]] && ! govern_bk::claims_always_on "$report"; then
+          lesson_route="appendix"
+          route_reason="GOVERN_LESSON_SINK=appendix (appendix is the DEFAULT sink) and this patch made no always-on claim — an always-on slot needs lessonPatch.alwaysOn=true PLUS a non-empty .frequency and .reversibility"
+        elif [[ "${GOVERN_LESSON_LADDER:-0}" == "1" ]] && ! govern_bk::ladder_ok "$report"; then
+          lesson_route="appendix"
+          route_reason="ladder gate (guard > lint/test > appendix > always-on): the patch did not declare lessonPatch.rung=\"always-on\" together with a lessonPatch.rungWhyNot explaining why a guard or a lint cannot cover it"
+        elif [[ "${GOVERN_LESSON_EVICT:-0}" == "1" ]]; then
+          lesson_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
+          lesson_cur_size="$(wc -c < "$target" 2>/dev/null | tr -d '[:space:]')"
+          [[ -n "$lesson_cur_size" ]] || lesson_cur_size=0
+          lesson_projected=$(( lesson_cur_size + ${#text} ))
+          if [[ "$lesson_projected" -gt "$lesson_budget" ]]; then
+            lesson_evicts="$(printf '%s' "$report" | jq -r '.lessonPatch.evicts // ""' 2>/dev/null || true)"
+            if [[ -n "$lesson_evicts" ]] && govern_bk::evict_entry "$target" "$lesson_evicts"; then
+              govern::log "bookkeep #$N: $lp_file at/over budget ($lesson_cur_size + ${#text} chars > $lesson_budget) — evicted the named incumbent (\"$lesson_evicts\") to make room for the promotion (GOVERN_LESSON_EVICT=1)"
+            else
+              lesson_route="appendix"
+              if [[ -z "$lesson_evicts" ]]; then
+                route_reason="$lp_file at/over budget ($lesson_cur_size + ${#text} chars > $lesson_budget) and lessonPatch.evicts was not supplied — a promotion at budget must NAME the entry it displaces"
+              else
+                route_reason="$lp_file at/over budget ($lesson_cur_size + ${#text} chars > $lesson_budget) and lessonPatch.evicts (\"$lesson_evicts\") did not match exactly one existing entry — refusing to guess which rule to delete"
+              fi
+            fi
+          fi
+        fi
+      fi
+
+      if [[ "$lesson_route" == "appendix" ]]; then
+        # DEMOTED, not lost: the FULL text lands in the appendix under its own heading and NOTHING is
+        # inserted into the always-on file (a pointer line would re-charge the per-turn tax this gate
+        # exists to avoid). The appendix is not a rot reservoir — an entry parked here is still
+        # subject to be-right / supersede-in-place / delete, never "moved and forgotten".
+        heading="#$N — ${ticket_title:-lesson}"
+        { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
+        patched_files+=("$appendix")
+        govern::log "bookkeep #$N: lessonPatch routed to CLAUDE-APPENDIX.md (\"$heading\") instead of always-on $lp_file — $route_reason"
+        target="$appendix"   # the summary line reports the sink that actually received the lesson
+      elif [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
         if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
           lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
         else
@@ -234,9 +401,13 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         patched_files+=("$appendix")
         govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
       fi
-      govern::insert_lesson "$target" "$anchor" "$insert_text"
-      patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
-                                    # root-relative name would miss it; absolute resolves from anywhere in the repo.
+      # The appendix route already wrote (and staged) the appendix; inserting into the always-on file
+      # as well would defeat the whole gate. Every other route inserts exactly as before.
+      if [[ "$lesson_route" != "appendix" ]]; then
+        govern::insert_lesson "$target" "$anchor" "$insert_text"
+        patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
+                                      # root-relative name would miss it; absolute resolves from anywhere in the repo.
+      fi
     else
       govern::log "bookkeep #$N: promoted lesson committed to $placement_repo/CLAUDE.md"
     fi

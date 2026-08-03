@@ -102,15 +102,16 @@ EOF
 chmod +x "$T2/bin/claude-hang"
 
 RUNDIR="$T2/logs/run-test"
-# Sizing is a MEASUREMENT now, so the ledger's model/effort must come from the scout verdict, not
-# from the ticket. Pre-seed the run-scoped cache: `--verdict` re-scores it deterministically and
-# never calls a model. The scope below (<=5 files, 1 repo, tests cover it, concrete direction, no
-# precedent) scores `small` → (sonnet, medium). Note the ticket ALSO carries a legacy
-# `**Model:** haiku` field, which must be inert — if it ever leaks back into the ledger this test
-# goes red.
+# The scout no longer sizes (it only surveys — see scout-ticket.sh's header). So the ledger's
+# model/effort must come from the workspace floor (GOVERN_WORKER_MODEL), NOT from the scout's cached
+# scope and NOT from the ticket's legacy `**Model:** haiku` field — both must be inert, and if either
+# ever leaks back into the ledger this test goes red. The cache below is pre-seeded in the CURRENT
+# scout.json schema (no `verdict` key) purely to prove spawn-worker doesn't even need to read it for
+# sizing any more; `deterministic.kind` is "" (not deterministic) so it can't short-circuit dispatch
+# either.
 mkdir -p "$RUNDIR/ticket-7"
 cat > "$RUNDIR/ticket-7/scout.json" <<'EOF'
-{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete"},"verdict":{"model":"sonnet","effort":"medium","scopeClass":"small"},"ts":1}
+{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete","targetPaths":[],"precedentCommit":"","testCommand":"","deterministic":{"kind":"","rationale":"","diff":""}},"scoutModel":"haiku","ts":1}
 EOF
 spawn7() { # claude-bin [extra env assignments handled by caller]
   GOVERN_TICKETS_FILE="$T2/tickets.md" \
@@ -120,7 +121,7 @@ spawn7() { # claude-bin [extra env assignments handled by caller]
   GOVERN_RUN_DIR="$RUNDIR" \
   GOVERN_WORKTREE_CMD="$T2/wt.sh" \
   GOVERN_CLAUDE_BIN="$1" \
-  GOVERN_WORKER_MODEL=opus \
+  GOVERN_WORKER_MODEL=sonnet \
   GOVERN_WORKER_TIMEOUT="${2:-60}" \
   GOVERN_SCOUT=1 \
   "$SPAWN" 7 </dev/null
@@ -133,25 +134,26 @@ LEDGER="$RUNDIR/ticket-7/attempts.jsonl"
   || { printf 'FAIL - %s\n' "spawn-worker wrote the per-attempt ledger"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 r1="$(head -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r1")"      "1"                  "attempt is 1-based"
-assert_eq "$(jq -r '.model' <<<"$r1")"        "sonnet"             "ledger records the resolved model (the MEASURED verdict)"
-assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "scout (scope=small)" "ledger records WHERE the model came from — the scout, not the ticket"
-assert_eq "$(jq -r '.effort' <<<"$r1")"       "medium"             "ledger records the resolved effort"
-assert_eq "$(jq -r '.effortSource' <<<"$r1")" "scout (scope=small)" "ledger records WHERE the effort came from"
+assert_eq "$(jq -r '.model' <<<"$r1")"        "sonnet"             "ledger records the resolved model (the workspace floor, GOVERN_WORKER_MODEL) — NOT the ticket's legacy Model: haiku"
+assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "GOVERN_WORKER_MODEL" "ledger records WHERE the model came from — the floor, not the scout and not the ticket's legacy Model: field"
+assert_eq "$(jq -r '.effort' <<<"$r1")"       "null"               "no GOVERN_WORKER_EFFORT set -> effort stays unset (the scout no longer supplies one)"
+assert_eq "$(jq -r '.effortSource' <<<"$r1")" "none (unset)"       "ledger records WHERE the (absent) effort came from"
 assert_eq "$(jq -r '.isRetry' <<<"$r1")"      "false"              "attempt 1 is not a retry"
 assert_eq "$(jq -r '.status' <<<"$r1")"       "resolved"           "ledger records the attempt's outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r1")" "1500"               "ledger records the attempt's tokens"
 assert_eq "$(jq -r '.costUsd' <<<"$r1")"      "0.02"               "ledger records the attempt's cost"
 
-# Attempt 2 — the worktree from attempt 1 survives, so this is the retry path: the ticket's cheap-tier
-# bet is dropped and GOVERN_WORKER_MODEL takes over. It must land as a SECOND ledger row, and attempt
-# 1's stream must be rotated aside rather than truncated in place.
+# Attempt 2 — the worktree from attempt 1 survives, so this is the retry path: MODEL_IS_RETRY escalates
+# off the sonnet floor to GOVERN_WORKER_ESCALATION_MODEL (default opus) since no prior-attempt evidence
+# exists to classify (retry_class=unknown -> the fail-safe branch). It must land as a SECOND ledger
+# row, and attempt 1's stream must be rotated aside rather than truncated in place.
 out2="$(spawn7 "$T2/bin/claude-hang" 1)"
 assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "timeout" "attempt 2 is killed before its verdict"
 assert_eq "$(awk 'END{print NR}' "$LEDGER")" "2" "the ledger is append-only (one row per attempt)"
 r2="$(tail -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r2")" "2"        "attempt number increments across spawns"
 assert_eq "$(jq -r '.isRetry' <<<"$r2")" "true"     "attempt 2 is flagged as a retry"
-assert_eq "$(jq -r '.model' <<<"$r2")"   "opus"     "retry escalates off the measured cheap tier"
+assert_eq "$(jq -r '.model' <<<"$r2")"   "opus"     "retry escalates from the sonnet floor to the escalation ceiling"
 assert_eq "$(jq -r '.status' <<<"$r2")"  "timeout"  "the killed attempt records its real outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null (#19)"
 assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt's usage came from per-turn events"

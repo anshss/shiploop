@@ -1663,71 +1663,135 @@ govern::prose_dep_warnings() { # [tickets-file] -> "#N: prose dependency '<phras
 # drivers are selected purely by severity with no regard for whether they touch the same files, so two
 # workers can race the same file; disjoint locality groups remove that race by construction.
 #
-# The signal is the ticket's declared file scope. `**Files:**` (a measured file list — the forward hook
-# for the scout ticket) is PREFERRED when present because it is machine-produced; `**Where:**` is the
-# prose fallback every ticket already carries. Both are matched the way govern::ticket_deps matches
-# `**Depends on:**`: anchored to the START of a line, bold-wrapping optional, COLON REQUIRED — so a
-# mid-sentence "where" in prose is never mistaken for the marker. (These fields are NOT in the ticket's
-# contiguous leading field block the way Model:/Effort:/Flow: are — a `Where:` paragraph is separated
-# from the heading by a blank line — so the leading-block anchor spawn-worker.sh uses does not apply
-# here.) Only the FIRST marker line is read. Worst case for a spoofed key is one mis-grouped batch,
-# bounded by GOVERN_BATCH_MAX; nothing destructive rides on it.
+# The signal is the ticket's MEASURED file scope, and only that. Two sources, both machine-produced:
+#   1. the scout's verified `targetPaths` (`scout-ticket.sh --paths N`) — paths it confirmed exist
+#   2. an explicit `**Files:**` field on the ticket
 #
-# Key = the LEAF DIRECTORY NAME of the dominant path token on that line. Depth-1 is deliberate: a
-# hub/workspace mirror pair (`shiploop/templates/govern/run-loop.sh` and `scripts/govern/run-loop.sh`)
-# IS the same area of the same codebase, and grouping them is the desired behavior, not a collision.
-# Coarseness is bounded by GOVERN_BATCH_MAX (default 1 = off), so the blast radius of a bad key is one
-# smaller-than-configured group, never an unbounded batch.
-govern::ticket_locality() { # N [tickets-file] -> locality key ("" = unlocalized, never batched)
-  local n="$1" f="${2:-$TICKETS_FILE}" block line
-  [[ -f "$f" ]] || return 0
-  block="$(govern::ticket_block "$n" "$f" | tail -n +2)"   # drop the heading (its title may say "where")
-  [[ -n "$block" ]] || return 0
-  # `**Files:**` wins over `**Where:**` when both are present (measured beats prose).
-  line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
-  [[ -n "$line" ]] || line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ww]here(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
-  [[ -n "$line" ]] || return 0
-  printf '%s\n' "$line" | awk '
-    {
-      # Drop shell-variable interpolations ($WORKTREE_BASE/ticket-N) — they name no real repo path.
-      gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, " ")
-      gsub(/[`(),;"]/, " ")
-      n=split($0, tok, /[[:space:]]+/)
-      for (i=1; i<=n; i++) {
-        p=tok[i]
-        sub(/^\.\//, "", p); sub(/[.,;:]+$/, "", p); sub(/\/+$/, "", p)
-        if (p !~ /^[A-Za-z0-9_][A-Za-z0-9._*-]*\//) continue   # must be a path-ish token
-        # Peel the trailing segment when it names a FILE (has a dot) or is a bare glob, leaving a dir.
-        while (1) {
-          slash=0; for (j=length(p); j>0; j--) if (substr(p,j,1)=="/") { slash=j; break }
-          if (!slash) break
-          last=substr(p, slash+1)
-          if (last ~ /\./ || last ~ /\*/ || last=="") { p=substr(p, 1, slash-1) } else break
-        }
-        sub(/\/+$/, "", p)
-        if (p == "" || p ~ /\./ || p ~ /\*/) continue          # nothing dir-like survived
-        # Leaf directory name = the key (see the depth-1 rationale above).
-        leaf=p; slash=0; for (j=length(p); j>0; j--) if (substr(p,j,1)=="/") { slash=j; break }
-        if (slash) leaf=substr(p, slash+1)
-        if (leaf == "") continue
-        leaf=tolower(leaf)
-        if (!(leaf in cnt)) { order[++ord]=leaf }
-        cnt[leaf]++
-      }
-    }
-    END {
-      best=""; bestc=0
-      for (i=1; i<=ord; i++) if (cnt[order[i]] > bestc) { best=order[i]; bestc=cnt[order[i]] }
-      if (best != "") print best
-    }
-  '
+# `**Where:**` is deliberately NOT a source. It is PROSE, written before anything was measured — the
+# same failure mode that retired the `Model:`/`Effort:` fields. Worse, keying on prose forced a
+# leaf-DIRECTORY-NAME approximation, and depth-1 leaf names collapse a whole backlog into a couple of
+# buckets ("govern", "src", "lib"). That made grouping effectively arbitrary, which is the losing side
+# of the batching trade: co-batched tickets shared no discovery, yet the worker still paid full
+# context accumulation across all of them. Accumulation is superlinear, so an arbitrary 3-ticket batch
+# is strictly worse than 3 workers.
+#
+# So: batch ONLY on real file-set overlap, and NO MEASUREMENT MEANS NO BATCH — a ticket with no
+# measured paths returns empty and locality_groups keeps it a singleton, which is exactly today's safe
+# default. Note this drops the old deliberate hub/workspace mirror collapse
+# (`shiploop/templates/govern/x.sh` + `scripts/govern/x.sh` no longer share a key): those are two
+# different repos, and porting between them is the sync-porter's job, not a batch.
+# §4.8 ALLOCATION. The loop auto-files tickets ABOUT THE HARNESS (govern-improve-triage.sh files
+# proposals; workers file their own `newTickets[]`), pays full worker price for them, and files more.
+# govern-health.sh already splits self-referential from product spend in its REPORTING — which means
+# somebody already suspected this — and root CLAUDE.md states the principle "gate dispatch cost, never
+# discovery", but nothing ENFORCES it. This is the pre-dispatch predicate that lets it be enforced.
+#
+# Deliberately structural, not semantic: a ticket is self-referential when the surfaces it names are
+# the harness's own. govern::is_selfref_repo is the post-hoc counterpart (it classifies a ticket by
+# the repos its PRs landed in, which is only knowable AFTER a worker ran); this one answers the same
+# question from the ticket text, before anything is spent.
+govern::is_selfref_ticket() { # N [tickets-file] -> rc 0 if the ticket is about the harness itself
+  local n="$1"
+  local f="${2:-$TICKETS_FILE}"
+  local block
+  [[ -f "$f" ]] || return 1
+  block="$(govern::ticket_block "$n" "$f")" || true
+  [[ -n "$block" ]] || return 1
+  # The standing self-improvement ticket govern-improve-triage.sh maintains, matched by its title.
+  case "$block" in *"Harness self-improvement:"*) return 0;; esac
+  # Otherwise: does it name ONLY harness surfaces? Any product path disqualifies it, so a ticket that
+  # touches both is treated as product work — the cap must never defer real product delivery.
+  local line hits=0 misses=0 p
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    case "$p" in
+      scripts/govern/*|scripts/lib/*|governor/*|templates/govern/*|templates/governor/*|templates/hooks/*|templates/lib/*|queue/*)
+        hits=$((hits+1)) ;;
+      *) misses=$((misses+1)) ;;
+    esac
+  done < <(govern::ticket_paths "$n" "$f" 2>/dev/null || true)
+  # Fall back to the prose `Where:` line only for this classification (NOT for batching — an
+  # imprecise key there produces a bad batch, whereas here the worst case is a deferred harness
+  # ticket, which is the conservative direction).
+  if [[ "$hits" -eq 0 && "$misses" -eq 0 ]]; then
+    line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ww]here(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
+    case "$line" in
+      *scripts/govern/*|*templates/govern/*|*templates/governor/*|*governor/*) return 0;;
+    esac
+    return 1
+  fi
+  [[ "$hits" -gt 0 && "$misses" -eq 0 ]] && return 0
+  return 1
+}
+
+govern::ticket_paths() { # N [tickets-file] -> measured repo-relative paths, one per line ("" = unmeasured)
+  local n="$1"
+  local f="${2:-$TICKETS_FILE}"
+  local libdir scout out="" block line
+  libdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  scout="$libdir/../scout-ticket.sh"
+  # 1. Scout-measured paths win — they were verified to exist against real code.
+  #    Tolerate the scout being absent, disabled (GOVERN_SCOUT=0), or having no cached survey.
+  #    Short-circuit on GOVERN_SCOUT=0 rather than paying a subshell per candidate to be told "no":
+  #    the batcher probes every candidate, so this is on a hot path in every test run.
+  if [[ "${GOVERN_SCOUT:-1}" != "0" && -x "$scout" ]]; then
+    out="$("$scout" --paths "$n" 2>/dev/null || true)"
+  fi
+  # 2. Fall back to an explicit `**Files:**` list. Matched the way govern::ticket_deps matches
+  #    `**Depends on:**`: anchored to the START of a line, bold-wrapping optional, COLON REQUIRED.
+  if [[ -z "$out" && -f "$f" ]]; then
+    block="$(govern::ticket_block "$n" "$f" | tail -n +2)"   # drop the heading (its title may say "files")
+    if [[ -n "$block" ]]; then
+      line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
+      if [[ -n "$line" ]]; then
+        out="$(printf '%s\n' "$line" | awk '
+          {
+            # Drop shell-variable interpolations ($WORKTREE_BASE/ticket-N) — they name no real path.
+            gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, " ")
+            gsub(/[`(),;"]/, " ")
+            n=split($0, tok, /[[:space:]]+/)
+            for (i=1; i<=n; i++) {
+              p=tok[i]
+              sub(/^\.\//, "", p); sub(/[.,;:]+$/, "", p); sub(/\/+$/, "", p)
+              if (p == "") continue
+              # A measured path names a FILE: it must contain a slash and an extension, and must not
+              # be a glob. A directory or a `src/**` pattern is not a measurement.
+              if (p !~ /\//) continue
+              if (p ~ /\*/) continue
+              if (p !~ /\.[A-Za-z0-9]+$/) continue
+              print p
+            }
+          }')"
+      fi
+    fi
+  fi
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | sed -e 's#^\./##' -e 's#//*#/#g' | awk 'NF && !seen[$0]++'
+  return 0
+}
+
+# Do two newline-separated path sets share at least one EXACT path? Exact, because the whole point of
+# re-keying was to stop approximating. Returns 0 on overlap, 1 otherwise (including either side empty).
+govern::paths_overlap() { # "pathsA" "pathsB" -> rc 0 if they intersect
+  local a="$1" b="$2"
+  [[ -n "$a" && -n "$b" ]] || return 1
+  local p
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    case $'\n'"$b"$'\n' in *$'\n'"$p"$'\n'*) return 0;; esac
+  done <<< "$a"
+  return 1
 }
 
 # Partition an ORDERED candidate list (the selector hands them over in severity order) into DISJOINT
 # locality groups of at most $1 tickets. Prints one group per line as a comma-separated ticket list,
 # preserving candidate order both between and within groups. Guarantees, in order of importance:
 #   • max <= 1  → every candidate is its own singleton group (today's exact behavior, the default).
-#   • An unlocalized ticket (empty locality key) is ALWAYS a singleton — never batched on a guess.
+#   • An UNMEASURED ticket (no measured file paths) is ALWAYS a singleton — never batched on a guess.
+#   • A candidate joins a group only if it shares at least one EXACT file path with that group's SEED
+#     ticket. Intersecting the seed rather than the group's running union is deliberate: union
+#     membership chains (A∩B, B∩C, A∩C=∅) and would readmit exactly the arbitrary grouping this
+#     re-key exists to remove. Every member provably shares files with the seed.
 #   • Two tickets in a dependency relation (either direction, via govern::ticket_deps) are NEVER
 #     co-batched. Constraint (b) allows co-batching in dependency order instead, but keeping them in
 #     separate groups is the strictly safer half of that choice: it cannot produce an out-of-order
@@ -1743,9 +1807,9 @@ govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
   for t in ${raw[@]+"${raw[@]}"}; do
     t="${t//[^0-9]/}"; [[ -n "$t" ]] || continue
     cand[nc]="$t"
-    # Only pay for the key/dep probes when batching is actually enabled (max<=1 is the default).
+    # Only pay for the path/dep probes when batching is actually enabled.
     if [[ "$max" -gt 1 ]]; then
-      keys[nc]="$(govern::ticket_locality "$t" "$f" 2>/dev/null || true)"
+      keys[nc]="$(govern::ticket_paths "$t" "$f" 2>/dev/null || true)"
       # Comma-wrapped for O(1) substring membership: ",9,11,"
       deps[nc]=",$(govern::ticket_deps "$t" "$f" 2>/dev/null | tr '\n' ',' || true)"
     else
@@ -1776,7 +1840,7 @@ govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
       for (( j=i+1; j<nc; j++ )); do
         [[ "$size" -lt "$max" ]] || break
         [[ "${used[j]}" -eq 0 ]] || continue
-        [[ "${keys[j]}" == "${keys[i]}" ]] || continue
+        govern::paths_overlap "${keys[j]}" "${keys[i]}" || continue
         _rel "$j" "$group" && continue   # dependency-related ⇒ leave it for its own group
         used[j]=1; group="$group,${cand[j]}"; size=$((size+1))
       done

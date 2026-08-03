@@ -2,6 +2,16 @@
 # Proof for the #67 validation-evidence gate in run-loop.sh: a validation/spike ticket reported
 # `resolved` WITHOUT live-test evidence is downgraded to parked (and kept in tickets.md); one WITH
 # evidence resolves normally. Stubbed claude + gh, sandboxed — no auth/network/real mutation.
+#
+# #84 audit note: every assertion below is on run-loop.sh's OWN log vocabulary ("VALIDATION ticket
+# but the worker gave no live-test evidence", "resolved=N parked=N") or on the synthetic
+# tickets.md/git-log fixtures this test writes itself — none of it is lifted from
+# templates/governor/worker-prompt.md prose. The stubbed `claude` binary below never reads the
+# worker prompt's contents at all (it only inspects $GOVERN_REPORT_PATH to script its canned
+# report), so this test is already immune to a wording-only edit in worker-prompt.md; it needed no
+# rewrite for #84 beyond this note. It DOES still exercise the real worker-prompt.md as an input
+# FILE (it must exist and be readable for run-loop.sh/spawn-worker.sh to assemble a prompt at all),
+# which is why it stays off the synthetic-fixture pattern test-spawn-prompt-segmented.sh uses.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"

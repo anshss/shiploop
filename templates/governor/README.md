@@ -6,13 +6,21 @@ classes. The governor itself is a **pure-bash driver** (`scripts/govern/run-loop
 Claude context; Claude runs only inside the bounded worker and supervisor sub-sessions.
 
 ## Run it
-From the main checkout, invoke the slash command:
+There is no slash command. From the main checkout, just say what you want worked — the session maps
+plain language straight onto the loop:
 ```
-/govern              # work the whole eligible backlog, sequentially
-/govern 42           # work only ticket #42
-/govern --dry-run    # prove the pipeline, ship nothing
+"work on all the tickets on queue"       → run-loop.sh
+"work on 42"                             → run-loop.sh 42
+"work on 42 51 63"                       → run-loop.sh 42 51 63
+"work through the queue while I'm out"   → run-loop.sh --parallel
 ```
-Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [<ticket>]`.
+Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [<ticket>...]`.
+
+The trigger changed; the **loop did not**. Detached workers, claim locks, verdict files, resumable
+worktrees and reaping are the only things that survive a closed laptop, and they are untouched — so a
+later session can reap workers an earlier one launched. Note that lowering trigger friction *raises*
+the need for the run-level ceiling (`GOVERN_RUN_MAX_WORKERS`): a slash command was a deliberate act,
+a sentence is not.
 
 ## Worker authentication (do this once before a live run)
 Spawned `claude -p` workers need their own credential. Use **subscription OAuth**: run `claude login`
@@ -41,7 +49,7 @@ Parked decisions used to be **write-only**: a worker appended a `## Open` entry 
 asked the operator, so they sat unanswered indefinitely. Now the loop closes itself:
 - **Run-end (`escalations-emit-pending.sh`):** writes `pending-escalations.json` (the unanswered
   `## Open` entries) and fires `GOVERN_NOTIFY_CMD` if set — so a headless run still signals you.
-- **Relay (`/govern` session):** presents all pending escalations in a **single batched
+- **Relay (the dispatching session):** presents all pending escalations in a **single batched
   `AskUserQuestion`** (#89 — ≤4 questions per prompt; chunk if >4, never one prompt per ticket) and
   records each operator's **Answer** + a canonical **Disposition** (`do-the-work` | `defer` |
   `mitigated` | `keep-open`) back into `escalations.md` (plus an optional "Make this a rule?" sentence).

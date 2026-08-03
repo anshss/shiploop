@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 # #23 — locality batching, END-TO-END through run-loop.sh (the partitioning helpers themselves are
 # unit-tested in test-locality-batch.sh). Stubbed claude/gh/worktree; dry mode, so no PR, no merge,
-# no git mutation. Proves the wiring the ticket's "Done when" actually asks for:
-#   A. GOVERN_BATCH_MAX unset (the default 1) → NO batching. One worker, one ticket, byte-for-byte
-#      today's behavior.
-#   B. GOVERN_BATCH_MAX=3 → the three same-locality tickets go to ONE worker, whose prompt carries
-#      all three ticket blocks; the different-locality ticket is NOT pulled in.
-#   C. Per-ticket outcomes are honored, not collapsed: the batched ticket the worker reported
+# no git mutation. Proves the wiring the ticket's "Done when" actually asks for.
+#
+# The batching KEY is now MEASURED file overlap (govern::ticket_paths / govern::paths_overlap), not
+# leaf-directory prose parsing — govern::ticket_locality is gone. A candidate joins a group only if it
+# shares a real file with the group's SEED ticket, sourced from an explicit `**Files:**` list (or the
+# scout's verified targetPaths — not exercised here). No measurement means no batch: prose `Where:`
+# lines are deliberately NOT a source any more. GOVERN_BATCH_MAX's default also changed from 1 to 2.
+#   A. GOVERN_BATCH_MAX=1 (explicit) → NO batching. One worker, one ticket, byte-for-byte the
+#      pre-#23 behavior — this is the override an operator reaches for to turn batching off.
+#   B. GOVERN_BATCH_MAX unset (the new default, 2) → batching is ON by default, capped at two: #1
+#      picks up exactly ONE same-file peer (#2), #3 (which only overlaps via a DIFFERENT shared file)
+#      is left out once the cap is hit, and #4 (no overlap at all) is never a candidate.
+#   C. GOVERN_BATCH_MAX=3 → all three file-sharing tickets go to ONE worker, whose prompt carries
+#      all three ticket blocks; the different-file ticket is NOT pulled in.
+#   D. Per-ticket outcomes are honored, not collapsed: the batched ticket the worker reported
 #      `resolved` is bookkept; the one it reported `failed` is NOT, and stays in tickets.md.
-#   D. A batched ticket ABSENT from the report's `tickets` array is likewise never bookkept
+#   E. A batched ticket ABSENT from the report's `tickets` array is likewise never bookkept
 #      (fail-closed — the #23 constraint (c) hazard: bookkeeping deletes what it marks resolved).
-#   E. Every batched ticket is CLAIM-LOCKED for the run and released afterwards, and a ticket a peer
+#   F. A batched `resolved` claim with NO group PR is not honored (fail-closed).
+#   G. Every batched ticket is CLAIM-LOCKED for the run and released afterwards, and a ticket a peer
 #      driver already holds is left out of the group instead of being double-worked.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,7 +51,11 @@ wsp_repo_slug() { printf '%s/%s' "\$GITHUB_ORG" "\$1"; }
 wsp_repo_localdir() { printf '%s/%s' "\$META_ROOT" "\$1"; }
 EOF
 
-# #1/#2/#3 share the 'govern' locality; #4 is elsewhere and must never join the group.
+# #1/#2/#3 are MEASURED (via **Files:**) to share real paths with #1: #2 shares
+# scripts/govern/lib/common.sh with #1, #3 shares scripts/govern/run-loop.sh with #1. #2 and #3 do
+# NOT share a file with each other — batching keys off the SEED (#1), never off the group's running
+# union — so both still join #1's group once the cap allows it. #4 shares nothing with anyone and
+# must never join.
 write_tickets() {
   cat > "$T/tickets.md" <<'EOF'
 # Tickets
@@ -49,22 +63,22 @@ write_tickets() {
 ## #1 — primary
 **Severity:** High — x.
 
-Where: scripts/govern/run-loop.sh
+**Files:** scripts/govern/run-loop.sh scripts/govern/lib/common.sh
 ---
 ## #2 — same area, worker resolves it
 **Severity:** High — y.
 
-Where: scripts/govern/govern-bookkeep.sh
+**Files:** scripts/govern/lib/common.sh scripts/govern/govern-bookkeep.sh
 ---
 ## #3 — same area, worker does NOT finish it
 **Severity:** Medium — z.
 
-Where: scripts/govern/select-ticket.sh
+**Files:** scripts/govern/run-loop.sh scripts/govern/select-ticket.sh
 ---
 ## #4 — different area entirely
 **Severity:** Medium — w.
 
-Where: templates/seed/CLAUDE.md
+**Files:** templates/seed/CLAUDE.md
 ---
 EOF
 }
@@ -89,7 +103,7 @@ EOF
 chmod +x "$T/bin/gh"
 
 # Worker stub: dump the prompt it was handed, then emit a report whose `tickets` array deliberately
-# MIXES outcomes — #2 resolved, #3 failed, and (in the D scenario) #3 omitted entirely.
+# MIXES outcomes — #2 resolved, #3 failed, and (in the E scenario) #3 omitted entirely.
 cat > "$T/bin/claude" <<EOF
 #!/usr/bin/env bash
 prompt=""
@@ -118,67 +132,76 @@ run_driver() { # extra env... -> one dry, serial, single-ticket driver; stderr o
     GOVERN_MAX_TICKETS=1 PATH="$T/bin:$PATH" "$@" bash "$RL" --dry-run --serial 2>&1 || true
 }
 
-# ── A — default (GOVERN_BATCH_MAX unset ⇒ 1): no batching at all ───────────
-logA="$(run_driver env)"
+# ── A — GOVERN_BATCH_MAX=1 (explicit): no batching at all ──────────────────
+logA="$(run_driver env GOVERN_BATCH_MAX=1)"
 assert_contains "$logA" "=== ticket #1" "A1: the driver works #1"
 if printf '%s' "$logA" | grep -q '^\[govern .*\] batch: '; then f=1; else f=0; fi
-assert_eq "$f" "0" "A2: no batch is formed at the default GOVERN_BATCH_MAX=1 (today's behavior)"
+assert_eq "$f" "0" "A2: GOVERN_BATCH_MAX=1 forms no batch (pre-#23 behavior, reached via explicit override)"
 promptsA="$(cat "$T/prompts.txt" 2>/dev/null || true)"
 if printf '%s' "$promptsA" | grep -qF '## #2 — same area'; then f=1; else f=0; fi
 assert_eq "$f" "0" "A3: the worker prompt carries ONLY #1's block"
 
-# ── B — GOVERN_BATCH_MAX=3: one worker gets the whole locality group ───────
-logB="$(run_driver env GOVERN_BATCH_MAX=3)"
-assert_contains "$logB" "batch: #1 + #2 #3" "B1: #2 and #3 are batched with #1 (same locality)"
-assert_contains "$logB" "locality 'govern'"  "B2: the group's locality key is logged"
-promptsB="$(cat "$T/prompts.txt" 2>/dev/null || true)"
-assert_contains "$promptsB" "## #1 — primary"     "B3: prompt carries the primary's block"
-assert_contains "$promptsB" "## #2 — same area"   "B4: prompt carries batched #2's block"
-assert_contains "$promptsB" "## #3 — same area"   "B5: prompt carries batched #3's block"
-assert_contains "$promptsB" "LOCALITY BATCH"      "B6: the batch instructions reach the worker"
-if printf '%s' "$promptsB" | grep -qF '## #4 — different area'; then f=1; else f=0; fi
-assert_eq "$f" "0" "B7: the different-locality ticket #4 is NOT pulled into the group"
+# ── B — GOVERN_BATCH_MAX unset: the new default (2) batches, capped at two ─
+logB="$(run_driver env)"
+assert_contains "$logB" "batch: #1 + #2" "B1: #2 (shares lib/common.sh with the seed #1) is batched by default"
+assert_contains "$logB" "(GOVERN_BATCH_MAX=2)" "B2: the default resolves to 2, not the old 1"
+if printf '%s' "$logB" | grep -qF 'batch: #1 + #2 #3'; then f=1; else f=0; fi
+assert_eq "$f" "0" "B3: #3 is NOT pulled in — the default cap (2) is already full with #1+#2"
+promptsB0="$(cat "$T/prompts.txt" 2>/dev/null || true)"
+if printf '%s' "$promptsB0" | grep -qF '## #3 — same area'; then f=1; else f=0; fi
+assert_eq "$f" "0" "B4: …and #3's block never reaches the worker prompt at the default cap"
+
+# ── C — GOVERN_BATCH_MAX=3: one worker gets the whole file-sharing group ───
+logC="$(run_driver env GOVERN_BATCH_MAX=3)"
+assert_contains "$logC" "batch: #1 + #2 #3" "C1: #2 and #3 are batched with #1 (both share a file with the seed)"
+promptsC="$(cat "$T/prompts.txt" 2>/dev/null || true)"
+assert_contains "$promptsC" "## #1 — primary"     "C2: prompt carries the primary's block"
+assert_contains "$promptsC" "## #2 — same area"   "C3: prompt carries batched #2's block"
+assert_contains "$promptsC" "## #3 — same area"   "C4: prompt carries batched #3's block"
+assert_contains "$promptsC" "LOCALITY BATCH"      "C5: the batch instructions reach the worker"
+if printf '%s' "$promptsC" | grep -qF '## #4 — different area'; then f=1; else f=0; fi
+assert_eq "$f" "0" "C6: the file-disjoint ticket #4 is NOT pulled into the group"
 # One worker for the whole group — not one per ticket. The prompt template starts with the literal
 # "worker prompt", and the stub appends one copy per invocation, so counting it counts workers.
 spawns="$(grep -o 'worker prompt' "$T/prompts.txt" 2>/dev/null | wc -l | tr -d ' ')"
-assert_eq "$spawns" "1" "B8: exactly ONE worker spawned for the three-ticket group"
+assert_eq "$spawns" "1" "C7: exactly ONE worker spawned for the three-ticket group"
 
-# ── C — per-ticket outcomes are honored, not collapsed ─────────────────────
-assert_contains "$logB" "[dry] would bookkeep batched #2" "C1: the batched ticket reported resolved IS bookkept"
-assert_contains "$logB" "#3 NOT resolved in batch with #1" "C2: the batched ticket reported failed is NOT"
-if printf '%s' "$logB" | grep -qF 'would bookkeep batched #3'; then f=1; else f=0; fi
-assert_eq "$f" "0" "C3: a non-resolved batched ticket is NEVER handed to bookkeep (it would be DELETED)"
-assert_contains "$logB" "left in tickets.md" "C4: …and is explicitly left in the queue for a later run"
+# ── D — per-ticket outcomes are honored, not collapsed ─────────────────────
+assert_contains "$logC" "[dry] would bookkeep batched #2" "D1: the batched ticket reported resolved IS bookkept"
+assert_contains "$logC" "#3 NOT resolved in batch with #1" "D2: the batched ticket reported failed is NOT"
+if printf '%s' "$logC" | grep -qF 'would bookkeep batched #3'; then f=1; else f=0; fi
+assert_eq "$f" "0" "D3: a non-resolved batched ticket is NEVER handed to bookkeep (it would be DELETED)"
+assert_contains "$logC" "left in tickets.md" "D4: …and is explicitly left in the queue for a later run"
 
-# ── D — a ticket MISSING from the report's tickets array is fail-closed ────
-logD="$(run_driver env GOVERN_BATCH_MAX=3 GOVERN_TEST_OMIT_3=1)"
-assert_contains "$logD" "[dry] would bookkeep batched #2"  "D1: the reported ticket is still bookkept"
-if printf '%s' "$logD" | grep -qF 'would bookkeep batched #3'; then f=1; else f=0; fi
-assert_eq "$f" "0" "D2: a ticket ABSENT from the tickets array is never bookkept (fail-closed)"
-assert_contains "$logD" "#3 NOT resolved in batch with #1" "D3: …it is recorded as not-resolved and kept"
+# ── E — a ticket MISSING from the report's tickets array is fail-closed ────
+logE="$(run_driver env GOVERN_BATCH_MAX=3 GOVERN_TEST_OMIT_3=1)"
+assert_contains "$logE" "[dry] would bookkeep batched #2"  "E1: the reported ticket is still bookkept"
+if printf '%s' "$logE" | grep -qF 'would bookkeep batched #3'; then f=1; else f=0; fi
+assert_eq "$f" "0" "E2: a ticket ABSENT from the tickets array is never bookkept (fail-closed)"
+assert_contains "$logE" "#3 NOT resolved in batch with #1" "E3: …it is recorded as not-resolved and kept"
 
-# ── D2 — a `resolved` claim with NO group PR is not honored ────────────────
+# ── F — a `resolved` claim with NO group PR is not honored ─────────────────
 # Doctrine defines resolved as "PR opened", and a batched ticket rides the primary's single group PR.
 # With no PR there is nothing for the claim to point at, so the ticket must stay in the queue.
 logNP="$(run_driver env GOVERN_BATCH_MAX=3 GOVERN_TEST_NO_PR=1)"
-assert_contains "$logNP" "the group produced no PR" "D4: a PR-less group is detected"
+assert_contains "$logNP" "the group produced no PR" "F1: a PR-less group is detected"
 if printf '%s' "$logNP" | grep -qF 'would bookkeep batched #2'; then f=1; else f=0; fi
-assert_eq "$f" "0" "D5: a batched 'resolved' with no group PR is NOT bookkept"
+assert_eq "$f" "0" "F2: a batched 'resolved' with no group PR is NOT bookkept"
 
-# ── E — claim locking covers every batched ticket ──────────────────────────
+# ── G — claim locking covers every batched ticket ───────────────────────────
 # A peer driver holding #2 must leave #2 out of the group (never double-worked)…
 mkdir -p "$T/governor/.locks/ticket-2"
-logE="$(run_driver env GOVERN_BATCH_MAX=3)"
+logG="$(run_driver env GOVERN_BATCH_MAX=3)"
 rmdir "$T/governor/.locks/ticket-2" 2>/dev/null || true
-assert_contains "$logE" "batch: #2 already claimed by another driver" "E1: a peer-held ticket is excluded from the group"
-assert_contains "$logE" "batch: #1 + #3"  "E2: …and the group forms from what remained claimable"
-promptsE="$(cat "$T/prompts.txt" 2>/dev/null || true)"
-if printf '%s' "$promptsE" | grep -qF '## #2 — same area'; then f=1; else f=0; fi
-assert_eq "$f" "0" "E3: the peer-held ticket's block never reaches this driver's worker"
+assert_contains "$logG" "batch: #2 already claimed by another driver" "G1: a peer-held ticket is excluded from the group"
+assert_contains "$logG" "batch: #1 + #3"  "G2: …and the group forms from what remained claimable"
+promptsG="$(cat "$T/prompts.txt" 2>/dev/null || true)"
+if printf '%s' "$promptsG" | grep -qF '## #2 — same area'; then f=1; else f=0; fi
+assert_eq "$f" "0" "G3: the peer-held ticket's block never reaches this driver's worker"
 # …and after a clean run every batched claim is released. Glob loop rather than `ls`: an unmatched
 # glob makes `ls` exit non-zero, which under `pipefail` turns the whole probe into a failure.
 leftover=0
 for _l in "$T/governor/.locks/ticket-"*; do if [[ -d "$_l" ]]; then leftover=$((leftover+1)); fi; done
-assert_eq "$leftover" "0" "E4: every claim lock (primary AND batched) is released at the end of the run"
+assert_eq "$leftover" "0" "G4: every claim lock (primary AND batched) is released at the end of the run"
 
 assert_done
