@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.17.1 — 2026-08-03
+
+### Fixed
+
+- **v1.17.0's new knobs never reached any workspace.** They were registered in `config-check.sh` —
+  which only *reports* what is set — but not in `templates/lib/workspace.sh`, which is the file
+  `/shiploop:update` actually distributes. `workspace-sh-merge` appends knobs the hub template
+  declares; the hub declared none of them, so it had nothing to append. Every fleet that updated to
+  v1.17.0 got the five new scripts and **no way to discover a single lever they expose**.
+
+  The sharp edge was `GOVERN_WORKER_ESCALATION_MODEL`. Undeclared, it fell back to the script default
+  `opus` — while `templates/lib/workspace.sh` still pinned `GOVERN_WORKER_MODEL=opus` from before the
+  split. Floor and ceiling both resolved to opus, which **re-collapses the two knobs v1.17.0 exists to
+  separate and makes escalation a same-tier re-bet.** That is precisely the failure the split was
+  built to prevent, shipped by the release that built it. It hit new scaffolds too, not just
+  upgrades, because the template carried the pin.
+
+  Now declared with their rationale: the floor (`sonnet`) and ceiling (`opus`) as an explicitly-paired
+  comment block that says keeping them different is the point, plus `GOVERN_DETERMINISTIC`,
+  `GOVERN_STALENESS_GATE`, `GOVERN_STALENESS_RUN_TESTS`, `GOVERN_EARLY_ABORT`, `GOVERN_INDEX`,
+  `GOVERN_VERIFY_FILTER`, `GOVERN_RUN_MAX_TOKENS`, `GOVERN_SELFREF_MAX_PER_RUN` and
+  `GOVERN_PRODUCT_FIRST`. Every default is unchanged, so this alters no behaviour on its own.
+
+  **Existing fleets need one manual edit.** `workspace-sh-merge` is append-only by design
+  (`scaffold.sh:727` skips any variable already present), so an upgrading workspace that already pins
+  `GOVERN_WORKER_MODEL` keeps its own value — `/shiploop:update` will append the new ceiling but
+  cannot lower your floor. If yours reads `opus`, change it to `sonnet` yourself or you are still
+  running floor == ceiling. Fresh scaffolds get the correct pair with no action.
+
 ## 1.17.0 — 2026-08-03
 
 The cost of a run is `Σ(bytes × turns_remaining) × tier_price`. Only the tier is a number you can set;

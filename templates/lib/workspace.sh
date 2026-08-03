@@ -70,7 +70,32 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 # (e.g. the meta-repo itself, or a skill-template repo on another owner). Give any
 # such repo a wsp_repo_slug / wsp_repo_localdir override below.
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
-GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-opus}"   # model for headless workers
+# ── Worker tier: a cheap FLOOR plus an escalation CEILING (two knobs, never one) ──
+# First attempts run at the FLOOR. On a failure the retry classifier attributes to judgment or
+# budget — never infra or CI — the ticket is re-bet ONCE at the CEILING. Measured over a real
+# backlog: opus $8.94/ticket, sonnet $2.22, haiku $0.59; three tickets sized opus resolved at
+# sonnet on attempt 1 for $1.34-$2.95 while the one dispatched at opus cost $20.18. Failures are
+# also cheap relative to successes (2.28M tokens vs 11.25M) because a worker out of its depth dies
+# early — so a wrong cheap bet costs far less than a right expensive one.
+#
+# KEEP THESE TWO DIFFERENT. Setting the floor to the ceiling re-collapses them into one value and
+# turns escalation into a same-tier re-bet — which disables the very rail that makes a cheap floor
+# safe. If you raise the floor to opus, you have opted out of tier arbitrage entirely.
+GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-sonnet}"                       # first-attempt FLOOR
+GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"   # escalate-once CEILING
+
+# ── Levers added in v1.17.0 — all default to the pre-v1.17.0 behaviour ───────
+# Every one is deterministic (no model call) and ships INERT, so enabling each is a deliberate act.
+# Flip one at a time and read `npm run govern:health` between changes.
+export GOVERN_DETERMINISTIC="${GOVERN_DETERMINISTIC:-0}"                   # 1 = let the scout's mechanical patches resolve a ticket with ZERO model turns
+export GOVERN_STALENESS_GATE="${GOVERN_STALENESS_GATE:-0}"                 # 1 = skip tickets whose named paths are gone (fail-open; positive evidence only)
+export GOVERN_STALENESS_RUN_TESTS="${GOVERN_STALENESS_RUN_TESTS:-0}"       # 1 = ALSO execute a test command read out of tickets.md. Separate opt-in on purpose: the queue is partly machine-written and a stat() is not a `bash -c`.
+export GOVERN_EARLY_ABORT="${GOVERN_EARLY_ABORT:-0}"                       # 1 = kill a worker showing no progress (~turn 30 instead of 218); it leaves a handoff the retry resumes from
+export GOVERN_INDEX="${GOVERN_INDEX:-1}"                                   # 0 = stop rebuilding the deterministic codebase index after each resolved ticket
+export GOVERN_VERIFY_FILTER="${GOVERN_VERIFY_FILTER:-1}"                   # 0 = stop collapsing a passing build/test run to one line
+export GOVERN_RUN_MAX_TOKENS="${GOVERN_RUN_MAX_TOKENS:-0}"                 # >0 = stop the run cleanly once this many tokens are spent (0 = no run-level brake)
+export GOVERN_SELFREF_MAX_PER_RUN="${GOVERN_SELFREF_MAX_PER_RUN:-0}"       # >0 = cap harness-about-harness tickets dispatched per run (gates DISPATCH, never discovery)
+export GOVERN_PRODUCT_FIRST="${GOVERN_PRODUCT_FIRST:-0}"                   # 1 = sort product work ahead of self-referential work
 
 # ── Default concurrency (GOVERN_PARALLEL_DEFAULT) ────────────────────────────
 # How many tickets a plain `scripts/govern/run-loop.sh` (no flags, no ticket number) works at once.
