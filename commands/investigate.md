@@ -1,5 +1,5 @@
 ---
-description: Triage a bug across all sub-repos before it becomes a ticket the governor ships. Seeds a notes file, pulls logs, forms a hypothesis, proposes a fix.
+description: Triage a bug across sub-repos before filing a ticket: gather evidence, form a hypothesis, propose a fix.
 allowed-tools: Bash, Read, Edit, Grep, Glob
 ---
 

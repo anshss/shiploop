@@ -85,6 +85,31 @@ When working inside a sub-repo, open that sub-repo's `learnings.md` yourself.
 
 ---
 
+## Rules that live here because something else already enforces them
+
+These were hard rules in `CLAUDE.md` until a frequency audit moved them. Each fires rarely *and* has a
+mechanical backstop, so paying for the prose on every turn bought nothing. They are still rules.
+
+- **MCP servers always at workspace root.** Never `claude mcp add` from a sub-repo — the server ends up
+  scoped to that sub-repo and is invisible from the root session where you actually work. Rare, and the
+  failure is a visibly missing tool rather than silent corruption, so it is cheap to rediscover.
+
+- **One package manager at the root — never two.** Set via `ROOT_PM` in `scripts/lib/workspace.sh`. The
+  root `.gitignore` ignores the off-PM root lockfiles, so a stray second lockfile can't be committed
+  and diverge. Sub-repos keep their own package managers independently; only the *root* is constrained.
+
+- **The main checkout stays on `main`, every repo, always.** The `check-main-on-main.sh` SessionStart
+  hook re-checks this at the start of every session and warns (non-blocking) if any repo has drifted,
+  so the invariant is surfaced when it matters instead of being re-read every turn. The half of this
+  rule that no hook covers — *coordination files commit directly to `main` here, never branched or
+  PR'd* — stayed in `CLAUDE.md`.
+
+The general test used for that audit: a rule earns its place in `CLAUDE.md` if it fires often, **or**
+if violating it fails silently and unrecoverably (nobody consults an appendix before `reset --hard`).
+Rules that are both rare and mechanically caught belong here.
+
+---
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_
