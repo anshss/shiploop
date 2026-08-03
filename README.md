@@ -13,53 +13,47 @@ A self-improving multi-agent harness for Interactive Coding Agents. It grinds a 
 
 ### Built to spend fewer tokens
 
-One goal: the fewest tokens per shipped ticket. Roughly in order of how much each one saves.
+One goal: the fewest tokens per shipped ticket. This section lists only the levers that move that number by **multiples**. Dozens of smaller economies exist in the code — cached lookups, retired validations, cleanup of abandoned resources — and they're real, but they're rounding errors next to these five.
 
-- **Every ticket is sized before it runs.** The Claude session that files a ticket stamps it with `Model:` and `Effort:`, and the governor honors that for the first attempt: haiku for mechanical single-file work, sonnet for standard search and edit, opus only for the judgment-heavy ones. You don't set these by hand. This is the biggest lever by a wide margin, because it's the difference between running everything on opus and running most things on haiku. And when a ticket arrives with neither field, it no longer falls through to opus: a scout pass runs first, at the haiku tier, and greps the real code to measure how many files and repos the fix plausibly touches, whether tests already cover the area, and whether git history holds a precedent commit. A deterministic scoring table — not a second model call — turns that measurement into a tier. Reconnaissance costs about a thousandth of the work, so spending a fraction of a cent to decide whether to spend three dollars or thirty is the best trade in the harness. An explicit `Model:` or `Effort:` always outranks the scout; it replaces the blanket default, never the operator.
+- **Model orchestration.** The dominant cost variable is which model runs a ticket, and the spread is wide: on this maintainer's backlog a resolved ticket costs roughly **$0.59 on haiku, $2.22 on sonnet, $8.94 on opus**. So the harness does not try to *predict* the right tier — it bets cheap and pays for the expensive model only when the cheap one has already demonstrably failed. Every ticket starts at a floor (`GOVERN_WORKER_MODEL`, default `sonnet`) and a classified failure escalates it **once** to a ceiling (`GOVERN_WORKER_ESCALATION_MODEL`, default `opus`), never further. That asymmetry is the whole trade: failed attempts die early and cheap (they average a fifth of the tokens of a successful one), so a wrong cheap guess costs far less than a right expensive one. Escalation is also classified rather than reflexive — an infrastructure or CI failure retries at the *same* tier with the log attached, running out of budget raises the tier, and only a genuine judgment failure buys both a bigger model and more thinking.
 
-- **It won't start work that can't succeed.** Before spawning anything it checks a few things. Is this repo's CI already red? Is this ticket waiting on another that isn't done? Does it touch a file already being changed upstream? Is this a check whose setup isn't wired yet? Is the disk nearly full? Any yes and it skips. No agent, no tokens. A session you never start is the cheapest one there is.
+  This replaced an earlier design where a cheap scout pass scored each ticket into a tier. It was removed because it was measured and didn't work: 4 of the 5 verdicts it ever produced were `opus/high`, and 3 tickets it sized `opus` then succeeded at `sonnet` on the first attempt. It was a rubber stamp, not arbitrage. The scout still runs — it just surveys now, and doesn't size.
 
-- **It won't pay to rediscover a fix that already exists.** If your workspace runs the harness on itself, a mechanism script in your `scripts/` has a counterpart in the hub — and another fleet may have already pushed the identical fix up. Before dispatching, the gate reads the ticket's `Where:` line and asks, for each file it names, whether the hub is ahead of you on that file. If it is, you get told to pull the fix down instead of a worker spending a full session re-deriving it. The direction test is the whole trick: two files differing tells you nothing about who moved, so it reuses the sync marker to tell *your* unported work apart from someone else's. Entirely file and git reads — no model call, no network. And it can never close a ticket on its own; the most it does is park one and ask you. Worth knowing this only fires on tickets pointing at harness mechanism files, so on an ordinary product backlog it will rarely trigger.
+- **A lane that spends no model at all.** The largest arbitrage available isn't opus→sonnet, it's **model→no model**, which is unbounded rather than a 4–15× ratio. A real share of any backlog is mechanical: flip a default, add a key, bump a version, delete a stale line, apply a known rename. The scout already runs and already reads real code, so it emits a candidate patch as one extra field on a call that was happening anyway — never a second model invocation. `deterministic-apply.sh` then applies that patch, verifies it, and opens the PR with **zero model turns spent on the fix**. Every doubt falls through to an ordinary worker: kill switch off, empty patch, a path outside the scout's verified list, a patch spanning two sub-repos, a dirty tree, `git apply --check` failing, no verify command configured, or the verify command failing. Falling through costs exactly one normal worker — the status quo — while a wrong patch costs a bad PR, a CI cycle, and your attention, so the guards are deliberately over-strict. Off by default (`GOVERN_DETERMINISTIC`).
 
-- **Running the loop costs nothing.** The part that picks tickets, tracks state and merges PRs is plain bash. It never calls a model. Tokens get spent inside the agents it starts, nowhere else.
+- **Tool schemas get trimmed, and that compounds every turn.** Measured on a real spawn, tool definitions were **51.7% of the entire request** — larger than the conversation itself. Most of it was unusable by a headless worker: the `Workflow` schema alone was 13.1% of the request. Passing an explicit tool list cuts tool bytes by 66.7% and the whole request by **−34.5%** (164,795 → 107,985 bytes; full methodology in [PROOF.md §5](PROOF.md)). This matters more than the raw percentage suggests, because a worker session runs ~218 turns and that overhead is re-sent on *every one of them*. On by default now, capability-probed so an older CLI just skips it.
 
-- **Each agent starts with a small context.** No MCP servers, no slash commands or skill descriptions, no project hooks. That's about 2,600 tokens saved on every single turn, and the starting context is roughly a quarter of everything a session spends.
+- **Work that can't succeed never starts.** Before spawning anything: is this repo's CI already red, is this ticket waiting on another that isn't done, is the disk nearly full, is this a check whose setup isn't wired yet? Any yes and it skips. And if your workspace runs the harness on itself, a separate gate asks whether the hub is already *ahead of you* on the files the ticket names — if another fleet pushed the identical fix up, you get told to pull it down instead of a worker re-deriving it from scratch. All of this is file and git reads: no model call, no network. A session you never start is the cheapest one there is, and skipping one avoids the entire ticket cost rather than shaving a percentage off it.
 
-- **The prompt is built to be cached.** The unchanging parts come first and your ticket text goes last, so every agent reuses one cached prefix instead of paying to build its own.
+- **A retry resumes instead of restarting.** Exploration is most of what a ticket costs, and before this a failed attempt bought you literally nothing. Now the worktree is preserved, so attempt two doesn't re-clone or re-explore, and it inherits the previous attempt's work: a scratchpad of which files turned out to matter and what was already ruled out, plus a structured handoff block (*ruled out / stopped at / would try next*) injected as "start here". Both are capped and both are handed over explicitly marked as **untrusted evidence, not instructions** — a wrong conclusion from attempt one shouldn't become gospel for attempt two. They live in the worktree, git-ignored, and never reach a PR.
 
-- **Agents are told to stay small.** Hand heavy reading to cheap sub-agents. Keep build output in a file instead of pasting it into the conversation. Keep replies short. And don't spin up a sub-agent for something you could finish in two commands.
+- **Batching, with a caveat.** One worker can take several tickets whose scout-measured file paths actually overlap, so it explores that area once instead of once per ticket. Default is 2 (`GOVERN_BATCH_MAX`). Be honest about this one: the mechanism is sound and exploration really is where the money goes, but **no production A/B measurement exists**. A 5-ticket batch is nowhere near 5× cheaper than 5 workers. The cap was raised off 1 only after batching was re-keyed onto measured file overlap rather than a topic guess.
 
-- **Batching is the big one you have to switch on.** `GOVERN_BATCH_MAX` lets one agent take several tickets from the same area so it explores once instead of once each. Exploration is most of what a ticket costs, so this can save more than anything else here. Off by default, because the grouping heuristic hasn't been proven on a real backlog yet.
+Three things worth knowing up front. The driver itself is free — the bash that picks tickets, tracks state, and merges PRs never calls a model, so tokens burn only inside the workers it spawns. Running four workers at once is the default (`GOVERN_PARALLEL_DEFAULT`), which gets more done per hour but costs four times as much at once and makes no single ticket cheaper. And several protections above only apply when the governor pulls from your backlog itself: name specific ticket numbers and you get neither batching nor the give-up-after-repeated-failures brake.
 
-- **Settled work never gets done again.** Agents share a list of what's already been attempted, re-check against the remote before starting in case a sibling just finished the same ticket, remember across runs that a ticket is waiting on a PR to merge, and skip anything already handed to outside contributors. A second `govern` run won't even start while one is still going.
+### The scaffolding around all this
 
-- **It only starts as many agents as there is work for.** A one ticket backlog spawns one agent, not four idle ones.
+Two layers get built for you: a **workspace** once, and a fresh **worker** per ticket.
 
-- **A retry picks up where it left off.** The old worktree is kept, so attempt two doesn't re-clone and re-explore — and now it inherits the first attempt's notes too. A worker keeps a scratchpad as it works: which files turned out to matter, what the root cause was, what it tried, what failed and why. On a retry that file is pasted into the new agent's prompt, so it starts from what the last one learned instead of paying for the same exploration twice. Exploration is most of what a ticket costs, and before this a failed attempt bought you nothing at all. The notes are handed over as evidence to weigh, not as fact — a wrong conclusion from attempt one shouldn't become gospel for attempt two — and they stay in the worktree, git-ignored, so they never reach a PR. And the failure itself gets read first: an infrastructure or CI failure retries at the same tier with the log attached, running out of budget raises the tier, and only a genuine judgment failure buys both a bigger model and more thinking. It never just reflexively re-bets on the most expensive model.
+**The workspace.** `/shiploop:setup` wraps your existing repo rather than absorbing it — your code moves into a subfolder and stays its own git repo with its full history, and the workspace scaffolds around it. The path you `cd` into doesn't change. Everything that appears next to it is plain text you can read and edit:
 
-- **It stops things that run away.** A couple of failed attempts on a ticket and it escalates to you instead of retrying forever. A run that keeps failing halts itself. And `GOVERN_WORKER_MAX_TOKENS` hard-stops a single agent that wanders past a token ceiling, though that one is off by default.
+```
+your-project/
+  <your-repo>/              # your code, untouched, still its own git repo
+  queue/tickets.md          # the backlog, one `## #N` per ticket
+  governor/                 # doctrine, escalations, improvements
+  scripts/                  # bash: status / dev / doctor / worktrees / govern
+  scripts/lib/workspace.sh  # the ONE config file; every knob lives here
+  CLAUDE.md                 # git-tracked memory; every resolved ticket adds a lesson
+```
 
-- **What it learns, it keeps.** Every finished ticket writes a lesson into your `CLAUDE.md`, so the next agent doesn't rediscover it. Plain text you can read, edit and delete.
+**The scripts** are the harness, and they're all bash. `run-loop.sh` is the driver: it owns state and control flow deterministically and never calls a model. `spawn-worker.sh` builds a worker's prompt and launches it. `config-check.sh` validates your entire config with zero tokens and no Claude auth. Because the orchestration layer is deterministic bash rather than an agent, the parts that decide *what* to do cost nothing; only the parts that do the work spend anything.
 
-- **Agents are told to size the check to the change.** A docs-only edit gets a lint or a parse check instead of a full test suite, since a suite run is the single biggest context flood in a session. Anything touching executable code still runs the full suite, and when in doubt it runs the full suite anyway.
+**The worktree** is what makes parallelism safe. One ticket gets one git worktree, cut fresh from an up-to-date `main` with a branch named for the ticket in each sub-repo actually in scope; sub-repos out of scope get a read-only detached checkout so a worker can read them but not touch them. Workers can't collide, no run inherits the last one's bad state, and context stays flat instead of accumulating across tickets. On failure the worktree is kept for the retry to resume from; it's only removed once the work lands, and never while it holds commits you haven't pushed.
 
-- **The reviewer is cheap, and only shows up when needed.** The supervisor auditing a run is a sonnet session in read-only mode that reads only what changed since it last looked. The deeper self-improvement pass runs only after a run that actually hit friction, so a clean run pays for no review at all.
+**The worker** is a fresh headless `claude -p` session inside that worktree. It gets a fixed prompt skeleton, your operator doctrine from `governor/preferences.md`, the ticket text, the scout's verified file paths as a warm start, and — on a retry — the previous attempt's handoff. It's also deliberately denied things: no MCP servers, no slash commands, no personal user-settings layer, and a trimmed tool list. That's not just thrift. A single-purpose headless worker has no use for scheduling, notification, or orchestration tools, and every schema it can't use is dead weight re-sent on all ~218 of its turns. It works, opens a PR, and writes a structured report the bash driver reads to decide what happens next.
 
-- **Validations don't get paid for twice.** A flow nobody uses gets retired instead of re-tested forever. A long cloud validation can refuse to start before it provisions anything. Once running, it survives past the usual task timeout instead of being killed and re-run from scratch, and its result is captured even if nothing was watching when it finished.
-
-- **Branches start from current code.** New worktrees are cut from a freshly fetched `origin/main`, not a stale local copy, so a PR isn't born already conflicted and needing a second attempt.
-
-- **It cleans up after itself.** A worker stopped mid-flight has its preview deploys and other billable resources torn down rather than left running, and ending a session kills stray dev processes before they hold ports hostage. It also refuses to delete a worktree holding commits you never pushed.
-
-- **Some work doesn't have to be yours.** On a public repo, low-severity tickets can go out as GitHub issues for outside contributors instead of spending one of your agents. Off by default, and nothing gets published without your say-so.
-
-- **Repeated lookups happen once.** Your GitHub identity, each repo's visibility, what your CLI supports. All resolved a single time per run, not once per PR. Start-of-run housekeeping runs once for the whole run too, not once per agent.
-
-- **You can see where the tokens went.** Every attempt records its model, effort, tokens and cost, and a run ends by separating what you spent on your product from what you spent maintaining the harness itself.
-
-- **Checking your setup is free.** `config-check.sh` validates your whole config without calling Claude at all. Worth knowing that `--dry-run` is not free. The merge and bookkeeping steps are only simulated, but it does run a real agent in plan mode.
-
-Two things worth knowing up front. Running four agents at once is the default (`GOVERN_PARALLEL_DEFAULT`), which gets more done per hour but costs four times as much at once, and it doesn't make any single ticket cheaper. And several of the protections above only apply when the governor pulls from your backlog itself: if you name specific ticket numbers, you get neither batching nor the give-up-after-repeated-failures brake.
+Autonomy is bounded by the trust ladder below, not by the scaffolding — workers run with permissions bypassed by design, scoped to a throwaway worktree and the branch it pushes.
 
 ## Install
 
@@ -90,17 +84,9 @@ Setup detects what the folder is and adapts:
 - **A folder of repos (or an empty one) → fresh scaffold.** Each subfolder with its own `.git` becomes a sub-repo. One repo is a fine workspace. Add more later.
 - **An existing workspace → upgrade**, component by component, without touching your config.
 
-It detects everything first (sub-repos, ports, dev commands, package manager), asks its questions in **one batched round**, then runs to completion. You end up with a workspace around your code:
+It detects everything first (sub-repos, ports, dev commands, package manager), asks its questions in **one batched round**, then runs to completion. You end up with the workspace laid out in [The scaffolding](#the-scaffolding-around-all-this) above.
 
-```
-your-project/
-  <your-repo>/              # your code, untouched, still its own git repo
-  queue/tickets.md          # the backlog the governor grinds
-  governor/                 # doctrine, escalations, improvements
-  scripts/                  # status / dev / doctor / worktrees / govern
-  scripts/lib/workspace.sh  # the ONE config file; every knob lives here
-  CLAUDE.md                 # git-tracked memory; every resolved ticket adds a lesson
-```
+Nothing you own gets clobbered on an upgrade: your `README.md`, `CLAUDE.md`, `scripts/lib/workspace.sh`, and the governor's operator files (`preferences.md`, `decisions-log.md`, `escalations.md`, `improvements.md`) are either never overwritten or refuse to be without an explicit `--yes`; `.gitignore` is append-only. A wrap-in-place writes a `.wrap-undo.sh` **before** it moves anything, verifies your repo's HEAD, branch, working-tree status, and submodule state are identical after the move, and rolls back on any mismatch.
 
 ### 2. See your product's risk map: 10 minutes, nothing deploys
 
@@ -137,7 +123,7 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns s
 </p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
-- **Right-sized models.** The interactive "brain" filing a ticket stamps it with a `Model:` field (`haiku` mechanical / `sonnet` standard / `opus` judgment-heavy) and an `Effort:`, and the spawn honors both on the first attempt. A ticket that names neither is sized by a **scout pass** instead of defaulting to opus: a cheap haiku recon run measures the real scope (files touched, repos involved, existing test coverage, a precedent commit in history, local edit vs contract change, concrete vs vague fix direction) and a deterministic bash scoring table maps that to `haiku`/`low`, `sonnet`/`medium`, or `opus`/`high`. The verdict is cached per run so a retry never re-scouts, and it is validated and clamped before use — a malformed scout falls back to `GOVERN_WORKER_MODEL` loudly, and clamping only ever pushes a ticket up the ladder, never down. Retries are classified rather than blindly escalated: an infra or CI failure retries at the same tier, running out of budget raises the tier, and a judgment failure raises both tier and effort.
+- **Cheap floor, escalate once.** Every ticket dispatches at `GOVERN_WORKER_MODEL` (default `sonnet`); a classified failure escalates it exactly once to `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`). No per-ticket prediction, because prediction was tried and measured as a rubber stamp. A cheap **scout pass** (haiku) still runs before dispatch, but it now only *surveys* — verified file paths, whether tests cover the area, whether history holds a precedent commit — which the worker gets as a warm start, the batching layer keys on, and the zero-model lane uses as its patch source. Its result is cached per run, so a retry never re-scouts.
 - **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
 - **It gets better over time.** Every resolved ticket promotes its durable lesson into the right `CLAUDE.md` before the entry is deleted: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
 
@@ -158,7 +144,7 @@ What makes the top rung safe to reach for:
 - **Bounded blast radius.** Workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
 - **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
 
-Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample skews `opus`-heavy on self-referential harness tickets; right-sizing (haiku/sonnet on tickets that don't need opus) pushes it down. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
+Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample predates the current cheap-floor default and skews `opus`-heavy on self-referential harness tickets, so treat it as an upper bound rather than an average — a `sonnet` floor observed ~$2.22/ticket. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## Commands
 
@@ -180,14 +166,16 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 |---|---|---|
 | `GOVERN_AUTONOMY` | `pr-only` | Trust-ladder rung (`observe` / `pr-only` / `auto`); absent = `auto` for pre-knob installs |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
-| `GOVERN_WORKER_MODEL` | `opus` | Fleet-wide fallback tier: used when the ticket names no `Model:` **and** the scout produced no usable verdict |
-| `GOVERN_SCOUT` | on | Pre-dispatch scout pass that measures a ticket's scope and picks the tier deterministically; `0` reverts to the blanket `GOVERN_WORKER_MODEL` default |
+| `GOVERN_WORKER_MODEL` | `sonnet` | First-attempt **floor**: the tier every ticket dispatches at. A ticket's own `Model:`/`Effort:` fields no longer participate in dispatch |
+| `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | Escalate-once **ceiling**: the tier a classified judgment failure retries at. A ticket never escalates twice |
+| `GOVERN_DETERMINISTIC` | `0` (off) | Zero-model lane: let the scout's mechanical patch resolve a ticket with **no model turns** on the fix. Over-strict guards; every doubt falls through to a normal worker |
+| `GOVERN_SCOUT` | on | Pre-dispatch survey (verified file paths, coverage, precedent commit) used as a worker warm start, the batching key, and the zero-model patch source. It does **not** pick the tier |
 | `GOVERN_SCOUT_MODEL` | `haiku` | Tier the scout pass itself runs at — recon should cost a rounding error |
-| `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned and sizing falls back |
+| `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned; dispatch proceeds without a survey |
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Tickets a plain `run-loop.sh` works at once: `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
 | `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm: a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
-| `GOVERN_WORKER_TOOLS` | empty (off) | Tool-schema trim: `default` passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
+| `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB: additive migrations merge instead of parking |
 | `GOVERN_PUBLIC_REPOS` | auto-detect | Public repos get neutral `sl-<hex>` branches, no ticket ids on PRs |
@@ -226,7 +214,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_INTERRUPT_RETRY` | `1` | Retries for a worker killed mid-flight |
 | `GOVERN_SUPERVISOR_EVERY` | `5` | Tickets between periodic supervisor reviews |
 | `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the supervisor pass runs at |
-| `GOVERN_BATCH_MAX` | `1` (off) | Same-area tickets one worker may take as a group, exploring once and opening one PR. The largest single cost lever here, off by default because the grouping heuristic is unproven on a real backlog |
+| `GOVERN_BATCH_MAX` | `2` | Tickets with overlapping scout-measured file paths that one worker may take as a group, exploring once and opening one PR. Kept low because no production A/B measurement of batching exists yet; `1` disables it |
 
 ### Binaries
 
