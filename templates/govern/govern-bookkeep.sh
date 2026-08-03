@@ -119,43 +119,127 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
     insert_text="$text"   # what actually gets inserted into $target — overridden below on overflow
 
+    # ── Placement gate (#83 Part 1) ─────────────────────────────────────────
+    # A worker CLAIMS this lesson belongs at root (lessonPatch, not an in-PR sub-repo edit), but
+    # worker-prompt.md's instruction to route sub-repo-scoped facts into the PR instead is text a
+    # worker can get wrong — and it did, in measured practice (root CLAUDE.md growing monotonically
+    # across fleets). Re-derive placement from the TEXT ITSELF via govern::lesson_placement (lib/
+    # common.sh); redirect the insertion target to that sub-repo's own CLAUDE.md when the evidence
+    # is unambiguous.
+    #
+    # TRANSACTIONAL: a redirect is a WRITE + COMMIT + (best-effort) PUSH into a git repo that is
+    # NOT the one this script's own lock/CAS-retry machinery protects — a sub-repo push can fail for
+    # reasons entirely outside our control (branch protection on its default branch, no push
+    # credential in a headless context, a non-fast-forward race with another worker). We refuse to
+    # even ATTEMPT a redirect unless the sub-repo's tree is already clean (never write/commit behind
+    # something else that's mid-edit there), and if the attempt still fails, we undo ONLY what we
+    # touched — never a `reset --hard` of a repo this script doesn't exclusively own — before falling
+    # through to the ORIGINAL root insert below. A lesson must always land SOMEWHERE; a failed
+    # redirect must never be a silently lost lesson (worse than the bloat this gate exists to fix).
+    # Every outcome (redirect success / dirty-skip / attempted-then-fell-back / never attempted) is logged.
+    redirected=0
+    if command -v govern::lesson_placement >/dev/null 2>&1; then
+      placement_repo=""; placement_reason=""
+      IFS=$'\t' read -r placement_repo placement_reason < <(govern::lesson_placement "$text")
+      if [[ -z "$placement_repo" ]]; then
+        govern::log "bookkeep #$N: lessonPatch staying at root CLAUDE.md ($placement_reason)"
+      else
+        subrepo_dir="$meta_root/$placement_repo"
+        subrepo_claude="$subrepo_dir/CLAUDE.md"
+        if [[ ! -f "$subrepo_claude" ]] || ! git -C "$subrepo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but $placement_repo/CLAUDE.md or its git repo isn't present here — staying at root CLAUDE.md ($placement_reason)"
+        elif [[ -n "$(git -C "$subrepo_dir" status --porcelain 2>/dev/null)" ]]; then
+          # SAFETY (#83 review): never write/commit into a sub-repo whose tree isn't already clean —
+          # an operator mid-edit in the main checkout, a concurrent session, or a worker's leftover
+          # state could be sitting there, and this gate has no business touching any of it. A dirty
+          # tree is exactly the situation where we must back off, not write behind someone's back.
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its working tree is DIRTY (uncommitted changes present) — refusing to write/commit into it; staying at root CLAUDE.md ($placement_reason)"
+        elif [[ "$(git -C "$subrepo_dir" symbolic-ref --short -q HEAD 2>/dev/null || true)" != "$(govern::subrepo_default_branch "$subrepo_dir")" ]]; then
+          # SAFETY (#83 review): govern-bookkeep.sh runs against the MAIN checkout (run-loop.sh
+          # invokes it from the same tree that owns queue/tickets.md — never a worker's worktree,
+          # which lives under a separate WORKTREE_BASE), and the workspace convention is that the
+          # main checkout's sub-repos always sit on their default branch (root CLAUDE.md rule #8;
+          # check-main-on-main.sh warns on drift, but only as an advisory SessionStart hook — it
+          # never blocks). If that convention has been violated for any reason (a human manually
+          # switched it, a bug elsewhere left it mid-op) and HEAD is on a ticket/feature branch,
+          # `push HEAD:<default>` would push that branch's entire tip — including unmerged work —
+          # straight onto the default branch, bypassing its PR and CI. Refuse instead: same shape
+          # as the dirty-tree check above. Detached HEAD (symbolic-ref returns empty) also refuses.
+          govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its checkout is not on its default branch — refusing to redirect (would push the wrong branch's tip); staying at root CLAUDE.md ($placement_reason)"
+        else
+          subrepo_default_branch="$(govern::subrepo_default_branch "$subrepo_dir")"
+          subrepo_prehead="$(git -C "$subrepo_dir" rev-parse HEAD 2>/dev/null || true)"
+          subrepo_ok=0
+          if [[ -n "$subrepo_prehead" ]]; then
+            govern::insert_lesson "$subrepo_claude" "$anchor" "$text"
+            # The compound command's exit status is its LAST evaluated element — `[[ "$pushed" == 1 ]]`
+            # on the push branch, or the `exit 0` short-circuits when no push was needed/possible — so
+            # the `if` genuinely reflects push success, not just "commit landed" (a real push failure
+            # must count as an overall failure here, never be masked by an earlier `|| true`).
+            if ( cd "$subrepo_dir"
+                 git add CLAUDE.md \
+                 && git commit -q -m "docs(claude): promote lesson from ticket #$N" \
+                 && { [[ "${GOVERN_NO_PUSH:-0}" == "1" ]] && exit 0
+                      git remote get-url origin >/dev/null 2>&1 || exit 0
+                      pushed=0
+                      for _attempt in 1 2 3 4 5; do
+                        if git push origin "HEAD:$subrepo_default_branch" >/dev/null 2>&1; then pushed=1; break; fi
+                        git pull --rebase origin "$subrepo_default_branch" >/dev/null 2>&1 || break
+                      done
+                      [[ "$pushed" == "1" ]]
+                    }
+               ); then
+              subrepo_ok=1
+            fi
+          fi
+          if [[ "$subrepo_ok" == "1" ]]; then
+            redirected=1
+            govern::log "bookkeep #$N: lessonPatch redirected root CLAUDE.md -> $placement_repo/CLAUDE.md ($placement_reason)"
+          else
+            # NARROW rollback — restore ONLY what we touched (CLAUDE.md + our own commit, if we made
+            # one), never `reset --hard` a repo we don't exclusively own. The tree was verified clean
+            # before we started, so the only possible diff from $subrepo_prehead at this point is our
+            # own add/commit: `reset --mixed` moves HEAD back (a no-op if we never got as far as
+            # committing) and resets the INDEX to match it (un-staging our `git add` either way),
+            # then `checkout --` restores the WORKING TREE for that one path from that index. Neither
+            # step touches any other file.
+            git -C "$subrepo_dir" reset --mixed "$subrepo_prehead" >/dev/null 2>&1 || true
+            git -C "$subrepo_dir" checkout -- CLAUDE.md 2>/dev/null || true
+            govern::log "bookkeep #$N: sub-repo commit/push into $placement_repo/CLAUDE.md failed — reverted CLAUDE.md + our commit only (working tree otherwise untouched) and falling BACK TO ROOT CLAUDE.md instead ($placement_reason)"
+          fi
+        fi
+      fi
+    fi
+
     # Overflow gate: CLAUDE.md is re-sent every turn, so an oversized lessonPatch inserted verbatim
     # is a PERMANENT per-turn tax. Past GOVERN_LESSON_MAX_CHARS, keep only the LEAD rule (the first
     # paragraph — text up to the first blank line; the first line if there's no blank line) in
     # $target, pointing at the full text parked under its own heading in CLAUDE-APPENDIX.md. Falls
     # back to the CURRENT insert-everything behavior when CLAUDE-APPENDIX.md doesn't exist at the
-    # meta-repo root — never silently lose the lesson.
-    lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
-    appendix="$meta_root/CLAUDE-APPENDIX.md"
-    if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
-      if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
-        lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
-      else
-        lead="$(printf '%s\n' "$text" | head -n1)"
+    # meta-repo root — never silently lose the lesson. ROOT-ONLY: a redirected sub-repo lesson skips
+    # this (CLAUDE-APPENDIX.md is a root-level overflow sink, and a sub-repo CLAUDE.md isn't re-sent
+    # every turn the way root is, so the same permanent-tax argument doesn't apply there).
+    if [[ "$redirected" == "0" ]]; then
+      lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
+      appendix="$meta_root/CLAUDE-APPENDIX.md"
+      if [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
+        if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
+          lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
+        else
+          lead="$(printf '%s\n' "$text" | head -n1)"
+        fi
+        heading="#$N — ${ticket_title:-lesson}"
+        insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."
+        { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
+        patched_files+=("$appendix")
+        govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
       fi
-      heading="#$N — ${ticket_title:-lesson}"
-      insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."
-      { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
-      patched_files+=("$appendix")
-      govern::log "bookkeep #$N: lessonPatch text (${#text} chars) exceeds GOVERN_LESSON_MAX_CHARS=$lesson_max_chars — full text moved to CLAUDE-APPENDIX.md (\"$heading\"), lead rule kept in $lp_file"
-    fi
-
-    if [[ -n "$anchor" ]] && grep -qF "$anchor" "$target"; then
-      # Insert the (possibly multi-line) lesson AFTER the anchor line. Pass the text via a
-      # FILE read with getline — NEVER `awk -v t="$text"`: awk's -v cannot hold literal
-      # newlines, so multi-line lesson text dies with "awk: newline in string" and the patch
-      # silently fails (the resolve then aborts before its commit under set -e).
-      tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$insert_text" > "$tf"
-      awk -v a="$anchor" -v tf="$tf" '
-        index($0,a) && !done { print; print ""; while ((getline line < tf) > 0) print line; close(tf); done=1; next }
-        { print }
-      ' "$target" > "$tmpf"
-      mv "$tmpf" "$target"; rm -f "$tf"
+      govern::insert_lesson "$target" "$anchor" "$insert_text"
+      patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
+                                    # root-relative name would miss it; absolute resolves from anywhere in the repo.
     else
-      printf '\n%s\n' "$insert_text" >> "$target"
+      govern::log "bookkeep #$N: promoted lesson committed to $placement_repo/CLAUDE.md"
     fi
-    patched_files+=("$target")   # ABSOLUTE path — staged from cd commit_dir (the queue/ folder), so a bare
-                                  # root-relative name would miss it; absolute resolves from anywhere in the repo.
   fi
 fi
 

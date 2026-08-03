@@ -791,6 +791,103 @@ govern::out_of_scope_tickets() { # [tickets-file] -> "N\twhere" lines
   ' "$f"
 }
 
+# ── lesson placement gate (#83 Part 1) ───────────────────────────────────────
+# Root CLAUDE.md is re-sent on EVERY turn of every session; a lessonPatch whose subject is really ONE
+# sub-repo's internals (not a cross-cutting harness/workspace rule) permanently taxes every session,
+# including ones that never touch that sub-repo. worker-prompt.md already TELLS workers to file such
+# lessons inside their own PR instead of `lessonPatch` — but that is a text instruction a worker can
+# get wrong, and it produced monotonic root-CLAUDE.md growth in practice (measured: one fleet's root
+# file went 7,319 → 47,075 B; another needed two manual emergency trims). This is the code-level
+# backstop: it re-derives placement from the LESSON TEXT ITSELF, independent of what the worker claims.
+#
+# Deliberately CONSERVATIVE — a false redirect silently buries a cross-cutting rule inside one
+# sub-repo's CLAUDE.md, which is worse than the root-file bloat this exists to fix. Redirects ONLY
+# when ALL of:
+#   1. exactly one REPOS entry is referenced as a PATH (`<repo>/...`) anywhere in the text — this is
+#      the actual "sub-repo scope" evidence, not just the repo's name appearing in prose;
+#   2. no OTHER REPOS entry is mentioned anywhere in the text (path or bare name) — a second repo
+#      named anywhere reads as "these interact", which is cross-cutting by definition;
+#   3. the text carries no cross-cutting signal word — naming the orchestration layer itself
+#      (meta-repo/root/governor/workspace.sh/CLAUDE.md/harness/queue) means the lesson is ABOUT how
+#      the harness and that sub-repo interact, not a pure sub-repo-internal fact.
+# Every other case (zero path signals, 2+ repos referenced, or a cross-cutting word) stays at root.
+# Pure function — prints "<repo>\t<reason>" (redirect) or "\t<reason>" (stay at root); always exit 0.
+# The caller (govern-bookkeep.sh) logs the reason either way, so every decision is auditable (#83).
+GOVERN_LESSON_CROSSCUT_RE='(^|[^A-Za-z0-9_-])(meta-repo|root claude\.md|governor|workspace\.sh|claude\.md|queue/tickets\.md|cross-repo|harness)([^A-Za-z0-9_-]|$)'
+govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
+  local text="$1" r
+  local -a path_hits=() name_hits=()
+  for r in "${REPOS[@]}"; do
+    [[ -n "$r" ]] || continue
+    if printf '%s\n' "$text" | grep -qE "(^|[^A-Za-z0-9_.-])${r}/[A-Za-z0-9_./-]+"; then
+      path_hits+=("$r")
+    elif printf '%s\n' "$text" | grep -qE "(^|[^A-Za-z0-9_-])${r}([^A-Za-z0-9_-]|$)"; then
+      name_hits+=("$r")   # mentioned by bare name only, no path — still "referenced" for signal (2)
+    fi
+  done
+  if [[ "${#path_hits[@]}" -eq 0 ]]; then
+    printf '\tno sub-repo path signal in lesson text — no evidence to redirect on\n'
+    return 0
+  fi
+  if [[ "${#path_hits[@]}" -gt 1 ]]; then
+    printf '\tmultiple sub-repos referenced by path (%s) — cross-cutting, staying at root\n' "${path_hits[*]}"
+    return 0
+  fi
+  if [[ "${#name_hits[@]}" -gt 0 ]]; then
+    printf '\tsecond sub-repo referenced by name (%s) alongside %s — cross-cutting, staying at root\n' \
+      "${name_hits[*]}" "${path_hits[0]}"
+    return 0
+  fi
+  # Scrub "<the matched repo>/CLAUDE.md" before the cross-cutting check — a lesson that legitimately
+  # recommends itself be added to ITS OWN sub-repo's CLAUDE.md (very common, ordinary phrasing) must
+  # not be forced to root just because it names that file. A BARE "CLAUDE.md" / "root CLAUDE.md"
+  # (the orchestration doc itself) or a DIFFERENT repo's CLAUDE.md still counts as cross-cutting
+  # signal — only the self-reference is exempted. Lowercase first (sed has no portable case-insensitive
+  # flag across GNU/BSD); GOVERN_LESSON_CROSSCUT_RE is written in lowercase to match.
+  local lower_text scrubbed
+  lower_text="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
+  scrubbed="$(printf '%s\n' "$lower_text" | sed "s#${path_hits[0]}/claude\\.md##g")"
+  if printf '%s\n' "$scrubbed" | grep -qE "$GOVERN_LESSON_CROSSCUT_RE"; then
+    printf '\tcross-cutting signal word present alongside %s — staying at root\n' "${path_hits[0]}"
+    return 0
+  fi
+  printf '%s\tunambiguous: only %s referenced, as a path, no second sub-repo or cross-cutting word\n' \
+    "${path_hits[0]}" "${path_hits[0]}"
+}
+
+# Insert lesson TEXT into FILE: after ANCHOR's line if ANCHOR is non-empty and present in FILE,
+# else appended at EOF. Shared by the root and sub-repo lesson-insert paths in govern-bookkeep.sh
+# so the two never drift. Pass TEXT via a FILE read with getline — NEVER `awk -v t="$text"`: awk's
+# -v cannot hold literal newlines, so multi-line lesson text dies with "awk: newline in string".
+govern::insert_lesson() { # <file> <anchor> <text>
+  local file="$1" anchor="$2" text="$3" tmpf tf
+  if [[ -n "$anchor" ]] && grep -qF "$anchor" "$file"; then
+    tmpf="$(mktemp)"; tf="$(mktemp)"; printf '%s\n' "$text" > "$tf"
+    awk -v a="$anchor" -v tf="$tf" '
+      index($0,a) && !done { print; print ""; while ((getline line < tf) > 0) print line; close(tf); done=1; next }
+      { print }
+    ' "$file" > "$tmpf"
+    mv "$tmpf" "$file"; rm -f "$tf"
+  else
+    printf '\n%s\n' "$text" >> "$file"
+  fi
+}
+
+# Resolve <dir>'s DEFAULT branch (what its origin's HEAD points at) — never touches the network
+# (no `git remote show`/`ls-remote`; this must stay fast on the dispatch path). Prefers the cached
+# `refs/remotes/origin/HEAD` symref (set at clone time, or by `git remote set-head origin -a`);
+# falls back to whichever of main/master exists as a remote-tracking ref when that symref is
+# absent (common for a shallow/CI clone), then "main" as a last resort — this codebase's own
+# convention (the root lesson commit already hardcodes `git push origin HEAD:main`).
+govern::subrepo_default_branch() { # <dir> -> branch name
+  local dir="$1" b
+  b="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+  if [[ -n "$b" ]]; then printf '%s' "$b"; return 0; fi
+  if git -C "$dir" rev-parse --verify -q origin/main >/dev/null 2>&1; then printf 'main'; return 0; fi
+  if git -C "$dir" rev-parse --verify -q origin/master >/dev/null 2>&1; then printf 'master'; return 0; fi
+  printf 'main'
+}
+
 # ── validation gate decision (#67 + #73) ─────────────────────────────────────
 # Given a worker's resolved report for a VALIDATION-type ticket, decide the gate action. Pure — no
 # side effects; the caller applies it. Prints exactly one of:
