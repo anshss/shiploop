@@ -33,18 +33,6 @@ marker="${TMPDIR:-/tmp}/metarepo-router-posture-${session_id}"
 : > "$marker" 2>/dev/null || true
 
 cat <<'EOF'
-[ROUTER POSTURE — default operating mode, see the delegation rule in CLAUDE.md]
-The driver (this session) does NOT do heavy work inline — per-turn cost ∝ this
-session's context size, which is re-sent every turn. Before acting on a task, classify:
-  • trivial (one answer / one small edit / one command / known one-file lookup) → inline.
-  • heavier (multi-file or read-heavy investigation, a codebase sweep, a diagnosis,
-    bringing up a stack to probe one thing, a build/test, a multi-file change)
-    → delegate to an `Agent` worker (run_in_background for long ones); pass minimal
-    context; relay ONLY its verdict. Do NOT read big files or run verbose builds here.
-  • multi-stage dependent steps → drive with a `Workflow` (returns only the final object).
-When you delegate, also SIZE THE MODEL: children do NOT need this session's model.
-haiku = mechanical/extract/lookup · sonnet = search/investigate/standard edits ·
-inherit only for judgment-heavy synthesis/review. A fan-out (N similar children) is
-almost never inherit-tier. Reserve this session for orchestration + decisions.
+[ROUTER POSTURE] Classify before acting: trivial (single answer/edit/command/known lookup) → inline. Heavier (multi-file investigation, codebase sweep, diagnosis, build/test, multi-file change) → delegate to an `Agent` worker (run_in_background if long); relay ONLY its verdict — don't Read big files or run verbose builds here. Multi-stage dependent steps → drive with a `Workflow` (final object only). Size children per CLAUDE.md's delegation rule.
 EOF
 exit 0

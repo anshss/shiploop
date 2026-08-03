@@ -122,7 +122,7 @@ case "$count" in (*[!0-9]*) count=0 ;; esac
 printf '%s' "$((count + 1))" > "$counter" 2>/dev/null || true
 
 # --- emit the non-blocking warn ---------------------------------------------
-warn="[ROUTER POSTURE] You (the driver) are about to do ${reason} inline. Per-turn cost ∝ this session's context, re-sent every turn — heavy inline work bloats every later turn. Prefer delegating this to an \`Agent\` worker (run_in_background for long ones) and relaying only its verdict; when you do, ALSO size the model (haiku=mechanical · sonnet=search/edits · inherit only for judgment-heavy synthesis). Proceed inline only if this is a quick, one-off check. (the delegation rule in CLAUDE.md; this warn is rate-limited.)"
+warn="[ROUTER POSTURE] About to do ${reason} inline. Delegate to an \`Agent\` worker (run_in_background if long); relay only its verdict. Size the model when delegating (haiku=mechanical, sonnet=search/edits, inherit=judgment-heavy). Proceed inline only for a quick one-off check."
 
 python3 -c '
 import json, sys

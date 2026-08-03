@@ -235,9 +235,7 @@ $(printf '%s\n' "$paths" | sed 's/^/- `/; s/$/`/')"
 scout::prompt() { # <N> <block>
   local n="$1" block="$2"
   cat <<EOF
-You are a SCOUT sizing a ticket before a worker is dispatched. You are NOT fixing anything — do not
-edit a single file. Measure the ticket's SCOPE, cheaply and fast: a handful of targeted greps and at
-most a skim of the files you find. Seed the search from the ticket's \`Where:\` line.
+SCOUT sizing pass for ticket #$n. Do NOT edit anything. Measure scope only: a few targeted greps, at most skim the files you find. Seed from the ticket's \`Where:\` line.
 
 Workspace root: $WS_ROOT
 Sub-repos: ${REPOS[*]:-<none>}
@@ -246,26 +244,20 @@ Sub-repos: ${REPOS[*]:-<none>}
 $block
 </ticket>
 
-Answer these six questions about the FIX this ticket asks for:
-  files        how many files the fix plausibly touches (an integer; 0 if you could not locate any)
-  repos        how many distinct sub-repos are involved (an integer)
-  testsCover   true if tests already exercise the area the fix touches, else false
-  precedent    true if git history contains an analogous prior commit for the same file/area
-               (\`git log --oneline -- <path>\` on the target paths), else false
-  changeKind   "local" for an edit contained inside function bodies; "structural" for anything that
-               moves a signature, a schema, a serialized format, or an API contract
-  fixDirection "concrete" if the ticket already names the change to make; "vague" if the approach
-               still has to be designed
+Locate what the fix needs, then answer:
+  files        files the fix plausibly touches (int; 0 if none located)
+  repos        distinct sub-repos involved (int)
+  testsCover   true if tests already exercise this area, else false
+  precedent    true if \`git log --oneline -- <path>\` shows an analogous prior commit, else false
+  changeKind   "local" (edit inside function bodies) or "structural" (signature/schema/API-contract change)
+  fixDirection "concrete" (ticket names the change) or "vague" (approach still needs designing)
 
-You had to LOCATE things to answer those. Report what you found, so the worker does not pay to
-rediscover it (leave a field empty/[] rather than guessing — a wrong pointer costs more than none):
-  targetPaths     the files you actually located, workspace-relative, most relevant first (array of
-                  strings, at most 8). These are the files you counted for \`files\`.
-  precedentCommit the short SHA of the analogous prior commit, when \`precedent\` is true ("" if not)
-  testCommand     the exact command that runs the tests covering this area, when \`testsCover\` is
-                  true — copy it from the sub-repo's package.json / CI config, do not invent one ("")
+Also report what you located (leave empty/[] rather than guess — a wrong pointer costs more than none):
+  targetPaths     files you located, workspace-relative, most relevant first (array, max 8)
+  precedentCommit short SHA of the analogous commit if precedent=true, else ""
+  testCommand     the real command that runs the covering tests if testsCover=true (copy, don't invent), else ""
 
-Output ONLY a single JSON object as the LAST line of your reply. No prose around it, no code fence:
+Output ONLY a single JSON object as the LAST line. No prose, no code fence:
 {"files":0,"repos":0,"testsCover":false,"precedent":false,"changeKind":"local","fixDirection":"vague","targetPaths":[],"precedentCommit":"","testCommand":""}
 EOF
 }

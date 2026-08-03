@@ -1,67 +1,54 @@
 # Governor preferences — the doctrine every worker reads
 
-This is the operator's standing policy. Workers MUST follow it to auto-resolve decisions the
-way the operator would, so they never block waiting for a human. It grows **slowly**: new rules
-land here only when the operator marks an escalation answer "make this a rule" or the same
-decision recurs ~2–3 times (see `escalations.md`).
+Operator's standing policy — auto-resolve decisions the way the operator would; never block waiting
+for a human. Grows only via an escalation answer marked "make this a rule" or a ~2-3x recurring
+decision (`escalations.md`).
 
-> **Customize this file for your project.** The rules below are sensible defaults for a meta-repo
-> with backend repos whose CI runs post-merge and frontend repos behind a billed preview. Edit the
-> specifics (which repos auto-merge, what "the real test" means, what counts as a billable action)
-> to match your stack. The auto-merge allowlist itself lives in `scripts/lib/workspace.sh`
-> (`GOVERN_MERGE_REPOS`); this file is the *judgment* the worker applies.
+> Defaults assume backend repos with post-merge CI, frontend repos behind a billed preview — edit to
+> match your stack. Auto-merge allowlist: `scripts/lib/workspace.sh` (`GOVERN_MERGE_REPOS`); this file
+> is the judgment applied around it.
 
 ## Completion & testing
-- Prefer the option that **fully completes** a ticket over one that defers or splits it.
-- **Validate locally before opening a PR.** Compile-clean + unit tests are NOT sufficient; run the
-  real local loop end-to-end (`<pm> run dev -- --only ...`, drive the UI where the change is
-  user-visible, watch logs) before claiming the fix works.
-- If your project has a "real" environment to test against (e.g. a prod-like database), prefer it
-  over a throwaway local one — but only if doing so is safe and non-destructive.
-- If a test action costs money or creates real external resources, keep it **minimal** (one small
-  action per ticket) and **always clean up afterward** (use the project's cleanup command / hook).
+- Fully complete a ticket over deferring/splitting it.
+- Validate locally before opening a PR — compile-clean + unit tests are NOT sufficient. Run the real
+  local loop end-to-end (`<pm> run dev -- --only ...`, drive the UI, watch logs).
+- Prefer a "real" test env (e.g. prod-like DB) over throwaway local, only if safe/non-destructive.
+- Billable/real-resource test action → minimal (one small action per ticket), always clean up after
+  (project's cleanup command/hook).
 
 ## Merging
-- **Auto-merge** only the repos in `GOVERN_MERGE_REPOS` (workspace.sh), and only once CI is
-  **green or has no PR-level checks** (a repo whose CI runs post-merge shows "no checks" → that is
-  mergeable; red/pending block).
-- **Never merge** the other (frontend / PR-only) repos — open the PR and stop; a human (or a
-  different account) merges those. This also honors **merge-backend-first**: the consumer waits
-  anyway.
-- "Resolved" = **PR opened** (not merged). The governor — not the worker — performs the
-  `tickets.md` / `CLAUDE.md` bookkeeping, in the main checkout.
-- **Additive prod migration chain** (only if the project configures `GOVERN_MIGRATE_CMD`): merge →
-  apply migration → verify → bookkeep. Order is safe because old running code ignores a new
-  nullable/default column; the new code arrives after. Destructive migration → do NOT merge,
+- Auto-merge only repos in `GOVERN_MERGE_REPOS`, only once CI is green or has no PR-level checks
+  (post-merge-CI repo shows "no checks" = mergeable; red/pending block).
+- Never merge other (frontend/PR-only) repos — open PR and stop; a human/different account merges.
+  Honors merge-backend-first (the consumer waits anyway).
+- "Resolved" = PR opened, not merged. Governor (not worker) does `tickets.md`/`CLAUDE.md` bookkeeping
+  in the main checkout.
+- Additive prod migration chain (only if `GOVERN_MIGRATE_CMD` set): merge → apply → verify → bookkeep.
+  Safe because old code ignores a new nullable/default column. Destructive migration → do NOT merge,
   escalate.
 
 ## Git & branching
-- **Worktree-first** for any code change; the main checkout stays on `main` across every repo.
-- Each sub-repo commits independently (`cd` into it first). The branch is `ticket-<N>` (the
-  governor's worktree allocator names it).
+- Worktree-first for any code change; main checkout stays on `main` across every repo.
+- Each sub-repo commits independently (`cd` in first). Branch = `ticket-<N>` (worktree allocator names it).
 
-## Hard-stops — ALWAYS escalate, never do autonomously
-- **Destructive git:** force-push, history rewrite, `branch -D` on shared branches, hard resets
-  that discard others' work.
-- **Prod data / DESTRUCTIVE schema / secrets:** deleting or bulk-mutating prod rows; rotating or
-  editing live secrets / `.env`; **destructive** migrations (DROP / rename / type-change /
-  NOT-NULL-without-default / data-backfill). **Additive** migrations (ADD nullable-or-default
-  column, ADD table/index) are NOT a hard-stop — classify them via the report's `migration` field
-  and the governor handles them.
+## Hard-stops — ALWAYS escalate, never act autonomously
+- Destructive git: force-push, history rewrite, `branch -D` on shared branches, hard resets that
+  discard others' work.
+- Prod data / destructive schema / secrets: deleting/bulk-mutating prod rows; rotating/editing live
+  secrets/`.env`; destructive migrations (DROP / rename / type-change / NOT-NULL-without-default /
+  data-backfill). Additive migrations (ADD nullable-or-default column, ADD table/index) are NOT a
+  hard-stop — classify via the report's `migration` field; governor handles them.
 
 ## Closing & escalation judgment
-- **Closeable umbrella → CLOSE, don't park.** If a ticket's core deliverable is already merged AND
-  verified, AND every residual is already filed as its own child ticket (so the umbrella has no
-  actionable scope of its own), **close it** — delete the block, note "resolved — core shipped +
-  verified; residuals tracked as #a/#b/…" — rather than park-and-escalate. Don't keep a no-op umbrella
-  alive. (See `decisions-log.md` for the operator decisions this generalizes.)
-- **Respect an embedded operator deferral.** If the ticket body carries a dated operator DECISION
-  deferring the remaining work — and the reactive mitigation already shipped — keep it parked (or
-  close as mitigated) per that deferral. Do **not** autonomously re-attempt the deferred work before
-  its stated condition is met, even if it's technically feasible now. This applies especially when the
-  only remaining path is a hard-stop (live prod infra / secrets).
+- Closeable umbrella → CLOSE, don't park. If the core deliverable is merged + verified and every
+  residual is already its own child ticket, close it (note "resolved — core shipped + verified;
+  residuals tracked as #a/#b/…") rather than park-and-escalate. See `decisions-log.md` for the
+  operator decisions this generalizes.
+- Respect an embedded operator deferral: a dated DECISION in the ticket body deferring remaining work
+  (with the reactive mitigation already shipped) stays parked/closed-as-mitigated per that deferral.
+  Don't autonomously re-attempt before its stated condition is met, even if technically feasible —
+  especially when the only remaining path is a hard-stop (live prod infra/secrets).
 
 ## Default rule
-- **Anything this doctrine does not clearly cover → park the ticket and escalate.** Do not guess on
-  a consequential or ambiguous choice. Fixing your *own* red CI (≤2 attempts) is NOT an escalation
-  — that is part of completing the ticket.
+Anything not clearly covered → park and escalate. Don't guess on a consequential/ambiguous choice.
+Fixing your OWN red CI (≤2 attempts) is completing the ticket, not an escalation.
