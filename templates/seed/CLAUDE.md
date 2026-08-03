@@ -1,60 +1,47 @@
 # <workspace> (meta-repo)
 
-A **meta-repo**: a workspace root holding N independent git repos as sub-folders, each with its own
-remote, PR queue, and CI. The root is also its own git repo, holding workspace config, cross-cutting
-scripts, the ticket queue, the governor, and shared AI context.
-
-> **This file is re-sent to the model on every turn.** It holds hard rules only — the things a session
-> must never miss. Rationale, reference tables, and long gotcha writeups go in `CLAUDE-APPENDIX.md`,
-> which is read on demand. When you add something here, ask whether every future turn should pay for
-> it; if not, it belongs in the appendix.
+> **Re-sent to the model every turn — hard rules only.** Rationale, command tables, and gotcha
+> writeups go in `CLAUDE-APPENDIX.md`, read on demand. Before adding a line here, ask whether a rule
+> that fires a few times a week is worth every future turn paying for it. If not, it's appendix.
 
 ## How to operate
 
-1. **Code work → `npm run worktree:new -- <slug>`, then `cd` into it.** The main checkout is
-   read/plan/main-branch-ops only. Clean up with `npm run worktree:rm -- <slug>` after PRs merge.
-   Read-only work (explain / "where is X") is the only exception.
+1. **Code work → `npm run worktree:new -- <slug>`, then `cd` in.** The main checkout is
+   read/plan/main-branch-ops only. `npm run worktree:rm -- <slug>` after PRs merge. Read-only work
+   (explain / "where is X") is the only exception.
 
 2. **Validate through the real path** (`npm run dev`) — the UI/API route a user actually touches, not a
    shortcut that skips the layers where bugs hide.
 
-3. **The driver session orchestrates; it does not read or edit product source.** Every inline `Read`
-   becomes permanent context cargo, re-sent every later turn. Delegate any investigation, sweep,
-   diagnosis, build, or fix — however small — to an `Agent`, and relay only its verdict. The driver may
-   freely read and edit coordination files (`queue/`, `governor/`, `CLAUDE.md`, `learnings.md`).
-   **Size the child:** `haiku` = mechanical/extract/lookup · `sonnet` = search/investigate/standard
-   edits · inherit only for judgment-heavy synthesis, architecture, or final review. A fan-out of N
-   similar children is almost never inherit-tier. On a cheap-tier failure retry once higher — never the
-   reverse. (This is about children YOU spawn. Do not size a ticket when you file one — a governor
-   worker's tier is measured pre-dispatch by the scout, not declared in the ticket.)
+3. **The driver orchestrates; it does not read or edit product source.** Every inline `Read` is
+   permanent context cargo, re-sent every later turn — delegate investigations, sweeps, builds, and
+   fixes to an `Agent` and relay only the verdict. Coordination files (`queue/`, `governor/`,
+   `CLAUDE.md`, `learnings.md`) are free to read and edit here. **Size the child:** `haiku` =
+   mechanical/lookup · `sonnet` = search/investigate/standard edits · inherit only for judgment-heavy
+   synthesis or final review. Never size a ticket when filing one — the scout measures that.
 
-4. **Issue reported in conversation → investigate → answer → file at the checkpoint.** Confirm it's
-   real and locate the root cause first; a discussion turn ends with the finding, not a new `## #N`.
-   File at the session's bookkeeping checkpoint (Stop-hook sweep, `/resolve`, or an explicit "file
-   this"). **Consolidate by default** — fold the finding into an open ticket unless it is independently
-   dispatchable; two tickets one worker would fix in one PR should have been one ticket. A filing
-   correction from the operator is a standing constraint for the rest of the session, not a one-off.
+4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep,
+   `/resolve`, or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
+   **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
 
 ## Where knowledge goes
 
-Route by **stability**, not topic. Each destination has a different cost: `CLAUDE.md` is paid every
-turn, the rest are paid only when read.
+Route by **stability**, not topic. `CLAUDE.md` is paid every turn; everything else only when read.
 
 | Where | Use when |
 |---|---|
-| **`queue/tickets.md`** | **Work items only** — anything to fix or build later, one `## #N` block each. Admits exactly two scopes: this workspace's sub-repos and the harness. Anything external files in its own tracker. |
-| **`CLAUDE.md`** (root or sub-repo) | Stable hard rules a session must never miss. Sub-repo file wins in its own scope; root is cross-repo only. |
-| **`CLAUDE-APPENDIX.md`** | The same durable knowledge when it's reference rather than rule — command tables, deep provider notes, the *why* behind a rule. |
-| **`learnings.md`** (root or sub-repo) | Transient/evolving knowledge only ("X provider flaky this week"). Never a work item, never a fixed-bug writeup. |
-| **Project memory** (`~/.claude/projects/<encoded-path>/memory/`) | Strategic cross-session context — product direction, durable preferences. Add a line to its `MEMORY.md` index. |
+| **`queue/tickets.md`** | Work items only, one `## #N` each. Scope: this workspace's sub-repos and the harness — nothing external. |
+| **`CLAUDE.md`** | Stable hard rules a session must never miss. Sub-repo file wins in its scope; root is cross-repo only. |
+| **`CLAUDE-APPENDIX.md`** | Durable but reference, not rule — command tables, provider notes, the *why*. |
+| **`learnings.md`** | Transient only ("X provider flaky this week"). Never a work item, never a fixed-bug writeup. |
+| **Project memory** | Strategic cross-session context. Add a line to its `MEMORY.md` index. |
 
-Bar: would knowing this save a future session 5+ min? Propose the edit before ending the session. The
-SessionStart digest surfaces only the **root** `learnings.md` — open a sub-repo's own file yourself.
+Bar: would this save a future session 5+ min? Propose the edit before the session ends.
 
 ## Sub-repos
 
-Single source of truth for the repo list, dev commands, and ports: `scripts/lib/workspace.sh`.
-Adding or removing a sub-repo is a one-file edit there.
+Single source of truth for repos, dev commands, and ports: `scripts/lib/workspace.sh`. Adding or
+removing a sub-repo is a one-file edit there.
 
 | Folder | Remote | Stack | Port |
 |--------|--------|-------|------|
@@ -63,25 +50,24 @@ Adding or removing a sub-repo is a one-file edit there.
 ## Commands
 
 `npm run dev` · `status` · `doctor` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` · `govern`.
-Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list. **Pass args after `--`.**
+**Pass args after `--`.** Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list.
 
 ## Anti-patterns (load-bearing)
 
-1. **MCP servers always at workspace root.** Never `claude mcp add` from a sub-repo.
-2. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files.
-   Corollary: `git status` at the root proves nothing about sub-repo state.
-3. **Never assume sub-repos share a branch.** They drift — run `npm run status` first.
-4. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
-5. **Never `git stash` to A/B a baseline** — the edits usually live in a nested sub-repo, so a
-   root-level stash is a silent no-op that yields a worthless "baseline". Use a throwaway
-   `git archive HEAD | tar -x -C "$(mktemp -d)"` export instead.
-6. **PRs aren't transactional across sub-repos — merge backend-first**, and state the merge order in
-   each sibling PR.
-7. **`.env.example` is the contract.** Never commit `.env`.
-8. **One package manager at the root — never two.** Set via `ROOT_PM` in `scripts/lib/workspace.sh`.
-9. **Main checkout stays on `main`, every repo, always.** Branch work only in worktrees; coordination
-   files (`CLAUDE.md`, `queue/`, `learnings.md`, `scripts/`) commit directly to `main` there.
-10. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
+1. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files, and
+   `git status` at the root proves nothing about sub-repo state.
+2. **Never assume sub-repos share a branch.** They drift — `npm run status` first.
+3. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
+4. **Never `git stash` to A/B a baseline** — the edits usually live in a nested sub-repo, so a
+   root-level stash silently no-ops and the "baseline" run is worthless. Use a throwaway
+   `git archive HEAD | tar -x -C "$(mktemp -d)"` export.
+5. **PRs aren't transactional across sub-repos — merge backend-first**, and state the order in each
+   sibling PR.
+6. **`.env.example` is the contract.** Never commit `.env` — nothing enforces this mechanically.
+7. **Coordination files commit directly to `main` in the main checkout** (`CLAUDE.md`, `queue/`,
+   `learnings.md`, `scripts/`) — never branched or PR'd. Branch work belongs in worktrees.
+8. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
 
-> Replace the `<…>` placeholders and the Sub-repos table with your workspace's specifics, then append
-> your own hard rules here and your reference material to `CLAUDE-APPENDIX.md` as you learn them.
+> Replace the `<…>` placeholders and the Sub-repos table with your specifics, then append your own hard
+> rules here and reference material to `CLAUDE-APPENDIX.md`. Also in the appendix: MCP servers always
+> at workspace root · one root package manager, never two · why the driver doesn't read source.

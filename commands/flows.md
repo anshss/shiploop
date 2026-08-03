@@ -1,5 +1,5 @@
 ---
-description: Inventory, inspect, and validate the user-facing flows your product exposes. `extract` fans out over the codebase to build the combinatorial list of paths a user might take that could break (staged for your approval, never auto-applied); `list` shows the registry grouped by proven / stale / untested / blocked; `file` queues governor validation tickets with a spend gate (resource-group batching, cheapest-first, --max-deploys, refuses billable batch runs without an orphan-sweep). The durable registry (.claude/shiploop/validation/flows.md) always knows which paths are proven at HEAD, which went stale, which failed, and which measured ineffective.
+description: Flow registry: extract inventories flows, list shows status, file queues validation tickets.
 allowed-tools: Bash, Read, Agent
 ---
 

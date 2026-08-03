@@ -1,5 +1,5 @@
 ---
-description: The self-improvement channel, pull direction. Pulls the latest hub templates into THIS workspace so mechanism improvements ported back from other fleets land here. Component-by-component bump via scaffold.sh — refreshes mechanism scripts, preserves scripts/lib/workspace.sh, updates the harness-version stamp, runs the no-auth verifiers. Idempotent; safe to re-run. Read-only when the workspace is already at the hub VERSION.
+description: Pull direction: bumps this workspace's scripts to match the latest hub template. Opposite of /push.
 allowed-tools: Bash, Read
 ---
 

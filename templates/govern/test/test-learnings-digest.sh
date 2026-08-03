@@ -33,17 +33,25 @@ SCAFFOLD="$HUB/scaffold.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 printf 'digest under test: %s\n' "$DIGEST"
 
+# Passed as $2/$3 on every invocation below to isolate this test from whatever the CURRENT
+# MACHINE happens to have at its real workspace-root CLAUDE.md or its real installed plugin
+# (~/.claude/skills/shiploop, CLAUDE_PLUGIN_ROOT, …) — neither is under test here, and letting
+# either resolve for real would leak size-trigger output into these entries-only assertions.
+# See test-claudemd-size-trigger.sh / test-manifest-size-trigger.sh for those checks.
+NO_CLAUDE="$T/no-claude-here.md"
+NO_PLUGIN="$T/no-plugin-here"
+
 # ── the pristine seed injects NOTHING (hub only) ─────────────────────────────
 # The seed carries a preamble AND a fenced format example. Both must be invisible. This is the guard
 # against someone re-introducing a `###` heading into the seed and silently re-taxing every fleet.
 if [ -f "$SEED" ]; then
-  assert_eq "$(bash "$DIGEST" "$SEED" | wc -c | tr -d ' ')" "0" \
+  assert_eq "$(bash "$DIGEST" "$SEED" "$NO_CLAUDE" "$NO_PLUGIN" | wc -c | tr -d ' ')" "0" \
     "the shipped seed learnings.md costs ZERO bytes at session start"
 fi
 
 # Same property, layout-independent: a file with a preamble but no entries emits nothing.
 printf '# Workspace learnings\n\nPREAMBLE_SENTINEL only, no entries yet.\n' > "$T/entryless.md"
-assert_eq "$(bash "$DIGEST" "$T/entryless.md" | wc -c | tr -d ' ')" "0" \
+assert_eq "$(bash "$DIGEST" "$T/entryless.md" "$NO_CLAUDE" "$NO_PLUGIN" | wc -c | tr -d ' ')" "0" \
   "an entry-less learnings.md costs ZERO bytes at session start"
 
 # ── preamble is never injected; entries are, newest first ────────────────────
@@ -67,11 +75,11 @@ MIDDLE_SENTINEL
 NEWEST_SENTINEL
 MD
 
-out="$(bash "$DIGEST" "$T/append-ordered.md")"
+out="$(bash "$DIGEST" "$T/append-ordered.md" "$NO_CLAUDE" "$NO_PLUGIN")"
 assert_not_contains "$out" "PREAMBLE_SENTINEL" "the instructional preamble is never injected"
 assert_contains     "$out" "NEWEST_SENTINEL"   "the newest entry is injected"
 
-out2="$(SHIPLOOP_LEARNINGS_MAX_ENTRIES=2 bash "$DIGEST" "$T/append-ordered.md")"
+out2="$(SHIPLOOP_LEARNINGS_MAX_ENTRIES=2 bash "$DIGEST" "$T/append-ordered.md" "$NO_CLAUDE" "$NO_PLUGIN")"
 assert_contains     "$out2" "NEWEST_SENTINEL" "cap=2 keeps the newest entry"
 assert_contains     "$out2" "MIDDLE_SENTINEL" "cap=2 keeps the second-newest entry"
 assert_not_contains "$out2" "OLDEST_SENTINEL" \
@@ -93,7 +101,7 @@ echo hi
 TAIL_SENTINEL
 MD
 
-out3="$(bash "$DIGEST" "$T/fenced.md")"
+out3="$(bash "$DIGEST" "$T/fenced.md" "$NO_CLAUDE" "$NO_PLUGIN")"
 assert_contains     "$out3" "TAIL_SENTINEL"      "a fenced '##' comment does not split the entry"
 assert_not_contains "$out3" "PREAMBLE_SENTINEL"  "a fenced heading does not drag the preamble in"
 assert_contains     "$out3" "learnings (1)"      "the fenced comment is not counted as a second entry"
@@ -109,19 +117,19 @@ UNDATED_SENTINEL
 DATED_SENTINEL
 MD
 
-out4="$(bash "$DIGEST" "$T/undated.md")"
+out4="$(bash "$DIGEST" "$T/undated.md" "$NO_CLAUDE" "$NO_PLUGIN")"
 assert_contains "$out4" "UNDATED_SENTINEL" "an undated entry still surfaces (no silent drop)"
 assert_contains "$out4" "DATED_SENTINEL"   "the dated entry surfaces alongside it"
 
 # ── the line cap is a hard ceiling ───────────────────────────────────────────
 { echo "# Workspace learnings"; echo; echo "### 2026-09-09 — huge"
   i=0; while [ "$i" -lt 200 ]; do echo "filler line $i"; i=$((i+1)); done; } > "$T/huge.md"
-lines="$(SHIPLOOP_LEARNINGS_MAX_LINES=10 bash "$DIGEST" "$T/huge.md" | wc -l | tr -d ' ')"
+lines="$(SHIPLOOP_LEARNINGS_MAX_LINES=10 bash "$DIGEST" "$T/huge.md" "$NO_CLAUDE" "$NO_PLUGIN" | wc -l | tr -d ' ')"
 # 10 body lines + the one-line header.
 assert_eq "$lines" "11" "SHIPLOOP_LEARNINGS_MAX_LINES caps the injected body"
 
 # ── a missing file is silent, not an error ───────────────────────────────────
-rc=0; bash "$DIGEST" "$T/does-not-exist.md" >/dev/null 2>&1 || rc=$?
+rc=0; bash "$DIGEST" "$T/does-not-exist.md" "$NO_CLAUDE" "$NO_PLUGIN" >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "an absent learnings.md exits 0 (a SessionStart hook must never block)"
 
 # ── settings-merge migrates the legacy inline hook IN PLACE ──────────────────
