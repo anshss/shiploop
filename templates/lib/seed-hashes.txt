@@ -1,0 +1,54 @@
+# Seed content-hash manifest — every version of each seed file shiploop has ever shipped.
+#
+# Format: <sha256>  <seed-filename>
+#
+# WHY: component_seeds is fill-if-absent, so a hub improvement to a seed's CONTENT (a
+# trim, a corrected rule) only ever reached brand-new installs. Overwriting an existing
+# seed outright is unacceptable — a workspace's CLAUDE.md accumulates every promoted
+# lesson and queue/tickets.md is live backlog.
+#
+# This manifest makes a LOSSLESS upgrade decidable: if a workspace's seed hashes to a
+# version recorded here, the operator provably never edited it, so replacing it with the
+# current seed destroys nothing. Any other hash = customized = left untouched, silently.
+# Byte-identity is the whole safety argument — never heuristic, never a merge.
+#
+# GENERATED — do not hand-edit. Regenerate after any templates/seed/* change:
+#     bash tools/gen-seed-hashes.sh > templates/lib/seed-hashes.txt
+
+# -- CLAUDE.md --
+1834baf659028d8e58adbfa82c2a4fa258ddc40f20c9627310a5e2581facfa94  CLAUDE.md
+304fcdc3f52b515a6365ff38471a9d5fc604e0bc92703d664df697788dc45ed0  CLAUDE.md
+31753d8852428e7840c1279812fdbd82e0378b1bfe43d57df2734932719eba49  CLAUDE.md
+3e0066511fd74611e1646d05d88b4102d0b58d050f7978ecae5558add5842b08  CLAUDE.md
+492372560542b09407b2e8bf53b7c8290004a76db5858c6d149d33d17797d477  CLAUDE.md
+4dcb607657b6940655c883bc6fe6e031281cf4a18a5fc05473ee0d99b969ce50  CLAUDE.md
+59435ed68af31fbde3b829dfa16556026957f316e06540249a2c7af90c5fc623  CLAUDE.md
+90abb61777077ef6582948f26b794e85157c03b93e889e53fd795ed40352b014  CLAUDE.md
+9ce2a3bf02273dc0a489e405fbf55249b538cf2a9892969404ae4ebcfae8e1f6  CLAUDE.md
+ccec9420c3bd78de7a55f1503e12c12355dd9b70298de69b95744b5e761dc701  CLAUDE.md
+d87ab721f83fab58fb72ebbe0f27b54bc19177695f03b6fb769a0f7525bab1de  CLAUDE.md
+ed8649a744451e363e724fe9ba184ce2b76319bd528c97e88a8cea06d2e038aa  CLAUDE.md
+
+# -- CLAUDE-APPENDIX.md --
+1033093c3e20e228c728f3c9eaf8c85413bd7889324e6b2285405bf200ae2022  CLAUDE-APPENDIX.md
+aceb095fc79538658a731a02fe1265b89de59d5453649d62a5f5eed6088a0662  CLAUDE-APPENDIX.md
+f8055728dc4bb6e97ab67c61e79f2e3346e85fcc5d620bdc0573b28898cfb1bc  CLAUDE-APPENDIX.md
+
+# -- learnings.md --
+6a1f443126614a70dd7c526d4bf9b26b5463d49c25b1f7cc1b65ea710f05001a  learnings.md
+89db38b548dff1021a3c0da87029d0efa88119357ad045f8dcc232aff6f38a64  learnings.md
+faa5fe073b6c4310d71c30ff89291754652cf74995a0aed1530cc52eaee786b1  learnings.md
+
+# -- tickets.md --
+0e0666cce9cdb3fb9a95fe36b8345cc2deb4122727e4a4b710e49d7c1b367366  tickets.md
+53dbc394ea61b183faa843f879a3fa4d752698eb45739bd5a1a414a98cf3af6c  tickets.md
+6a70a1da1d9e3c4d71d149acbefe17224a4a6476f2e3445bb4c7d2f18f22ff5a  tickets.md
+6e8a6eb9986f2770c2fcae247db02d6c04b32734812d582f6df31f29cce0671c  tickets.md
+74e475e00d893026cd397791a80c05278b9481c72d20bf0bf76555c85e9854b0  tickets.md
+a1e487b4da32b875c8bb3e1914353efb22d224ab9e0c2794ba6a5508e5350bc0  tickets.md
+a99586dc461544f43d3c02163d011f4a79041d5b1a4e9a8de483f2ac6b3312d6  tickets.md
+
+# -- tickets-parked.md --
+62e0f9735ab5d3bbf32dd96ea71af501332d6d6bfe77dd732e8ecf68d02d35d4  tickets-parked.md
+d71b1c17cc84e996a65109e5ddd70c15198f25d5f2b56adc6c2da310174e35a3  tickets-parked.md
+
