@@ -151,14 +151,14 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_EXTERNALIZE_REPO` / `_SUBREPO` | empty | Stage low-severity OSS tickets as public "good first issue"s, filed only on your approval |
 | `GOVERN_UPSTREAM_HARNESS_REPO` / `_DIR` | empty | The `/shiploop:push` sync channel to your hub fork |
 | `WSP_PR_FOOTER` | on | "shipped by shiploop" attribution line on worker PRs (`off` to suppress) |
-| `GOVERN_EVENTS` | `0` (off) | Fleet event log: append one JSON line per worker spawn/finish/escalation/park to `governor/events.jsonl`. Nothing reads it until you turn it on, and nothing about a run changes when you do. This is what `npm run govern:status`, the statusline segment, and the plugin monitor all fold — see **Fleet visibility** below |
+| `GOVERN_EVENTS` | `0` (off) | Fleet event log: append one JSON line per worker spawn/finish/escalation/park to `governor/events.jsonl`. Nothing reads it until you turn it on, and nothing about a run changes when you do. This is what `npm run govern:status`, the statusline segment, and the plugin monitor all fold; see **Fleet visibility** below |
 | `GOVERN_EVENTS_FILE` | `governor/events.jsonl` | Where that log lives |
 
 ### Fleet visibility
 
 Governor workers are detached `claude -p` processes. Their pid lives only in a bash array inside
 `run-loop.sh` and structured state is written only at completion, so while a run is in flight
-*nothing on disk says "running"* — which is why no surface could ever show them.
+*nothing on disk says "running"*, which is why no surface could ever show them.
 
 `GOVERN_EVENTS=1` fixes that with one append-only log, `governor/events.jsonl`, and three readers
 fold it. The emitter can never abort a run: a failed append is swallowed silently, by construction.
@@ -169,14 +169,14 @@ fleet: 2 active · 3 resolved · 1 parked · 0 failed · 1 escalated
 run:   gov-20260901T101500Z-4242 (running, mode=live, up 41m)
   #94    opus     22m    pid 44112  effort=high
   #97    sonnet   4m     pid 44530  effort=medium
-drivers: 2 live — #94(pid 44098) #97(pid 44520)
+drivers: 2 live: #94(pid 44098) #97(pid 44520)
 ```
 
 | Surface | What it is | How to get it |
 |---|---|---|
-| `npm run govern:status` | One-shot reader. Text, or `--json` for machines. Verifies every claimed-live worker with `kill -0` and reaps the phantoms a killed driver leaves behind. No model call, no lock — safe from inside a session, from CI, or over SSH | Ships with the harness |
-| Statusline segment | `⚙ 4/6 · #94 opus 22m` in your Claude Code statusline. Silent when no fleet is running | `/shiploop:statusline` — explicit, opt-in, and it **chains**: your existing `statusLine.command` is recorded verbatim and wrapped, never replaced. `uninstall` restores it byte for byte |
-| Plugin monitor | The in-session channel. Prints one line per state *transition* — never a raw tail — which Claude Code turns into a notification in your session | Automatic with the plugin; silent in any session with no event log. `GOVERN_MONITOR=0` to disable |
+| `npm run govern:status` | One-shot reader. Text, or `--json` for machines. Verifies every claimed-live worker with `kill -0` and reaps the phantoms a killed driver leaves behind. No model call, no lock, so it is safe from inside a session, from CI, or over SSH | Ships with the harness |
+| Statusline segment | `⚙ 4/6 · #94 opus 22m` in your Claude Code statusline. Silent when no fleet is running | `/shiploop:statusline`; explicit, opt-in, and it **chains**: your existing `statusLine.command` is recorded verbatim and wrapped, never replaced. `uninstall` restores it byte for byte |
+| Plugin monitor | The in-session channel. Prints one line per state *transition* (never a raw tail), which Claude Code turns into a notification in your session | Automatic with the plugin; silent in any session with no event log. `GOVERN_MONITOR=0` to disable |
 
 The monitor is deliberately stingy: every line it prints costs context in the very session shiploop
 exists to keep cheap. It dedupes repeated states, caps itself at 6 lines/minute
