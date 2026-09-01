@@ -9,7 +9,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
-A self-improving multi-agent harness for Interactive Coding Agents. It grinds a ticket backlog across every repo in your product: a fresh headless agent per ticket, guarded auto-merge on green CI, and a durable lesson written into your tracked `CLAUDE.md` after every resolved ticket.
+Lightweight orchestration layer that makes Claude Code faster and more token-efficient — model orchestration, subagent delegation, and worker branching. Adds capability, not bloat.
+
 
 ### Built to spend fewer tokens
 
