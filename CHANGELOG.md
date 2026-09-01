@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.18.0 — 2026-09-01
+## Unreleased
 
 ### Fixed
 
