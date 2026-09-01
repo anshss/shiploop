@@ -31,7 +31,7 @@ Then set it up on a project, once per project:
 cd ~/code/your-project && claude   # then run: /shiploop:setup
 ```
 
-Setup adapts to the folder’s state. An existing repo is wrapped in place: it moves into a subfolder but remains a separate Git repo, with history verified byte-for-byte and your cd path unchanged. A folder of repos—or an empty folder—gets a new scaffold. An existing workspace is upgraded component by component without changing your config.
+Setup adapts to the folder’s state. An existing repo is wrapped in place: it moves into a subfolder but remains a separate Git repo, with history verified byte-for-byte and your cd path unchanged. A folder of repos, or an empty folder, gets a new scaffold. An existing workspace is upgraded component by component without changing your config.
 
 You can add all repos related to you project into this folder.
 
@@ -43,7 +43,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Model orchestration.** Start with the lowest-cost capable model and escalate only after a clear failure. Failed attempts are usually far cheaper than successful ones, so a cheap first pass reduces average cost without compromising difficult work.
 
-- **Model→No Model.** Many backlog changes are mechanical—small, well-understood edits that do not need model judgment—yet they still consume a normal worker turn. This lane applies and verifies only pre-validated, low-risk changes directly, using no model at all. Anything ambiguous, unverified, or unsafe automatically falls back to the normal workflow.
+- **Model→No Model.** Many backlog changes are mechanical: small, well-understood edits that do not need model judgment, yet they still consume a normal worker turn. This lane applies and verifies only pre-validated, low-risk changes directly, using no model at all. Anything ambiguous, unverified, or unsafe automatically falls back to the normal workflow.
 
 - **Workers repeatedly receive tools they cannot use.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. Passing an explicit tool list cuts tool bytes by 66.7% and the whole request by **−34.5%** (full methodology in [PROOF.md §5](PROOF.md)).
 
@@ -91,7 +91,7 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns s
 </p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
-- **Cheap floor, escalate once.** Every ticket dispatches at `GOVERN_WORKER_MODEL` (default `sonnet`); a classified failure escalates it exactly once to `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`). No per-ticket prediction, because prediction was tried and measured as a rubber stamp. A cheap **scout pass** (haiku) still runs before dispatch, but it now only *surveys* — verified file paths, whether tests cover the area, whether history holds a precedent commit — which the worker gets as a warm start, the batching layer keys on, and the zero-model lane uses as its patch source. Its result is cached per run, so a retry never re-scouts.
+- **Cheap floor, escalate once.** Every ticket dispatches at `GOVERN_WORKER_MODEL` (default `sonnet`); a classified failure escalates it exactly once to `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`). No per-ticket prediction, because prediction was tried and measured as a rubber stamp. A cheap **scout pass** (haiku) still runs before dispatch, but it now only *surveys* (verified file paths, whether tests cover the area, whether history holds a precedent commit) which the worker gets as a warm start, the batching layer keys on, and the zero-model lane uses as its patch source. Its result is cached per run, so a retry never re-scouts.
 - **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
 - **It gets better over time.** Every resolved ticket promotes its durable lesson into the right `CLAUDE.md` before the entry is deleted: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
 
@@ -112,7 +112,7 @@ What makes the top rung safe to reach for:
 - **Bounded blast radius.** Workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
 - **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
 
-Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample predates the current cheap-floor default and skews `opus`-heavy on self-referential harness tickets, so treat it as an upper bound rather than an average — a `sonnet` floor observed ~$2.22/ticket. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
+Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample predates the current cheap-floor default and skews `opus`-heavy on self-referential harness tickets, so treat it as an upper bound rather than an average; a `sonnet` floor observed ~$2.22/ticket. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## Commands
 
@@ -138,7 +138,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | Escalate-once **ceiling**: the tier a classified judgment failure retries at. A ticket never escalates twice |
 | `GOVERN_DETERMINISTIC` | `0` (off) | Zero-model lane: let the scout's mechanical patch resolve a ticket with **no model turns** on the fix. Over-strict guards; every doubt falls through to a normal worker |
 | `GOVERN_SCOUT` | on | Pre-dispatch survey (verified file paths, coverage, precedent commit) used as a worker warm start, the batching key, and the zero-model patch source. It does **not** pick the tier |
-| `GOVERN_SCOUT_MODEL` | `haiku` | Tier the scout pass itself runs at — recon should cost a rounding error |
+| `GOVERN_SCOUT_MODEL` | `haiku` | Tier the scout pass itself runs at; recon should cost a rounding error |
 | `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned; dispatch proceeds without a survey |
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Tickets a plain `run-loop.sh` works at once: `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
 | `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm: a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
@@ -156,14 +156,14 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 
 | Knob | Default | Turns on |
 |---|---|---|
-| `GOVERN_PERMISSION_MODE` | `bypassPermissions` | The `--permission-mode` every headless worker runs under. The default lets a worker act without prompting — which is what makes an unattended run possible, and also the single widest grant in the harness. Tighten it if you want workers to stop at the permission boundary; note that a mode which prompts will stall a headless run rather than fail it |
+| `GOVERN_PERMISSION_MODE` | `bypassPermissions` | The `--permission-mode` every headless worker runs under. The default lets a worker act without prompting, which is what makes an unattended run possible, and also the single widest grant in the harness. Tighten it if you want workers to stop at the permission boundary; note that a mode which prompts will stall a headless run rather than fail it |
 | `GOVERN_WORKER_MCP` | `0` (off) | Give workers the workspace's MCP servers. Off by default: MCP tool schemas are re-sent on every turn, so this is a standing per-turn cost |
 
-### Hard bounds — how a run is guaranteed to end
+### Hard bounds: how a run is guaranteed to end
 
 | Knob | Default | Turns on |
 |---|---|---|
-| `GOVERN_MAX_TICKETS` | `20` | Tickets one driver will work before stopping. **Per driver** — a parallel backlog run's real ceiling is N × this |
+| `GOVERN_MAX_TICKETS` | `20` | Tickets one driver will work before stopping. **Per driver**, so a parallel backlog run's real ceiling is N × this |
 | `GOVERN_MAX_BAD_STREAK` | `4` | Consecutive parked/failed tickets before the run halts itself |
 | `GOVERN_MAX_RUNTIME` | `0` (no cap) | Wall-clock seconds. There is **no** time bound unless you set one |
 | `GOVERN_WORKER_TIMEOUT` | `3600` (1h) | Seconds one worker may run before it is killed rather than left stalled |
@@ -188,10 +188,10 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 
 | Knob | Default | Turns on |
 |---|---|---|
-| `GOVERN_CLAUDE_BIN` | `claude` | Path to the Claude Code CLI — set it for a non-standard install or to pin a version |
+| `GOVERN_CLAUDE_BIN` | `claude` | Path to the Claude Code CLI; set it for a non-standard install or to pin a version |
 | `GOVERN_GH_BIN` | `gh` | Path to the GitHub CLI |
 
-Knobs not listed here (`GOVERN_TICKETS_FILE`, `GOVERN_QUEUE_DIR`, `GOVERN_LOG_ROOT`, `GOVERN_LOCK*`, `GOVERN_TEMPLATE_DIR`, and similar path overrides) exist for test and scaffold plumbing. They are overridable but are not tuning surface — treat them as internal.
+Knobs not listed here (`GOVERN_TICKETS_FILE`, `GOVERN_QUEUE_DIR`, `GOVERN_LOG_ROOT`, `GOVERN_LOCK*`, `GOVERN_TEMPLATE_DIR`, and similar path overrides) exist for test and scaffold plumbing. They are overridable but are not tuning surface, so treat them as internal.
 
 ## Requirements
 
@@ -210,7 +210,7 @@ Devin, Cursor, Copilot, and Claude Code all do one task you hand them well. ship
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Everything the scaffolder installs lives under `templates/`; the slash commands under `commands/`; hermetic governor tests under `templates/govern/test/` (hub-only — the suite is not installed into a workspace).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Everything the scaffolder installs lives under `templates/`; the slash commands under `commands/`; hermetic governor tests under `templates/govern/test/` (hub-only; the suite is not installed into a workspace).
 
 ## License
 
