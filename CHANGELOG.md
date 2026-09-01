@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.18.0 — 2026-09-01
+
+### Fixed
+
+**Parallel worktrees could exhaust a machine's RAM, and finished worktrees were never reclaimed.**
+Two independent leaks, both surfacing as "my laptop is unusable and my disk is full" rather than as
+any test failure.
+
+- **Concurrent dependency installs had no global cap.** A project bootstrap hook installs deps for
+  several sub-repos at once and backgrounds each one; the obvious throttle, a `wait` at the end of
+  the bootstrap, is per-worktree and cannot see another worktree's installs. Under
+  `GOVERN_PARALLEL_DEFAULT` tickets in flight the real ceiling was (tickets x repos x ~1 GB per
+  install). Measured on a 24 GB laptop: 13 concurrent installs, ~14 GB resident, 3.7 GB swap,
+  unusable for minutes. Neither layer was individually wrong — the governor's concurrency knob
+  reasons about API spend, the bootstrap's `&` reasons about one worktree, and nothing anywhere was
+  denominated in machine memory.
+
+  New `scripts/lib/install-semaphore.sh`: a cross-process, package-manager-agnostic cap (`mkdir`
+  atomic, works on stock bash 3.2). Default 4 via `WORKTREE_INSTALL_PARALLEL`. A slot orphaned by a
+  killed install is reclaimed by pid liveness; a slot wait degrades to running uncapped and loud
+  after `WORKTREE_INSTALL_WAIT_TIMEOUT` rather than deadlocking every session on the machine.
+  `worktree/new.sh` documents the seam so a project bootstrap opts in with two lines.
+
+  Note for anyone measuring this: `ps` RSS does not show the spike — it reported a 364 MB maximum
+  while the OS process monitor showed 1.18 GB for the same processes, because RSS excludes
+  compressed and swapped pages.
+
+- **New `<pm> run worktree:reap`** reclaims disk from worktrees nothing needs. Worktrees accumulate
+  from two directions: `run-loop.sh` preserves parked/failed tickets' worktrees on purpose and never
+  ages them out, and hand-made worktrees have no cleanup path at all. Measured: 26 GB across 12
+  worktrees.
+
+  Dry-run by default. A worktree is reaped only when it is idle AND clean AND merged across every
+  repo *including the meta worktree root*, and any check that cannot be answered blocks the reap.
+  That last part is load-bearing: of four worktrees with zero commits off `origin/main`, one had a
+  live session working in it and another had uncommitted files — deleting on the merge check alone
+  would have destroyed both. `--strip` drops regenerable build output from kept-but-idle worktrees
+  instead of removing them.
+
 ## 1.17.2 — 2026-08-03
 
 ### Fixed
