@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
-Lightweight orchestration layer that makes Claude Code faster and more token-efficient — model orchestration, subagent delegation, and worker branching. Adds capability, not bloat.
+Lightweight orchestration layer that makes Claude Code faster and more token-efficient to your entire project. Adds capability, not bloat.
 
 ## Get Started
 
@@ -28,18 +28,11 @@ Then set it up on a project — once per project:
 cd ~/code/your-project && claude   # then run: /shiploop:setup
 ```
 
-Setup adapts to what the folder is. An **existing repo** is wrapped in place: it moves into a subfolder, stays its own git repo with full history verified byte-identical, and the path you `cd` into does not change. A **folder of repos**, or an empty one, gets a fresh scaffold. An **existing workspace** is upgraded component by component without touching your config. Sub-repos, ports, dev commands, and package manager are detected first, every question is asked in **one batched round**, then it runs to completion. Nothing you own is clobbered: your `README.md`, `CLAUDE.md`, config, and governor files are never overwritten without an explicit `--yes`, and a wrap-in-place writes a `.wrap-undo.sh` before it moves anything. You end up with the layout shown in [How Shiploop Runs](#how-shiploop-runs).
+Setup adapts to the folder’s state. An existing repo is wrapped in place: it moves into a subfolder but remains a separate Git repo, with history verified byte-for-byte and your cd path unchanged. A folder of repos—or an empty folder—gets a new scaffold. An existing workspace is upgraded component by component without changing your config.
 
-Now file a ticket and ship it, from the workspace root:
+You can add all repos related to you project into this folder.
 
-```bash
-scripts/govern/file-ticket.sh "Fix empty-state copy on /settings"   # into queue/tickets.md
-bash scripts/govern/config-check.sh                                 # free smoke test: no tokens, no Claude auth
-```
-
-Then say **"work on that ticket"**, or **"work through the queue"** for the whole backlog. The loop is not a command — Claude maps that onto `scripts/govern/run-loop.sh`: fresh worker → edits → PR → waits for CI. New workspaces start on the **pr-only** rung, where workers open PRs and the governor never merges. You click merge. Add a repo to `GOVERN_MERGE_REPOS` once you trust the pattern and its green-CI PRs auto-merge, guarded ([Trust](#trust)).
-
-**Want the risk map first?** `/shiploop:flows extract` inventories every user-facing path that might break; `/shiploop:flows list` renders it as proven / untested / stale / failed. Roughly 10 minutes, opens no PRs, deploys nothing. Proving a path (`/shiploop:flows file <id>`) *can* deploy, so it stays dry until `--yes`.
+Shiploop detects sub-repos, ports, dev commands, and your package manager, asks all questions in one batch, then completes setup. It never overwrites your README.md, CLAUDE.md, config, or governor files without --yes; before wrapping, it creates .wrap-undo.sh.
 
 ## Built to Spend Fewer Tokens
 
