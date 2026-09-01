@@ -138,6 +138,37 @@ Rules that are both rare and mechanically caught belong here.
 
 ---
 
+## Fleet visibility — seeing what the governor is actually doing
+
+Governor workers are detached `claude -p` processes. Their pid lives only in a bash array inside
+`run-loop.sh`, and structured state is written only at completion — so while a run is in flight
+nothing on disk says "running". Claude's own subagent panel cannot help: it renders Task-tool
+children of *this* session, and there is no way to inject a row into it from outside.
+
+`GOVERN_EVENTS=1` turns on one append-only log, `governor/events.jsonl`, and everything else folds
+it. Off by default; nothing about a run changes when you enable it, and a failed append is swallowed
+rather than aborting the run.
+
+| Want | Run |
+|---|---|
+| A snapshot, right now | `npm run govern:status` (add `--json` for machines) |
+| It in the statusline | `/shiploop:statusline` — opt-in, and it **wraps** your existing statusline rather than replacing it |
+| Live notifications in-session | Nothing: the shiploop plugin's monitor already tails the log and reports state transitions |
+
+Three things worth knowing before you go looking for a bug in it:
+
+- **A "live" worker in the log is a claim, not a fact.** A killed driver or a `pkill claude` leaves a
+  `worker_spawned` with no matching `worker_done` forever. Every reader arbitrates with `kill -0`;
+  `govern:status` additionally appends a synthetic `status:"stale"` row so the log self-heals.
+- **The fold is last-event-wins per (run_id, ticket)**, not spawned-minus-done. A retry is
+  spawn → done → spawn, and a subtraction would call that ticket idle.
+- **The monitor is deliberately stingy.** Every line it prints becomes a notification in the driver's
+  context — the exact resource shiploop exists to conserve. It emits transitions only, dedupes, caps
+  at `GOVERN_MONITOR_MAX_PER_MIN` (6) per minute, and never replays history. If you want the raw
+  stream, `tail -f governor/events.jsonl` yourself; do not make the monitor chattier.
+
+---
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_

@@ -61,6 +61,17 @@ PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.jso
 TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
+# Fleet event log (govern::event). Sourced HERE, not beside flows.sh/pregate.sh above — the log's
+# default location derives from GOVERNOR_DIR, which is only defined a few lines up. Same existence
+# guard as those modules, so a workspace scaffolded before this shipped still runs. OFF by default
+# behind GOVERN_EVENTS; see events.sh for the never-abort-the-run contract.
+# (`if`, not the `[[ … ]] && source` one-liner used above for flows/pregate: under `set -e` that
+# form ABORTS the sourcing shell when the file is absent — the very upgrade case it means to survive.)
+if [[ -f "$GOVERN_LIB_DIR/events.sh" ]]; then source "$GOVERN_LIB_DIR/events.sh"; fi
+# No-op stand-in so no call site needs its own `declare -F` probe. Only defined when the module is
+# genuinely absent — sourcing events.sh above already defined the real one.
+if ! declare -F govern::event >/dev/null 2>&1; then govern::event() { return 0; }; fi
+
 # Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
 # it = $LOG_ROOT/run-<ts>), so a re-run of ticket N writes to a fresh run-<ts>/ticket-N/ and can
 # NEVER read a PRIOR run's stale worker.jsonl. Falls back to the legacy flat $LOG_ROOT/ticket-N/

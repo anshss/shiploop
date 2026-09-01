@@ -1,0 +1,8 @@
+[
+  {
+    "name": "shiploop-fleet",
+    "command": "bash \"${CLAUDE_PLUGIN_ROOT}/tools/fleet-monitor.sh\"",
+    "description": "shiploop governor fleet — worker spawn/finish/escalate/park transitions, rate-limited",
+    "when": "always"
+  }
+]
