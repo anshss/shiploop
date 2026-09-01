@@ -12,7 +12,7 @@
 Lightweight orchestration layer that makes Claude Code faster and more token-efficient — model orchestration, subagent delegation, and worker branching. Adds capability, not bloat.
 
 
-### Built to spend fewer tokens
+### Built to Spend Fewer Tokens
 
 One goal: minimize tokens per shipped work. These are the levers that materially change that outcome.
 
@@ -30,13 +30,13 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 A few practical notes: the coordination layer itself does not consume model tokens. Parallel work improves throughput, not per-ticket efficiency. Some safeguards apply only when work is selected from the backlog automatically.
 
-### The scaffolding around all this
+### How Shiploop Runs
 
-Two layers get built for you: a **workspace** once, and a fresh **worker** per ticket.
+Two layers are created for you: one **workspace** and a fresh **worker** for every ticket.
 
-**The workspace.** `/shiploop:setup` wraps your existing repo rather than absorbing it — your code moves into a subfolder and stays its own git repo with its full history, and the workspace scaffolds around it. The path you `cd` into doesn't change. Everything that appears next to it is plain text you can read and edit:
+**The workspace.** `/shiploop:setup` wraps your existing repo instead of absorbing it. Your code moves into a subfolder but remains its own git repo with its full history. The path you `cd` into stays the same. Everything alongside it is plain text you can read and edit:
 
-```
+```yaml
 your-project/
   <your-repo>/              # your code, untouched, still its own git repo
   queue/tickets.md          # the backlog, one `## #N` per ticket
@@ -46,23 +46,13 @@ your-project/
   CLAUDE.md                 # git-tracked memory; every resolved ticket adds a lesson
 ```
 
-**The scripts** are the harness, and they're all bash. `run-loop.sh` is the driver: it owns state and control flow deterministically and never calls a model. `spawn-worker.sh` builds a worker's prompt and launches it. `config-check.sh` validates your entire config with zero tokens and no Claude auth. Because the orchestration layer is deterministic bash rather than an agent, the parts that decide *what* to do cost nothing; only the parts that do the work spend anything.
+**The scripts** form the bash harness. `run-loop.sh` deterministically owns state and control flow. It never calls a model. `spawn-worker.sh` builds each worker prompt and launches it. `config-check.sh` validates the full configuration with zero tokens and no Claude auth. Because orchestration is deterministic bash, deciding what to do costs no tokens. Only the work itself spends them.
 
-**The worktree** is what makes parallelism safe. One ticket gets one git worktree, cut fresh from an up-to-date `main` with a branch named for the ticket in each sub-repo actually in scope; sub-repos out of scope get a read-only detached checkout so a worker can read them but not touch them. Workers can't collide, no run inherits the last one's bad state, and context stays flat instead of accumulating across tickets. On failure the worktree is kept for the retry to resume from; it's only removed once the work lands, and never while it holds commits you haven't pushed.
+**The worktree** makes parallelism safe. Each ticket gets its own git worktree, created from an up-to-date `main`. Every in-scope sub-repo gets a ticket-named branch. Out-of-scope sub-repos get a detached, read-only checkout so workers can inspect them without changing them. Workers cannot collide, runs do not inherit prior bad state, and context stays flat across tickets. On failure, the worktree remains so a retry can resume. It is removed only after the work lands, and never while it contains unpushed commits.
 
-**The worker** is a fresh headless `claude -p` session inside that worktree. It gets a fixed prompt skeleton, your operator doctrine from `governor/preferences.md`, the ticket text, the scout's verified file paths as a warm start, and — on a retry — the previous attempt's handoff. It's also deliberately denied things: no MCP servers, no slash commands, no personal user-settings layer, and a trimmed tool list. That's not just thrift. A single-purpose headless worker has no use for scheduling, notification, or orchestration tools, and every schema it can't use is dead weight re-sent on all ~218 of its turns. It works, opens a PR, and writes a structured report the bash driver reads to decide what happens next.
+**The worker** is a fresh, headless `claude -p` session in that worktree. It receives a fixed prompt skeleton, your operator doctrine from `governor/preferences.md`, the ticket text, the scout’s verified file paths, and the previous handoff on retries. It is also intentionally restricted: no MCP servers, slash commands, personal user settings, or unnecessary tools. This is not only about cost. A single-purpose worker does not need scheduling, notification, or orchestration tools, and every unused schema is dead weight resent across roughly 218 turns. The worker completes the task, opens a PR, and writes a structured report that the bash driver uses to determine the next step.
 
-Autonomy is bounded by the trust ladder below, not by the scaffolding — workers run with permissions bypassed by design, scoped to a throwaway worktree and the branch it pushes.
-
-## Install
-
-```bash
-# In Claude Code:
-/plugin marketplace add anshss/shiploop
-/plugin install shiploop@shiploop
-```
-
-This installs the plugin once, globally: commands appear as `/shiploop:setup`, `/shiploop:flows`, etc. in every session — the ticket loop itself isn't a command, it's natural language ("work through the queue") onto `scripts/govern/run-loop.sh` (see [Quickstart](#3-file-one-ticket-watch-it-ship)). Each project you want shiploop on then gets its own one-time setup (next section). Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Same commands, same layout.
+Autonomy is bounded by the trust ladder below, not the scaffolding. Workers bypass permissions by design, but operate only in a disposable worktree and on the branch they push.
 
 ## Quickstart
 
