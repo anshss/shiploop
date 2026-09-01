@@ -121,10 +121,14 @@ fi
 # §5.7: set to 1 by resolve_sizing when THIS spawn actually raised a knob above the floor. The live
 # path stamps the worktree from it so the next spawn knows the ticket's one escalation is spent.
 ESCALATION_APPLIED=0
+# The tier this spawn escalated FROM, captured beside the flag so the fleet event log can report
+# `from`/`to` without re-parsing the human-readable model_source prose. Empty when nothing escalated.
+ESCALATION_FROM=""
 resolve_sizing() {
   local base_model base_effort escalated_model escalated_stamp
   retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
   ESCALATION_APPLIED=0
+  ESCALATION_FROM=""
 
   # Baseline = what the FIRST attempt would have used: the workspace floors.
   #
@@ -245,7 +249,7 @@ resolve_sizing() {
     budget)
       # Ran out of room while still exploring → the SCOPE was underestimated, not the judgment.
       # Raise TIER only; compounding an effort raise on top just multiplies the spend.
-      model="$escalated_model"; ESCALATION_APPLIED=1
+      model="$escalated_model"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
       model_source="escalated from $base_model (retry class=budget — scope underestimated) [retry-class]"
       effort_source="$effort_source (retry class=budget — tier raised, effort unchanged) [retry-class]"
       ;;
@@ -255,7 +259,7 @@ resolve_sizing() {
       # attempt already ran at the floor, judgment was marginal rather than absent and the effort
       # rung is the whole escalation).
       effort="$(govern::effort_bump "$base_effort")"
-      model="$escalated_model"; ESCALATION_APPLIED=1
+      model="$escalated_model"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
       effort_source="escalated from ${base_effort:-<unset>} (retry class=judgment) [retry-class]"
       if [[ "$model" == "$base_model" ]]; then
         model_source="$model_source (retry class=judgment — already at the floor tier; effort raised instead) [retry-class]"
@@ -266,7 +270,7 @@ resolve_sizing() {
     *)
       # UNRECOGNIZED signature → exactly the pre-classifier behavior: discard the ticket's brain-decided
       # fields and escalate to the workspace floor. Fail-safe by construction.
-      model="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"; ESCALATION_APPLIED=1
+      model="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
       effort="${GOVERN_WORKER_EFFORT:-}"
       model_source="GOVERN_WORKER_ESCALATION_MODEL (retry — baseline '$base_model' skipped)"
       effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
@@ -905,6 +909,12 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 if [[ "$ESCALATION_APPLIED" -eq 1 && -d "$WORKTREE_BASE/$slug" ]]; then
   : > "$WORKTREE_BASE/$slug/.governor-escalated" 2>/dev/null || true
 fi
+# Fleet event log (off unless GOVERN_EVENTS=1). Emitted from the same condition as the stamp, so
+# an escalation appears on the log exactly when it was actually bought.
+if [[ "$ESCALATION_APPLIED" -eq 1 ]]; then
+  govern::event worker_escalated "ticket=$N" "from=${ESCALATION_FROM:-unknown}" "to=$model" \
+    "effort=${effort:-}" "reason=$retry_class"
+fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
@@ -982,6 +992,18 @@ record_attempt() { # status -> appends one ledger row
        effort:(if $e == "" then null else $e end), effortSource:$es,
        ticketModel:(if $tm == "" then null else $tm end), isRetry:($retry == 1),
        mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
+  # Fleet event log (off unless GOVERN_EVENTS=1). record_attempt is the single funnel every exit
+  # path runs through (clean return AND the INT/TERM/EXIT teardown), and it is latched idempotent —
+  # so the log gets exactly one worker_done per attempt, including the killed ones.
+  # `if`, not `[[ … ]] && …` (rule 11): under `set -e` a false test in an && list aborts the
+  # CALLER, and record_attempt runs on the teardown path where an abort would lose the ledger row.
+  local _ev_tok _ev_elapsed=0
+  _ev_tok="$(printf '%s' "$usage" | jq -r '.tokens // "null"' 2>/dev/null || echo null)"
+  if [[ -n "${WORKER_SPAWN_TS:-}" ]]; then _ev_elapsed=$(( $(date +%s) - WORKER_SPAWN_TS )); fi
+  # WORKER_PID, not $cpid: the reap path clears cpid to disarm the cleanup traps, and record_attempt
+  # runs after that on the clean-exit route — reading cpid here would log an empty pid.
+  govern::event worker_done "ticket=$N" "status=$st" "model=$model" "effort=${effort:-}" \
+    "attempt=$attempt" "tokens=${_ev_tok:-null}" "elapsed=$_ev_elapsed" "pid=${WORKER_PID:-null}"
   return 0
 }
 
@@ -1208,6 +1230,11 @@ set -m
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
+# Fleet event log (off unless GOVERN_EVENTS=1). THIS is the line that makes a running worker
+# visible: until now the only record of a live worker was $cpid in this shell's memory.
+WORKER_SPAWN_TS="$(date +%s)"; WORKER_PID="$cpid"
+govern::event worker_spawned "ticket=$N" "model=$model" "effort=${effort:-}" \
+  "timeout=$to" "worktree=$wtpath" "pid=$cpid"
 if [[ "$to" -gt 0 ]]; then
   # 1>/dev/null: the watchdog (and its sleep child) must NOT inherit this script's stdout — that
   # pipe feeds the caller's $(...) capture, and an orphaned sleep holding it would hang the caller.

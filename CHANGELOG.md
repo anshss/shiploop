@@ -39,6 +39,58 @@ any test failure.
   would have destroyed both. `--strip` drops regenerable build output from kept-but-idle worktrees
   instead of removing them.
 
+### Added
+
+**Fleet visibility — the governor's live state, on four surfaces.** Governor workers are detached
+`claude -p` processes whose pid lives only in a bash array inside `run-loop.sh`; structured state was
+written only at completion, so while a run was in flight *nothing on disk said "running"* and no
+surface could show it. (Claude's own subagent panel is not an option: it renders Task-tool children
+of the session, and cannot be injected into from outside.)
+
+One append-only event log is now the single source of truth, and everything folds it.
+
+- **`GOVERN_EVENTS` (default `0`, off)** — `scripts/govern/lib/events.sh` adds `govern::event`, which
+  appends one JSON object per line to `governor/events.jsonl`. Types: `run_started`,
+  `driver_spawned`, `worker_spawned`, `worker_escalated`, `worker_done`, `ticket_parked`,
+  `driver_reaped`, `run_done`. Always-on fields are `ts`, `run_id` (the TokenJam run id, so events
+  join against the OTel attributes workers are already tagged with), and `type`. **The emitter can
+  never abort a run** — the whole body is a guarded group with an explicit `return 0`, so an
+  unwritable log, a full disk, or a malformed key is swallowed silently under `set -euo pipefail`.
+  Nothing about a run changes at `0`, and existing installs are unaffected until they opt in.
+
+- **`npm run govern:status`** (`scripts/govern/status.sh`) — one-shot reader, text by default,
+  `--json` for machines. Folds the log **last-event-wins per (run_id, ticket)**, which is what makes
+  a retry (spawn → done → spawn) read as active where a spawned-minus-done count would not. Verifies
+  every claimed-live worker with `kill -0` and reaps the phantoms a killed driver leaves behind,
+  appending a synthetic `status:"stale"` row so the log self-heals. No jq dependency, no model call,
+  no lock — runnable from inside a Claude session, from CI, or over SSH. `--no-reap` and `--all-runs`
+  included.
+
+- **Plugin monitor** (`monitors/monitors.json` + `tools/fleet-monitor.sh`) — the in-session channel.
+  Every stdout line becomes a notification in the driver's context, which is the resource shiploop
+  exists to conserve, so it emits **state transitions only** (never a raw tail), dedupes repeated
+  states, caps itself at `GOVERN_MONITOR_MAX_PER_MIN` (6) lines a minute with the overflow collapsed
+  into one line, attaches at the *end* of the log so history is never replayed, and prints absolutely
+  nothing when there is no event log — which is nearly every session. `GOVERN_MONITOR=0` disables it.
+
+- **`/shiploop:statusline`** + `scripts/govern/statusline-{segment,chain,install}.sh` — an opt-in
+  statusline segment (`⚙ 4/6 · #94 opus 22m`), silent when no fleet is running. **It chains, it does
+  not replace.** `statusLine.command` is a single string, so an installer that writes its own value
+  destroys a user's ccusage or custom HUD; instead the installer records the *entire* previous
+  `statusLine` object verbatim to `~/.claude/shiploop-statusline.json`, wraps it (stdin is read once
+  and replayed to the original, whose output comes first), and uninstall restores the recording byte
+  for byte — including removing the key entirely when there was none. It refuses to re-record over an
+  existing recording, and refuses to touch a malformed `settings.json`. `refreshInterval` defaults to
+  5s (yours wins if you had one); without it the elapsed time freezes while the session is idle.
+  Never installed by `scaffold.sh`, `/shiploop:setup`, or `/shiploop:update`.
+
+- Five new tests (`test-events-emitter`, `test-events-status`, `test-events-statusline`,
+  `test-events-runloop`, `test-events-monitor`), covering the never-abort contract, the fold, stale
+  reaping, the monitor's rate limit and silence, and the statusline chain/restore. `test-events-monitor`
+  is hub-context (the monitor ships with the plugin, not into a workspace) and is registered in
+  `tools/hub-context-tests.txt`. `GOVERN_EVENTS=0` is exported from `test/assert.sh` for the whole
+  suite, per the standing dispatch-path-mechanism rule.
+
 ## 1.17.2 — 2026-08-03
 
 ### Fixed
