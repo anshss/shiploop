@@ -226,6 +226,17 @@ fi
 # We do NOT bake any of that here because it is entirely project-specific.
 # Pass --skip-bootstrap to defer to the user (e.g. you want the raw worktree
 # layout without waiting for deps).
+#
+# IF YOUR BOOTSTRAP INSTALLS DEPS CONCURRENTLY, CAP IT with scripts/lib/install-semaphore.sh:
+#
+#     source "$ROOT/scripts/lib/install-semaphore.sh"
+#     ( trap sem_release EXIT; sem_acquire "$repo"; <install cmd> ) &
+#
+# A `wait` at the end of your bootstrap bounds only YOUR worktree. It cannot see the
+# installs another worktree's bootstrap started, so under `govern --parallel` the real
+# ceiling is (tickets in flight x repos per worktree x ~1 GB per install) — measured at
+# ~14 GB on a 24 GB machine before the cap existed. install-semaphore.sh is a
+# cross-process cap; see its header for the full reasoning and how to measure it.
 if [ "$SKIP_BOOTSTRAP" -eq 0 ]; then
   if [ -x "$ROOT/scripts/lib/worktree-bootstrap.sh" ]; then
     echo "[worktree] running scripts/lib/worktree-bootstrap.sh ..."

@@ -304,12 +304,13 @@ component_core_scripts() {
   cp "$T/lib/session-state.sh" scripts/lib/
   cp "$T/lib/preflight.sh" scripts/lib/
   cp "$T/lib/githooks.sh" scripts/lib/
+  cp "$T/lib/install-semaphore.sh" scripts/lib/
   info "installed core scripts + hooks + libs"
 }
 
 component_worktrees() {
   log "component: worktrees"
-  cp "$T/worktree/new.sh" "$T/worktree/rm.sh" "$T/worktree/status.sh" \
+  cp "$T/worktree/new.sh" "$T/worktree/rm.sh" "$T/worktree/reap.sh" "$T/worktree/status.sh" \
      "$T/worktree/exec.sh" "$T/worktree/main.sh" "$T/worktree/session-end-cleanup.sh" \
      scripts/worktree/
   cp "$T/worktree/lib/registry.sh" "$T/worktree/lib/base-ref.sh" scripts/worktree/lib/
@@ -600,6 +601,7 @@ $(printf "$dev_lines" | sed '/^$/d')
     "worktree": "bash scripts/worktree/main.sh",
     "worktree:new": "bash scripts/worktree/new.sh",
     "worktree:rm": "bash scripts/worktree/rm.sh",
+    "worktree:reap": "bash scripts/worktree/reap.sh",
     "worktree:status": "bash scripts/worktree/status.sh",
     "worktree:exec": "bash scripts/worktree/exec.sh",
     "govern": "bash scripts/govern/run-loop.sh",
@@ -648,6 +650,7 @@ component_package_json_merge() {
     "worktree":           "bash scripts/worktree/main.sh",
     "worktree:new":       "bash scripts/worktree/new.sh",
     "worktree:rm":        "bash scripts/worktree/rm.sh",
+    "worktree:reap":      "bash scripts/worktree/reap.sh",
     "worktree:status":    "bash scripts/worktree/status.sh",
     "worktree:exec":      "bash scripts/worktree/exec.sh",
     "govern":             "bash scripts/govern/run-loop.sh",
@@ -946,11 +949,11 @@ probe_files() {
       for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard validations-pending-hook learnings-digest; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in session-state preflight githooks; do
+      for s in session-state preflight githooks install-semaphore; do
         printf 'scripts/lib/%s.sh\t%s/lib/%s.sh\n' "$s" "$T" "$s"
       done ;;
     worktrees)
-      for s in new rm status exec main session-end-cleanup; do
+      for s in new rm reap status exec main session-end-cleanup; do
         printf 'scripts/worktree/%s.sh\t%s/worktree/%s.sh\n' "$s" "$T" "$s"
       done
       for s in registry base-ref; do
@@ -1141,7 +1144,7 @@ config_drift_report() {
     local missing_scripts
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
-      | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:status",
+      | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
          "worktree:exec","govern","govern:health","govern:dry-run","govern:validations"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
     ' package.json 2>/dev/null)"
