@@ -11,8 +11,37 @@
 
 Lightweight orchestration layer that makes Claude Code faster and more token-efficient — model orchestration, subagent delegation, and worker branching. Adds capability, not bloat.
 
+## Get Started
 
-### Built to Spend Fewer Tokens
+Install the plugin once, globally. `/shiploop:setup`, `/shiploop:flows` and the rest then appear in every session:
+
+```
+/plugin marketplace add anshss/shiploop
+/plugin install shiploop@shiploop
+```
+
+Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Same commands, same layout.
+
+Then set it up on a project — once per project:
+
+```bash
+cd ~/code/your-project && claude   # then run: /shiploop:setup
+```
+
+Setup adapts to what the folder is. An **existing repo** is wrapped in place: it moves into a subfolder, stays its own git repo with full history verified byte-identical, and the path you `cd` into does not change. A **folder of repos**, or an empty one, gets a fresh scaffold. An **existing workspace** is upgraded component by component without touching your config. Sub-repos, ports, dev commands, and package manager are detected first, every question is asked in **one batched round**, then it runs to completion. Nothing you own is clobbered: your `README.md`, `CLAUDE.md`, config, and governor files are never overwritten without an explicit `--yes`, and a wrap-in-place writes a `.wrap-undo.sh` before it moves anything. You end up with the layout shown in [How Shiploop Runs](#how-shiploop-runs).
+
+Now file a ticket and ship it, from the workspace root:
+
+```bash
+scripts/govern/file-ticket.sh "Fix empty-state copy on /settings"   # into queue/tickets.md
+bash scripts/govern/config-check.sh                                 # free smoke test: no tokens, no Claude auth
+```
+
+Then say **"work on that ticket"**, or **"work through the queue"** for the whole backlog. The loop is not a command — Claude maps that onto `scripts/govern/run-loop.sh`: fresh worker → edits → PR → waits for CI. New workspaces start on the **pr-only** rung, where workers open PRs and the governor never merges. You click merge. Add a repo to `GOVERN_MERGE_REPOS` once you trust the pattern and its green-CI PRs auto-merge, guarded ([Trust](#trust)).
+
+**Want the risk map first?** `/shiploop:flows extract` inventories every user-facing path that might break; `/shiploop:flows list` renders it as proven / untested / stale / failed. Roughly 10 minutes, opens no PRs, deploys nothing. Proving a path (`/shiploop:flows file <id>`) *can* deploy, so it stays dry until `--yes`.
+
+## Built to Spend Fewer Tokens
 
 One goal: minimize tokens per shipped work. These are the levers that materially change that outcome.
 
@@ -30,7 +59,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 A few practical notes: the coordination layer itself does not consume model tokens. Parallel work improves throughput, not per-ticket efficiency. Some safeguards apply only when work is selected from the backlog automatically.
 
-### How Shiploop Runs
+## How Shiploop Runs
 
 Two layers are created for you: one **workspace** and a fresh **worker** for every ticket.
 
@@ -53,52 +82,6 @@ your-project/
 **The worker** is a fresh, headless `claude -p` session in that worktree. It receives a fixed prompt skeleton, your operator doctrine from `governor/preferences.md`, the ticket text, the scout’s verified file paths, and the previous handoff on retries. It is also intentionally restricted: no MCP servers, slash commands, personal user settings, or unnecessary tools. This is not only about cost. A single-purpose worker does not need scheduling, notification, or orchestration tools, and every unused schema is dead weight resent across roughly 218 turns. The worker completes the task, opens a PR, and writes a structured report that the bash driver uses to determine the next step.
 
 Autonomy is bounded by the trust ladder below, not the scaffolding. Workers bypass permissions by design, but operate only in a disposable worktree and on the branch they push.
-
-## Quickstart
-
-### 1. Set it up on your project: one command, one round of questions
-
-Open Claude Code in the project you want shiploop to work on, and run setup:
-
-```bash
-cd ~/code/your-project && claude
-```
-```
-/shiploop:setup
-```
-
-Setup detects what the folder is and adapts:
-
-- **An existing repo → wrap-in-place.** Your repo moves into a subfolder and the workspace scaffolds around it. The path you `cd` into stays the same, full history travels as one unit verified byte-identical, and a generated `.wrap-undo.sh` reverses everything until it all verifies.
-- **A folder of repos (or an empty one) → fresh scaffold.** Each subfolder with its own `.git` becomes a sub-repo. One repo is a fine workspace. Add more later.
-- **An existing workspace → upgrade**, component by component, without touching your config.
-
-It detects everything first (sub-repos, ports, dev commands, package manager), asks its questions in **one batched round**, then runs to completion. You end up with the workspace laid out in [The scaffolding](#the-scaffolding-around-all-this) above.
-
-Nothing you own gets clobbered on an upgrade: your `README.md`, `CLAUDE.md`, `scripts/lib/workspace.sh`, and the governor's operator files (`preferences.md`, `decisions-log.md`, `escalations.md`, `improvements.md`) are either never overwritten or refuse to be without an explicit `--yes`; `.gitignore` is append-only. A wrap-in-place writes a `.wrap-undo.sh` **before** it moves anything, verifies your repo's HEAD, branch, working-tree status, and submodule state are identical after the move, and rolls back on any mismatch.
-
-### 2. See your product's risk map: 10 minutes, nothing deploys
-
-```
-/shiploop:flows extract   # inventory every user-facing path that might break
-/shiploop:flows list      # your risk map: proven / untested / stale / failed
-```
-
-Extract fans out one agent per surface, and the inventory is staged for your approval: it opens no PRs, merges nothing, rents no compute. On a fresh extract everything is UNTESTED: that list is exactly the map of what you don't yet know works. Proving a path (`/shiploop:flows file <id>`) *can* deploy, so it's dry by default: nothing files until `--yes`, `--max-deploys N` caps a batch, and `--all-stale`/`--all-untested` refuse unless the orphan-sweep (`GOVERN_DEPLOY_SWEEP_CMD`) is wired.
-
-### 3. File one ticket, watch it ship
-
-From the workspace root:
-
-```bash
-scripts/govern/file-ticket.sh "Fix empty-state copy on /settings"   # into queue/tickets.md
-bash scripts/govern/config-check.sh   # free smoke test, no tokens, no Claude auth
-```
-
-Then just say **"work on that ticket"** (or "work through the queue" for the whole backlog) — Claude
-maps it straight onto `scripts/govern/run-loop.sh`: fresh worker → edits → PR → waits for CI.
-
-New workspaces start on the **pr-only** rung: workers open PRs, the governor never merges. You click merge. When you've read enough of a repo's PRs to trust the pattern, add it to `GOVERN_MERGE_REPOS` and its green-CI PRs auto-merge, guarded ([Trust](#trust)).
 
 ## How it works
 
