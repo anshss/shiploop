@@ -19,10 +19,13 @@ Install the plugin once, globally. `/shiploop:setup`, `/shiploop:flows` and the 
 /plugin marketplace add anshss/shiploop
 /plugin install shiploop@shiploop
 ```
+or 
+```
+git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop &&
+bash ~/.claude/skills/shiploop/install.sh
+```
 
-Prefer a clone? `git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop && bash ~/.claude/skills/shiploop/install.sh`. Same commands, same layout.
-
-Then set it up on a project — once per project:
+Then set it up on a project, once per project:
 
 ```bash
 cd ~/code/your-project && claude   # then run: /shiploop:setup
