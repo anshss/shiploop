@@ -426,6 +426,10 @@ record() { # ticket status note
   # they are dropped from the CROSS-RUN history on purpose (not the ticket's fault), but within THIS
   # run they have still consumed a worker, so a sibling must not immediately re-spawn on them either.
   printf '%s\n' "$1" >> "$RUN_ATTEMPTED_FILE" 2>/dev/null || true
+  # Fleet event log (off unless GOVERN_EVENTS=1). Only `parked` is emitted here: every other status
+  # already has a worker_done event from spawn-worker, and duplicating them would make the fold
+  # double-count. A park is the one outcome an operator is asked to act on, so it gets its own type.
+  if [[ "$2" == "parked" ]]; then govern::event ticket_parked "ticket=$1" "note=$3"; fi
   # #60: persist the outcome to the cross-run history (run id + epoch) — best-effort.
   # #90: NEVER record an infra/auth outage to the cross-run history — it is not the ticket's fault,
   # so it must not count toward #60 auto-escalation or be read back by govern-improve as a hard
@@ -782,6 +786,11 @@ trap 'on_exit' EXIT
 trap 'INTERRUPTED=1; govern::log "INTERRUPTED — in-flight ticket kept in tickets.md + worktree preserved; re-run resumes."; govern_teardown_worker; exit 130' INT TERM
 
 govern::log "run $RUNDIR (mode=$MODE, target=${TARGET:-backlog}, max=$MAX_TICKETS, bad-streak=$MAX_BAD_STREAK, runtime=${MAX_RUNTIME}s)"
+# Fleet event log (off unless GOVERN_EVENTS=1) — the first line of a run, so every reader knows a
+# fleet exists before any worker has been spawned.
+govern::event run_started "mode=$MODE" "target=${TARGET:-backlog}" "max_tickets=$MAX_TICKETS" \
+  "runtime=$MAX_RUNTIME" "parallel=$([[ "$PARALLEL" -eq 1 ]] && printf '%s' "$PARALLEL_N" || printf '1')" \
+  "rundir=$RUNDIR" "pid=$$"
 # Ticket-SET fix: log the FULL parsed target set at run start, unconditionally, so a truncation
 # bug like the one this fixes (four numbers given, only the last kept) can never be silent again —
 # the operator can always diff what they typed against this line.
@@ -1058,10 +1067,12 @@ govern::_parallel_reap_one() {
     # rows=0 is NORMAL and not a failure: a backlog driver whose siblings had already claimed every
     # eligible ticket exits cleanly having worked none.
     govern::log "parallel: driver $lbl done (pid $pid, $rows ticket(s)) → $rd"
+    govern::event driver_reaped "label=$lbl" "pid=$pid" "tickets=$rows" "ok=true"
   else
     PARALLEL_RC=1
     govern::log "parallel: driver $lbl done (pid $pid) — could not locate its run dir/state under $LOG_ROOT; treating as failed for the tally, see the child's own log above"
     PARALLEL_TFAIL=$((PARALLEL_TFAIL+1)); PARALLEL_TICKETS=$((PARALLEL_TICKETS+1))
+    govern::event driver_reaped "label=$lbl" "pid=$pid" "tickets=0" "ok=false"
   fi
 }
 # Spawn one child driver. $1 = label for logs, $2 = "" or "--dry-run", $3… = extra argv (a ticket
@@ -1082,6 +1093,8 @@ govern::_parallel_spawn() {
   GOVERN_ALLOW_CONCURRENT=1 GOVERN_PARALLEL='' bash "$DIR/run-loop.sh" "$@" --serial --orchestrated $dry >&2 &
   PARALLEL_PIDS+=("$!"); PARALLEL_TIX+=("$lbl")
   govern::log "parallel: spawned $lbl (pid $!) — ${#PARALLEL_PIDS[@]}/$PARALLEL_N driver(s) running"
+  govern::event driver_spawned "label=$lbl" "pid=${PARALLEL_PIDS[${#PARALLEL_PIDS[@]}-1]}" \
+    "running=${#PARALLEL_PIDS[@]}" "cap=$PARALLEL_N"
 }
 govern::_parallel_run() {
   # A plain string (not an array) here on purpose: bash 3.2 (macOS's /bin/bash) throws "unbound
@@ -2192,6 +2205,11 @@ if [[ -x "$DIR/govern-health.sh" && -s "$HISTORY" ]]; then
     | while IFS= read -r _hl; do govern::log "health | $_hl"; done || true
 fi
 govern::log "DONE — resolved=$nres parked=$npark failed=$nfail timed-out=$ntimeout budget-exceeded=$nbudget early-aborted=$nabort interrupted=$nintr (processed $done_count) | state=$STATE review=$REVIEW"
+# Fleet event log (off unless GOVERN_EVENTS=1). The terminator every reader folds on: once this
+# line lands, `govern:status` reports the run as finished rather than probing pids.
+govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout=$ntimeout" \
+  "budget_exceeded=$nbudget" "early_aborted=$nabort" "interrupted=$nintr" "processed=$done_count" \
+  "rundir=$RUNDIR"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 
 # Auto-trigger sync-port at run-end IFF (a) the mechanism script is present in

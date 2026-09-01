@@ -37,8 +37,11 @@ There is no dev server; everything is bash. The realistic dev loop:
      --git-init --verify --yes
    ```
 
-2. Run the full govern suite against that scaffolded workspace:
+2. `scaffold.sh` deliberately does not install `scripts/govern/test/` into a workspace (the suite is hub-only), so copy it in yourself, exactly as the CI `scaffold-and-test` job does, then run it:
    ```bash
+   mkdir -p "$WS/scripts/govern/test"
+   cp templates/govern/test/*.sh "$WS/scripts/govern/test/"
+   chmod +x "$WS"/scripts/govern/test/*.sh
    cd "$WS"
    for t in scripts/govern/test/test-*.sh; do
      name=$(basename "$t" .sh)
@@ -51,6 +54,8 @@ There is no dev server; everything is bash. The realistic dev loop:
    done
    ```
    This mirrors the CI `scaffold-and-test` job. If it is green locally against a fresh scaffold, CI will almost always be green too.
+
+   Some of the copied tests skip (exit 77) here by design: they assert on the hub itself (`scaffold.sh`, `templates/`, `VERSION`, `purge.txt`, `seed-hashes.txt`) and resolve the hub as `$DIR/../../..`, which only resolves correctly from a hub checkout, not a scaffolded workspace. Those are listed in `tools/hub-context-tests.txt` and gated by the separate CI `hub-context-tests` job, which runs them straight from the checkout and treats a skip there as a failure. To exercise them locally, run them from this repo directly, e.g. `bash templates/govern/test/test-update-channel.sh`.
 
 3. Iterate on the template, re-run only the affected test (`bash scripts/govern/test/test-<name>.sh`), then re-run the full suite before pushing.
 

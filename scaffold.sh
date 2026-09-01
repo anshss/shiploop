@@ -607,6 +607,7 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern": "bash scripts/govern/run-loop.sh",
     "govern:health": "bash scripts/govern/govern-health.sh",
     "govern:dry-run": "bash scripts/govern/dry-run.sh",
+    "govern:status": "bash scripts/govern/status.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh"
   }
 }
@@ -656,6 +657,7 @@ component_package_json_merge() {
     "govern":             "bash scripts/govern/run-loop.sh",
     "govern:health":      "bash scripts/govern/govern-health.sh",
     "govern:dry-run":     "bash scripts/govern/dry-run.sh",
+    "govern:status":      "bash scripts/govern/status.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh"
   }') || { warn "package-json-merge: jq failed to build the script set"; return 0; }
 
@@ -1145,7 +1147,7 @@ config_drift_report() {
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
-         "worktree:exec","govern","govern:health","govern:dry-run","govern:validations"]
+         "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:validations"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
     ' package.json 2>/dev/null)"
     [ -n "$missing_scripts" ] && notes+="  package.json    missing script(s): $missing_scripts"$'\n'
