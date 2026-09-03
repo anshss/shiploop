@@ -21,7 +21,7 @@
 #   scaffold.sh --workspace-dir . --component govern
 #
 # Components: core-scripts, worktrees, govern, hooks, githooks, seeds,
-#             gitignore, package-json, settings, commands, workflows, all
+#             gitignore, package-json, settings, commands, agents, workflows, all
 #   merge-tier (additive, idempotent, safe on an existing workspace — what /update runs):
 #             settings-merge, package-json-merge, workspace-sh-merge, config-merge
 #
@@ -206,7 +206,7 @@ hydrate_from_workspace_sh() {
 
 component_dirs() {
   mkdir -p scripts/lib scripts/worktree/lib scripts/govern/lib
-  mkdir -p governor .worktrees .claude/commands .claude/workflows .claude/skills .githooks queue
+  mkdir -p governor .worktrees .claude/commands .claude/workflows .claude/skills .claude/agents .githooks queue
   touch .worktrees/.gitkeep
 }
 
@@ -363,6 +363,18 @@ component_project_commands() {
   log "component: project-local slash commands"
   cp "$T"/.claude/commands/*.md .claude/commands/ 2>/dev/null || true
   info "installed .claude/commands/"
+}
+
+# component_agents — shipped subagent definitions (lookup, investigator). These give the
+# interactive driver lane cheap-tier targets for the delegation posture (router-posture
+# hooks + CLAUDE.md) that already tells it to delegate — without them "delegate to an
+# Agent" had no pre-sized, cheap-model destination, so haiku delegation stayed near zero
+# in practice. Mirrors component_project_commands: copy-only, no substitution.
+component_agents() {
+  log "component: shipped subagent definitions (.claude/agents/)"
+  mkdir -p .claude/agents
+  cp "$T"/.claude/agents/*.md .claude/agents/ 2>/dev/null || true
+  info "installed .claude/agents/"
 }
 
 # Workspace-shadowing workflows + skill. The tiered `deep-research.js` file ships with
@@ -611,7 +623,8 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern:budgets": "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
     "govern:trim": "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
-    "govern:validations": "bash scripts/govern/govern-validations.sh"
+    "govern:validations": "bash scripts/govern/govern-validations.sh",
+    "vf": "bash scripts/govern/verify-filter.sh"
   }
 }
 EOF
@@ -665,7 +678,8 @@ component_package_json_merge() {
     "govern:budgets":     "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
     "govern:trim":        "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
-    "govern:validations": "bash scripts/govern/govern-validations.sh"
+    "govern:validations": "bash scripts/govern/govern-validations.sh",
+    "vf":                 "bash scripts/govern/verify-filter.sh"
   }') || { warn "package-json-merge: jq failed to build the script set"; return 0; }
 
   # Per-repo dev:<name> entries, from --repos or hydrated workspace.sh.
@@ -945,7 +959,7 @@ JQ
 # The mechanism components whose installed files are byte-comparable against
 # templates. Shared by --diff-only AND the stamp gate so the two can never drift
 # apart (N5: a component tracked by one but not the other loops "behind" forever).
-MECH_COMPONENTS="core-scripts worktrees govern githooks commands workflows"
+MECH_COMPONENTS="core-scripts worktrees govern githooks commands agents workflows"
 
 # probe_files — component -> lines "installed-path<TAB>template-path".
 # Top-level so both diff_only and workspace_converged share one source of truth.
@@ -988,6 +1002,12 @@ probe_files() {
       for f in "$T"/.claude/commands/*.md; do
         [ -f "$f" ] || continue
         printf '.claude/commands/%s\t%s\n' "$(basename "$f")" "$f"
+      done ;;
+    agents)
+      local f
+      for f in "$T"/.claude/agents/*.md; do
+        [ -f "$f" ] || continue
+        printf '.claude/agents/%s\t%s\n' "$(basename "$f")" "$f"
       done ;;
     workflows)
       local f skdir
@@ -1263,6 +1283,7 @@ case "$COMPONENT" in
     component_govern
     component_githooks
     component_project_commands
+    component_agents
     component_workflows
     component_seeds
     component_readme
@@ -1276,6 +1297,7 @@ case "$COMPONENT" in
   govern)         component_govern ;;
   githooks)       component_githooks ;;
   commands)       component_project_commands ;;
+  agents)         component_agents ;;
   workflows)      component_workflows ;;
   seeds)          component_seeds ;;
   readme)         component_readme ;;
@@ -1321,7 +1343,7 @@ if [ "$DO_GIT_INIT" -eq 1 ]; then
     git_add_paths=""
     for p in scripts .githooks governor package.json .gitignore .worktrees/.gitkeep \
              queue learnings.md CLAUDE.md CLAUDE-APPENDIX.md README.md \
-             .claude/settings.json .claude/commands .claude/skills .claude/workflows validation; do
+             .claude/settings.json .claude/commands .claude/agents .claude/skills .claude/workflows validation; do
       [ -e "$p" ] && git_add_paths="$git_add_paths $p"
     done
     # shellcheck disable=SC2086 — deliberate word splitting into a pathspec list.
