@@ -1026,6 +1026,14 @@ if [[ "$PARALLEL" -eq 1 ]]; then
 fi
 govern::log "dispatching ${#DISPATCH_GROUPS[@]} locality group(s) from ${#TARGETS[@]} named ticket(s)$( [[ "$PARALLEL" -eq 1 ]] && printf ', up to %s concurrent' "$PARALLEL_N" )"
 
+# ── dispatch-time overlap nudge (#139, zero model calls) ────────────────────────────────────────────
+# Locality batching above only sees the NAMED set: it has no visibility into a ticket the operator
+# did not name. Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45%
+# of overlapping pairs were both ALREADY QUEUED at dispatch, batchable if the operator had known.
+# This is a non-blocking hint only: it never changes DISPATCH_GROUPS, never touches the queue, and
+# never blocks. GOVERN_OVERLAP_NUDGE=0 silences it (default on, log line only).
+govern::overlap_nudge "$ELIGIBLE_CSV" "$TICKETS_FILE"
+
 # ── --parallel orchestrator ──────────────────────────────────────────────────────────────────────
 # Composes the SAME machinery a manual "launch N drivers, each with GOVERN_ALLOW_CONCURRENT=1"
 # recipe always used: the per-ticket claim lock + the bookkeep lock (both documented above) are what

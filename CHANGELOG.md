@@ -32,6 +32,22 @@ human. Zero model calls.
   unchanged. `doctor` additionally reports how many trim proposals are pending. New npm script:
   `govern:trim`.
 
+**Dispatch-time overlap nudge, zero model calls.** Named dispatch already batches overlap WITHIN the
+set you name (locality batching), but had no visibility into a ticket you did NOT name. Measured: 81%
+of dispatched tickets touched files an earlier ticket touched, and 45% of overlapping pairs were both
+already queued at dispatch time, batchable if the operator had known.
+
+- After a named set's own target paths are known (the scout's measured `targetPaths`, or a measured
+  `**Files:**` field, or as a last resort backticked paths in the ticket's own body), `run-loop.sh`
+  scans every OTHER open `## #N` ticket's body for path-like tokens (anything containing `/` or
+  ending `.sh`/`.md`/`.ts`/`.js`/`.go`/`.py`/`.json`; `file:line` counts as its file) and prints up
+  to 5 non-blocking `[overlap]` (exact shared file) or `[overlap-dir]` (weaker: shared directory
+  prefix, depth 2+) lines naming the batch command to re-run with both tickets.
+- Never blocks, never changes `DISPATCH_GROUPS`, never touches the queue. Excludes tickets already in
+  the current named set, a ticket with nothing extractable, and a ticket a live driver already holds
+  the per-ticket claim lock on. Emits one `overlap_nudge` fleet event per line when `GOVERN_EVENTS=1`.
+- Kill switch `GOVERN_OVERLAP_NUDGE=0` (default on, log line only).
+
 **The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
 
 Both fleets that ran the sweep had already abandoned it. One workspace's `governor/ticket-history.jsonl`
