@@ -1,0 +1,4 @@
+# Benchmark runtime state. Raw results are teardown fuel (spec section 4): only derived claims go
+# public, and the candidate backlog pool is private by design.
+bench/pilot-backlogs/
+bench/results/

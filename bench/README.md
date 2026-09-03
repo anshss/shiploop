@@ -1,0 +1,105 @@
+# bench
+
+The benchmark that produces shiploop's cost claim. It measures **a full session clearing a
+backlog**, not a ticket: the unit is the whole loop (scout, cheap-floor dispatch, escalation, fresh
+context per worker) against the whole alternative (one Claude Code session grinding the same
+backlog, top to bottom).
+
+Design and rationale: `.specs/2026-09-03-benchmark-design.md`.
+
+## What is here
+
+```
+bench/
+  backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
+  pilot-backlogs/                 candidate pool, gitignored, never pushed
+  run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
+  arms.sh                         the three arm shapes
+  record.sh                       result events -> results.jsonl rows
+  rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
+  fixtures/                       canned streams and golden results for the test suite
+  results/<run-id>/               results.jsonl + session logs, gitignored
+```
+
+## Arms
+
+| Arm | Shape |
+|---|---|
+| `vanilla` | One `claude -p` session for the whole backlog, headless default model, in a fresh worktree of the pinned ref. Prompt is the backlog verbatim. |
+| `shiploop` | The real `templates/govern/run-loop.sh` over a `queue/tickets.md` seeded with the same backlog, in a scaffolded throwaway workspace, defaults on. Cost is everything the loop spends: driver, scouts, workers, escalations. |
+| `vanilla-fresh` | A fresh session per ticket, sequential. Private record only, opt-in via `--arm vanilla-fresh`. |
+
+Ticket text is byte-identical across arms. Neither arm has WebFetch or WebSearch.
+
+## Reproducing the published number
+
+Requires `node`, `jq`, `git`, and a `claude` CLI on PATH. It spends real quota.
+
+```bash
+# 1. Dry run first. Zero network, zero spend, canned fixtures for both arm shapes.
+bash bench/run.sh --dry-run
+
+# 2. The real run over the published backlog set.
+bash bench/run.sh --reps 2
+
+# 3. The three metric cuts, the selection ranking, and the headline sentence.
+node bench/rollup.mjs
+```
+
+`run.sh` prints the results path; `rollup.mjs` with no argument reads the newest run under
+`bench/results/`. Pass a path to read a specific one.
+
+The rollup prints every cut it can compute and `n/a` with a reason for any it cannot. The headline
+line names which metric produced its percentage, so a token cut is never published under a cost
+word.
+
+## Rails
+
+Both are always on. Neither is an option.
+
+| Rail | Default | Behavior |
+|---|---|---|
+| `BENCH_MAX_USD` | 60 | Hard cap on API-rate `total_cost_usd` across the run, checked before each cell is dispatched. Past it the driver stops dispatching and records the remaining cells with `status: capped`; the rollup drops a capped backlog rather than counting a truncated run as a saving. |
+| `BENCH_MAX_TURNS` | 200 vanilla session, 80 per shiploop worker | `--max-turns` on every spawned session. A run that hits the ceiling clears fewer tickets, records as failed-to-clear, and drops the backlog from the published set. |
+
+`--max-turns` is gated on a cached `claude --help` capability probe, never a version compare. If the
+CLI does not support it, `run.sh` refuses to spawn rather than silently running uncapped. The
+override is deliberate and explicit: `BENCH_ALLOW_UNCAPPED_TURNS=1`. `BENCH_MAX_TURNS_FLAG=0` is the
+kill switch that omits the flag; `_GOVERN_MAXTURNS_SUPPORTED=1|0` pre-seeds the probe for tests.
+
+Both arms reach that one probe, `govern::claude_supports_max_turns` in
+`templates/govern/lib/common.sh`, so they can never disagree about CLI support. The shiploop arm's
+workers get the ceiling through `GOVERN_WORKER_MAX_TURNS`, which `spawn-worker.sh` resolves behind
+the same probe. That knob is OFF by default (`0` means no flag and no probe), so a fleet that never
+sets it spawns exactly as it did before the bench existed.
+
+Other knobs: `BENCH_CLAUDE_BIN` (default `claude`), `BENCH_OUT_ROOT`, `BENCH_MODEL_LABEL` (the model
+name written onto each row and into the headline sentence).
+
+`bench/backlogs/fixture-backlog/` is a test fixture, not a benchmark backlog. It names a
+`fixture://` repo, so a non-dry run refuses it up front rather than failing halfway through a
+clone, and it can never be counted toward a published backlog total.
+
+## Verification
+
+Each ticket carries a `verify_cmd`: the test the merged upstream PR made pass. It is run from the
+checkout root after the arm finishes, and its exit status is the only oracle. Nothing in a run is
+judged by a model. A backlog either arm fails to fully clear is dropped from the published set, so
+completion on the published sample is 100% by construction and is not a reported metric.
+
+## Cost figures and account type
+
+Every cost figure comes from `total_cost_usd` on the session's `result` event, which is API-list-rate
+denominated regardless of how the CLI is authenticated. On a subscription those dollars are a proxy
+for quota burn; on an API key they are the invoice. The published figure is a percentage, so it is
+identical in both worlds.
+
+## Tests
+
+`templates/govern/test/test-bench-*.sh`, fixture-driven, zero spawns. They resolve the hub as
+`$DIR/../../..` and skip (exit 77) anywhere else, so they are listed in `tools/hub-context-tests.txt`
+and run by the `hub-context-tests` CI job from the checkout, where a skip is a hard failure.
+
+```bash
+for t in templates/govern/test/test-bench-*.sh; do bash "$t"; done
+```

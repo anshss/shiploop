@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"fixture-vanilla","model":"fixture-default"}
+{"type":"assistant","message":{"usage":{"input_tokens":40000,"output_tokens":12000,"cache_read_input_tokens":2000000,"cache_creation_input_tokens":200000}}}
+{"type":"assistant","message":{"usage":{"input_tokens":40000,"output_tokens":14000,"cache_read_input_tokens":3000000,"cache_creation_input_tokens":200000}}}
+{"type":"assistant","message":{"usage":{"input_tokens":40000,"output_tokens":14000,"cache_read_input_tokens":3000000,"cache_creation_input_tokens":200000}}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":96,"duration_ms":5400000,"total_cost_usd":24.0,"usage":{"input_tokens":120000,"output_tokens":40000,"cache_read_input_tokens":8000000,"cache_creation_input_tokens":600000}}
