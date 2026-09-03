@@ -84,6 +84,15 @@ bench::require_turn_ceiling() { # <arm>
 # ── prompts ─────────────────────────────────────────────────────────────────
 # Byte-identical ticket text across arms: both of these render from the same backlog.jsonl fields
 # through the same jq program, so there is one place where the wording lives.
+# A rendered ticket is TITLE and BODY, and nothing else.
+#
+# `verify_cmd` is deliberately NOT in the prompt. Under the golden-test-patch oracle the test does
+# not exist at the pinned ref (the merged PR added it, and the patch is applied at verify time,
+# after the session ends), so printing "Verify with: pytest tests/test_foo.py::test_bar" would hand
+# the arm the exact file and case name the oracle is about to create. That is gold-test leakage: an
+# arm that knows the target test name can satisfy the oracle without solving the problem, and the
+# leak is symmetric across arms, so it would not even show up as an asymmetry. The arm gets the
+# issue text and the repo's own test suite, which is what a real engineer starts with.
 bench::backlog_prompt() { # <backlog.jsonl> -> the vanilla session prompt on stdout
   printf 'Work through these tickets in order; commit each when its tests pass.\n\n'
   bench::tickets_markdown "$1"
@@ -92,13 +101,12 @@ bench::backlog_prompt() { # <backlog.jsonl> -> the vanilla session prompt on std
 
 bench::ticket_prompt() { # <backlog.jsonl> <ticket-id> -> one ticket's prompt on stdout
   printf 'Work this ticket; commit when its tests pass.\n\n'
-  jq -r --arg id "$2" 'select(.id == $id)
-    | "## " + .title + "\n\n" + .body + "\n\nVerify with: " + .verify_cmd + "\n"' "$1"
+  jq -r --arg id "$2" 'select(.id == $id) | "## " + .title + "\n\n" + .body + "\n"' "$1"
   return 0
 }
 
 bench::tickets_markdown() { # <backlog.jsonl> -> all tickets as markdown on stdout
-  jq -r '"## " + .title + "\n\n" + .body + "\n\nVerify with: " + .verify_cmd + "\n"' "$1"
+  jq -r '"## " + .title + "\n\n" + .body + "\n"' "$1"
   return 0
 }
 
@@ -200,12 +208,14 @@ bench::repo_slug() { # <backlog.jsonl> -> repo name
 
 # Seed queue/tickets.md from a backlog.jsonl. Ticket N is the Nth line of the backlog, so the
 # numbers handed to run-loop.sh are stable and the body is byte-identical to the vanilla prompt's.
+# Same omission as the prompts above: no verify_cmd, because it names the test file the golden
+# patch will add at verify time.
 bench::seed_tickets() { # <backlog.jsonl> <tickets.md> <repo-slug>
   local backlog="$1" out="$2" slug="$3"
   mkdir -p "$(dirname "$out")"
   {
     printf '# Tickets\n\n'
-    jq -rs --arg slug "$slug" 'to_entries[] | "## #\(.key + 1) \(.value.title)\n\nSeverity: Medium\nRepo: \($slug)\n\n\(.value.body)\n\nVerify with: `\(.value.verify_cmd)`\n"' "$backlog"
+    jq -rs --arg slug "$slug" 'to_entries[] | "## #\(.key + 1) \(.value.title)\n\nSeverity: Medium\nRepo: \($slug)\n\n\(.value.body)\n"' "$backlog"
   } > "$out"
   return 0
 }

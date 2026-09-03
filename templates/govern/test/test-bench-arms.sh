@@ -74,6 +74,29 @@ assert_contains "$one" "$title" "3. the per-ticket prompt carries the same title
 assert_contains "$one" "$body" "3. the per-ticket prompt carries the same body"
 assert_not_contains "$full" "shiploop" "3. neither arm's prompt hints at the treatment"
 assert_not_contains "$full" "upstream_pr" "3. the prompt never leaks the upstream PR"
+# The oracle must stay invisible to the session. The golden test_patch is applied at VERIFY time,
+# after the arm has finished; a prompt carrying it (or the merge sha, or the test file name) would
+# hand the arm the answer and void the whole measurement.
+patch="$(jq -r 'select(.id=="t3") | .test_patch' "$BL")"
+sha="$(jq -r 'select(.id=="t3") | .merge_sha' "$BL")"
+assert_not_contains "$full" "$sha" "3. the prompt never leaks merge_sha"
+assert_not_contains "$one" "$sha" "3. nor does the per-ticket prompt"
+assert_not_contains "$full" "diff --git" "3. the prompt never carries a golden test_patch"
+assert_not_contains "$one" "diff --git" "3. nor does the per-ticket prompt"
+assert_not_contains "$full" "tests/t3.sh" "3. and it never names the test file the oracle will add"
+assert_not_contains "$one" "tests/t3.sh" "3. nor does the per-ticket prompt"
+assert_not_contains "$full" "Verify with" \
+  "3. verify_cmd is not in the prompt at all: it names the gold test the oracle adds later"
+# The seeded governor queue is the shiploop arm's prompt source, so it must be just as clean.
+slug="$(armsh "bench::repo_slug '$BL'")"
+armsh "bench::seed_tickets '$BL' '$T/leak.md' '$slug'" >/dev/null
+leak="$(cat "$T/leak.md")"
+assert_not_contains "$leak" "diff --git" "3. the seeded queue carries no golden test_patch"
+assert_not_contains "$leak" "$sha" "3. and no merge_sha"
+assert_not_contains "$leak" "local://pr" "3. and no upstream PR link"
+assert_not_contains "$leak" "tests/t1.sh" "3. and never the gold test file name"
+[ -n "$patch" ] && printf 'ok   - 3. (the fixture really does carry a non-empty test_patch to leak)\n' || \
+  { printf 'FAIL - 3. fixture has no test_patch, so the leak checks prove nothing\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
 # 4. One tool list, shared by both arms, with the two web tools removed.
 tools="$(armsh 'printf "%s" "$BENCH_TOOLS"')"
@@ -117,7 +140,6 @@ assert_contains "$got" "rc=0" "6. the explicit operator override is the only way
 assert_contains "$got" "running UNCAPPED" "6. and the override is logged"
 
 # ── 7. the shiploop arm seeds a real queue ──────────────────────────────────
-slug="$(armsh "bench::repo_slug '$BL'")"
 assert_eq "$slug" "bench" "7. the sub-repo slug is a NAME derived from the repo, not the clone URL"
 armsh "bench::seed_tickets '$BL' '$T/tickets.md' '$slug'" >/dev/null
 seeded="$(cat "$T/tickets.md")"
@@ -125,6 +147,7 @@ assert_eq "$(grep -c '^## #' "$T/tickets.md")" "6" "7. one queue ticket per back
 assert_contains "$seeded" "## #1 " "7. tickets are numbered from 1 so the whole set can be named"
 assert_contains "$seeded" "## #6 " "7. through to the last one"
 assert_contains "$seeded" "$body" "7. the queue body is the same bytes the vanilla prompt gets"
+assert_not_contains "$seeded" "Verify with" "7. and carries no verify_cmd, same as the vanilla prompt"
 # The `Repo:` field must be the workspace sub-repo NAME. Seeding the clone URL there would make
 # every ticket unselectable, the shiploop arm would record zero cost, and the rollup would read
 # that as a 100% saving. This is the assertion that stops a silent 100%.

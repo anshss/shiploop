@@ -14,6 +14,7 @@ bench/
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
+  validate-backlog.sh             offline fail-to-pass gate; decides which backlogs are eligible
   arms.sh                         the three arm shapes
   record.sh                       result events -> results.jsonl rows
   rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
@@ -80,12 +81,35 @@ name written onto each row and into the headline sentence).
 `fixture://` repo, so a non-dry run refuses it up front rather than failing halfway through a
 clone, and it can never be counted toward a published backlog total.
 
-## Verification
+## Verification: the golden test patch
 
-Each ticket carries a `verify_cmd`: the test the merged upstream PR made pass. It is run from the
-checkout root after the arm finishes, and its exit status is the only oracle. Nothing in a run is
-judged by a model. A backlog either arm fails to fully clear is dropped from the published set, so
-completion on the published sample is 100% by construction and is not a reported metric.
+`verify_cmd` is the test the merged upstream PR made pass, so **at the pinned `ref` it does not
+exist yet**. The oracle is therefore SWE-bench shaped, and the ordering is the contract:
+
+1. Worktree at `ref`. The arm receives `title` and `body` verbatim and nothing else. It never sees
+   `test_patch`, `merge_sha`, `upstream_pr`, or `verify_cmd`.
+2. The arm finishes and commits.
+3. `git apply` the ticket's `test_patch` onto the arm's tree, then run `verify_cmd`.
+4. If the apply fails, record the sentinel `90` and treat the ticket as unresolved. No 3-way merge,
+   no fuzzy apply, no `--reject`.
+
+Same path for both arms. Per-ticket outcomes land in `results/<run-id>/verify/<cell>.jsonl`, which
+is the private record; only the cell-level counts reach `results.jsonl`. Nothing is judged by a
+model. A backlog either arm fails to fully clear is dropped from the published set, so completion
+on the published sample is 100% by construction and is not a reported metric.
+
+### Backlog validation
+
+Before a backlog can enter the pilot it has to prove the fail-to-pass property offline:
+
+```bash
+bash bench/validate-backlog.sh --backlogs bench/pilot-backlogs --json
+```
+
+Per ticket, against a real clone, no model calls: `test_patch` must apply at `ref`, `verify_cmd`
+must FAIL there, and at `merge_sha` the test content must be present and `verify_cmd` must PASS.
+A backlog under `--min-tickets` (default 6) is marked unusable, and the gate exits non-zero when
+nothing is usable so a pilot script cannot proceed on an empty eligible set.
 
 ## Cost figures and account type
 

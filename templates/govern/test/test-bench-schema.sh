@@ -11,6 +11,11 @@
 #      four parts (a rollup that loses a component is how a cost claim quietly drifts)
 #   6. a rollup's costUsdTotal equals the sum of its cell's session costs
 #   7. a session hard-killed before emitting a result recovers TOKENS but never a fabricated cost
+#   8. the fixture backlog is refused by a non-dry run
+#   9. verify applies the golden test_patch to the ARM'S tree and only then runs verify_cmd, and
+#      records one ledger line per ticket
+#  10. a test_patch that will not apply records the distinct sentinel and leaves the ticket
+#      unresolved: no 3-way merge, no fuzz, no silent repair of the oracle
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -95,5 +100,48 @@ out="$(BENCH_OUT_ROOT="$T/live" bash "$HUB/bench/run.sh" --run-id live \
         --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog 2>&1)"
 assert_eq "$?" "1" "8. a non-dry run on the fixture backlog exits non-zero"
 assert_contains "$out" "is a TEST FIXTURE" "8. and says why, before spending anything"
+
+# ── 9. the golden test_patch is applied at verify time, on the arm's tree ───
+# The dry run's checkout is a bare repo with a README. The fixture backlog's patches ADD their test
+# files, so a clean apply is what makes verify_cmd runnable at all: if the patch step were skipped
+# or ordered before the arm, nothing would clear.
+L="$T/results/schema-dry/verify/fixture-backlog-vanilla-1.jsonl"
+assert_eq "$(jq -sr 'length' "$L")" "6" "9. one verify ledger line per ticket"
+assert_eq "$(jq -sr '[ .[] | select(.patchApplied) ] | length' "$L")" "6" \
+  "9. every golden test_patch applied to the arm's tree"
+assert_eq "$(jq -sr '[ .[] | select(.cleared) ] | length' "$L")" "6" \
+  "9. and verify_cmd then passed for every ticket"
+# The ledger must NOT sit beside the session streams: record_sessions globs *.jsonl there, so a
+# ledger written into that dir would be folded in as an extra zero-cost session.
+assert_eq "$(ls "$T/results/schema-dry/sessions/fixture-backlog-vanilla-1"/*.jsonl | wc -l | tr -d ' ')" "1" \
+  "9. the ledger is not counted as a session stream"
+
+# ── 10. an unappliable patch records the sentinel, never a repair ───────────
+mkdir -p "$T/badpatch"
+jq -c '.test_patch = "diff --git a/nope.txt b/nope.txt\n--- a/nope.txt\n+++ b/nope.txt\n@@ -1 +1 @@\n-was\n+now\n"' \
+  "$HUB/bench/backlogs/fixture-backlog/backlog.jsonl" > "$T/badpatch/backlog.jsonl"
+mkdir -p "$T/badwd" && ( cd "$T/badwd" && git init -q -b main && echo x > README.md \
+  && git -c user.email=a@b -c user.name=a add -A \
+  && git -c user.email=a@b -c user.name=a commit -qm init ) >/dev/null 2>&1
+read -r bc bt bw < <(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  BENCH_VERIFY_PATCH_FAILED=90
+  '"$(sed -n '/^bench::verify_backlog()/,/^}/p' "$HUB/bench/run.sh")"'
+  bench::verify_backlog "'"$T"'/badpatch/backlog.jsonl" "'"$T"'/badwd" "'"$T"'/bad.jsonl"
+' 2>/dev/null)
+assert_eq "$bc" "0" "10. no ticket clears when the golden patch cannot apply"
+assert_eq "$bw" "90" "10. the worst exit is the distinct patch-failure sentinel, not a test failure"
+assert_eq "$(jq -sr '[ .[] | select(.patchApplied == false) ] | length' "$T/bad.jsonl")" "6" \
+  "10. every ledger line records that the patch did not apply"
+assert_eq "$(jq -sr '[ .[] | select(.verifyExit == 90) ] | length' "$T/bad.jsonl")" "6" \
+  "10. and carries the sentinel rather than a plain non-zero"
+# The oracle is never repaired to make a run look better. Inspect the INVOCATION lines only: the
+# comments above them say the words "3-way" and "reject" on purpose, and a naive file-wide grep
+# would match its own documentation and never fail on real code.
+applies="$(grep -e 'git apply' "$HUB/bench/run.sh" | grep -v -e '^ *#')"
+assert_contains "$applies" "git apply -" "10. the verify path does apply the golden patch"
+assert_eq "$(printf '%s' "$applies" | grep -c -e '3way' -e 'apply -3' -e 'reject' -e 'unidiff-zero')" "0" \
+  "10. and never 3-way merges, fuzzes, or partially applies it"
 
 assert_done

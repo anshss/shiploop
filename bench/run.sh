@@ -121,7 +121,8 @@ bench::discover_backlogs() { # -> names on stdout, one per line
 bench::validate_backlog() { # <backlog.jsonl>
   local f="$1" bad
   bad="$(jq -r 'select((.id//"")=="" or (.repo//"")=="" or (.ref//"")=="" or (.title//"")==""
-                       or (.body//"")=="" or (.verify_cmd//"")=="") | .id // "<no id>"' "$f" 2>&1 || true)"
+                       or (.body//"")=="" or (.verify_cmd//"")==""
+                       or (.test_patch//"")=="" or (.merge_sha//"")=="") | .id // "<no id>"' "$f" 2>&1 || true)"
   [[ -z "$bad" ]] || bench::die "backlog $f has ticket(s) missing required fields: $bad"
   # backlogs/fixture-backlog exists for the test suite and names a fixture:// repo that no clone can
   # reach. Catching it here turns a confusing git failure mid-run into one sentence up front, and
@@ -161,17 +162,55 @@ bench::prepare_workdir() { # <backlog.jsonl> <cell-id> -> path on stdout
 }
 
 # ── verify ──────────────────────────────────────────────────────────────────
-# Mechanical oracle, no LLM judging (section 3): each ticket's verify_cmd is the test the merged upstream
-# PR made pass. Prints "<cleared> <total> <worstExit>".
-bench::verify_backlog() { # <backlog.jsonl> <workdir>
-  local backlog="$1" wd="$2" cleared=0 total=0 worst=0 cmd rc
-  while IFS= read -r cmd; do
-    [[ -n "$cmd" ]] || continue
+# Mechanical oracle, no LLM judging (section 3), SWE-bench style.
+#
+# THE ORDERING IS THE CONTRACT. `verify_cmd` is the test the merged upstream PR made pass, which
+# means at the pinned `ref` that test DOES NOT EXIST: the PR added it. The arm is told only the
+# problem, never the test file and never the case name, so it can never reproduce that name on its
+# own. Verifying against the ref's tree would therefore fail every ticket in BOTH arms and drop
+# every backlog. So the golden `test_patch` (test-file changes only, no source) is applied HERE, on
+# the tree the arm produced, and only then does `verify_cmd` run.
+#
+# The arm session never sees test_patch, merge_sha, or upstream_pr. It receives title and body
+# verbatim and nothing else, which is what keeps the ticket text byte-identical across arms and
+# leaves the treatment arm no hint.
+#
+# If `git apply` fails, the arm edited a test file the patch touches. That records the sentinel
+# below and the ticket is unresolved. No 3-way merge, no fuzzy apply, no --reject: silently
+# repairing the oracle is worse than failing it, because a repaired oracle produces a number that
+# looks measured and is not.
+BENCH_VERIFY_PATCH_FAILED=90
+
+# Prints "<cleared> <total> <worstExit>" and writes one JSON line per ticket to <verify-ledger>,
+# the private per-ticket record section 3 asks for.
+bench::verify_backlog() { # <backlog.jsonl> <workdir> <verify-ledger>
+  local backlog="$1" wd="$2" ledger="$3"
+  local cleared=0 total=0 worst=0 line id cmd patch rc applied
+  : > "$ledger"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
     total=$((total+1))
+    id="$(printf '%s' "$line" | jq -r '.id')"
+    cmd="$(printf '%s' "$line" | jq -r '.verify_cmd')"
+    patch="$(printf '%s' "$line" | jq -r '.test_patch')"
+    applied=false
     rc=0
-    ( cd "$wd" && eval "$cmd" ) >/dev/null 2>&1 || rc=$?
+    # Exact apply only. `git apply` does not fuzz by default, and nothing here adds -3 or --reject.
+    # `printf '%s\n'`, not '%s': command substitution strips the trailing newline off $patch, and a
+    # diff without its final newline is "corrupt patch at line N" to git apply. That failure is
+    # indistinguishable from a genuine conflict, so it would silently sentinel every ticket in both
+    # arms and drop every backlog for a reason that has nothing to do with the arms.
+    if printf '%s\n' "$patch" | ( cd "$wd" && git apply - ) >/dev/null 2>&1; then
+      applied=true
+      ( cd "$wd" && eval "$cmd" ) >/dev/null 2>&1 || rc=$?
+    else
+      rc="$BENCH_VERIFY_PATCH_FAILED"
+      bench::log "verify $id: the golden test_patch did NOT apply to the arm's tree (sentinel $rc); ticket recorded unresolved"
+    fi
     if [[ "$rc" -eq 0 ]]; then cleared=$((cleared+1)); else worst="$rc"; fi
-  done < <(jq -r '.verify_cmd' "$backlog")
+    jq -nc --arg id "$id" --argjson applied "$applied" --argjson exit "$rc" \
+      '{ticket:$id, patchApplied:$applied, verifyExit:$exit, cleared:($exit == 0)}' >> "$ledger"
+  done < <(jq -c '.' "$backlog")
   printf '%s %s %s\n' "$cleared" "$total" "$worst"
   return 0
 }
@@ -267,7 +306,10 @@ for name in "${backlogs[@]}"; do
       started="$(date +%s)"
       workdir="$(bench::prepare_workdir "$backlog_file" "$cell")"
       bench::run_arm "$arm" "$workdir" "$backlog_file" "$logdir" "$name"
-      read -r cleared total worst < <(bench::verify_backlog "$backlog_file" "$workdir")
+      # NOT inside $logdir: record_sessions globs every *.jsonl there as a claude session stream,
+      # so a ledger written beside the streams would be recorded as an extra zero-cost session.
+      mkdir -p "$RUN_DIR/verify"
+      read -r cleared total worst < <(bench::verify_backlog "$backlog_file" "$workdir" "$RUN_DIR/verify/$cell.jsonl")
       wall_ms=$(( ( $(date +%s) - started ) * 1000 ))
       if [[ "$cleared" -eq "$total" ]]; then status="resolved"; else status="failed"; fi
       sessions="$(bench::record_sessions "$logdir" "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" \
