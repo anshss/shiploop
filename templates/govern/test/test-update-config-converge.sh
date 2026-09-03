@@ -69,6 +69,8 @@ wnew_val="$(jq -r '.scripts["worktree:new"]' "$W1/package.json")"
 assert_eq "$wnew_val" "bash scripts/worktree/new.sh" "1. missing harness key 'worktree:new' added"
 gval_val="$(jq -r '.scripts["govern:validations"]' "$W1/package.json")"
 assert_eq "$gval_val" "bash scripts/govern/govern-validations.sh" "1. missing harness key 'govern:validations' added"
+vf_val="$(jq -r '.scripts["vf"]' "$W1/package.json")"
+assert_eq "$vf_val" "bash scripts/govern/verify-filter.sh" "1. missing harness key 'vf' added"
 
 first_pkg="$(cat "$W1/package.json")"
 bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" \
@@ -228,5 +230,28 @@ out="$(bash "$SCAFFOLD" --workspace-dir "$W9" --templates "$TEMPLATES" --diff-on
 assert_eq "$rc" "0" "9. --diff-only exit 0 even though config drift exists"
 assert_contains "$out" "README.md" "9. config drift report names README.md as absent"
 assert_not_contains "$out" "behind (" "9. no mechanism component reports drift"
+
+# ── 10. config_drift_report: a missing 'vf' package.json key is surfaced ────
+command -v jq >/dev/null 2>&1 && {
+  jq 'del(.scripts["vf"])' "$W9/package.json" > "$W9/package.json.tmp" && mv "$W9/package.json.tmp" "$W9/package.json"
+  out10="$(bash "$SCAFFOLD" --workspace-dir "$W9" --templates "$TEMPLATES" --diff-only 2>&1)"; rc10=$?
+  assert_eq "$rc10" "0" "10. --diff-only still exit 0 (config drift never flips the exit code)"
+  assert_contains "$out10" "vf" "10. config drift report names 'vf' as a missing package.json script"
+}
+
+# ── 11. agents component: shipped subagent defs install to .claude/agents/ ──
+W11="$ROOT/ws11"; mkdir -p "$W11"
+bash "$SCAFFOLD" --workspace-dir "$W11" --templates "$TEMPLATES" \
+  --pm npm --org testorg --repos "alpha::echo alpha" --merge-allowlist "alpha" \
+  --worktree-base "$W11.wt" --component agents --yes >/tmp/scaf-cfg-w11.log 2>&1
+rc11=$?
+assert_eq "$rc11" "0" "11. --component agents exits 0"
+[ -f "$W11/.claude/agents/lookup.md" ] && printf 'ok   - 11. lookup.md installed\n' || \
+  { printf 'FAIL - 11. lookup.md missing\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+[ -f "$W11/.claude/agents/investigator.md" ] && printf 'ok   - 11. investigator.md installed\n' || \
+  { printf 'FAIL - 11. investigator.md missing\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+diff -q "$W11/.claude/agents/lookup.md" "$TEMPLATES/.claude/agents/lookup.md" >/dev/null 2>&1 && \
+  printf 'ok   - 11. installed lookup.md is byte-identical to the template\n' || \
+  { printf 'FAIL - 11. installed lookup.md differs from the template\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
 assert_done
