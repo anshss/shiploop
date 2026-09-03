@@ -45,7 +45,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Model→No Model.** Many backlog changes are mechanical: small, well-understood edits that do not need model judgment, yet they still consume a normal worker turn. This lane applies and verifies only pre-validated, low-risk changes directly, using no model at all. Anything ambiguous, unverified, or unsafe automatically falls back to the normal workflow.
 
-- **Workers repeatedly receive tools they cannot use.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. Passing an explicit tool list cuts tool bytes by 66.7% and the whole request by **−34.5%** (full methodology in [PROOF.md §5](PROOF.md)).
+- **Workers runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the ticket actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** (full methodology in [PROOF.md §5](PROOF.md)).
 
 - **Some tickets are blocked before work begins.** Check dependencies, repository health, capacity, setup, and if another fleet pushed the identical fix up, you get told to pull it down instead of a worker re-deriving it from scratch., so work that cannot succeed never consumes a worker and avoids waste of tokens.
 
