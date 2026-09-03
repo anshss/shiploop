@@ -93,16 +93,18 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 - Additive prod migration auto-applies **only if** `GOVERN_MIGRATE_CMD` is configured (else it parks
   for a manual apply — it never merges code ahead of a schema it needs and forgets).
 
-## Right-sizing + retry escalation (which model runs, and what a retry changes)
-- Sizing is **measured, not declared**. Before dispatch, `scout-ticket.sh` runs a cheap read-only
-  `haiku` pass over the real code and answers six questions (files touched, repos involved, do tests
-  cover it, is there a precedent commit, is the change local or structural, is the fix direction
-  concrete or vague). A pure-bash scoring table — no second model call — turns that into
-  `(model, effort)`. `GOVERN_WORKER_MODEL` / `GOVERN_WORKER_EFFORT` are the workspace floors, used
-  when there is no usable verdict (scout disabled, timed out, or output rejected by the guard).
-- Tickets do **not** carry `Model:` / `Effort:` fields. They used to, and the filing-time guess
-  outranked the measurement — backwards, since the guess is made before any evidence exists. Legacy
-  entries still carrying them are inert. `GOVERN_MEASURED_SIZING=0` restores the old precedence.
+## Model floor + retry escalation (which model runs, and what a retry changes)
+- Sizing is **not predicted**. There is no per-ticket difficulty estimate: every first attempt
+  dispatches at the workspace floor `GOVERN_WORKER_MODEL` (default `sonnet`), and the only route
+  above it is the retry rail below, which escalates to `GOVERN_WORKER_ESCALATION_MODEL` (default
+  `opus`). The scout used to score its survey into a `(model, effort)` verdict; that was measured as
+  a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
+  `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
+  `--verdict`/`--score` modes are deleted. `haiku` still runs the scout survey and the supervisor
+  audit — it is not a ticket-work tier.
+- Tickets do **not** carry effective `Model:` / `Effort:` fields. An entry still holding them is
+  inert: ignored, never an error, because a filing-time guess is made before any evidence exists.
+  `GOVERN_MEASURED_SIZING=0` restores the old precedence in which those fields win.
 - The tier set is deliberately **coarse and must stay so**: the prompt cache is per-model and an
   effort change invalidates the tools+system prefix, so spreading N tickets across N distinct
   `(model, effort)` combinations fragments the cross-worker shared prefix that currently works.

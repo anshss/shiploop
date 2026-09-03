@@ -483,7 +483,7 @@ component_readme() {
 
 **$meta_name** ships on [Shiploop](https://github.com/anshss/shiploop) — a self-improving
 multi-agent harness that dispatches the tickets you name across every repo in this workspace
-($repos_list). A fresh, right-sized headless agent takes each ticket, opens a PR, auto-merges
+($repos_list). A fresh headless agent takes each ticket at a cheap model floor, opens a PR, auto-merges
 on green CI where you've allowed it, and writes a durable lesson back into \`CLAUDE.md\` so the
 next run is smarter and cheaper.
 
