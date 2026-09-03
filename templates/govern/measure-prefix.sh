@@ -53,6 +53,11 @@ WORKER_JSONL="$OUT_DIR/worker.jsonl"
 # 1. Resolve the REAL spawn parameters from spawn-worker.sh's own seams — never re-derive them here.
 flags_json="$(GOVERN_SPAWN_DRY_RUN=1 "$DIR/spawn-worker.sh" "$N")"
 model="$(printf '%s' "$flags_json" | jq -r '.model')"
+# Session ceiling. Normally a no-op: the seam above IS spawn-worker's resolver, which already clamps.
+# Applied anyway because this is a real `claude` spawn and the rail's guarantee is per dispatch site,
+# not per code path: if the seam is ever widened (an --out override, a hand-passed tier) this stays
+# closed. The clamp is idempotent, so re-applying it cannot perturb the fidelity contract above.
+model="$(govern::model_clamp "$model")"
 effort="$(printf '%s' "$flags_json" | jq -r '.effort // ""')"
 perm="$(printf '%s' "$flags_json" | jq -r '.permission_mode')"
 strict_mcp="$(printf '%s' "$flags_json" | jq -r '.strict_mcp')"

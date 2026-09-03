@@ -128,6 +128,20 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   escalation never **down**-grades below the tier the first attempt used — only a positively
   identified infra/CI cause may keep a sub-floor tier. Every decision is logged as
   `worker #N sizing: model=… effort=… retry-class=… — <reason>`.
+- **A session may never spawn above its own tier.** Every `--model` the harness assembles (worker,
+  scout, supervisor, self-improve, self-apply, sync porter) is clamped to `max(opus, the model of the
+  session that spawned it)`. Opus is the FLOOR of that ceiling, not the ceiling itself, so a haiku or
+  sonnet driver still buys opus on a retry exactly as before; what the rail forbids is a driver
+  buying a tier ABOVE the one it is itself running at, which is the only way a cheap session could
+  quietly dispatch the most expensive model in the fleet. A session whose own model sits in a family
+  above opus raises its ceiling to that model, and no higher: a `claude-fable-5` session may spawn
+  `claude-fable-5`, never `claude-fable-5-1`. The session model is read from `GOVERN_SESSION_MODEL`,
+  then `ANTHROPIC_MODEL`, then the tail of the session transcript; when none of those answer, the
+  ceiling is `opus` (the fail-safe direction, never the permissive one). A clamp that actually lowers
+  a tier is logged and appended to the dispatch's `model_source`, so a run can always explain why it
+  ran below its configured tier.
+- `GOVERN_MODEL_CEILING=0` (kill switch): disables the clamp entirely, restoring the previous
+  behaviour in which the configured tier is dispatched verbatim.
 - `GOVERN_RETRY_CLASSIFY=0` — kill switch: pins every retry back to the old
   always-escalate-to-`GOVERN_WORKER_MODEL` behavior.
 - `GOVERN_MEASURED_SIZING=0` — kill switch: restores the old precedence in which a ticket's

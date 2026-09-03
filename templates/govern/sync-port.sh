@@ -78,6 +78,9 @@ CLAUDE_BIN="${GOVERN_CLAUDE_BIN:-claude}"
 # FIRST-ATTEMPT floor for ticket workers (sonnet), and porting a mechanism fix across repos is a
 # judgment-heavy job that should not silently downgrade when the worker floor moves.
 PORTER_MODEL="${GOVERN_SYNC_PORTER_MODEL:-opus}"
+# The porter is the one dispatch that defaults to the top tier, which makes it the site where an
+# operator raising the knob above the driving session would bite first. Same clamp as every other.
+PORTER_MODEL="$(govern::model_clamp "$PORTER_MODEL")"
 PORTER_PROMPT_FILE="${GOVERN_SYNC_PORTER_PROMPT:-$GOVERNOR_DIR/sync-porter-prompt.md}"
 PORTER_TIMEOUT="${GOVERN_SYNC_PORTER_TIMEOUT:-1800}"
 LOCK="${GOVERN_SYNC_PORT_LOCK:-$GOVERNOR_DIR/.locks/sync-port}"
