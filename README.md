@@ -137,7 +137,7 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 
 | `npm run govern:budgets` | Enforce context budgets (lesson char cap, CLAUDE.md total, learnings TTL) outside a dispatch; `--dry` to preview |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (opt-in, off until `GOVERN_EXTERNALIZE_REPO` is set) |
 
-`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases.
+`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases, and **fails** when root `CLAUDE.md` exceeds its context budget (`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000), since an over-budget file is a tax on every turn of every session. `npm run govern:budgets` brings it back under.
 
 ## Configuration
 
@@ -155,6 +155,9 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned; dispatch proceeds without a survey |
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Locality groups a named `run-loop.sh <N> ...` dispatch works at once: `N > 1` runs N concurrent full-driver children, one per group (N× the spend); per-run `--parallel[=N]` / `--serial` override it. Naming exactly one ticket, or resolving to a single group, always collapses to sequential |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
+| `GOVERN_LESSON_MAX_CHARS` | `600` | Char cap on a single lesson promoted into `CLAUDE.md`; overflow keeps the lead rule inline and parks the full text in `CLAUDE-APPENDIX.md` |
+| `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); enforced by `npm run govern:budgets` and checked by `doctor`, with named eviction past the ceiling |
+| `SHIPLOOP_LEARNINGS_TTL` | `0` (off) | Age out `learnings.md` entries older than `SHIPLOOP_LEARNINGS_TTL_DAYS` (default `14`) when `npm run govern:budgets` runs |
 | `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB: additive migrations merge instead of parking |
@@ -248,7 +251,7 @@ Devin, Cursor, Copilot, and Claude Code all do one task you hand them well. ship
 
 ## Proof
 
-281 tickets auto-found and resolved on the maintainer's production multi-repo product, of 290 governor-authored PRs merged (0 confirmed reverts). The harness audits, fixes, and releases *itself* through the same loop. Every governor edge case found in the field ports back into these templates with a regression test, and the hermetic suite goes RED in CI before a breaking change can merge. See **[PROOF.md](PROOF.md)** for the full sanitized evidence artifact: auto-merge/human-merge split, revert rate, cost-per-ticket distribution, and the exact re-runnable queries behind every number.
+281 tickets resolved end-to-end on the maintainer's production multi-repo product, of 290 governor-authored PRs merged (0 confirmed reverts); measured June-Aug 2026 under the autonomous sweep that v1.18.0 removed, through the same spawn-worker dispatch path that remains. The harness audits, fixes, and releases *itself* through the same loop. Every governor edge case found in the field ports back into these templates with a regression test, and the hermetic suite goes RED in CI before a breaking change can merge. See **[PROOF.md](PROOF.md)** for the full sanitized evidence artifact: auto-merge/human-merge split, revert rate, cost-per-ticket distribution, and the exact re-runnable queries behind every number.
 
 ## Contributing
 
