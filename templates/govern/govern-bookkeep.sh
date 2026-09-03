@@ -83,17 +83,22 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
     fi
   done < <(eb_sections "$eb_claude" | sort -k1,1nr)
 
-  # 2. TOTAL BUDGET. Still over after the cap pass: demote whole sections, LARGEST FIRST, until the
-  #    file is under budget. Largest-first is the only ordering that is both deterministic and
-  #    monotone in what it buys per demotion.
-  while [[ "$(eb_size "$eb_claude")" -gt "$eb_budget" ]]; do
-    eb_pick="$(eb_sections "$eb_claude" | sort -k1,1nr | head -1 | cut -f2-)"
-    [[ -n "$eb_pick" ]] || break
-    eb_demote "$eb_claude" "$eb_pick" || break
-    eb_moved=$((eb_moved+1))
-    govern::log "budgets: $eb_verb \"$eb_pick\" → CLAUDE-APPENDIX.md (CLAUDE.md over the $eb_budget-char budget)"
-    [[ "$EB_DRY" -eq 1 ]] && break   # a dry pass cannot shrink the file, so it would loop forever
-  done
+  # 2. TOTAL BUDGET. The blind largest-first eviction is gone: claudemd-trim.sh replaces it with
+  #    evidence-based, reversible, two-lane trimming. Lane 1 auto-moves ONLY blocks proven dead
+  #    (every cited path/knob absent from the whole workspace) plus exact duplicates, always into
+  #    CLAUDE-APPENDIX.md; lane 2 never edits CLAUDE.md, it writes ranked candidates to
+  #    governor/claudemd-trim-proposals.md for the operator to --apply or stamp --still-true.
+  #    GOVERN_TRIM_DEAD=0 turns lane 1 off. The size check below stays as the alarm (exit 3,
+  #    doctor gates on it).
+  if [[ -f "$DIR/claudemd-trim.sh" ]]; then
+    eb_trim_rc=0
+    if [[ "$EB_DRY" -eq 1 ]]; then bash "$DIR/claudemd-trim.sh" --dry-run || eb_trim_rc=$?
+    else bash "$DIR/claudemd-trim.sh" || eb_trim_rc=$?
+    fi
+    if [[ "$eb_trim_rc" -ne 0 && "$eb_trim_rc" -ne 3 ]]; then
+      govern::log "budgets: claudemd-trim.sh exited $eb_trim_rc (continuing; the size check below still gates)"
+    fi
+  fi
 
   # 3. LEARNINGS TTL (opt-in, SHIPLOOP_LEARNINGS_TTL=1 — the same knob the SessionStart digest reads,
   #    so the warning and the enforcement can never disagree). learnings.md is transient by contract;
@@ -121,7 +126,7 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
   eb_final="$(eb_size "$eb_claude")"
   govern::log "budgets: CLAUDE.md $eb_final/$eb_budget chars · $eb_moved entr(ies) $eb_verb3 to CLAUDE-APPENDIX.md"
   if [[ "$eb_final" -gt "$eb_budget" ]]; then
-    govern::log "budgets: STILL OVER by $(( eb_final - eb_budget )) chars — nothing left to demote automatically; the remaining weight is in the preamble or in sections the appendix already holds. Cut it by hand."
+    govern::log "budgets: STILL OVER by $(( eb_final - eb_budget )) chars. Nothing provably dead was left to move automatically: review governor/claudemd-trim-proposals.md, then claudemd-trim.sh --apply <hash> the blocks you approve, or stamp keepers with --still-true <hash>."
     exit 3
   fi
   [[ "$EB_DRY" -eq 1 ]] || govern::log "budgets: edits left UNCOMMITTED in $eb_root — review and commit them yourself"
