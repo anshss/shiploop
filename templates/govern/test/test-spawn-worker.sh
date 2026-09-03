@@ -93,4 +93,27 @@ out3="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
 
 assert_eq "$(printf '%s' "$out3" | jq -r '.status')" "failed" "no parseable JSON anywhere → synthesized failed"
 
+# #95 regression: the worker's own env (the `env ... "$claude_bin"` prefix spawn-worker.sh builds)
+# must carry GOVERN_RUN=1, the same marker sync-port.sh already sets on a porter spawn. This is
+# what lets pre-push's branch-name enforcement (and the ticket-sweep-reminder / router-posture-guard
+# GOVERN_RUN exemptions) recognize a dispatch worker at all.
+cat > "$TMP/fake-claude-envcheck.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s' "\${GOVERN_RUN:-<unset>}" > "$TMP/seen-govern-run.txt"
+report='{"status":"resolved","pr":{"repo":"alpha","number":7},"newTickets":[],"escalation":null}'
+[[ -n "\${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
+printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
+EOF
+chmod +x "$TMP/fake-claude-envcheck.sh"
+
+GOVERN_TICKETS_FILE="$TMP/tickets.md" \
+  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
+  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
+  GOVERN_LOG_ROOT="$TMP/logs4" \
+  GOVERN_WORKTREE_CMD="$TMP/fake-worktree.sh" \
+  GOVERN_CLAUDE_BIN="$TMP/fake-claude-envcheck.sh" \
+  "$SPAWN" 7 >/dev/null
+
+assert_eq "$(cat "$TMP/seen-govern-run.txt")" "1" "worker env carries GOVERN_RUN=1"
+
 assert_done

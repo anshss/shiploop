@@ -99,6 +99,8 @@ $harness"
 
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_IMPROVE_MODEL:-sonnet}"
+# Same rail as the worker and supervisor: no spawn may outrank max(opus, this session's model).
+model="$(govern::model_clamp "$model")"
 # TokenJam: tag this self-improve session with the run id so it groups with the run's workers (#tokenjam).
 out="$(env OTEL_RESOURCE_ATTRIBUTES="$(govern::otel_attrs self-improve)" "$claude_bin" -p "$prompt" --output-format stream-json --verbose \
        --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" --permission-mode plan --model "$model" 2>/dev/null \
