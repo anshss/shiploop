@@ -66,7 +66,8 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # shellcheck ships on the ubuntu-latest image; only pay for apt if it is missing.
+          command -v shellcheck >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck; }
           mapfile -t scripts < <(git ls-files '*.sh')
           shellcheck -S warning "${scripts[@]}" || true
 
@@ -136,7 +137,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: install jq
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+        # jq ships on the ubuntu-latest image; only pay for apt if it is missing.
+        run: command -v jq >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
       - name: pin git default branch to main
         run: git config --global init.defaultBranch main
       - name: run hub-context tests
@@ -173,12 +175,24 @@ jobs:
           exit "$rc_all"
 
   scaffold-and-test:
-    name: Scaffold throwaway workspace + run govern test suite
+    name: Govern suite (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    # The suite is ~550s of wall clock and every test is self-contained (its own
+    # mktemp workspace), so it is embarrassingly parallel. Sharding it turns the
+    # long pole of this workflow into ~1/N of itself WITHOUT dropping a single
+    # assertion. Cost is concentrated, not spread: the 25 slowest tests are 66%
+    # of the runtime and the 71 fastest are 4.9%, so deleting tests is a bad
+    # trade here and parallelism is a good one.
+    # fail-fast: false so one red shard still lets the others report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
       - name: install jq (some tests need it)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+        # jq ships on the ubuntu-latest image; only pay for apt if it is missing.
+        run: command -v jq >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
       - name: pin git default branch to main
         # The GitHub Actions runner's git has no init.defaultBranch set, so `git init` (and
         # `git init --bare`) writes HEAD → master. Tests that push `main` from a seed clone
@@ -221,6 +235,9 @@ jobs:
         # own scratch build.
         run: |
           set -euo pipefail
+          SHARD="${{ matrix.shard }}"
+          SHARDS="${{ strategy.job-total }}"
+          echo "shard $SHARD of $SHARDS"
           mkdir -p "$WS/scripts/govern/test"
           cp templates/govern/test/*.sh "$WS/scripts/govern/test/"
           chmod +x "$WS"/scripts/govern/test/*.sh
@@ -228,9 +245,46 @@ jobs:
           passed=0; failed=0; skipped=0; total=0
           fails=()
           skips=()
+          # Build the run order: known-expensive tests first (scheduling hint from
+          # tools/slow-tests-first.txt), then every remaining test alphabetically.
+          # Round-robin over THAT order then packs the shards near-evenly, because
+          # the cost is concentrated in a handful of tests. The hint can never drop
+          # a test: stale entries are skipped and unlisted tests land in the tail,
+          # so the built order is always the complete suite (asserted below).
+          hint="$GITHUB_WORKSPACE/tools/slow-tests-first.txt"
+          : > /tmp/order.txt
+          if [ -f "$hint" ]; then
+            while IFS= read -r n; do
+              case "$n" in ''|\#*) continue ;; esac
+              # NOT `[ -f x ] && printf`: under `set -e` a stale hint entry would
+              # make that statement return 1 and abort the whole step.
+              if [ -f "scripts/govern/test/$n.sh" ]; then
+                printf '%s\n' "$n" >> /tmp/order.txt
+              fi
+            done < "$hint"
+          fi
           for t in scripts/govern/test/test-*.sh; do
+            n="$(basename "$t" .sh)"
+            grep -qxF "$n" /tmp/order.txt || printf '%s\n' "$n" >> /tmp/order.txt
+          done
+
+          # The order MUST cover every test file exactly once, or a shard split
+          # would silently drop coverage while CI stayed green.
+          n_files="$(ls scripts/govern/test/test-*.sh | wc -l | tr -d ' ')"
+          n_order="$(sort -u /tmp/order.txt | wc -l | tr -d ' ')"
+          n_lines="$(wc -l < /tmp/order.txt | tr -d ' ')"
+          if [ "$n_order" != "$n_files" ] || [ "$n_lines" != "$n_files" ]; then
+            echo "::error::shard order covers $n_order unique / $n_lines lines but there are $n_files test files"
+            exit 1
+          fi
+          echo "ok - shard order covers all $n_files tests"
+
+          idx=0
+          while IFS= read -r name; do
+            idx=$((idx+1))
+            [ "$(( (idx - 1) % SHARDS + 1 ))" -eq "$SHARD" ] || continue
+            t="scripts/govern/test/$name.sh"
             total=$((total+1))
-            name="$(basename "$t" .sh)"
             if bash "$t" >/tmp/testout.log 2>&1; then
               passed=$((passed+1))
               echo "ok   - $name"
@@ -247,9 +301,9 @@ jobs:
                 sed 's/^/         /' /tmp/testout.log
               fi
             fi
-          done
+          done < /tmp/order.txt
           echo ""
-          echo "passed=$passed  failed=$failed  skipped=$skipped  total=$total"
+          echo "shard=$SHARD/$SHARDS  passed=$passed  failed=$failed  skipped=$skipped  total=$total"
           if [ "$failed" -gt 0 ]; then
             for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
             exit 1
