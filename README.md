@@ -49,19 +49,19 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Successful outputs are kept out of the transcript.** Everything in a session is re-sent on every turn that follows, and test output is most of what a worker generates. A green run carries no information, so it never enters; failures come through trimmed to the useful part. Failing CI logs arrive the same way: a short scripted excerpt, not a fresh investigation.
 
-- **A watchdog cuts sessions that loop, stall, or just keep erroring.*** A stuck worker would otherwise burn tokens all the way to its timeout; the watchdog kills it the moment its transcript shows the pattern. Hard token budgets work the same way, per worker and per run: past the ceiling the worker is killed and its worktree kept, so the work resumes instead of restarting.now 
+- **A watchdog cuts sessions that loop, stall, or just keep erroring.** A stuck worker would otherwise burn tokens all the way to its timeout; the watchdog kills it the moment its transcript shows the pattern. Hard token budgets work the same way, per worker and per run: past the ceiling the worker is killed and its worktree kept, so the work resumes instead of restarting. Both ship off and turn on with one knob each.
 
 - **A scripted codebase map is shared by every worker.** Before dispatch, plain scripts index the repo: what files exist, where symbols live, how it all fits together. Every worker starts with that index instead of burning tokens reading files to learn the same layout. A retry inherits the previous attempt's findings the same way, and the manual audit reads only what's new since its last pass.
- 
+
 - **A retry resumes instead of restarting.** Exploration is most of what a ticket costs, and before this a failed attempt bought you literally nothing. Now the worktree is preserved, so attempt two doesn't re-clone or re-explore, and it inherits the previous attempt's work.
 
 - **Memory improves without growing.** Every resolved ticket writes a lesson into CLAUDE.md, a file that is re-sent on every turn forever. So lessons are length-capped, the file has a budget, and overflow moves to an appendix.
 
-- **Some tickets are blocked before work begins.** Check dependencies, repository health, capacity, setup, and if another fleet pushed the identical fix up, you get told to pull it down instead of a worker re-deriving it from scratch., so work that cannot succeed never consumes a worker and avoids waste of tokens.
+- **Some tickets are blocked before work begins.** Check dependencies, repository health, capacity, setup, and if another fleet pushed the identical fix up, you get told to pull it down instead of a worker re-deriving it from scratch, so work that cannot succeed never consumes a worker and avoids waste of tokens.
 
 - **Related tickets can duplicate the same exploration.** One worker can take several tickets whose scout-measured file paths actually overlap, so it explores that area once instead of once per ticket resulting in token savings. A 5-ticket batch is nowhere near 5× cheaper than 5 workers.
 
-Tokens are the currency: shiploop breaks work into tickets, you choose which ones matter, and each dispatched ticket gets done at the least spend. A few practical notes: the coordination layer itself does not consume model tokens. Parallel work improves throughput, not per-ticket efficiency.
+Tokens are the currency: shiploop breaks work into tickets, you choose which ones matter, and each dispatched ticket gets done at the least spend. A few practical notes: the coordination layer itself does not consume model tokens. The zero-model lane ships off until you enable it. Parallel work improves throughput, not per-ticket efficiency.
 
 ## How Shiploop Runs
 
