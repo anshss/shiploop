@@ -1666,6 +1666,64 @@ govern::prose_dep_warnings() { # [tickets-file] -> "#N: prose dependency '<phras
   ' "$f"
 }
 
+# govern::dangling_dep_refs [tickets-file] — warn when a ticket declares a dependency on a ticket
+# number that no longer has a `## #N` heading.
+#
+# A ticket's FINDINGS are durable, but its "blocked on #M" is a claim about the PRESENT and it rots
+# silently: #M gets resolved and deleted, often by a DIFFERENT session working the same queue, and
+# the blocker line goes on reading authoritative. Observed in the field: a ticket still named three
+# blockers that had all been resolved during that same session, telling the next reader to wait on
+# work that was already finished. Nothing detected it; a human noticed.
+#
+# Deliberately narrow, because a warning that cries wolf gets trained away:
+#   • ONE regex pairs a dependency verb with a ref within 60 non-# characters. Matching any `#M` on
+#     the same LINE is useless: a big ticket's table row can be a single 2000-char line, so every
+#     historical "was #123" on it gets swept up (measured: 6 false positives out of 7).
+#   • bare `#M` only. `<repo>#123` is a PR, not a ticket, so a preceding word character disqualifies
+#     it, and so does `/` (the `#123/#124` PR-range form). That under-reports the second half of a
+#     `#123/#124` ticket pair, which is the right trade: the line is still flagged by its first ref,
+#     and a false positive costs more here than a missed duplicate.
+#   • self-references skipped.
+# Advisory only: the caller prints to stderr and leaves the exit code alone, because a dangling ref
+# can be deliberate history and this lint gates the Stop hook for everyone.
+govern::dangling_dep_refs() { # [tickets-file] -> "#N: depends on #M, which has no ## #M heading" lines
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  awk '
+    NR==FNR {
+      if (match($0, /^##[[:space:]]+#[0-9]+/)) {
+        n=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", n); exists[n]=1
+      }
+      next
+    }
+    match($0, /^##[[:space:]]+#[0-9]+/) {
+      cur=substr($0, RSTART, RLENGTH); sub(/^##[[:space:]]+#/, "", cur); next
+    }
+    cur == "" { next }
+    {
+      rest=$0
+      while (match(rest, /(depends on|depend on|blocked by|blocked on|blocking on|blocks|waiting on|gated on)[^#]{0,60}#[0-9]+/)) {
+        oS=RSTART; oL=RLENGTH            # SAVE: the inner match() below clobbers RSTART/RLENGTH,
+        seg=substr(rest, oS, oL)          # and advancing on the clobbered values never terminates.
+        if (match(seg, /#[0-9]+$/)) {
+          num=substr(seg, RSTART+1, RLENGTH-1)
+          before=(RSTART<=1) ? "" : substr(seg, RSTART-1, 1)
+          if (before !~ /[A-Za-z0-9_\/-]/ && num != cur && !(num in exists) && !((cur "|" num) in seen)) {
+            seen[cur "|" num]=1; order[++k]=cur "|" num
+          }
+        }
+        rest=substr(rest, oS+oL)
+      }
+    }
+    END {
+      for (i=1; i<=k; i++) {
+        split(order[i], p, "|")
+        print "#" p[1] ": depends on #" p[2] ", which has no `## #" p[2] "` heading (resolved, or never existed)"
+      }
+    }
+  ' "$f" "$f"
+}
+
 # ── locality batching (#23) ────────────────────────────────────────────────
 # Exploration is the dominant cost term of a resolved ticket (~98% cacheRead): three tickets that all
 # touch the same directory currently mean THREE workers each paying full discovery cost on the same
