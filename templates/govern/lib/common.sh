@@ -2512,13 +2512,136 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
 # keep a tier BELOW GOVERN_WORKER_MODEL on a retry are infra/ci, which positively identify a
 # non-model cause — that preserves the "a retry never silently down-grades" invariant.
 
-govern::model_rank() { # tier -> 1..3 (0 = unknown/unrankable)
-  case "${1:-}" in haiku) echo 1 ;; sonnet) echo 2 ;; opus) echo 3 ;; *) echo 0 ;; esac
+# ── model ladder, session ceiling, and the clamp ────────────────────────────────────────────────
+# The ladder used to be three bare aliases (haiku/sonnet/opus) because that was the entire tier set
+# the harness could dispatch at. It now has to compare a bare alias against a FULL model id, because
+# the ceiling below is derived from the SPAWNING SESSION's model, which arrives as an id
+# (`claude-opus-5`, `claude-opus-5[1m]`, `claude-haiku-4-5-20251001`) rather than an alias.
+#
+# Parse, in order: lowercase → drop a `[...]` context-window suffix → find the family token anywhere
+# in the string (ids carry vendor/date decoration on both sides) → read AT MOST a major and a minor
+# from the digit run immediately after the family. That last cap is the whole trick for dated ids:
+# `haiku-4-5-20251001` yields 4.5 and the date is simply not read, and an id whose SECOND token is a
+# date (`opus-4-20250514`) is caught by the two-digit sanity cap below, so a build date can never
+# outrank a real point release.
+#
+# Encoding: family*10000 + major*100 + minor, family haiku=1 sonnet=2 opus=3 fable=4. Family
+# dominates version by construction. A BARE alias has no version, so it lands on the family's floor
+# (`opus` = 30000 < `opus-4` = 30400): the conservative reading, since an unversioned alias tells us
+# only which family the caller meant. The old haiku<sonnet<opus ordering is preserved exactly, so
+# every existing govern::model_max caller is unaffected.
+govern::model_rank() { # model alias OR full model id -> total-ordered int (0 = unknown/unrankable)
+  local m fam base rest major minor
+  m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  m="${m%%\[*}"                       # claude-opus-5[1m] -> claude-opus-5
+  case "$m" in
+    *haiku*)  fam=haiku;  base=1 ;;
+    *sonnet*) fam=sonnet; base=2 ;;
+    *opus*)   fam=opus;   base=3 ;;
+    *fable*)  fam=fable;  base=4 ;;
+    *) echo 0; return 0 ;;
+  esac
+  rest="${m#*"$fam"}"; rest="${rest#-}"   # 'claude-opus-5' -> '5'; bare 'opus' -> ''
+  major=0; minor=0
+  if [[ "$rest" =~ ^([0-9]+)(-([0-9]+))? ]]; then
+    major="$((10#${BASH_REMATCH[1]}))"                       # 10# so a leading zero is not read as octal
+    minor="$((10#${BASH_REMATCH[3]:-0}))"
+  fi
+  # Sanity caps. A version component is one or two digits in every id shipped so far; anything wider
+  # is a YYYYMMDD build date that happened to sit where a point release would.
+  [[ "$major" -gt 99 ]] && major=0
+  [[ "$minor" -gt 99 ]] && minor=0
+  echo "$(( base * 10000 + major * 100 + minor ))"
 }
 govern::model_max() { # a b -> the HIGHER-ranked of the two (b wins ties and unrankable a)
   local ra rb; ra="$(govern::model_rank "${1:-}")"; rb="$(govern::model_rank "${2:-}")"
   if [[ "$ra" -gt "$rb" ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi
 }
+
+# The model of the session that is SPAWNING this process, or "" when it cannot be established.
+# Memoised: the transcript probe below touches the filesystem, and one govern::model_clamp call
+# resolves it twice (once for the ceiling, once for the log line). The latch is per-SHELL, so it does
+# not survive the command substitution each call site wraps the clamp in: it saves the second probe
+# within one clamp, not one probe per script. That is the whole win available, and it is enough.
+_GOVERN_SESSION_MODEL=""
+_GOVERN_SESSION_MODEL_RESOLVED=0
+govern::session_model() { # -> canonical model string of the spawning session, or "" (never fails)
+  if [[ "$_GOVERN_SESSION_MODEL_RESOLVED" == "1" ]]; then printf '%s' "$_GOVERN_SESSION_MODEL"; return 0; fi
+  _GOVERN_SESSION_MODEL_RESOLVED=1
+  local m="" f
+  # 1. Explicit override. Also THE test seam: the suite pins it so a run is identical regardless of
+  #    which model happens to be driving the session that invoked the tests.
+  m="${GOVERN_SESSION_MODEL:-}"
+  # 2. Claude Code honours ANTHROPIC_MODEL as the session's model when it is set, so it is a
+  #    first-party statement of what is spawning us.
+  [[ -z "$m" ]] && m="${ANTHROPIC_MODEL:-}"
+  # 3. The session transcript. The last `"model":"…"` line in the session's own jsonl is what the
+  #    session most recently ran as (a /model switch mid-session moves it). Read a bounded TAIL, never
+  #    the file: these transcripts routinely reach hundreds of MB and a full read would dominate the
+  #    cost of the dispatch it is guarding. No jq: a transcript line is not guaranteed parseable and
+  #    a hard dependency here would make an optional rail fail a run that has no jq.
+  if [[ -z "$m" && -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+    for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"${CLAUDE_CODE_SESSION_ID}.jsonl"; do
+      [[ -r "$f" ]] || continue
+      m="$(tail -n "${GOVERN_SESSION_MODEL_TAIL:-400}" "$f" 2>/dev/null \
+           | grep -oE '"model"[[:space:]]*:[[:space:]]*"[^"]+"' | tail -1 \
+           | sed -E 's/.*"([^"]+)"$/\1/')" || m=""
+      [[ -n "$m" ]] && break
+    done
+  fi
+  _GOVERN_SESSION_MODEL="$m"
+  printf '%s' "$m"
+  return 0
+}
+
+# The ceiling every dispatched model is clamped to: max(opus, spawning-session model).
+#
+# Opus is the FLOOR of the ceiling, not the ceiling itself: a haiku or sonnet session may still buy
+# opus for a worker, which is the whole point of the escalation rail. What the rail forbids is a
+# session buying a tier ABOVE the one it is itself running at, which is how a cheap driver could
+# quietly dispatch the most expensive tier in the fleet. An UNDETECTABLE session model therefore
+# yields `opus`, never the permissive direction.
+govern::model_ceiling() { # -> "opus", or the session model verbatim when its FAMILY outranks opus
+  # FAMILY, not raw rank: `claude-opus-5` outranks the bare `opus` alias on the ladder (an alias sits
+  # on its family's floor), but it is still the opus family and must yield the canonical `opus`. The
+  # ceiling handed to --model stays a plain tier name for everything at or below opus, and only a
+  # session in a family ABOVE opus reports itself verbatim.
+  local sm fam_sm fam_opus
+  sm="$(govern::session_model)"
+  fam_sm="$(( $(govern::model_rank "$sm") / 10000 ))"
+  fam_opus="$(( $(govern::model_rank opus) / 10000 ))"
+  if [[ "$fam_sm" -gt "$fam_opus" ]]; then printf '%s' "$sm"; else printf 'opus'; fi
+  return 0
+}
+
+# Clamp one requested tier down to that ceiling. Called at the LAST choke point before each `--model`
+# flag, so no selection path (ticket field, floor, execute-only shortcut, retry escalation) can route
+# around it. An unrankable or empty tier passes through untouched: rank 0 outranks nothing, and the
+# clamp must never invent a model where the caller deliberately had none.
+govern::model_clamp() { # <tier> -> <tier>, or the ceiling when <tier> outranks it
+  local tier="${1:-}" ceil rt rc sm
+  [[ "${GOVERN_MODEL_CEILING:-1}" == "0" ]] && { printf '%s' "$tier"; return 0; }
+  ceil="$(govern::model_ceiling)"
+  sm="$(govern::session_model)"
+  rt="$(govern::model_rank "$tier")"; rc="$(govern::model_rank "$ceil")"
+  # A BARE ALIAS used as the ceiling admits its whole family, so it is compared at the family top.
+  # Without this, an opus session (ceiling `opus` = the family floor) would clamp an explicitly
+  # requested `claude-opus-5` down to `opus`: a same-family rewrite that buys no safety and could
+  # silently drop a variant the operator chose on purpose (e.g. a [1m] context window). A versioned
+  # ceiling, which only happens when the SESSION's own model set it, is still compared exactly, so a
+  # fable-5 session cannot spawn fable-5-1.
+  [[ "$(( rc % 10000 ))" -eq 0 ]] && rc="$(( rc + 9999 ))"
+  if [[ "$rt" -gt "$rc" ]]; then
+    # A silent downgrade is unacceptable: a run must be able to explain why it ran below its
+    # configured tier. Call sites that own an event emitter log this again there, structured.
+    govern::log "model ceiling: requested tier '$tier' outranks this session's ceiling '$ceil' (spawning session: ${sm:-undetectable}). Dispatching at '$ceil'. Set GOVERN_MODEL_CEILING=0 to disable this rail."
+    printf '%s' "$ceil"
+  else
+    printf '%s' "$tier"
+  fi
+  return 0
+}
+
 govern::effort_bump() { # effort -> the next rung UP the reasoning-effort ladder
   # Raising effort is far cheaper than raising tier, so it is the first rung of the escalation
   # ladder. An UNSET effort has no rung to step from (#18 deliberately invents no default), so an

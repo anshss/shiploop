@@ -336,6 +336,10 @@ scout::run_pass() { # <N> <block> -> raw stdout
   local bin="${GOVERN_CLAUDE_BIN:-claude}"
   local secs="${GOVERN_SCOUT_TIMEOUT:-$SCOUT_TIMEOUT_DEFAULT}"
   local tier="${GOVERN_SCOUT_MODEL:-haiku}"
+  # Session ceiling: the scout is a haiku recon pass by default, so this is normally a no-op. It is
+  # applied anyway because GOVERN_SCOUT_MODEL is an operator knob and the rail has to hold for every
+  # `--model` the harness assembles, not only the expensive ones.
+  tier="$(govern::model_clamp "$tier")"
   local prompt; prompt="$(scout::prompt "$n" "$block")"
   ( cd "$WS_ROOT" && govern::run_bounded "$secs" "$bin" -p "$prompt" \
       --model "$tier" --permission-mode plan --strict-mcp-config \
