@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+**CI shards the govern suite across 8 runners: the workflow's critical path drops from 267s to 47s
+(5.7x), with no test removed.**
+
+- `scaffold-and-test` is now an 8-way matrix (`fail-fast: false`). Every test is self-contained in
+  its own `mktemp` workspace, so the suite is embarrassingly parallel.
+- Shard packing is cost-aware. Timing a full green run (158 tests) shows the cost is concentrated
+  rather than spread: the 25 slowest tests are 66% of the runtime and the 71 fastest are 4.9%
+  combined. Round-robin over an alphabetical list therefore packs badly, so CI orders the expensive
+  tests first using the new `tools/slow-tests-first.txt` hint. Measured on this workflow: 8 shards
+  land between 24s and 47s, against 267s for the old single sequential job.
+- That hint file cannot affect coverage. CI builds the order as "listed tests that still exist,
+  then every remaining test file alphabetically", and then asserts the built order covers every
+  test file exactly once before running anything. A stale entry is skipped, a new test lands in the
+  tail, and a missing hint file degrades to plain alphabetical order.
+- `jq` and `shellcheck` ship on the `ubuntu-latest` image, so the three `apt-get install` steps
+  (each carrying an `apt-get update`) are now guarded on `command -v` and normally do no work. They
+  are guarded rather than deleted so the workflow survives a future runner-image change.
+
 ### Added
 
 **`GOVERN_LESSON_EVICT` flips to on by default; a new `GOVERN_AUTO_BUDGETS` (default on) flushes the
