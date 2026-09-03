@@ -79,7 +79,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   bash "$RL" 1 </dev/null 2>&1)"
 rc=$?
 set -e
@@ -137,7 +137,7 @@ out2="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock2" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude-nocost" \
-  GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   bash "$RL" 2 </dev/null 2>&1)"
 set -e
 SUM2="$T/logs2/last-session.md"

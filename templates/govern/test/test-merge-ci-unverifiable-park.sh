@@ -77,7 +77,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_CI_ERR_MAX=1 GOVERN_CI_NONE_GRACE=0 GOVERN_CI_FIX_TRIES=0 \
-  GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_IMPROVE=0 \
   bash "$RL" 1 2>&1)"
 
 assert_contains "$out" "CI state unverifiable"           "unverifiable CI is detected + logged"

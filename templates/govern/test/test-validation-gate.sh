@@ -84,8 +84,8 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
-  bash "$RL" 2>&1)"
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
+  bash "$RL" --serial 1 2 2>&1)"
 
 assert_contains "$out" "VALIDATION ticket but the worker gave no live-test evidence" "gate fired on #1 (no evidence)"
 assert_contains "$out" "resolved=1 parked=1"  "#2 (with evidence) resolved; #1 (no evidence) parked"

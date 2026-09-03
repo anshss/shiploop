@@ -97,7 +97,7 @@ chmod +x "$T/bin/claude"
 run_env() { # extra env... -> exports a base env for a dry driver
   GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_LOG_ROOT="$T/logs" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_SETTING_SOURCES=user GOVERN_WORKER_TIMEOUT=60 GOVERN_SUPERVISOR_EVERY=99 \
+  GOVERN_SETTING_SOURCES=user GOVERN_WORKER_TIMEOUT=60 \
   GOVERN_MAX_TICKETS=1 \
   PATH="$T/bin:$PATH" "$@"
 }
@@ -106,7 +106,7 @@ run_env() { # extra env... -> exports a base env for a dry driver
 mkdir -p "$T/governor/.locks"
 mkdir "$T/governor/.locks/ticket-1"   # stand in for a concurrent peer driver already holding #1
 logA="$T/driverA.log"
-run_env bash "$RL" --dry-run >/dev/null 2>"$logA" || true
+run_env bash "$RL" --dry-run 1 2 >/dev/null 2>"$logA" || true
 rmdir "$T/governor/.locks/ticket-1" 2>/dev/null || true
 
 assert_contains "$(cat "$logA")" "#1 already claimed by another driver" "A: dry driver SEES the held claim lock (not live-gated)"
@@ -124,9 +124,9 @@ body1
 ---
 EOF
 logB1="$T/B1.log"; logB2="$T/B2.log"
-run_env env GOVERN_ALLOW_CONCURRENT=1 GOVERN_TEST_WORKER_SLEEP=2 bash "$RL" --dry-run >/dev/null 2>"$logB1" &
+run_env env GOVERN_ALLOW_CONCURRENT=1 GOVERN_TEST_WORKER_SLEEP=2 bash "$RL" --dry-run 1 2 >/dev/null 2>"$logB1" &
 p1=$!
-run_env env GOVERN_ALLOW_CONCURRENT=1 GOVERN_TEST_WORKER_SLEEP=2 bash "$RL" --dry-run >/dev/null 2>"$logB2" &
+run_env env GOVERN_ALLOW_CONCURRENT=1 GOVERN_TEST_WORKER_SLEEP=2 bash "$RL" --dry-run 1 2 >/dev/null 2>"$logB2" &
 p2=$!
 wait "$p1"; wait "$p2"
 

@@ -90,7 +90,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   bash "$RL" 1 2>&1)"
 
 # A. discovery + merge of BOTH auto-merge siblings (one of which the worker never reported)

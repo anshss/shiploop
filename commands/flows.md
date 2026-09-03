@@ -86,8 +86,8 @@ scripts/govern/flows-file.sh deploy-gpu.vastai comfyui.vastai --yes  # actually 
   `GOVERN_WORKER_TIMEOUT` are flagged.
 - **Never auto-file on staleness** — staleness is advisory, filing is a human act (the `--yes`).
 
-Review the dry plan with the operator, confirm, then re-run with `--yes`. The governor grinds the filed
-tickets on its next pass and stamps each flow's verdict back into the registry.
+Review the dry plan with the operator, confirm, then re-run with `--yes`. Dispatch the filed tickets
+by name on the next `run-loop.sh` pass; the worker stamps each flow's verdict back into the registry.
 
 ## Kill path (an INEFFECTIVE flow the operator wants gone)
 

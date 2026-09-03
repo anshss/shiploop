@@ -6,6 +6,127 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
+# ── --enforce-budgets: run the context ratchet controls OUTSIDE a dispatch ──────────────────────
+# The lesson char cap, the CLAUDE.md total budget and the learnings TTL used to fire ONLY inside a
+# per-ticket bookkeep. That coupled context hygiene to dispatch volume, so a fleet that stops
+# dispatching stops enforcing: measured 2026-09-03, one fleet's root CLAUDE.md sat at 24,366 chars
+# against a 14,000 budget (74% over, re-sent on every turn of ~395 interactive sessions) purely
+# because no bookkeep had run since August. Budgets are a property of the FILES, not of the run.
+#
+# Usage:  govern-bookkeep.sh --enforce-budgets [--dry]
+# Exit:   0 = under budget after the pass · 3 = still over (doctor gates on this) · 1 = usage error
+#
+# NOTHING IS EVER DELETED. Every demotion moves the full text into CLAUDE-APPENDIX.md, which is a
+# real file a human reviews, not a bin. Content above the first flush-left `## ` heading (the
+# preamble: the file's own framing rules) is never touched. Edits are left UNCOMMITTED on purpose:
+# what a session is charged every turn is the operator's call to land, not a script's.
+if [[ "${1:-}" == "--enforce-budgets" ]]; then
+  shift
+  EB_DRY=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry|--dry-run) EB_DRY=1;;
+      *) govern::die "usage: govern-bookkeep.sh --enforce-budgets [--dry]";;
+    esac
+    shift
+  done
+  eb_root="$(govern::meta_root)"
+  eb_claude="$eb_root/CLAUDE.md"
+  eb_appendix="$eb_root/CLAUDE-APPENDIX.md"
+  eb_learnings="$eb_root/learnings.md"
+  eb_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
+  eb_cap="${GOVERN_LESSON_MAX_CHARS:-600}"
+  eb_moved=0
+  if [[ "$EB_DRY" -eq 1 ]]; then eb_verb="would demote"; eb_verb2="would archive"; eb_verb3="would move"
+  else eb_verb="demoted"; eb_verb2="archived"; eb_verb3="moved"; fi
+
+  eb_size() { local n; n="$(wc -c < "$1" 2>/dev/null | tr -d '[:space:]')"; printf '%s' "${n:-0}"; }
+  # Print the byte size of every flush-left `## ` section in $1, as "<size>\t<heading text>".
+  eb_sections() { # <file>
+    awk '
+      /^## / { if (h != "") printf "%d\t%s\n", n, h; h = $0; n = length($0) + 1; next }
+      h != "" { n += length($0) + 1 }
+      END { if (h != "") printf "%d\t%s\n", n, h }
+    ' "$1" 2>/dev/null
+  }
+  # Move one whole `## ` section out of $1 and append it verbatim to the appendix.
+  eb_demote() { # <file> <heading-line>
+    local file="$1" head="$2" tmpf body
+    body="$(awk -v h="$head" 'BEGIN{on=0} $0==h{on=1;print;next} on && /^## /{on=0} on{print}' "$file")"
+    [[ -n "$body" ]] || return 1
+    tmpf="$(mktemp)"
+    awk -v h="$head" 'BEGIN{on=0} $0==h{on=1;next} on && /^## /{on=0} on{next} {print}' "$file" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+    if [[ "$EB_DRY" -eq 1 ]]; then rm -f "$tmpf"; return 0; fi
+    mv "$tmpf" "$file"
+    printf '\n%s\n' "$body" >> "$eb_appendix"
+    return 0
+  }
+
+  if [[ ! -f "$eb_claude" ]]; then
+    govern::log "budgets: no $eb_claude — nothing to enforce"
+    exit 0
+  fi
+  if [[ ! -f "$eb_appendix" ]]; then
+    govern::log "budgets: $eb_claude is $(eb_size "$eb_claude") chars against a $eb_budget budget, but CLAUDE-APPENDIX.md is absent — there is nowhere to demote to. Create it, then re-run."
+    [[ "$(eb_size "$eb_claude")" -gt "$eb_budget" ]] && exit 3
+    exit 0
+  fi
+
+  # 1. LESSON CHAR CAP. A single section past the cap is a permanent per-turn tax paid by every
+  #    session. Demote it whole; the appendix keeps every word.
+  while IFS=$'\t' read -r sz head; do
+    [[ "$sz" =~ ^[0-9]+$ ]] || continue
+    [[ "$sz" -gt "$eb_cap" ]] || continue
+    if eb_demote "$eb_claude" "$head"; then
+      eb_moved=$((eb_moved+1))
+      govern::log "budgets: $eb_verb \"$head\" ($sz chars > GOVERN_LESSON_MAX_CHARS=$eb_cap) → CLAUDE-APPENDIX.md"
+    fi
+  done < <(eb_sections "$eb_claude" | sort -k1,1nr)
+
+  # 2. TOTAL BUDGET. Still over after the cap pass: demote whole sections, LARGEST FIRST, until the
+  #    file is under budget. Largest-first is the only ordering that is both deterministic and
+  #    monotone in what it buys per demotion.
+  while [[ "$(eb_size "$eb_claude")" -gt "$eb_budget" ]]; do
+    eb_pick="$(eb_sections "$eb_claude" | sort -k1,1nr | head -1 | cut -f2-)"
+    [[ -n "$eb_pick" ]] || break
+    eb_demote "$eb_claude" "$eb_pick" || break
+    eb_moved=$((eb_moved+1))
+    govern::log "budgets: $eb_verb \"$eb_pick\" → CLAUDE-APPENDIX.md (CLAUDE.md over the $eb_budget-char budget)"
+    [[ "$EB_DRY" -eq 1 ]] && break   # a dry pass cannot shrink the file, so it would loop forever
+  done
+
+  # 3. LEARNINGS TTL (opt-in, SHIPLOOP_LEARNINGS_TTL=1 — the same knob the SessionStart digest reads,
+  #    so the warning and the enforcement can never disagree). learnings.md is transient by contract;
+  #    an entry past the window is archived to the appendix rather than deleted, because a still-true
+  #    measurement that vanishes just gets re-derived at full cost.
+  if [[ "${SHIPLOOP_LEARNINGS_TTL:-0}" == "1" && -f "$eb_learnings" ]]; then
+    eb_ttl_days="${SHIPLOOP_LEARNINGS_TTL_DAYS:-14}"
+    eb_today="${SHIPLOOP_LEARNINGS_TODAY:-$(date +%Y-%m-%d)}"
+    eb_today_n="${eb_today//-/}"
+    while IFS=$'\t' read -r _sz head; do
+      eb_d="$(awk -v h="$head" 'BEGIN{on=0} $0==h{on=1} on{print} on && /^## / && $0!=h{exit}' "$eb_learnings" \
+        | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 || true)"
+      [[ -n "$eb_d" ]] || continue                       # undated entries are never aged out
+      eb_age=$(( ( $(date -j -f %Y-%m-%d "$eb_today" +%s 2>/dev/null || date -d "$eb_today" +%s 2>/dev/null || echo 0) \
+                 - $(date -j -f %Y-%m-%d "$eb_d" +%s 2>/dev/null || date -d "$eb_d" +%s 2>/dev/null || echo 0) ) / 86400 ))
+      [[ "$eb_age" -gt "$eb_ttl_days" ]] || continue
+      if eb_demote "$eb_learnings" "$head"; then
+        eb_moved=$((eb_moved+1))
+        govern::log "budgets: $eb_verb2 learnings entry \"$head\" (${eb_age}d old > SHIPLOOP_LEARNINGS_TTL_DAYS=$eb_ttl_days) → CLAUDE-APPENDIX.md"
+      fi
+    done < <(eb_sections "$eb_learnings" | sort -k1,1nr)
+    : "$eb_today_n"
+  fi
+
+  eb_final="$(eb_size "$eb_claude")"
+  govern::log "budgets: CLAUDE.md $eb_final/$eb_budget chars · $eb_moved entr(ies) $eb_verb3 to CLAUDE-APPENDIX.md"
+  if [[ "$eb_final" -gt "$eb_budget" ]]; then
+    govern::log "budgets: STILL OVER by $(( eb_final - eb_budget )) chars — nothing left to demote automatically; the remaining weight is in the preamble or in sections the appendix already holds. Cut it by hand."
+    exit 3
+  fi
+  [[ "$EB_DRY" -eq 1 ]] || govern::log "budgets: edits left UNCOMMITTED in $eb_root — review and commit them yourself"
+  exit 0
+fi
 N="${1:?ticket number required}"
 report="$(cat)"
 # '|| true' so a MISSING queue dir yields "" (not an unreliable set -e abort with a confusing cd error);

@@ -69,7 +69,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   bash "$RL" 1 2>&1)"
 
 assert_contains "$out" "parking (ticket NOT deleted)" "merge failure parks instead of resolving (#42)"

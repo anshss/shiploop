@@ -134,8 +134,8 @@ out="$(PATH="$E/bin:$PATH" \
   GOVERN_LOCK="$E/lock" \
   GOVERN_WORKTREE_CMD="$E/wt.sh" \
   GOVERN_CLAUDE_BIN="$E/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
-  bash "$RL" 2>&1)"
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
+  bash "$RL" --serial 1 2 2>&1)"
 
 assert_contains "$out" "resolved=2"                 "e2e: both tickets resolved"
 assert_contains "$out" "health |"                   "e2e: ROI health logged at run-end"

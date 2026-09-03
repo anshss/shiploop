@@ -108,7 +108,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_INFRA_RETRY_PAUSE=0 \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 1 2 7 2>&1)"
 
 assert_contains "$out" "INFRA HALT"                 "run halts with a DISTINCT infra signal (not the generic bad-streak message)"
 assert_contains "$out" "claude login"               "halt message tells the operator to re-authenticate"
