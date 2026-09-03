@@ -367,7 +367,7 @@ component_project_commands() {
 
 # component_agents — shipped subagent definitions (lookup, investigator). These give the
 # interactive driver lane cheap-tier targets for the delegation posture (router-posture
-# hooks + CLAUDE.md) that already tells it to delegate — without them "delegate to an
+# hooks + CLAUDE.md) that already tells it to delegate: without them "delegate to an
 # Agent" had no pre-sized, cheap-model destination, so haiku delegation stayed near zero
 # in practice. Mirrors component_project_commands: copy-only, no substitution.
 component_agents() {
