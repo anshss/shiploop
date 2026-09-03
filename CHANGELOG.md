@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+### Removed
+
+**The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
+
+Both fleets that ran the sweep had already abandoned it. One workspace's `governor/ticket-history.jsonl`
+spans 2026-06-11 to 2026-08-11 (861 entries over 302 tickets) and then stops, while ~300 further tickets
+were filed and 67 resolved by hand over the following three weeks. The other's last dispatch was Aug 3.
+The reason is the same in both: a sweep spends on QUEUE-ORDER priorities, and the operator has OPERATOR
+priorities. Queue order is not a work order.
+
+The worker was never the waste, so nothing about it changed: every CLI-stripping flag, budget, watchdog,
+worktree resume, scout warm start and report contract in `spawn-worker.sh` is exactly as shipped.
+
+- `run-loop.sh` REQUIRES one or more ticket numbers. A bare invocation prints usage and exits 2 (not 0
+  with an empty run, which in a script or a cron line reads as success). Backlog auto-selection and the
+  grind-until-empty outer loop are deleted.
+- `select-ticket.sh` no longer picks from the backlog. New contract:
+  `select-ticket.sh <exclude-csv> <candidate-csv>` filters and severity-orders a NAMED set and prints one
+  ticket per line. The ticket-body parser that named dispatch needs is unchanged; the backlog-ordering
+  mode (including `GOVERN_PRODUCT_FIRST`) is gone.
+- **The periodic supervisor is deleted.** `GOVERN_SUPERVISOR_EVERY` and `GOVERN_SUPERVISOR_FLUSH` no
+  longer exist and `run-loop.sh` never invokes `govern-supervise.sh`. The supervisor survives as a manual
+  audit: `<pm> run govern:audit`. Zero model spend unless you ask for it.
+- The externalization lane no longer runs at every run-start. `externalize-low-tickets.sh` is unchanged
+  and now runs deliberately: `<pm> run govern:externalize`.
+- Deleted env flags: `GOVERN_SUPERVISOR_EVERY`, `GOVERN_SUPERVISOR_FLUSH`, `GOVERN_PRODUCT_FIRST`,
+  `GOVERN_SELFREF_MAX_PER_RUN`, `GOVERN_IMPROVE_PER_RUN`.
+
+### Fixed
+
+**Named dispatch was the unprotected path.** Every gate the loop had was skipped the moment a ticket was
+named, on the theory that the operator chose deliberately. But naming a ticket does not land its
+dependency, un-red the base branch, or undo a fix another fleet already shipped. All of these now run on
+every named dispatch: the per-ticket claim lock, the cross-driver re-verify (#108), the `Depends on:` gate
+(#119, previously ignored outright on a named set), the staleness gate, the upstream-drift hub pregate,
+the failure-streak breaker (#60), and the run-start `preflight-main` + `preflight-base-ci`.
+
+**A named set fanned out ungrouped, putting two workers on one file.** Verified 2026-07-25:
+`run-loop.sh 24 25 26 --parallel` spawned three drivers even at `GOVERN_BATCH_MAX=3`. The named set is now
+partitioned into LOCALITY GROUPS by measured file overlap (dependency-related tickets kept apart) before
+anything is dispatched, and `--parallel` spawns one full driver per GROUP, so the fleet is sized in groups
+rather than tickets and every gate still fires inside each child. Naming EXACTLY ONE ticket is the
+carve-out: sequential and unbatched, whatever the knobs say.
+
+**Run-end blocks fired once per driver instead of once per dispatch.** The pending-escalations emit, the
+health ROI line, the sync-port trigger, the self-improvement review, the orphan reap and the
+validations-pending adopt are all whole-dispatch passes over shared state; firing them per child made an
+N-way run file N near-identical tickets over N slices of the same run. They now run once, in the
+orchestrator, after reaping; children skip them via the internal `--orchestrated` flag.
+
+**A group array named `GROUPS` dispatched the operator's unix group ids as ticket numbers.** `GROUPS` is a
+bash special variable and assignments to it are silently ignored. Caught in test, not in production. The
+array is `DISPATCH_GROUPS`.
+
+### Added
+
+**`govern-bookkeep.sh --enforce-budgets` runs the context ratchet OUTSIDE a dispatch**, wired to
+`<pm> run govern:budgets`. The lesson char cap and the CLAUDE.md total budget used to run only inside a
+per-ticket bookkeep, which coupled context hygiene to dispatch volume: stop dispatching and the file grows
+unchecked. Measured 2026-09-03, one fleet's root `CLAUDE.md` sat at 24,366 chars against a 14,000 budget,
+74% over and re-sent on every turn of ~395 interactive sessions, purely because no bookkeep had run since
+August. Budgets are a property of the files, not of the run.
+
+Nothing is ever deleted: every demotion moves the full text into `CLAUDE-APPENDIX.md`, the preamble above
+the first `## ` heading is never touched, `--dry` reports without writing, and a workspace with no
+`CLAUDE-APPENDIX.md` is refused (exit 3) rather than trimmed. Opt-in learnings TTL
+(`SHIPLOOP_LEARNINGS_TTL=1`) archives out-of-window entries the same way.
+
+`doctor` now FAILS (not warns) when root `CLAUDE.md` is over `SHIPLOOP_CLAUDEMD_MAX_CHARS`, and names the
+command that fixes it.
+
+**New npm keys**, added to fresh scaffolds and back-filled into existing workspaces by
+`/shiploop:update`: `govern:audit`, `govern:budgets`, `govern:externalize`.
+
 ### Fixed
 
 **Parallel worktrees could exhaust a machine's RAM, and finished worktrees were never reclaimed.**

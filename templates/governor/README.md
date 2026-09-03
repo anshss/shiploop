@@ -1,20 +1,25 @@
 # Governor harness — operating guide
 
-One long-running **governor** drives fresh per-ticket **headless `claude -p`** workers. The operator
-job shrinks to: managing `queue/tickets.md`, answering `escalations.md`, and the two hard-stop decision
-classes. The governor itself is a **pure-bash driver** (`scripts/govern/run-loop.sh`) — it spends ~zero
-Claude context; Claude runs only inside the bounded worker and supervisor sub-sessions.
+A **governor** drives fresh per-ticket **headless `claude -p`** workers over the tickets you name. The
+operator job shrinks to: managing `queue/tickets.md`, choosing what to dispatch, answering
+`escalations.md`, and the two hard-stop decision classes. The governor itself is a **pure-bash driver**
+(`scripts/govern/run-loop.sh`): it spends ~zero Claude context, and Claude runs only inside the bounded
+worker sub-sessions.
 
 ## Run it
 There is no slash command. From the main checkout, just say what you want worked — the session maps
-plain language straight onto the loop:
+plain language straight onto the loop. Named dispatch is the only front door: you name the ticket(s),
+the driver dispatches exactly those, at the least spend, with every gate on. There is no backlog
+sweep and no grind-until-empty loop: a bare invocation prints usage and exits 2.
 ```
-"work on all the tickets on queue"       → run-loop.sh
 "work on 42"                             → run-loop.sh 42
 "work on 42 51 63"                       → run-loop.sh 42 51 63
-"work through the queue while I'm out"   → run-loop.sh --parallel
+"work on 42 51 63 while I'm out"         → run-loop.sh --parallel 42 51 63
 ```
-Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [<ticket>...]`.
+Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [--parallel[=N]|--serial] <ticket>...`.
+Naming exactly one ticket is always sequential and unbatched. Naming several partitions them into
+**locality groups** (shared measured file paths, capped at `GOVERN_BATCH_MAX` per group); `--parallel`
+spawns one full driver child per group, not per ticket.
 
 The trigger changed; the **loop did not**. Detached workers, claim locks, verdict files, resumable
 worktrees and reaping are the only things that survive a closed laptop, and they are untouched — so a
@@ -34,7 +39,8 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
   mark "make this a rule" to grow the doctrine.
 - `pending-escalations.json` — machine-readable driver→relay hand-off of the unanswered `## Open`
   entries (regenerated every run-end; gitignored runtime state).
-- `worker-prompt.md` / `supervisor-prompt.md` — the templates workers / the supervisor run.
+- `worker-prompt.md` / `supervisor-prompt.md`: the templates workers run / the manual audit
+  (`npm run govern:audit`) runs.
 - `improvements.md` — self-improvement proposals (output; observe→propose, never auto-applied unless
   you opt in).
 - `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
@@ -164,7 +170,8 @@ the flat-parent property the governor exists for.
   `budget-exceeded` outcome (not `timeout`) in `state.jsonl` / the cross-run history, so a worker that
   ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
   preserved and a re-run resumes it, exactly like a timeout.
-- `GOVERN_SUPERVISOR_EVERY` (5) — supervisor review cadence (+ on anomaly).
+- No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
+  (`npm run govern:audit`) you invoke against a run directory; it costs zero model spend otherwise.
 
 ## Upstream-drift pre-gate (`GOVERN_PREGATE_DRIFT`, default `1` = on)
 
@@ -187,7 +194,9 @@ worker is spawned — no LLM call, no network, no writes.
   session; a false positive would silently stall a real ticket.
 - **Narrow by construction.** Only literal, glob-free paths under `GOVERN_PREGATE_PREFIXES`
   (`scripts/ governor/ .githooks/ .claude/commands/`) are even considered, so a product-repo ticket
-  can't trip it. Skipped for an explicit ticket set — the operator chose that ticket deliberately.
+  can't trip it. It runs on named dispatch too: "another fleet already shipped this exact fix" is
+  worth the same zero-cost check whoever picked the ticket, and its only outcome is park + escalate,
+  never a resolve.
 
 Codemod auto-detection is deliberately **not** implemented: a false positive that "resolves" a ticket
 without fixing it is far worse than a missed opportunity, and no narrow, safe detector was found.
@@ -221,8 +230,8 @@ Batching and parallelism pull against each other: past a point, bigger groups tr
 token saving. Hence the default of `2` (small groups, most of the token saving, little wall-clock
 risk) — set `GOVERN_BATCH_MAX=1` to turn batching off and go back to one ticket per worker. No
 production A/B measurement of the default exists yet; today's `2` is a starting point, not a
-validated optimum. Only applies to a **backlog** pull; an explicit ticket set is dispatched exactly
-as named.
+validated optimum. Applies to any named ticket set: the operator names the tickets, batching only
+decides how the driver groups them for dispatch.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
@@ -308,12 +317,13 @@ reviewer (`govern-improve.sh`) appends concrete improvement proposals to `govern
 only *proposes*; the operator reviews and applies. Safety rails (hard-stops, run bounds, permission
 gate, merge allowlist) are **never** auto-changed. Disable with `GOVERN_IMPROVE=0`.
 
-The pass fires **once per run**, in the orchestrator, over the aggregated state after reaping — not
-once per driver. A child driver only ever sees its own slice of the run, so a per-driver "review of
-the run" is structurally a review of a fragment, and an N-way parallel run filed N near-identical
-tickets (two of them from the same wall-clock run). Triage also **appends to a standing ticket**
-rather than minting a new `## #N` each time, since the same friction recurs and produces the same
-proposal. `GOVERN_IMPROVE_PER_RUN=0` restores per-driver filing. Opt-in guarded
+The pass fires **exactly once per run**, in the orchestrator, over the aggregated state after
+reaping, never once per driver. A child driver only ever sees its own slice of the run, so a
+per-driver "review of the run" is structurally a review of a fragment, and an N-way parallel run
+used to file N near-identical tickets (two of them from the same wall-clock run). Children skip the
+pass via the internal `--orchestrated` flag; a sequential dispatch IS the orchestrator, so it always
+runs. Triage also **appends to a standing ticket** rather than minting a new `## #N` each time, since
+the same friction recurs and produces the same proposal. Opt-in guarded
 auto-apply (`GOVERN_SELF_APPLY=1`, default OFF) applies ONE proposal under strict guards (edit-only
 agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-end so it takes effect
 next run.

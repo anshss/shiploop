@@ -98,9 +98,9 @@ run_governor() { # <root>
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_EVENTS_FILE="$T/governor/events.jsonl" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=0 GOVERN_IMPROVE=0 \
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   GOVERN_MIGRATE_CMD="true" GOVERN_VERIFY_CMD="true" \
-  bash "$RL" --serial 2>&1
+  bash "$RL" --serial 1 2 2>&1
 }
 
 TOFF="$(mktemp -d)"; TON="$(mktemp -d)"

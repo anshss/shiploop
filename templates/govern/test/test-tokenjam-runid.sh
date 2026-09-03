@@ -116,7 +116,7 @@ run_loop_dry() {
   GOVERN_LOG_ROOT="$TMP/gov2/logs" \
   GOVERN_RUN_ID_FILE="$RIDF" \
   GOVERN_LOCK="$TMP/gov2/.lock" \
-  bash "$RL" --dry-run 2>&1
+  bash "$RL" --dry-run --serial 7 8 2>&1
 }
 
 # FRESH: a just-written file (current mtime) is reused verbatim — the resume keeps the id.

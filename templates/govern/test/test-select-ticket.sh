@@ -3,6 +3,10 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 SEL="$DIR/../select-ticket.sh"
+# select-ticket.sh orders a NAMED set now: it never picks from the backlog, so every call passes the
+# candidate set explicitly. `sel1` keeps these assertions reading as "who comes first", which is what
+# they were always about. A missing candidate set is a usage error, asserted at the bottom.
+sel1() { "$SEL" "$1" "$2" | head -1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mk_ws_stub "$TMP"  # hermetic workspace stub (independent of the live workspace.sh)
@@ -25,15 +29,15 @@ cat > "$TMP/escalations.md" <<'EOF'
 EOF
 
 # Highest severity first → #5, but #5 is parked open → next is #3 (medium) over #2 (low).
-out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/escalations.md" "$SEL")"
+out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/escalations.md" sel1 "" "2,3,5")"
 assert_eq "$out" "3" "skips open-escalation #5, picks medium #3 over low #2"
 
 # With no escalations file, highest severity wins → #5
-out2="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL")"
+out2="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" sel1 "" "2,3,5")"
 assert_eq "$out2" "5" "picks highest-severity #5 when nothing parked"
 
 # CLI exclude arg removes #5 and #3 → low #2 remains
-out3="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL" "5,3")"
+out3="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" sel1 "5,3" "2,3,5")"
 assert_eq "$out3" "2" "respects CLI exclude list"
 
 # #92: a ticket whose body carries a bold "NOT govern-automatable" marker is auto-skipped — even
@@ -52,10 +56,10 @@ The selector should still pick me — I only mention the phrase, I'm not marked.
 **Severity:** Medium — fine.
 ---
 EOF
-out4="$(GOVERN_TICKETS_FILE="$TMP/na.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL")"
+out4="$(GOVERN_TICKETS_FILE="$TMP/na.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" sel1 "" "5,6,7")"
 assert_eq "$out4" "6" "auto-skips bold-marked #5, picks prose-only #6 (mention ≠ marker)"
 
-out5="$(GOVERN_TICKETS_FILE="$TMP/na.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL" "6")"
+out5="$(GOVERN_TICKETS_FILE="$TMP/na.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" sel1 "6" "5,6,7")"
 assert_eq "$out5" "7" "with #6 excluded, marked #5 stays skipped → medium #7, never #5"
 
 # the helper itself reports exactly the marked ticket + its reason keyword
@@ -98,16 +102,26 @@ assert_eq "$sp" "$(printf '20\tscripts/govern/run-loop.sh')" "sync-port helper f
 
 # select-ticket EXCLUDES the colliding High #20 → picks Medium #21 over Low #22 (proves the
 # High collider was skipped, not merely deprioritized).
-spout="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-open.md" "$SEL")"
+spout="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-open.md" sel1 "" "20,21,22")"
 assert_eq "$spout" "21" "select-ticket skips open-sync-port-collision #20, picks medium #21"
 
 # a RESOLVED sync-port escalation carries no in-flight branch → #20 is selectable again (High wins).
-spout2="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-resolved.md" "$SEL")"
+spout2="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-resolved.md" sel1 "" "20,21,22")"
 assert_eq "$spout2" "20" "resolved sync-port escalation does NOT exclude #20 (High picked)"
 
 # helper is a clean no-op when the escalations file has no OPEN sync-port entries.
 sp3="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-resolved.md" \
   bash -c 'source "'"$DIR"'/../lib/common.sh"; govern::sync_port_collision_tickets')"
 assert_eq "$sp3" "" "sync-port helper emits nothing when no OPEN sync-port escalation matches"
+
+# The candidate set is REQUIRED: a bare call must be a usage error, not an implicit "pick something
+# for me". That implicit mode is the backlog sweep, and it is gone.
+rc=0; usage="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a call with no candidate set exits 2 (usage error)"
+assert_contains "$usage" "candidate set is required" "…and says the set is required"
+
+# The whole eligible set comes back, in dispatch order, one per line — the driver partitions it.
+allout="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" "$SEL" "" "2,3,5")"
+assert_eq "$allout" "$(printf '5\n3\n2')" "the full named set comes back severity-ordered, one per line"
 
 assert_done

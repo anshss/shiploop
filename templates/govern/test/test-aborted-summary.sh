@@ -89,7 +89,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
   GOVERN_MIGRATE_CMD="false" GOVERN_VERIFY_CMD="false" \
-  GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
+  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   bash "$RL" 1 </dev/null 2>&1)"
 rc=$?
 set -e

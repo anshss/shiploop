@@ -482,20 +482,19 @@ component_readme() {
 # $meta_name on Shiploop
 
 **$meta_name** ships on [Shiploop](https://github.com/anshss/shiploop) — a self-improving
-multi-agent harness that grinds your ticket backlog across every repo in this workspace
+multi-agent harness that dispatches the tickets you name across every repo in this workspace
 ($repos_list). A fresh, right-sized headless agent takes each ticket, opens a PR, auto-merges
 on green CI where you've allowed it, and writes a durable lesson back into \`CLAUDE.md\` so the
 next run is smarter and cheaper.
 
-## Ship the backlog
+## Ship the tickets you name
 
 \`\`\`text
 Just say what you want worked, in plain language:
 
-  "work on 42"                        one ticket
-  "work on 42 51 63"                  an explicit set
-  "work on all the tickets on queue"  the whole eligible backlog
-  "work through the queue while I'm out"   unattended
+  "work on 42"                         one ticket, sequential and unbatched
+  "work on 42 51 63"                   that exact set, grouped by file locality
+  "work on 42 51 63 while I'm out"     the same set, unattended and fanned out
 \`\`\`
 
 That maps onto \`scripts/govern/run-loop.sh\` — the loop, worktrees, claim locks and reaping are
@@ -608,6 +607,9 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern:health": "bash scripts/govern/govern-health.sh",
     "govern:dry-run": "bash scripts/govern/dry-run.sh",
     "govern:status": "bash scripts/govern/status.sh",
+    "govern:audit": "bash scripts/govern/govern-supervise.sh",
+    "govern:budgets": "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
+    "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh"
   }
 }
@@ -658,6 +660,9 @@ component_package_json_merge() {
     "govern:health":      "bash scripts/govern/govern-health.sh",
     "govern:dry-run":     "bash scripts/govern/dry-run.sh",
     "govern:status":      "bash scripts/govern/status.sh",
+    "govern:audit":       "bash scripts/govern/govern-supervise.sh",
+    "govern:budgets":     "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
+    "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh"
   }') || { warn "package-json-merge: jq failed to build the script set"; return 0; }
 
@@ -1147,7 +1152,8 @@ config_drift_report() {
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
-         "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:validations"]
+         "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:audit",
+         "govern:budgets","govern:externalize","govern:validations"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
     ' package.json 2>/dev/null)"
     [ -n "$missing_scripts" ] && notes+="  package.json    missing script(s): $missing_scripts"$'\n'

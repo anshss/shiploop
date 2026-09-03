@@ -312,14 +312,14 @@ the output; else note it skipped in the Phase Z report.
 
 Mention optional next steps: hand-write `scripts/lib/worktree-bootstrap.sh` for per-worktree setup
 (`worktree/new.sh` sources it when present; same for `session-cleanup.sh` and `doctor-extra.sh`);
-customize `governor/preferences.md`; before the first "work through the queue" dispatch, from a
+customize `governor/preferences.md`; before the first named dispatch, from a
 **plain terminal** run `claude -p "ping" --model sonnet --strict-mcp-config` to confirm worker auth.
 
 ### Starter ticket
 
 After verification passes, look for ONE small guaranteed-tractable item surfaced during scaffold to
-become ticket #1, so the first "work through the queue" run has a real target instead of an empty
-queue. Priority order:
+become ticket #1, so the first named dispatch has a real target instead of an empty queue. Priority
+order:
 1. A `doctor`/`config-check` warning the governor can fix (missing `.env.example` key, script alias
    gap, lint nit).
 2. A missing `.env.example` entry for a referenced env var.
@@ -493,7 +493,7 @@ Decisions:   autonomy=<rung> · allowlist=<repos|none> · remote=<created|skippe
              (everything above came from the single interview — one recap, no re-asks)
 Try:
   <ROOT_PM> run worktree:new -- try-it && cd <worktree-base>/try-it
-  scripts/govern/run-loop.sh --dry-run   # or just say "dry-run the queue"
+  scripts/govern/run-loop.sh --dry-run <N>   # or just say "dry-run ticket <N>"
 Still needs you:
   - per-sub-repo .env files (see <repo>/.env.example)
   - enable optional hooks: write scripts/lib/{worktree-bootstrap,session-cleanup,doctor-extra}.sh

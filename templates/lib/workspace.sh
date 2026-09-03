@@ -94,19 +94,17 @@ export GOVERN_EARLY_ABORT="${GOVERN_EARLY_ABORT:-0}"                       # 1 =
 export GOVERN_INDEX="${GOVERN_INDEX:-1}"                                   # 0 = stop rebuilding the deterministic codebase index after each resolved ticket
 export GOVERN_VERIFY_FILTER="${GOVERN_VERIFY_FILTER:-1}"                   # 0 = stop collapsing a passing build/test run to one line
 export GOVERN_RUN_MAX_TOKENS="${GOVERN_RUN_MAX_TOKENS:-0}"                 # >0 = stop the run cleanly once this many tokens are spent (0 = no run-level brake)
-export GOVERN_SELFREF_MAX_PER_RUN="${GOVERN_SELFREF_MAX_PER_RUN:-0}"       # >0 = cap harness-about-harness tickets dispatched per run (gates DISPATCH, never discovery)
-export GOVERN_PRODUCT_FIRST="${GOVERN_PRODUCT_FIRST:-0}"                   # 1 = sort product work ahead of self-referential work
 
 # ── Default concurrency (GOVERN_PARALLEL_DEFAULT) ────────────────────────────
-# How many tickets a plain `scripts/govern/run-loop.sh` (no flags, no ticket number) works at once.
-#   N > 1 (default 4)  the driver becomes an orchestrator and runs N full backlog drivers
-#                concurrently, each grinding the queue and contending on the per-ticket claim lock.
-#                This is the "launch N terminals" recipe, automated — and it is the DEFAULT, because
-#                working the backlog in parallel is the point of the harness.
-#   1            one at a time — set this to opt out permanently.
+# How many LOCALITY GROUPS a named `scripts/govern/run-loop.sh <N> ...` dispatch works at once.
+#   N > 1 (default 4)  the driver becomes an orchestrator and runs one full driver child per group
+#                concurrently, contending on the per-ticket claim lock. This is the "launch N
+#                terminals" recipe, automated, and it is the DEFAULT.
+#   1            one group at a time — set this to opt out permanently.
+# Naming EXACTLY ONE ticket always stays sequential, whatever this says.
 # Per-run overrides always win: `--parallel[=N]` to fan out further, `--serial` to force one-at-a-time.
-# NOTE this multiplies CONCURRENT headless workers — N tickets in flight means up to N workers'
-# spend at once. It does not make a single ticket cheaper; it makes the backlog finish sooner.
+# NOTE this multiplies CONCURRENT headless workers — N groups in flight means up to N workers'
+# spend at once. It does not make a single ticket cheaper; it makes a big set finish sooner.
 # Lower it if you are rate-limited or want a smaller blast radius.
 export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 
