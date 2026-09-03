@@ -3,19 +3,27 @@
 #
 # The problem these encode: promotion into root CLAUDE.md is automatic, removal is a human noticing.
 # GOVERN_LESSON_MAX_CHARS caps how BIG one lesson may be; nothing caps how MANY. The three gates
-# below add an admission test and an eviction, and every one of them must SHIP INERT — the default
-# behaviour has to stay byte-for-byte what it was, so this file asserts the OFF direction as hard as
-# the ON direction.
+# below add an admission test and an eviction. GOVERN_LESSON_SINK and GOVERN_LESSON_LADDER still
+# SHIP INERT (default behaviour is byte-for-byte what it was before #87). GOVERN_LESSON_EVICT (#95)
+# no longer ships inert: it defaults ON, so this file asserts the NEW default (forced eviction at
+# budget) as hard as the kill switch that restores the old always-insert behaviour.
 #
 # Covered:
-#   - defaults (no knobs set): a lesson still lands in CLAUDE.md, appendix untouched
+#   - defaults, under budget: a lesson still lands in CLAUDE.md, appendix untouched (EVICT is a
+#     no-op below budget)
+#   - defaults, at/over budget WITH a matching .evicts: the named entry is displaced, lesson lands
+#     in CLAUDE.md (no GOVERN_LESSON_EVICT set: this IS the new default)
+#   - defaults, at/over budget with NO .evicts: the lesson is demoted to CLAUDE-APPENDIX.md in full
+#     and CLAUDE.md is unchanged (no GOVERN_LESSON_EVICT set: this IS the new default)
+#   - GOVERN_LESSON_EVICT=0: restores the OLD always-insert-into-CLAUDE.md behaviour, even over budget
 #   - GOVERN_LESSON_SINK=appendix: unclaimed lesson -> appendix ONLY (nothing in CLAUDE.md)
 #   - GOVERN_LESSON_SINK=appendix: a complete always-on claim (alwaysOn+frequency+reversibility)
 #     still takes the CLAUDE.md slot; a PARTIAL claim does not
 #   - GOVERN_LESSON_LADDER=1: rung must be "always-on" AND carry rungWhyNot
-#   - GOVERN_LESSON_EVICT=1 under budget: no eviction demanded
-#   - GOVERN_LESSON_EVICT=1 at budget WITHOUT .evicts -> appendix, incumbent untouched
-#   - GOVERN_LESSON_EVICT=1 at budget WITH a matching .evicts -> incumbent REMOVED, lesson promoted
+#   - GOVERN_LESSON_EVICT=1 (explicit) under budget: no eviction demanded
+#   - GOVERN_LESSON_EVICT=1 (explicit) at budget WITHOUT .evicts -> appendix, incumbent untouched
+#   - GOVERN_LESSON_EVICT=1 (explicit) at budget WITH a matching .evicts -> incumbent REMOVED,
+#     lesson promoted
 #   - .evicts that matches zero or many lines is a refusal, never a guess
 #   - no CLAUDE-APPENDIX.md present: every gate is skipped (a lesson is never lost)
 set -uo pipefail
@@ -87,12 +95,38 @@ run() { # <report-json> <env-assignments...>
   printf '%s' "$r" | env GOVERN_NO_PUSH=1 GOVERN_TICKETS_FILE="$T/tickets.md" "$@" bash "$BK" 9 >/dev/null 2>&1
 }
 
-# ── 1. DEFAULTS: ships inert — unchanged behaviour ───────────────────────────
+# ── 1. DEFAULTS: GOVERN_LESSON_EVICT is ON by default (#95) ──────────────────
+# 1a. UNDER budget: eviction is a no-op below budget, so this leg is unchanged from before #95.
 reset_ws yes
 run "$(rpt '{}')"
-assert_contains "$(cat "$T/CLAUDE.md")" "$LESSON" "defaults: lesson still lands in CLAUDE.md (gates ship inert)"
-assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "defaults: appendix untouched"
-assert_contains "$(cat "$T/CLAUDE.md")" "INCUMBENT_BULLET" "defaults: nothing is ever evicted"
+assert_contains "$(cat "$T/CLAUDE.md")" "$LESSON" "defaults, under budget: lesson still lands in CLAUDE.md (EVICT is a no-op below budget)"
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "defaults, under budget: appendix untouched"
+assert_contains "$(cat "$T/CLAUDE.md")" "INCUMBENT_BULLET" "defaults, under budget: nothing is ever evicted"
+
+# 1b. AT/OVER budget WITH a matching .evicts naming exactly one existing entry: that entry is
+# displaced and the lesson lands in CLAUDE.md. No GOVERN_LESSON_EVICT set: this IS the new default.
+reset_ws yes
+run "$(rpt '{"evicts":"INCUMBENT_BULLET"}')" GOVERN_LESSON_BUDGET_CHARS=10
+claude_now="$(cat "$T/CLAUDE.md")"
+assert_contains     "$claude_now" "$LESSON"          "defaults, at budget + named incumbent: lesson promoted to CLAUDE.md"
+assert_not_contains "$claude_now" "INCUMBENT_BULLET" "defaults, at budget + named incumbent: the named bullet is GONE"
+assert_contains     "$claude_now" "KEEPER_BULLET"    "defaults, at budget + named incumbent: the neighbouring bullet survives"
+
+# 1c. AT/OVER budget with NO .evicts: the lesson is demoted to CLAUDE-APPENDIX.md in full and
+# CLAUDE.md is unchanged. No GOVERN_LESSON_EVICT set: this IS the new default.
+reset_ws yes
+run "$(rpt '{}')" GOVERN_LESSON_BUDGET_CHARS=10
+assert_contains     "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON"          "defaults, at budget, no .evicts: demoted to the appendix in full"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON"          "defaults, at budget, no .evicts: CLAUDE.md does not grow"
+assert_contains     "$(cat "$T/CLAUDE.md")"          "INCUMBENT_BULLET" "defaults, at budget, no .evicts: incumbents untouched"
+
+# 1d. Kill switch: GOVERN_LESSON_EVICT=0 restores the OLD always-insert-into-CLAUDE.md behaviour,
+# even at/over budget.
+reset_ws yes
+run "$(rpt '{}')" GOVERN_LESSON_EVICT=0 GOVERN_LESSON_BUDGET_CHARS=10
+assert_contains     "$(cat "$T/CLAUDE.md")" "$LESSON"          "kill switch GOVERN_LESSON_EVICT=0: lesson lands in CLAUDE.md even over budget"
+assert_contains     "$(cat "$T/CLAUDE.md")" "INCUMBENT_BULLET" "kill switch GOVERN_LESSON_EVICT=0: no eviction demanded"
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "kill switch GOVERN_LESSON_EVICT=0: appendix untouched"
 
 # ── 2. SINK INVERSION: appendix is the default target ────────────────────────
 reset_ws yes
