@@ -2,7 +2,35 @@
 
 ## Unreleased
 
-### Removed
+### Added
+
+**Evidence-based, reversible, two-lane CLAUDE.md trimming (`claudemd-trim.sh`) replaces blind
+size-based eviction in `govern-bookkeep.sh --enforce-budgets`.** Design adapted from cleanmyclaude's
+rule_trim/rule_drift/rule_verdicts. The unit of removal is a markdown block (heading, bullet with its
+continuation lines, paragraph, whole fenced code block), never a char truncation or a raw line; trim
+candidates come from evidence, not size or age; every removal is a reversible move into
+`CLAUDE-APPENDIX.md`, never a delete; and only mechanical proof may auto-apply, suspicion goes to a
+human. Zero model calls.
+
+- Lane 1 (auto, kill switch `GOVERN_TRIM_DEAD=0`): moves a block only when EVERY backticked repo
+  path it cites is absent from the workspace root and every sub-repo in `scripts/lib/workspace.sh`,
+  and every cited `GOVERN_*`/`SHIPLOOP_*`/`WSP_*` knob appears nowhere under `scripts/` or
+  `templates/`; plus exact-duplicate blocks (same content hash, first copy kept). Headings and the
+  file's first block are never auto-moved. Each move lands in the appendix under a dated heading
+  with a one-line provenance note.
+- Lane 2 (propose): when the file still exceeds `SHIPLOOP_CLAUDEMD_MAX_CHARS` (default 14000) after
+  lane 1, candidates are written to `governor/claudemd-trim-proposals.md`, ranked largest first,
+  each with its content hash, byte size and an evidence line. CLAUDE.md is never edited by this lane.
+- Operator commands: `claudemd-trim.sh --apply <hash>` moves exactly the addressed block (refused
+  when the hash matches zero or several current blocks); `--still-true <hash>` records a verdict in
+  `governor/claudemd-verdicts.json` keyed by the block's content hash, so the verdict dies exactly
+  when the text it covered changes and the proposal revives; `--dry-run` previews both lanes. A
+  missing, corrupt or partial verdicts file always reads as NOT stamped. No tool bookkeeping is ever
+  written into CLAUDE.md itself.
+- `govern-bookkeep.sh --enforce-budgets` now calls the trim instead of demoting the largest sections
+  until the number fits; the lesson char cap, the learnings TTL and the budget alarm (exit 3) are
+  unchanged. `doctor` additionally reports how many trim proposals are pending. New npm script:
+  `govern:trim`.
 
 **The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
 

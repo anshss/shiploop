@@ -108,6 +108,7 @@ dispatched ticket gets done at the least spend, with every gate on.
 
   govern:audit                   manual supervisor review (zero spend unless invoked)
   govern:budgets                 enforce the CLAUDE.md / lessons / learnings budgets
+  govern:trim                    evidence-based CLAUDE.md trim (auto-moves proven-dead blocks, proposes the rest)
 USAGE
   exit 2
 fi
