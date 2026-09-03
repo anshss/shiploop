@@ -3,7 +3,7 @@
 #  - worker runs in PLAN mode (no edits, no PR)
 #  - merge + tickets.md bookkeeping run in ECHO mode (printed, not executed)
 #  - the selected ticket and a synthetic worktree are used; nothing is committed.
-# Usage: dry-run.sh [ticket-number]
+# Usage: dry-run.sh <ticket-number>
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -11,10 +11,10 @@ govern::require jq
 
 echo "=== govern dry-run ==="
 
-# 1. Select (real selector against real tickets.md).
-N="${1:-$("$DIR/select-ticket.sh")}"
-[[ -n "$N" ]] || govern::die "no eligible ticket to dry-run"
-echo "[1/5] selected ticket #$N"
+# 1. The ticket to rehearse. Named, always: there is no backlog selection to fall back on.
+N="${1:-}"
+[[ "$N" =~ ^[0-9]+$ ]] || govern::die "usage: dry-run.sh <ticket-number> — name the ticket to rehearse"
+echo "[1/5] ticket #$N"
 
 # 2. Spawn the worker in dry (plan) mode. Plan mode is read-only, so we point the worker at
 #    the REAL main checkout for genuine context — no worktree is created, nothing is copied,

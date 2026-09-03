@@ -178,7 +178,7 @@ done < <(printf '%s' "$ordered_keys")
 
 printf '\n'
 if [[ "$do_file" -eq 1 ]]; then
-  printf 'Filed %d validation ticket(s). The governor will grind them on its next pass.\n' "$filed"
+  printf 'Filed %d validation ticket(s). Dispatch them by name when you want them worked.\n' "$filed"
 else
   printf 'DRY RUN — %d ticket(s) planned, nothing filed. Re-run with --yes to file (real spend).\n' "$planned"
 fi

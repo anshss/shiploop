@@ -151,8 +151,8 @@ out="$(PATH="$TB/bin:$PATH" \
   GOVERN_LOCK="$TB/lock" \
   GOVERN_WORKTREE_CMD="$TB/wt.sh" \
   GOVERN_CLAUDE_BIN="$TB/bin/claude" \
-  GOVERN_NO_PUSH=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=99 GOVERN_IMPROVE=0 \
-  bash "$RL" </dev/null 2>&1)"
+  GOVERN_NO_PUSH=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
+  bash "$RL" --serial 1 2 3 </dev/null 2>&1)"
 
 # #2's wait is cleared at run-start (it owns an auto-merge-repo PR), so it is NOT deferred.
 assert_contains "$out" "ticket owns open alpha PR #201 in an auto-merge repo" "#2 NOT deferred — governor owns its PR (#191)"

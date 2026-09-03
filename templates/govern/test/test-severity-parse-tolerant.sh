@@ -9,6 +9,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 SEL="$DIR/../select-ticket.sh"
+sel1() { "$SEL" "$1" "1,2,3,4" | head -1; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
@@ -37,20 +38,20 @@ body4
 EOF
 : > "$T/none.md"
 
-out="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" "$SEL")"
+out="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" sel1 "")"
 assert_eq "$out" "1" "all three High forms parse as High → lowest-numbered High #1 wins over Medium #4"
 
 # With #1 excluded, the next High wins. If #2's colon-outside form silently downgraded to
 # unknown, #3 would win (or #4 would beat it if #3's list form also downgraded).
-out2="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" "$SEL" "1")"
+out2="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" sel1 "1")"
 assert_eq "$out2" "2" "#2 (colon-outside-bold) parses as High and wins over Medium #4"
 
 # With #1 and #2 excluded, #3 must win (list form parses as High).
-out3="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" "$SEL" "1,2")"
+out3="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" sel1 "1,2")"
 assert_eq "$out3" "3" "#3 (list form) parses as High and wins over Medium #4"
 
 # Finally, all Highs excluded → Medium #4 wins.
-out4="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" "$SEL" "1,2,3")"
+out4="$(GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_ESCALATIONS_FILE="$T/none.md" sel1 "1,2,3")"
 assert_eq "$out4" "4" "with all Highs excluded, Medium #4 wins normally"
 
 assert_done

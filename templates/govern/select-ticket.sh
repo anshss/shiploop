@@ -1,11 +1,33 @@
 #!/usr/bin/env bash
-# Emit the next ticket number to work: severity desc (High>Medium>Low>unknown), then # asc.
-# Skips numbers in $1 (comma-separated) and any # with an entry under "## Open" in escalations.
+# Order a NAMED ticket set for dispatch: severity desc (High>Medium>Low>unknown), then # asc.
+# Named dispatch is the only front door, so this script no longer picks anything FROM the backlog;
+# it filters and orders a set the operator already chose. What survives from the old selector is
+# exactly the ticket-BODY parser (the `## #N` scan + the tolerant `**Severity:**` match) and the
+# eligibility exclusions, both of which named dispatch still needs.
+#
+# Usage: select-ticket.sh <exclude-csv> <candidate-csv>
+#   <exclude-csv>    numbers to drop (may be empty)
+#   <candidate-csv>  the named set. REQUIRED; an empty/absent set is a usage error (exit 2), never
+#                    an implicit "pick something for me".
+# Prints one eligible ticket number per line, in dispatch order. Silent + exit 0 when the whole set
+# is ineligible (the caller names each survivor-less target and says why).
+#
+# Also dropped, per set: any ticket with an entry under "## Open" in escalations.md, any ticket whose
+# body is marked NOT govern-automatable (#92), and any ticket colliding with an open sync-port
+# manual port (#314).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 EXCLUDE_ARG="${1:-}"
+CANDIDATES="${2:-}"
+CANDIDATES="${CANDIDATES//[^0-9,]/}"
+if [[ -z "${CANDIDATES//,/}" ]]; then
+  printf 'usage: select-ticket.sh <exclude-csv> <candidate-csv>\n' >&2
+  printf '  the candidate set is required: this selector orders a NAMED set, it never picks from the backlog\n' >&2
+  exit 2
+fi
+include=",${CANDIDATES},"
 exclude=",${EXCLUDE_ARG},"
 
 # Add open-escalation ticket numbers to the exclude set.
@@ -23,17 +45,16 @@ if [[ -f "$ESCALATIONS_FILE" ]]; then
 fi
 
 # #92: drop tickets whose body carries a bold "NOT govern-automatable" / "requires web-UI" /
-# "handle interactively" marker — a headless worker can't resolve them, so selecting one just
-# burns a worker and fast-fails every run. They stay in tickets.md (workable again once a human
+# "handle interactively" marker — a headless worker can't resolve them, so dispatching one just
+# burns a worker and fast-fails. They stay in tickets.md (workable again once a human
 # un-parks/handles them); the loop logs the human-readable why (this script's stderr is suppressed).
 while IFS=$'\t' read -r na_n _; do
   [[ -n "$na_n" ]] && exclude+="${na_n},"
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 
-# #314: drop tickets that edit a file with an OPEN sync-port manual-port escalation — selecting
-# one this run risks colliding with that in-progress port's `sync-auto-*` branch/worktree (the
-# #309 collision). They stay in tickets.md (selectable once the sync-port escalation resolves);
-# the loop logs the why (this script's stderr is suppressed).
+# #314: drop tickets that edit a file with an OPEN sync-port manual-port escalation — dispatching
+# one risks colliding with that in-progress port's `sync-auto-*` branch/worktree (the #309
+# collision). They stay in tickets.md (dispatchable once the sync-port escalation resolves).
 while IFS=$'\t' read -r sp_n _; do
   [[ -n "$sp_n" ]] && exclude+="${sp_n},"
 done < <(govern::sync_port_collision_tickets "$TICKETS_FILE" "$ESCALATIONS_FILE")
@@ -58,18 +79,9 @@ flush
 
 [[ "${#rows[@]}" -gt 0 ]] || exit 0   # no tickets → empty output, exit 0
 
-# §4.8 VALUE ORDERING. The cheapest ticket is the one never dispatched, and dispatch order was
-# severity-then-number — never worth. The one worth distinction the harness can make DETERMINISTICALLY
-# (no model call) is product work vs. work the loop filed about ITSELF: the loop auto-files harness
-# tickets, pays full worker price for them, and files more. Cost per successful ticket can improve
-# while TOTAL spend rises, if the loop simply grinds more of its own backlog more cheaply — so product
-# tickets sort ahead of self-referential ones, severity breaking ties within each class exactly as
-# before. Off by default (GOVERN_PRODUCT_FIRST=0) so ordering is unchanged until an operator opts in.
-product_first="${GOVERN_PRODUCT_FIRST:-0}"
 for r in "${rows[@]}"; do
   n="${r#* }"
+  case "$include" in *",$n,"*) ;; *) continue;; esac
   case "$exclude" in *",$n,"*) continue;; esac
-  cls=0
-  if [[ "$product_first" == "1" ]] && govern::is_selfref_ticket "$n" "$TICKETS_FILE"; then cls=1; fi
-  printf '%s %s\n' "$cls" "$r"
-done | sort -k1,1n -k2,2n -k3,3n | head -1 | awk '{print $3}'
+  printf '%s\n' "$r"
+done | sort -k1,1n -k2,2n | awk '{print $2}'

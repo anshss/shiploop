@@ -859,8 +859,9 @@ govern::_flows_days_of() { # str -> N | ""
 
 # Pure READ — one advisory line per flow that is (a) MEASURING with a declared `Sample-window: <N>d`
 # whose window has plausibly elapsed since it was armed (Validated date), or (b) a settled verdict whose
-# `Revalidate: every <N>d` policy is past due. NEVER files, NEVER mutates — the periodic supervisor pass
-# surfaces these for the operator (billable safety: filing a validation is always a human act). Empty
+# `Revalidate: every <N>d` policy is past due. NEVER files, NEVER mutates — the run-end block in
+# run-loop.sh surfaces these for the operator (billable safety: filing a validation is always a human
+# act). Empty
 # (rc 0) when nothing is due or there is no registry.
 govern::flows_due_advisories() { # [meta-root] -> advisory lines
   local meta="${1:-$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")}"
