@@ -32,6 +32,17 @@ human. Zero model calls.
   unchanged. `doctor` additionally reports how many trim proposals are pending. New npm script:
   `govern:trim`.
 
+**`verify-filter.sh` reaches the interactive driver lane, plus two shipped subagents.** `npm run vf --
+<cmd>` now runs `scripts/govern/verify-filter.sh` from the workspace root (wired into scaffold.sh's
+package.json write, the merge-tier component, and `config_drift_report`'s missing-scripts check), so a
+driver session gets the same "a passing run emits nothing" treatment a worker already had.
+`router-posture-guard.sh` gains a second advisory: an unwrapped test/build command (`npm test`,
+`npm run build/test/check`, `pytest`, `go test`, `cargo test`, `vitest`, `jest`, `tsc`) gets a short
+nudge toward `npm run vf --`, sharing the existing per-session cap and driver-only guard. Kill switch
+`GOVERN_VF_NUDGE=0`. New `.claude/agents/{lookup,investigator}.md` (haiku single-fact lookup, sonnet
+multi-file investigation) ship as a new `agents` component, installed on fresh scaffold and by
+`/shiploop:update`.
+
 **The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
 
 Both fleets that ran the sweep had already abandoned it. One workspace's `governor/ticket-history.jsonl`

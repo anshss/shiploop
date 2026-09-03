@@ -62,6 +62,8 @@ bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" \
 bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" \
   --component commands     --yes >/dev/null 2>&1
 bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" \
+  --component agents       --yes >/dev/null 2>&1
+bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" \
   --component workflows    --yes >/dev/null 2>&1
 out="$(bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" --diff-only 2>&1)"; rc=$?
 assert_eq "$rc" "0" "3. --diff-only after full sync → exit 0 (in-sync)"
