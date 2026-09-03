@@ -53,7 +53,7 @@ run_loop() {
     GOVERN_LOCK="$T/lock" \
     GOVERN_NA_NUDGE_AFTER=3 \
     GOVERN_NO_PUSH=1 GOVERN_IMPROVE=0 \
-    bash "$RL" 2>&1
+    bash "$RL" 45 2>&1
 }
 
 open_count() { # how many open ### #45 escalations

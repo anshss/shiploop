@@ -49,7 +49,8 @@ removing a sub-repo is a one-file edit there.
 
 ## Commands
 
-`npm run dev` · `doctor` · `sync` · `tail` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` · `govern`.
+`npm run dev` · `doctor` · `sync` · `tail` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` ·
+`govern -- <ticket> ...` (named dispatch only; a bare `govern` prints usage).
 **Pass args after `--`.** Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list.
 
 ## Anti-patterns (load-bearing)

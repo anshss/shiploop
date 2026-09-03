@@ -144,7 +144,7 @@ out2="$(PATH="$T/bin:$PATH" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=30 \
   _GOVERN_EDP_SUPPORTED=1 \
   _GOVERN_TOOLS_SUPPORTED=1 \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 1 2 3 7 2>&1)"
 
 state="$(ls -t "$T"/logs/run-*/state.jsonl | head -1)"
 assert_eq "$(jq -r 'select(.ticket==1) | .status' "$state")" "resolved" "#1 interrupted then auto-retried → resolved [#34]"
@@ -220,7 +220,7 @@ out3="$(PATH="$T/bin:$PATH" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_WORKER_TIMEOUT=30 \
   _GOVERN_EDP_SUPPORTED=1 \
   _GOVERN_TOOLS_SUPPORTED=1 \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 1 2 3 7 2>&1)"
 
 state="$(ls -t "$T"/logs/run-*/state.jsonl | head -1)"
 assert_eq "$(jq -r 'select(.ticket==1) | .status' "$state")" "interrupted" "retry ALSO drops → recorded interrupted (NOT failed) [#34]"
@@ -314,7 +314,7 @@ out4="$(PATH="$T/bin:$PATH" \
   GOVERN_MAX_BAD_STREAK=2 \
   _GOVERN_EDP_SUPPORTED=1 \
   _GOVERN_TOOLS_SUPPORTED=1 \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 1 2 3 7 2>&1)"
 
 assert_contains "$out4" "circuit breaker" "consecutive interrupts trip the in-run circuit breaker [#34 LOCKED]"
 

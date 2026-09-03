@@ -100,7 +100,7 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_ALLOW_CONCURRENT=1 \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_PARALLEL_STAGGER_S=0 \
   GOVERN_WORKER_TIMEOUT=20 GOVERN_WORKER_MAX_TOKENS=100 GOVERN_TOKEN_POLL_S=1 \
-  bash "$RL" --parallel=2 </dev/null 2>&1)"
+  bash "$RL" --parallel=2 1 2 </dev/null 2>&1)"
 
 # The cross-run history is ONE file shared by every driver, so it is the unambiguous place to count
 # how many workers a ticket actually consumed this run — the per-driver state.jsonl files are folded

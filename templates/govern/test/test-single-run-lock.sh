@@ -18,7 +18,7 @@ RL="$DIR/../run-loop.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
 mkdir -p "$T/governor" "$T/logs"
-printf '# Tickets\n' > "$T/tickets.md"                       # header only → no eligible tickets → clean exit
+printf '# Tickets\n' > "$T/tickets.md"                       # header only → the named ticket is not found → clean exit
 printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
 
 # Run run-loop in dry mode (skips live preflight/escalations) so it reaches the lock then exits at
@@ -33,7 +33,7 @@ run_rl() { # extra "VAR=val"... -> sets OUT, RC
     GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
     GOVERN_LOG_ROOT="$T/logs" \
     GOVERN_LOCK="$T/lock" \
-    bash "$RL" --dry-run </dev/null 2>&1)" && RC=0 || RC=$?
+    bash "$RL" --dry-run 1 </dev/null 2>&1)" && RC=0 || RC=$?
 }
 
 # A guaranteed-LIVE, non-self holder = this test's own pid ($$): alive for the whole run and distinct

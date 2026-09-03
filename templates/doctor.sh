@@ -234,6 +234,26 @@ if [ -f "$ROOT/.claude/shiploop/validation/flows.md" ] && [ -f "$ROOT/scripts/go
   fi
 fi
 
+# ── Context budget — is CLAUDE.md over the per-turn budget? ──
+# CLAUDE.md is re-sent on EVERY turn of EVERY session, so an over-budget file is a permanent tax
+# charged to work that never touches the topic. This used to be enforced only inside a per-ticket
+# bookkeep, which coupled context hygiene to dispatch volume: stop dispatching and the file grows
+# unchecked. A FAILING check here (not a warning) is the decoupling — the fix is one command.
+if [ -f "$ROOT/CLAUDE.md" ]; then
+  section "context budget"
+  _cb_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
+  _cb_size="$(wc -c < "$ROOT/CLAUDE.md" 2>/dev/null | tr -d '[:space:]')"
+  _cb_size="${_cb_size:-0}"
+  if [ "$_cb_size" -gt "$_cb_budget" ]; then
+    fail "CLAUDE.md is $_cb_size chars, over the $_cb_budget budget (re-sent every turn) — run '${ROOT_PM:-npm} run govern:budgets' to demote the heaviest sections into CLAUDE-APPENDIX.md"
+  else
+    ok "CLAUDE.md $_cb_size/$_cb_budget chars"
+  fi
+  if [ -f "$ROOT/learnings.md" ] && [ "${SHIPLOOP_LEARNINGS_TTL:-0}" = "1" ]; then
+    ok "learnings TTL enforcement is on (SHIPLOOP_LEARNINGS_TTL=1) — 'govern:budgets' archives entries past the window"
+  fi
+fi
+
 # ── Update channel — is the harness behind the installed hub? ──
 # scaffold.sh writes scripts/lib/.harness-version (the hub VERSION this workspace
 # was last synced against). If the installed hub is locally resolvable and its

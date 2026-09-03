@@ -128,8 +128,8 @@ run_driver() { # extra env... -> one dry, serial, single-ticket driver; stderr o
   rm -rf "$T/logs"; mkdir -p "$T/logs"
   env GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_LOG_ROOT="$T/logs" \
     GOVERN_WORKTREE_CMD="$T/wt.sh" GOVERN_CLAUDE_BIN="$T/bin/claude" \
-    GOVERN_SETTING_SOURCES=user GOVERN_WORKER_TIMEOUT=60 GOVERN_SUPERVISOR_EVERY=99 \
-    GOVERN_MAX_TICKETS=1 PATH="$T/bin:$PATH" "$@" bash "$RL" --dry-run --serial 2>&1 || true
+    GOVERN_SETTING_SOURCES=user GOVERN_WORKER_TIMEOUT=60 \
+    GOVERN_MAX_TICKETS=1 PATH="$T/bin:$PATH" "$@" bash "$RL" --dry-run --serial 1 2 3 4 2>&1 || true
 }
 
 # ── A — GOVERN_BATCH_MAX=1 (explicit): no batching at all ──────────────────

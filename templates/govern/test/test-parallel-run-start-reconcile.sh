@@ -28,7 +28,7 @@ source "$DIR/assert.sh"
 RL="$DIR/../run-loop.sh"
 
 # Every worker call resolves its ticket; every supervisor call returns a clean verdict (same minimal
-# stubs as test-supervisor-cadence-parallel.sh).
+# stubs as test-run-loop-multi-target.sh).
 mk_claude_stub() { # <bindir>
   cat > "$1/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -96,7 +96,7 @@ run_govern() { # <dir> <args...> → combined stdout+stderr
   GOVERN_WORKTREE_CMD="$d/wt.sh" \
   GOVERN_CLAUDE_BIN="$d/bin/claude" \
   GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 GOVERN_PARALLEL_STAGGER_S=0 \
-  bash "${RL_UNDER_TEST:-$RL}" "$@" 2>&1
+  bash "${RL_UNDER_TEST:-$RL}" "$@" 501 502 2>&1
 }
 count() { grep -cF "$2" <<<"$1" || true; }
 
@@ -104,8 +104,8 @@ count() { grep -cF "$2" <<<"$1" || true; }
 TP="$(mktemp -d)"; trap 'rm -rf "$TP"' EXIT
 mk_fixture "$TP"
 par_out="$(run_govern "$TP" --parallel=2)"
-assert_contains "$par_out" "parallel mode: backlog pull across 2 concurrent full driver(s)" \
-  "the fan-out under test is 2 FULL backlog drivers — the shape that re-ran the preflight N times"
+assert_contains "$par_out" "parallel mode: 2 locality group(s)" \
+  "the fan-out under test is 2 FULL drivers, one per locality group — the shape that re-ran the preflight N times"
 assert_eq "$(count "$par_out" "preflight: published")" "1" \
   "preflight-main did its git work (fetch + push of the unpushed meta commit) EXACTLY once across the whole run — pre-fix each of the 2 children repeated it against the same checkout"
 assert_eq "$(count "$par_out" "run-start reconcile: skipped")" "2" \

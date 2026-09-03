@@ -51,7 +51,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **A watchdog cuts sessions that loop, stall, or just keep erroring.*** A stuck worker would otherwise burn tokens all the way to its timeout; the watchdog kills it the moment its transcript shows the pattern. Hard token budgets work the same way, per worker and per run: past the ceiling the worker is killed and its worktree kept, so the work resumes instead of restarting.now 
 
-- **A scripted codebase map is shared by every worker.** Before dispatch, plain scripts index the repo: what files exist, where symbols live, how it all fits together. Every worker starts with that index instead of burning tokens reading files to learn the same layout. A retry inherits the previous attempt's findings the same way, and the supervisor reads only what's new since its last look.
+- **A scripted codebase map is shared by every worker.** Before dispatch, plain scripts index the repo: what files exist, where symbols live, how it all fits together. Every worker starts with that index instead of burning tokens reading files to learn the same layout. A retry inherits the previous attempt's findings the same way, and the manual audit reads only what's new since its last pass.
  
 - **A retry resumes instead of restarting.** Exploration is most of what a ticket costs, and before this a failed attempt bought you literally nothing. Now the worktree is preserved, so attempt two doesn't re-clone or re-explore, and it inherits the previous attempt's work.
 
@@ -61,18 +61,20 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Related tickets can duplicate the same exploration.** One worker can take several tickets whose scout-measured file paths actually overlap, so it explores that area once instead of once per ticket resulting in token savings. A 5-ticket batch is nowhere near 5× cheaper than 5 workers.
 
-A few practical notes: the coordination layer itself does not consume model tokens. Parallel work improves throughput, not per-ticket efficiency. Some safeguards apply only when work is selected from the backlog automatically.
+Tokens are the currency: shiploop breaks work into tickets, you choose which ones matter, and each dispatched ticket gets done at the least spend. A few practical notes: the coordination layer itself does not consume model tokens. Parallel work improves throughput, not per-ticket efficiency.
 
 ## How Shiploop Runs
 
-Two layers are created for you: one **workspace** and a fresh **worker** for every ticket.
+You pick the tickets. Naming them is the only way work starts: there is no backlog sweep, because a
+sweep spends on queue-order priorities and you have your own. Two layers are created for you: one
+**workspace** and a fresh **worker** for every ticket.
 
 **The workspace.** `/shiploop:setup` wraps your existing repo instead of absorbing it. Your code moves into a subfolder but remains its own git repo with its full history. The path you `cd` into stays the same. Everything alongside it is plain text you can read and edit:
 
 ```yaml
 your-project/
   <your-repo>/              # your code, untouched, still its own git repo
-  queue/tickets.md          # the backlog, one `## #N` per ticket
+  queue/tickets.md          # the queue you dispatch from, one `## #N` per ticket
   governor/                 # doctrine, escalations, improvements
   scripts/                  # bash: status / dev / doctor / worktrees / govern
   scripts/lib/workspace.sh  # the ONE config file; every knob lives here
@@ -89,18 +91,18 @@ Autonomy is bounded by the trust ladder below, not the scaffolding. Workers bypa
 
 ## How it works
 
-The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh`): it owns state and control flow deterministically and spends near-zero Claude context. Model tokens burn only inside the fresh headless workers it spawns.
+The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh <N> ...`): you name the tickets, it owns state and control flow deterministically, and it spends near-zero Claude context. Model tokens burn only inside the fresh headless workers it spawns. Naming several tickets partitions them into **locality groups** by measured file overlap first, so two concurrent workers are never put on the same file, and every gate (claim lock, `Depends on:`, staleness, base-CI, upstream-drift, failure-streak) runs on every dispatch.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: queue/tickets.md feeds a fresh headless worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a supervisor audits the run and can halt it. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
+    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh headless worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
   </picture>
 </p>
 
 - **One ticket = one fresh headless session** in its own git worktree. Context stays flat, workers ship in parallel without collisions, no run inherits the last one's bad state.
 - **Cheap floor, escalate once.** Every ticket dispatches at `GOVERN_WORKER_MODEL` (default `sonnet`); a classified failure escalates it exactly once to `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`). No per-ticket prediction, because prediction was tried and measured as a rubber stamp. A cheap **scout pass** (haiku) still runs before dispatch, but it now only *surveys* (verified file paths, whether tests cover the area, whether history holds a precedent commit) which the worker gets as a warm start, the batching layer keys on, and the zero-model lane uses as its patch source. Its result is cached per run, so a retry never re-scouts.
-- **A periodic supervisor** (another cheap fresh session) audits the run and can halt it. Hard-stops land in `governor/escalations.md` for you.
+- **A manual audit** (`npm run govern:audit`, another cheap fresh session) reviews a run's state on demand and can return a `halt` verdict. Hard-stops land in `governor/escalations.md` for you. Zero model spend unless you invoke it.
 - **It gets better over time.** Every resolved ticket promotes its durable lesson into the right `CLAUDE.md` before the entry is deleted: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
 
 ## Trust
@@ -127,10 +129,13 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 
 | Command | What it does |
 |---|---|
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
-| *(say "work on \<tickets\>" / "work through the queue")* | Ship your backlog: natural language onto the bash-driven ticket loop (`scripts/govern/run-loop.sh`), end to end |
+| *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the bash-driven ticket loop (`scripts/govern/run-loop.sh <N> ...`), end to end |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |
+| `npm run govern:audit` | Manual audit: review a run's state on demand, zero model spend unless invoked |
+| `npm run govern:budgets` | Enforce context budgets (lesson char cap, CLAUDE.md total, learnings TTL) outside a dispatch; `--dry` to preview |
+| `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (opt-in, off until `GOVERN_EXTERNALIZE_REPO` is set) |
 
 `bash scripts/doctor.sh` warns when your workspace lags the hub by N releases.
 
@@ -148,8 +153,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_SCOUT` | on | Pre-dispatch survey (verified file paths, coverage, precedent commit) used as a worker warm start, the batching key, and the zero-model patch source. It does **not** pick the tier |
 | `GOVERN_SCOUT_MODEL` | `haiku` | Tier the scout pass itself runs at; recon should cost a rounding error |
 | `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned; dispatch proceeds without a survey |
-| `GOVERN_PARALLEL_DEFAULT` | `4` | Tickets a plain `run-loop.sh` works at once: `N > 1` runs N concurrent backlog drivers (N× the spend); per-run `--parallel[=N]` / `--serial` override it |
-| `GOVERN_SUPERVISOR_FLUSH` | on | Out-of-loop supervisor passes so a fan-out keeps the sequential review rhythm: a per-driver run-tail flush plus one whole-run review over the pool (`0` to suppress both) |
+| `GOVERN_PARALLEL_DEFAULT` | `4` | Locality groups a named `run-loop.sh <N> ...` dispatch works at once: `N > 1` runs N concurrent full-driver children, one per group (N× the spend); per-run `--parallel[=N]` / `--serial` override it. Naming exactly one ticket, or resolving to a single group, always collapses to sequential |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
@@ -202,7 +206,7 @@ prints nothing at all when there is no fleet.
 
 | Knob | Default | Turns on |
 |---|---|---|
-| `GOVERN_MAX_TICKETS` | `20` | Tickets one driver will work before stopping. **Per driver**, so a parallel backlog run's real ceiling is N × this |
+| `GOVERN_MAX_TICKETS` | `20` | Tickets one driver will work before stopping. **Per driver**, so a `--parallel` dispatch's real ceiling is N × this |
 | `GOVERN_MAX_BAD_STREAK` | `4` | Consecutive parked/failed tickets before the run halts itself |
 | `GOVERN_MAX_RUNTIME` | `0` (no cap) | Wall-clock seconds. There is **no** time bound unless you set one |
 | `GOVERN_WORKER_TIMEOUT` | `3600` (1h) | Seconds one worker may run before it is killed rather than left stalled |
@@ -219,8 +223,7 @@ prints nothing at all when there is no fleet.
 | `GOVERN_CONFLICT_FIX_TRIES` | `1` | Attempts at resolving a merge conflict before parking |
 | `GOVERN_INFRA_RETRY` | `1` | Retries for an infrastructure-class failure (API/transport). Retried at the **same** model tier, not escalated |
 | `GOVERN_INTERRUPT_RETRY` | `1` | Retries for a worker killed mid-flight |
-| `GOVERN_SUPERVISOR_EVERY` | `5` | Tickets between periodic supervisor reviews |
-| `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the supervisor pass runs at |
+| `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the manual audit (`govern:audit`) runs at |
 | `GOVERN_BATCH_MAX` | `2` | Tickets with overlapping scout-measured file paths that one worker may take as a group, exploring once and opening one PR. Kept low because no production A/B measurement of batching exists yet; `1` disables it |
 
 ### Binaries

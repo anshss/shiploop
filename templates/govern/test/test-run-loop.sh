@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# End-to-end orchestration proof for run-loop.sh with stubbed Claude (worker + supervisor) and
-# stubbed gh. No real auth, no network, no real repo mutation — everything in a sandbox.
+# End-to-end orchestration proof for run-loop.sh with a stubbed Claude worker and stubbed gh. No real
+# auth, no network, no real repo mutation: everything in a sandbox.
+#
+# Named dispatch works EXACTLY the tickets named. A ticket the worker FILES mid-run (#3 here, via the
+# report's newTickets) lands in tickets.md and is NOT worked by this dispatch: the operator decides
+# what to dispatch, and a worker filing work does not make that decision for them.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -74,17 +78,16 @@ out="$(PATH="$T/bin:$PATH" \
   GOVERN_LOCK="$T/lock" \
   GOVERN_WORKTREE_CMD="$T/wt.sh" \
   GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_SUPERVISOR_EVERY=1 GOVERN_IMPROVE=0 \
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
   GOVERN_MIGRATE_CMD="touch $T/migrated" GOVERN_VERIFY_CMD="true" \
-  bash "$RL" 2>&1)"
+  bash "$RL" --serial 1 2 2>&1)"
 
-assert_contains "$out" "resolved=2 parked=1"  "additive #1 + spawned #3 resolved; destructive #2 parked"
+assert_contains "$out" "resolved=1 parked=1"  "additive #1 resolved; destructive #2 parked"
 assert_contains "$out" "DESTRUCTIVE"          "destructive migration on #2 caught — NOT auto-merged"
-assert_contains "$out" "supervisor review"    "supervisor fired (every-1 cadence)"
 mr=no; [ -f "$T/migrated" ] && mr=yes
 assert_eq "$mr" "yes" "additive prod migration applied (GOVERN_MIGRATE_CMD ran) for #1"
 remaining="$(grep -c '^## #' "$T/tickets.md" || true)"
-assert_eq "$remaining" "1" "only the parked #2 remains in tickets.md"
+assert_eq "$remaining" "2" "the parked #2 and the worker-filed #3 remain in tickets.md — a mid-run-filed ticket is never auto-worked"
 commits="$(cd "$T" && git log --oneline | grep -c 'resolve #' || true)"
-assert_eq "$commits" "2" "2 resolve commits (#1,#3); destructive #2 parked, not bookkept"
+assert_eq "$commits" "1" "1 resolve commit (#1); destructive #2 parked, #3 never dispatched"
 assert_done
