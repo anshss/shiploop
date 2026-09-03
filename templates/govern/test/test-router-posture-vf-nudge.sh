@@ -5,11 +5,11 @@
 #   1. An unwrapped test/build runner (npm test) fires the advisory.
 #   2. The SAME command already wrapped in `npm run vf --` (or verify-filter.sh
 #      directly) stays silent.
-#   3. GOVERN_VF_NUDGE=0 is a kill switch — silent even when unwrapped.
-#   4. Silent for a governor worker (GOVERN_RUN set) — the delegation target,
+#   3. GOVERN_VF_NUDGE=0 is a kill switch: silent even when unwrapped.
+#   4. Silent for a governor worker (GOVERN_RUN set), the delegation target,
 #      not the driver.
 #   5. Silent for a sub-agent transcript path (.../subagents/...).
-#   6. The per-session warn cap is shared and respected — after
+#   6. The per-session warn cap is shared and respected: after
 #      MAX_WARNS_PER_SESSION warns in a session, the hook goes quiet.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,7 +61,7 @@ out="$(payload Bash "npm test" "$sid" "/tmp/fake-transcript.jsonl" | env -u GOVE
 assert_not_contains "$out" "verify-filter" "3. GOVERN_VF_NUDGE=0 silences the nudge"
 clear_counter "$sid"
 
-# ── 4. governor worker (GOVERN_RUN set) never gets nagged — it's the target ─
+# ── 4. governor worker (GOVERN_RUN set) never gets nagged, it's the target ──
 sid="vfnudge-workertarget"; clear_counter "$sid"
 p="$(payload Bash "npm test" "$sid" "/tmp/fake-transcript.jsonl")"
 out="$(printf '%s' "$p" | env GOVERN_RUN=1 "$GUARD" 2>&1)"
