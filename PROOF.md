@@ -111,8 +111,8 @@ governor's history log (2026-07-02 onward). Over that window, **N = 32 resolved 
 **This supersedes the earlier "~623.9k output tokens (~$0.54) per resolved ticket" estimate**,
 which predates real cost telemetry and does not reproduce against Claude Code's own cost
 accounting. The measured sample also skews toward `opus`-tier, self-referential harness/meta-tooling
-tickets (the harness improving itself), which run more expensive than typical right-sized
-haiku/sonnet product tickets — so $4.49 is closer to an opus-heavy upper bound than a right-sized
+tickets (the harness improving itself), which run more expensive than typical
+sonnet-floor product tickets — so $4.49 is closer to an opus-heavy upper bound than a floor-tier
 average. We're not publishing a lower, nicer-looking number in its place; $4.49/median $3.03 is
 what the 32-ticket sample with real telemetry actually shows, and the sample will grow as more runs
 carry cost data.
