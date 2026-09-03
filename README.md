@@ -43,13 +43,19 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Model orchestration.** Start with the lowest-cost capable model and escalate only after a clear failure. Failed attempts are usually far cheaper than successful ones, so a cheap first pass reduces average cost without compromising difficult work.
 
-- **Model→No Model.** Many backlog changes are mechanical: small, well-understood edits that do not need model judgment, yet they still consume a normal worker turn. This lane applies and verifies only pre-validated, low-risk changes directly, using no model at all. Anything ambiguous, unverified, or unsafe automatically falls back to the normal workflow.
+- **Workers runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the ticket actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
 
-- **Workers runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the ticket actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** (full methodology in [PROOF.md §5](PROOF.md)).
+- **Routine changes are handled by code, not a model.** Much of a backlog is mechanical: flip a default, add a key, bump a version, apply a known rename. Shiploop detects those during the survey it already runs, then applies and verifies them deterministically, with no model in the loop. Anything ambiguous, unverified, or unsafe falls back to the normal worker automatically.
+
+- **Successful outputs are kept out of the transcript.** Everything in a session is re-sent on every turn that follows, and test output is most of what a worker generates. A green run carries no information, so it never enters; failures come through trimmed to the useful part. Failing CI logs arrive the same way: a short scripted excerpt, not a fresh investigation.
+
+- **A scripted codebase map is shared by every worker.** Before dispatch, plain scripts index the repo: what files exist, where symbols live, how it all fits together. Every worker starts with that index instead of burning tokens reading files to learn the same layout. A retry inherits the previous attempt's findings the same way, and the supervisor reads only what's new since its last look.
+ 
+- **A retry resumes instead of restarting.** Exploration is most of what a ticket costs, and before this a failed attempt bought you literally nothing. Now the worktree is preserved, so attempt two doesn't re-clone or re-explore, and it inherits the previous attempt's work.
+
+- **Memory improves without growing.** Every resolved ticket writes a lesson into CLAUDE.md, a file that is re-sent on every turn forever. So lessons are length-capped, the file has a budget, and overflow moves to an appendix.
 
 - **Some tickets are blocked before work begins.** Check dependencies, repository health, capacity, setup, and if another fleet pushed the identical fix up, you get told to pull it down instead of a worker re-deriving it from scratch., so work that cannot succeed never consumes a worker and avoids waste of tokens.
-
-- **A retry resumes instead of restarting.** Exploration is most of what a ticket costs, and before this a failed attempt bought you literally nothing. Now the worktree is preserved, so attempt two doesn't re-clone or re-explore, and it inherits the previous attempt's work.
 
 - **Related tickets can duplicate the same exploration.** One worker can take several tickets whose scout-measured file paths actually overlap, so it explores that area once instead of once per ticket resulting in token savings. A 5-ticket batch is nowhere near 5× cheaper than 5 workers.
 
