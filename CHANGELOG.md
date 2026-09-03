@@ -4,6 +4,31 @@
 
 ### Added
 
+**`GOVERN_LESSON_EVICT` flips to on by default; a new `GOVERN_AUTO_BUDGETS` (default on) flushes the
+context-budget ratchet once per dispatch instead of never.**
+
+- `GOVERN_LESSON_EVICT` (forced eviction at budget, matching-`.evicts`-or-demote-to-appendix) now
+  defaults to `1`. `GOVERN_LESSON_EVICT=0` restores the old always-insert-into-`CLAUDE.md` behaviour.
+  Fixed a message contradiction along the way: the `GOVERN_LESSON_SINK=appendix` routing reason used
+  to falsely claim appendix was the default sink; `claude-md` is, and always was.
+- `run-loop.sh` now calls `govern-bookkeep.sh --enforce-budgets` once at the end of every dispatch,
+  after every worker is reaped, never per-ticket (a per-driver cadence divided across an N-way
+  `--parallel` fan-out would overfire ~N×). A "still over budget" alarm from that pass (exit 3) is
+  logged but never changes the dispatch's own exit status. Kill switch: `GOVERN_AUTO_BUDGETS=0`.
+
+**Worker and porter spawns now set `GOVERN_RUN=1`; the Stop-hook queue-reconcile reminder now exempts
+a dispatch worker.**
+
+- `spawn-worker.sh` adds `GOVERN_RUN=1` to the env prefix it already spawns every worker under. The
+  `pre-push` guard's branch-name enforcement under `GOVERN_RUN=1` was previously live only for
+  `sync-port.sh`'s porter spawn; it now covers the worker path too, closing a gap where a worker
+  could in principle push an arbitrary branch name.
+- `ticket-sweep-reminder.sh` (the Stop hook that nudges a session to reconcile `queue/tickets.md`)
+  now exits immediately under `GOVERN_RUN=1`. A dispatch worker inherits the workspace's git-tracked
+  `.claude/settings.json`, so this hook used to fire inside worker sessions too and block them with
+  an order to edit `tickets.md`, directly contradicting the worker prompt's "do NOT edit
+  `queue/tickets.md`".
+
 **Evidence-based, reversible, two-lane CLAUDE.md trimming (`claudemd-trim.sh`) replaces blind
 size-based eviction in `govern-bookkeep.sh --enforce-budgets`.** Design adapted from cleanmyclaude's
 rule_trim/rule_drift/rule_verdicts. The unit of removal is a markdown block (heading, bullet with its

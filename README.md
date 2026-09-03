@@ -157,6 +157,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Locality groups a named `run-loop.sh <N> ...` dispatch works at once: `N > 1` runs N concurrent full-driver children, one per group (N× the spend); per-run `--parallel[=N]` / `--serial` override it. Naming exactly one ticket, or resolving to a single group, always collapses to sequential |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_LESSON_MAX_CHARS` | `600` | Char cap on a single lesson promoted into `CLAUDE.md`; overflow keeps the lead rule inline and parks the full text in `CLAUDE-APPENDIX.md` |
+| `GOVERN_LESSON_EVICT` | `1` (on) | Forced eviction at budget: once root `CLAUDE.md` is at/over `GOVERN_LESSON_BUDGET_CHARS`, a new always-on lesson must name the existing entry it displaces (`lessonPatch.evicts`, matching exactly one heading/rule line) or it is routed to `CLAUDE-APPENDIX.md` instead of growing the always-on file. `0` restores the old always-insert-into-`CLAUDE.md` behaviour |
 | `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); enforced by `npm run govern:budgets` and checked by `doctor`. Past the ceiling the evidence-based trim proposes candidates, it never blind-evicts |
 | `GOVERN_TRIM_DEAD` | `1` (on) | Lane 1 of the CLAUDE.md trim: auto-move blocks whose every cited path/knob is provably absent from the workspace, plus exact duplicates, into `CLAUDE-APPENDIX.md`. `0` disables auto-moves, leaving proposals only |
 | `SHIPLOOP_LEARNINGS_TTL` | `0` (off) | Age out `learnings.md` entries older than `SHIPLOOP_LEARNINGS_TTL_DAYS` (default `14`) when `npm run govern:budgets` runs |
@@ -231,6 +232,7 @@ prints nothing at all when there is no fleet.
 | `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the manual audit (`govern:audit`) runs at |
 | `GOVERN_BATCH_MAX` | `2` | Tickets with overlapping scout-measured file paths that one worker may take as a group, exploring once and opening one PR. Kept low because no production A/B measurement of batching exists yet; `1` disables it |
 | `GOVERN_OVERLAP_NUDGE` | `1` (on) | Dispatch-time hint, zero model calls: before a named dispatch proceeds, print up to 5 `[overlap]`/`[overlap-dir]` lines naming any OTHER open ticket that shares a file (or, weaker, a directory) with what you named, so you can re-run with both on `npm run govern --`. Log line only, never blocks and never touches the queue; `0` silences it |
+| `GOVERN_AUTO_BUDGETS` | `1` (on) | Run `govern-bookkeep.sh --enforce-budgets` once at the end of every dispatch, after every worker is reaped (never per-ticket, so an N-way `--parallel` fan-out doesn't overfire it). A "still over budget" alarm from that pass (exit 3) is logged but never changes the dispatch's own exit status. `0` disables the auto-run; `npm run govern:budgets` still works manually either way |
 
 ### Binaries
 

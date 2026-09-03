@@ -1223,6 +1223,7 @@ set -m
 ( cd "$wtpath" && exec env \
     -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
     -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
+    GOVERN_RUN=1 \
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
