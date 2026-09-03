@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+**A session may never spawn above its own tier: every dispatched `--model` is clamped to
+`max(opus, the spawning session's model)`.**
+
+- `GOVERN_MODEL_CEILING` (default `1`, on) clamps the model chosen at every dispatch site: worker,
+  scout, supervisor, self-improve, self-apply, and the sync porter. Opus is the FLOOR of the ceiling,
+  so the cheap-floor/escalate-once rail is unchanged (a sonnet or haiku driver still buys opus on a
+  classified failure). What is now impossible is a driver buying a tier above the one it is itself
+  running at, and a session whose own model sits above opus is capped at that model rather than at
+  the family top: a `claude-fable-5` session spawns `claude-fable-5`, never `claude-fable-5-1`.
+- `govern::model_rank` is now version-aware. It canonicalises a bare alias or a full model id
+  (`claude-opus-5`, `claude-opus-5[1m]`, `claude-haiku-4-5-20251001`) into a total order: family
+  first (haiku < sonnet < opus < fable), then version within the family, with a two-digit sanity cap
+  so a trailing build date can never be read as a point release. A bare alias sits on its family's
+  floor when requested, and admits the whole family when it is the ceiling.
+- `govern::session_model` resolves the spawning session from `GOVERN_SESSION_MODEL`, then
+  `ANTHROPIC_MODEL`, then a bounded tail of the session transcript. No `jq` dependency, memoised per
+  process, and it never fails a caller. An undetectable session yields the `opus` ceiling: the
+  fail-safe direction, never the permissive one.
+- A clamp that lowers a tier is never silent: it logs, appends a marker to the dispatch's
+  `model_source`, and (in spawn-worker) emits a `worker_model_clamped` fleet event.
+
 ### Changed
 
 **CI shards the govern suite across 8 runners: the workflow's critical path drops from 267s to 47s
