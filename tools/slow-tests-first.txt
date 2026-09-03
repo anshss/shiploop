@@ -1,0 +1,46 @@
+# Scheduling hint ONLY: the slowest govern tests, slowest first.
+#
+# CI shards the suite across N runners. Round-robin over an alphabetical list
+# packs badly (measured: slowest shard 137s vs fastest 28s) because cost is
+# concentrated, not spread: the 25 tests below are ~66% of the suite's 553s,
+# and the 71 fastest are 4.9%. Scheduling the expensive ones first turns that
+# into a near-even split (slowest shard ~113s, a 4.9x speedup).
+#
+# THIS FILE CANNOT AFFECT COVERAGE. CI builds the run order as: the tests
+# listed here that still exist, then EVERY remaining test file alphabetically.
+# A stale entry is skipped, a new test lands in the tail, and the union is
+# always the full suite. Staleness costs balance, never correctness. CI also
+# asserts the built order covers every test file.
+#
+# Regenerate by timing a full green run and taking the 25 slowest:
+#   for t in scripts/govern/test/test-*.sh; do
+#     s=$(date +%s.%N); bash "$t" >/dev/null 2>&1; e=$(date +%s.%N)
+#     printf '%s %s\n' "$(echo "$e-$s" | bc)" "$(basename "$t" .sh)"
+#   done | sort -rn | head -25 | awk '{print $2}'
+#
+# Measured 2026-09-04 on a full green run: 158 tests, 552.8s total.
+test-history-sizing-fields
+test-budget-exceeded-classification
+test-parallel-run-start-reconcile
+test-valjob
+test-spawn-early-abort
+test-run-loop-multi-target
+test-timeout-classification
+test-sync-port
+test-named-dispatch
+test-parallel-no-double-attempt
+test-local-first-migration
+test-claim-lock-dry
+test-auto-budgets
+test-na-permanent-nudge
+test-spawn-warm-escalation
+test-interrupted-classification
+test-events-runloop
+test-spawn-exclude-dynamic-prompt
+test-locality-batch-runloop
+test-sync-port-fork-funnel
+test-install-semaphore
+test-orphan-teardown
+test-cost-summary
+test-autonomy-gate
+test-spawn-worker-sweep

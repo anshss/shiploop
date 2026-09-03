@@ -152,4 +152,16 @@ out="$(sweep "$T" sess11)"
 assert_contains "$out" '"decision":"block"' "dangling-ref case still blocks"
 assert_contains "$out" "#252" "dangling-ref case still gets the #252 framing"
 
+# ── 12. GOVERN_RUN=1 (a dispatch worker's spawn) exits silently, even on a scenario that fires
+#        without it. Same setup as case 2 (new work after a clean baseline blocks), GOVERN_RUN=1
+#        added: a dispatch worker's own prompt (governor/worker-prompt.md) forbids editing
+#        queue/tickets.md, so this hook must never order it to reconcile. Case 2 above already
+#        proves the other half: GOVERN_RUN unset still blocks a normal interactive session.
+T="$(mk_sandbox)"
+snap "$T" sess12
+dirty_subrepo "$T"          # identical to case 2's "new work after baseline"
+out="$(printf '{"session_id":"sess12","cwd":"%s/wt","stop_hook_active":false}' "$T" \
+  | META_ROOT="$T/main" TMPDIR="$TMPDIR" GOVERN_RUN=1 bash "$SWEEP")"
+assert_eq "$out" "" "GOVERN_RUN=1: exits silently even though the identical scenario fires without it (case 2)"
+
 assert_done

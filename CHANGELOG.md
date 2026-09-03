@@ -4,6 +4,68 @@
 
 ### Added
 
+**`verify-filter.sh` reaches the interactive driver lane, plus two shipped subagents.** `npm run vf --
+<cmd>` now runs `scripts/govern/verify-filter.sh` from the workspace root (wired into scaffold.sh's
+package.json write, the merge-tier component, and `config_drift_report`'s missing-scripts check), so a
+driver session gets the same "a passing run emits nothing" treatment a worker already had.
+`router-posture-guard.sh` gains a second advisory: an unwrapped test/build command (`npm test`,
+`npm run build/test/check`, `pytest`, `go test`, `cargo test`, `vitest`, `jest`, `tsc`) gets a short
+nudge toward `npm run vf --`, sharing the existing per-session cap and driver-only guard. Kill switch
+`GOVERN_VF_NUDGE=0`. New `.claude/agents/{lookup,investigator}.md` (haiku single-fact lookup, sonnet
+multi-file investigation) ship as a new `agents` component, installed on fresh scaffold and by
+`/shiploop:update`.
+
+## 1.18.0 — 2026-09-04
+
+### Added
+
+**A session may never spawn above its own tier: every dispatched `--model` is clamped to
+`max(opus, the spawning session's model)`.**
+
+- `GOVERN_MODEL_CEILING` (default `1`, on) clamps the model chosen at every dispatch site: worker,
+  scout, supervisor, self-improve, self-apply, and the sync porter. Opus is the FLOOR of the ceiling,
+  so the cheap-floor/escalate-once rail is unchanged (a sonnet or haiku driver still buys opus on a
+  classified failure). What is now impossible is a driver buying a tier above the one it is itself
+  running at, and a session whose own model sits above opus is capped at that model rather than at
+  the family top: a `claude-fable-5` session spawns `claude-fable-5`, never `claude-fable-5-1`.
+- `govern::model_rank` is now version-aware. It canonicalises a bare alias or a full model id
+  (`claude-opus-5`, `claude-opus-5[1m]`, `claude-haiku-4-5-20251001`) into a total order: family
+  first (haiku < sonnet < opus < fable), then version within the family, with a two-digit sanity cap
+  so a trailing build date can never be read as a point release. A bare alias sits on its family's
+  floor when requested, and admits the whole family when it is the ceiling.
+- `govern::session_model` resolves the spawning session from `GOVERN_SESSION_MODEL`, then
+  `ANTHROPIC_MODEL`, then a bounded tail of the session transcript. No `jq` dependency, memoised per
+  process, and it never fails a caller. An undetectable session yields the `opus` ceiling: the
+  fail-safe direction, never the permissive one.
+- A clamp that lowers a tier is never silent: it logs, appends a marker to the dispatch's
+  `model_source`, and (in spawn-worker) emits a `worker_model_clamped` fleet event.
+
+
+**`GOVERN_LESSON_EVICT` flips to on by default; a new `GOVERN_AUTO_BUDGETS` (default on) flushes the
+context-budget ratchet once per dispatch instead of never.**
+
+- `GOVERN_LESSON_EVICT` (forced eviction at budget, matching-`.evicts`-or-demote-to-appendix) now
+  defaults to `1`. `GOVERN_LESSON_EVICT=0` restores the old always-insert-into-`CLAUDE.md` behaviour.
+  Fixed a message contradiction along the way: the `GOVERN_LESSON_SINK=appendix` routing reason used
+  to falsely claim appendix was the default sink; `claude-md` is, and always was.
+- `run-loop.sh` now calls `govern-bookkeep.sh --enforce-budgets` once at the end of every dispatch,
+  after every worker is reaped, never per-ticket (a per-driver cadence divided across an N-way
+  `--parallel` fan-out would overfire ~N×). A "still over budget" alarm from that pass (exit 3) is
+  logged but never changes the dispatch's own exit status. Kill switch: `GOVERN_AUTO_BUDGETS=0`.
+
+**Worker and porter spawns now set `GOVERN_RUN=1`; the Stop-hook queue-reconcile reminder now exempts
+a dispatch worker.**
+
+- `spawn-worker.sh` adds `GOVERN_RUN=1` to the env prefix it already spawns every worker under. The
+  `pre-push` guard's branch-name enforcement under `GOVERN_RUN=1` was previously live only for
+  `sync-port.sh`'s porter spawn; it now covers the worker path too, closing a gap where a worker
+  could in principle push an arbitrary branch name.
+- `ticket-sweep-reminder.sh` (the Stop hook that nudges a session to reconcile `queue/tickets.md`)
+  now exits immediately under `GOVERN_RUN=1`. A dispatch worker inherits the workspace's git-tracked
+  `.claude/settings.json`, so this hook used to fire inside worker sessions too and block them with
+  an order to edit `tickets.md`, directly contradicting the worker prompt's "do NOT edit
+  `queue/tickets.md`".
+
 **Evidence-based, reversible, two-lane CLAUDE.md trimming (`claudemd-trim.sh`) replaces blind
 size-based eviction in `govern-bookkeep.sh --enforce-budgets`.** Design adapted from cleanmyclaude's
 rule_trim/rule_drift/rule_verdicts. The unit of removal is a markdown block (heading, bullet with its
@@ -32,16 +94,21 @@ human. Zero model calls.
   unchanged. `doctor` additionally reports how many trim proposals are pending. New npm script:
   `govern:trim`.
 
-**`verify-filter.sh` reaches the interactive driver lane, plus two shipped subagents.** `npm run vf --
-<cmd>` now runs `scripts/govern/verify-filter.sh` from the workspace root (wired into scaffold.sh's
-package.json write, the merge-tier component, and `config_drift_report`'s missing-scripts check), so a
-driver session gets the same "a passing run emits nothing" treatment a worker already had.
-`router-posture-guard.sh` gains a second advisory: an unwrapped test/build command (`npm test`,
-`npm run build/test/check`, `pytest`, `go test`, `cargo test`, `vitest`, `jest`, `tsc`) gets a short
-nudge toward `npm run vf --`, sharing the existing per-session cap and driver-only guard. Kill switch
-`GOVERN_VF_NUDGE=0`. New `.claude/agents/{lookup,investigator}.md` (haiku single-fact lookup, sonnet
-multi-file investigation) ship as a new `agents` component, installed on fresh scaffold and by
-`/shiploop:update`.
+**Dispatch-time overlap nudge, zero model calls.** Named dispatch already batches overlap WITHIN the
+set you name (locality batching), but had no visibility into a ticket you did NOT name. Measured: 81%
+of dispatched tickets touched files an earlier ticket touched, and 45% of overlapping pairs were both
+already queued at dispatch time, batchable if the operator had known.
+
+- After a named set's own target paths are known (the scout's measured `targetPaths`, or a measured
+  `**Files:**` field, or as a last resort backticked paths in the ticket's own body), `run-loop.sh`
+  scans every OTHER open `## #N` ticket's body for path-like tokens (anything containing `/` or
+  ending `.sh`/`.md`/`.ts`/`.js`/`.go`/`.py`/`.json`; `file:line` counts as its file) and prints up
+  to 5 non-blocking `[overlap]` (exact shared file) or `[overlap-dir]` (weaker: shared directory
+  prefix, depth 2+) lines naming the batch command to re-run with both tickets.
+- Never blocks, never changes `DISPATCH_GROUPS`, never touches the queue. Excludes tickets already in
+  the current named set, a ticket with nothing extractable, and a ticket a live driver already holds
+  the per-ticket claim lock on. Emits one `overlap_nudge` fleet event per line when `GOVERN_EVENTS=1`.
+- Kill switch `GOVERN_OVERLAP_NUDGE=0` (default on, log line only).
 
 **The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
 
@@ -69,33 +136,6 @@ worktree resume, scout warm start and report contract in `spawn-worker.sh` is ex
 - Deleted env flags: `GOVERN_SUPERVISOR_EVERY`, `GOVERN_SUPERVISOR_FLUSH`, `GOVERN_PRODUCT_FIRST`,
   `GOVERN_SELFREF_MAX_PER_RUN`, `GOVERN_IMPROVE_PER_RUN`.
 
-### Fixed
-
-**Named dispatch was the unprotected path.** Every gate the loop had was skipped the moment a ticket was
-named, on the theory that the operator chose deliberately. But naming a ticket does not land its
-dependency, un-red the base branch, or undo a fix another fleet already shipped. All of these now run on
-every named dispatch: the per-ticket claim lock, the cross-driver re-verify (#108), the `Depends on:` gate
-(#119, previously ignored outright on a named set), the staleness gate, the upstream-drift hub pregate,
-the failure-streak breaker (#60), and the run-start `preflight-main` + `preflight-base-ci`.
-
-**A named set fanned out ungrouped, putting two workers on one file.** Verified 2026-07-25:
-`run-loop.sh 24 25 26 --parallel` spawned three drivers even at `GOVERN_BATCH_MAX=3`. The named set is now
-partitioned into LOCALITY GROUPS by measured file overlap (dependency-related tickets kept apart) before
-anything is dispatched, and `--parallel` spawns one full driver per GROUP, so the fleet is sized in groups
-rather than tickets and every gate still fires inside each child. Naming EXACTLY ONE ticket is the
-carve-out: sequential and unbatched, whatever the knobs say.
-
-**Run-end blocks fired once per driver instead of once per dispatch.** The pending-escalations emit, the
-health ROI line, the sync-port trigger, the self-improvement review, the orphan reap and the
-validations-pending adopt are all whole-dispatch passes over shared state; firing them per child made an
-N-way run file N near-identical tickets over N slices of the same run. They now run once, in the
-orchestrator, after reaping; children skip them via the internal `--orchestrated` flag.
-
-**A group array named `GROUPS` dispatched the operator's unix group ids as ticket numbers.** `GROUPS` is a
-bash special variable and assignments to it are silently ignored. Caught in test, not in production. The
-array is `DISPATCH_GROUPS`.
-
-### Added
 
 **`govern-bookkeep.sh --enforce-budgets` runs the context ratchet OUTSIDE a dispatch**, wired to
 `<pm> run govern:budgets`. The lesson char cap and the CLAUDE.md total budget used to run only inside a
@@ -115,44 +155,6 @@ command that fixes it.
 **New npm keys**, added to fresh scaffolds and back-filled into existing workspaces by
 `/shiploop:update`: `govern:audit`, `govern:budgets`, `govern:externalize`.
 
-### Fixed
-
-**Parallel worktrees could exhaust a machine's RAM, and finished worktrees were never reclaimed.**
-Two independent leaks, both surfacing as "my laptop is unusable and my disk is full" rather than as
-any test failure.
-
-- **Concurrent dependency installs had no global cap.** A project bootstrap hook installs deps for
-  several sub-repos at once and backgrounds each one; the obvious throttle, a `wait` at the end of
-  the bootstrap, is per-worktree and cannot see another worktree's installs. Under
-  `GOVERN_PARALLEL_DEFAULT` tickets in flight the real ceiling was (tickets x repos x ~1 GB per
-  install). Measured on a 24 GB laptop: 13 concurrent installs, ~14 GB resident, 3.7 GB swap,
-  unusable for minutes. Neither layer was individually wrong — the governor's concurrency knob
-  reasons about API spend, the bootstrap's `&` reasons about one worktree, and nothing anywhere was
-  denominated in machine memory.
-
-  New `scripts/lib/install-semaphore.sh`: a cross-process, package-manager-agnostic cap (`mkdir`
-  atomic, works on stock bash 3.2). Default 4 via `WORKTREE_INSTALL_PARALLEL`. A slot orphaned by a
-  killed install is reclaimed by pid liveness; a slot wait degrades to running uncapped and loud
-  after `WORKTREE_INSTALL_WAIT_TIMEOUT` rather than deadlocking every session on the machine.
-  `worktree/new.sh` documents the seam so a project bootstrap opts in with two lines.
-
-  Note for anyone measuring this: `ps` RSS does not show the spike — it reported a 364 MB maximum
-  while the OS process monitor showed 1.18 GB for the same processes, because RSS excludes
-  compressed and swapped pages.
-
-- **New `<pm> run worktree:reap`** reclaims disk from worktrees nothing needs. Worktrees accumulate
-  from two directions: `run-loop.sh` preserves parked/failed tickets' worktrees on purpose and never
-  ages them out, and hand-made worktrees have no cleanup path at all. Measured: 26 GB across 12
-  worktrees.
-
-  Dry-run by default. A worktree is reaped only when it is idle AND clean AND merged across every
-  repo *including the meta worktree root*, and any check that cannot be answered blocks the reap.
-  That last part is load-bearing: of four worktrees with zero commits off `origin/main`, one had a
-  live session working in it and another had uncommitted files — deleting on the merge check alone
-  would have destroyed both. `--strip` drops regenerable build output from kept-but-idle worktrees
-  instead of removing them.
-
-### Added
 
 **Fleet visibility — the governor's live state, on four surfaces.** Governor workers are detached
 `claude -p` processes whose pid lives only in a bash array inside `run-loop.sh`; structured state was
@@ -203,6 +205,88 @@ One append-only event log is now the single source of truth, and everything fold
   is hub-context (the monitor ships with the plugin, not into a workspace) and is registered in
   `tools/hub-context-tests.txt`. `GOVERN_EVENTS=0` is exported from `test/assert.sh` for the whole
   suite, per the standing dispatch-path-mechanism rule.
+
+### Changed
+
+**CI shards the govern suite across 8 runners: the workflow's critical path drops from 267s to 47s
+(5.7x), with no test removed.**
+
+- `scaffold-and-test` is now an 8-way matrix (`fail-fast: false`). Every test is self-contained in
+  its own `mktemp` workspace, so the suite is embarrassingly parallel.
+- Shard packing is cost-aware. Timing a full green run (158 tests) shows the cost is concentrated
+  rather than spread: the 25 slowest tests are 66% of the runtime and the 71 fastest are 4.9%
+  combined. Round-robin over an alphabetical list therefore packs badly, so CI orders the expensive
+  tests first using the new `tools/slow-tests-first.txt` hint. Measured on this workflow: 8 shards
+  land between 24s and 47s, against 267s for the old single sequential job.
+- That hint file cannot affect coverage. CI builds the order as "listed tests that still exist,
+  then every remaining test file alphabetically", and then asserts the built order covers every
+  test file exactly once before running anything. A stale entry is skipped, a new test lands in the
+  tail, and a missing hint file degrades to plain alphabetical order.
+- `jq` and `shellcheck` ship on the `ubuntu-latest` image, so the three `apt-get install` steps
+  (each carrying an `apt-get update`) are now guarded on `command -v` and normally do no work. They
+  are guarded rather than deleted so the workflow survives a future runner-image change.
+
+### Fixed
+
+**Named dispatch was the unprotected path.** Every gate the loop had was skipped the moment a ticket was
+named, on the theory that the operator chose deliberately. But naming a ticket does not land its
+dependency, un-red the base branch, or undo a fix another fleet already shipped. All of these now run on
+every named dispatch: the per-ticket claim lock, the cross-driver re-verify (#108), the `Depends on:` gate
+(#119, previously ignored outright on a named set), the staleness gate, the upstream-drift hub pregate,
+the failure-streak breaker (#60), and the run-start `preflight-main` + `preflight-base-ci`.
+
+**A named set fanned out ungrouped, putting two workers on one file.** Verified 2026-07-25:
+`run-loop.sh 24 25 26 --parallel` spawned three drivers even at `GOVERN_BATCH_MAX=3`. The named set is now
+partitioned into LOCALITY GROUPS by measured file overlap (dependency-related tickets kept apart) before
+anything is dispatched, and `--parallel` spawns one full driver per GROUP, so the fleet is sized in groups
+rather than tickets and every gate still fires inside each child. Naming EXACTLY ONE ticket is the
+carve-out: sequential and unbatched, whatever the knobs say.
+
+**Run-end blocks fired once per driver instead of once per dispatch.** The pending-escalations emit, the
+health ROI line, the sync-port trigger, the self-improvement review, the orphan reap and the
+validations-pending adopt are all whole-dispatch passes over shared state; firing them per child made an
+N-way run file N near-identical tickets over N slices of the same run. They now run once, in the
+orchestrator, after reaping; children skip them via the internal `--orchestrated` flag.
+
+**A group array named `GROUPS` dispatched the operator's unix group ids as ticket numbers.** `GROUPS` is a
+bash special variable and assignments to it are silently ignored. Caught in test, not in production. The
+array is `DISPATCH_GROUPS`.
+
+
+**Parallel worktrees could exhaust a machine's RAM, and finished worktrees were never reclaimed.**
+Two independent leaks, both surfacing as "my laptop is unusable and my disk is full" rather than as
+any test failure.
+
+- **Concurrent dependency installs had no global cap.** A project bootstrap hook installs deps for
+  several sub-repos at once and backgrounds each one; the obvious throttle, a `wait` at the end of
+  the bootstrap, is per-worktree and cannot see another worktree's installs. Under
+  `GOVERN_PARALLEL_DEFAULT` tickets in flight the real ceiling was (tickets x repos x ~1 GB per
+  install). Measured on a 24 GB laptop: 13 concurrent installs, ~14 GB resident, 3.7 GB swap,
+  unusable for minutes. Neither layer was individually wrong — the governor's concurrency knob
+  reasons about API spend, the bootstrap's `&` reasons about one worktree, and nothing anywhere was
+  denominated in machine memory.
+
+  New `scripts/lib/install-semaphore.sh`: a cross-process, package-manager-agnostic cap (`mkdir`
+  atomic, works on stock bash 3.2). Default 4 via `WORKTREE_INSTALL_PARALLEL`. A slot orphaned by a
+  killed install is reclaimed by pid liveness; a slot wait degrades to running uncapped and loud
+  after `WORKTREE_INSTALL_WAIT_TIMEOUT` rather than deadlocking every session on the machine.
+  `worktree/new.sh` documents the seam so a project bootstrap opts in with two lines.
+
+  Note for anyone measuring this: `ps` RSS does not show the spike — it reported a 364 MB maximum
+  while the OS process monitor showed 1.18 GB for the same processes, because RSS excludes
+  compressed and swapped pages.
+
+- **New `<pm> run worktree:reap`** reclaims disk from worktrees nothing needs. Worktrees accumulate
+  from two directions: `run-loop.sh` preserves parked/failed tickets' worktrees on purpose and never
+  ages them out, and hand-made worktrees have no cleanup path at all. Measured: 26 GB across 12
+  worktrees.
+
+  Dry-run by default. A worktree is reaped only when it is idle AND clean AND merged across every
+  repo *including the meta worktree root*, and any check that cannot be answered blocks the reap.
+  That last part is load-bearing: of four worktrees with zero commits off `origin/main`, one had a
+  live session working in it and another had uncommitted files — deleting on the merge check alone
+  would have destroyed both. `--strip` drops regenerable build output from kept-but-idle worktrees
+  instead of removing them.
 
 ## 1.17.2 — 2026-08-03
 

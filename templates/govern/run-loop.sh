@@ -1026,6 +1026,14 @@ if [[ "$PARALLEL" -eq 1 ]]; then
 fi
 govern::log "dispatching ${#DISPATCH_GROUPS[@]} locality group(s) from ${#TARGETS[@]} named ticket(s)$( [[ "$PARALLEL" -eq 1 ]] && printf ', up to %s concurrent' "$PARALLEL_N" )"
 
+# ── dispatch-time overlap nudge (#139, zero model calls) ────────────────────────────────────────────
+# Locality batching above only sees the NAMED set: it has no visibility into a ticket the operator
+# did not name. Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45%
+# of overlapping pairs were both ALREADY QUEUED at dispatch, batchable if the operator had known.
+# This is a non-blocking hint only: it never changes DISPATCH_GROUPS, never touches the queue, and
+# never blocks. GOVERN_OVERLAP_NUDGE=0 silences it (default on, log line only).
+govern::overlap_nudge "$ELIGIBLE_CSV" "$TICKETS_FILE"
+
 # ── --parallel orchestrator ──────────────────────────────────────────────────────────────────────
 # Composes the SAME machinery a manual "launch N drivers, each with GOVERN_ALLOW_CONCURRENT=1"
 # recipe always used: the per-ticket claim lock + the bookkeep lock (both documented above) are what
@@ -1974,6 +1982,29 @@ govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout
   "budget_exceeded=$nbudget" "early_aborted=$nabort" "interrupted=$nintr" "processed=$done_count" \
   "rundir=$RUNDIR"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
+
+# ── auto budget enforcement (#95) ────────────────────────────────────────────────────────────────
+# govern-bookkeep.sh --enforce-budgets used to be invoked ONLY by a human (`npm run govern:budgets`)
+# or by a human heeding doctor.sh's failing check, so a fleet that never runs either never enforces
+# its own context budgets. Flush it here instead: ONCE per dispatch, at run-end, AFTER every worker
+# is reaped (RUN_END is 1 only in the orchestrator / the sequential driver that IS the orchestrator,
+# see the RUN-END BLOCKS comment above). Deliberately NOT per-ticket: a per-driver cadence divided
+# across an N-way fan-out overfires ~N× (workspace CLAUDE.md rule 15); a single end-of-run flush
+# keeps the check rate constant regardless of --parallel width.
+#
+# --enforce-budgets can legitimately exit 3 as a deliberate "still over budget" alarm (doctor gates
+# on that). That alarm must NEVER abort this run or change its exit status: capture the status
+# explicitly rather than letting `set -euo pipefail` see a bare non-zero command. GOVERN_AUTO_BUDGETS=0
+# disables this entirely (default on; mirrors how GOVERN_OVERLAP_NUDGE (#139) is structured).
+if [[ "$RUN_END" -eq 1 && "$MODE" == "live" && "${GOVERN_AUTO_BUDGETS:-1}" == "1" ]]; then
+  eb_out="$("$DIR/govern-bookkeep.sh" --enforce-budgets 2>&1)" && eb_rc=0 || eb_rc=$?
+  [[ -n "${eb_out:-}" ]] && printf '%s\n' "$eb_out" | while IFS= read -r _bl; do govern::log "budgets | $_bl"; done
+  case "$eb_rc" in
+    0) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): OK, under budget after the pass" ;;
+    3) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): ALARM, still over budget after the pass (exit 3); does not affect this run's exit status. Review governor/claudemd-trim-proposals.md." ;;
+    *) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): --enforce-budgets exited $eb_rc (unexpected); does not affect this run's exit status." ;;
+  esac
+fi
 
 # Auto-trigger sync-port at run-end IFF (a) the mechanism script is present in this workspace AND
 # (b) the workspace opted in via GOVERN_UPSTREAM_HARNESS_REPO. Best-effort: a failure here logs but

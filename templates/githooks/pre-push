@@ -4,9 +4,9 @@
 # Policy (CLAUDE.md anti-pattern #9): meta-repo/coordination files commit DIRECTLY to `main` in the
 # main checkout — a NORMAL interactive session never opens a harness PR. The governor is the sole
 # exception: a govern worker/loop may deliver a meta-repo-file ticket as a `ticket-<N>` PR on this
-# repo. The governor marks its git ops with GOVERN_RUN=1 (exported by scripts/govern/lib/common.sh
-# and injected into each worker by spawn-worker.sh); a normal session never sources that file, so
-# GOVERN_RUN is unset and a feature-branch push here is rejected.
+# repo. The governor marks its git ops with GOVERN_RUN=1: spawn-worker.sh sets it on the worker
+# spawn's env, and sync-port.sh sets it on the porter spawn's env. A normal interactive session
+# never sets it, so GOVERN_RUN is unset and a feature-branch push here is rejected.
 #
 # Under GOVERN_RUN=1 the branch name is ALSO enforced (#301): a govern worker's feature branch MUST
 # be a governor-owned name the governor can find + merge the PR by (#55) — either the classic

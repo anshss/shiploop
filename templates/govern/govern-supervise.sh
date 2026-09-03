@@ -65,6 +65,8 @@ $open_esc"
 
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 model="${GOVERN_SUPERVISOR_MODEL:-sonnet}"
+# A supervisor pass is spawned BY this session, so it lives under the same ceiling as a worker.
+model="$(govern::model_clamp "$model")"
 # TokenJam: tag this supervisor session with the run id so it groups with the run's workers (#tokenjam).
 out="$(env OTEL_RESOURCE_ATTRIBUTES="$(govern::otel_attrs supervisor)" "$claude_bin" -p "$prompt" --output-format stream-json --verbose \
        --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" --permission-mode plan --model "$model" 2>/dev/null \
