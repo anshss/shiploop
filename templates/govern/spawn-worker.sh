@@ -124,7 +124,7 @@ ESCALATION_APPLIED=0
 # The tier this spawn escalated FROM, captured beside the flag so the fleet event log can report
 # `from`/`to` without re-parsing the human-readable model_source prose. Empty when nothing escalated.
 ESCALATION_FROM=""
-resolve_sizing() {
+resolve_sizing_uncapped() {
   local base_model base_effort escalated_model escalated_stamp
   retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
   ESCALATION_APPLIED=0
@@ -280,6 +280,30 @@ resolve_sizing() {
       ;;
   esac
   # Explicit: under `set -e` a function whose LAST command is a false test would abort the spawn.
+  return 0
+}
+
+
+# ── model ceiling (the LAST choke point before --model) ─────────────────────────────────────────
+# resolve_sizing_uncapped above has FOUR paths that can set the tier (workspace floor, the ticket
+# field under GOVERN_MEASURED_SIZING=0, the execute-only haiku shortcut, and the retry escalation to
+# GOVERN_WORKER_ESCALATION_MODEL) plus two early returns. Clamping at each of them is four chances to
+# miss one and a fifth the next time someone adds a path, so the clamp lives HERE, wrapping the whole
+# resolver: whatever the selection logic decided, this is the value that reaches the CLI.
+#
+# The rail: a session may never buy a tier above max(opus, its own model). See govern::model_clamp.
+# MODEL_CLAMPED_FROM carries the pre-clamp tier so the live path can emit a structured event; it is
+# empty whenever the clamp changed nothing.
+MODEL_CLAMPED_FROM=""
+resolve_sizing() {
+  MODEL_CLAMPED_FROM=""
+  resolve_sizing_uncapped "$@"
+  local capped; capped="$(govern::model_clamp "$model")"
+  if [[ "$capped" != "$model" ]]; then
+    MODEL_CLAMPED_FROM="$model"
+    model_source="$model_source (clamped to $capped by the session model ceiling)"
+    model="$capped"
+  fi
   return 0
 }
 
@@ -902,6 +926,12 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
 govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
+# A clamp is never silent: model_source already carries the marker into the log line above and the
+# history record, and this makes it queryable on the fleet event log beside worker_escalated.
+if [[ -n "${MODEL_CLAMPED_FROM:-}" ]]; then
+  govern::event worker_model_clamped "ticket=$N" "from=$MODEL_CLAMPED_FROM" "to=$model" \
+    "ceiling=$(govern::model_ceiling)"
+fi
 # §5.7: burn this ticket's ONE escalation. Stamped in the preserved worktree (the same artifact whose
 # existence is the retry signal), and ONLY on the live path — the dry-run seam is a pure observation
 # and must never mutate state a later real dispatch reads. Best-effort: an unwritable worktree loses
