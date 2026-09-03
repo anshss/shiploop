@@ -160,8 +160,9 @@ declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/v
 # exactly three fixes: be right, supersede in place, delete. None of them is a move. COROLLARY: if
 # something cannot be made self-correcting and does not clear the bar, DELETE it rather than demote it.
 #
-# The three gates below add admission + eviction. Each SHIPS INERT — the default is byte-for-byte
-# today's behaviour — and each is reverted by a single env var:
+# The three gates below add admission + eviction. GOVERN_LESSON_SINK and GOVERN_LESSON_LADDER SHIP
+# INERT (default is byte-for-byte the old behaviour); GOVERN_LESSON_EVICT ships ON by default (the
+# ratchet is the point). Each is reverted by a single env var:
 #
 #   GOVERN_LESSON_SINK=claude-md|appendix        (default claude-md = today)
 #       `appendix` inverts the default sink: CLAUDE-APPENDIX.md becomes the DEFAULT target and an
@@ -177,13 +178,14 @@ declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/v
 #       says why the cheaper rungs cannot cover it (`lessonPatch.rungWhyNot`). This is a gate on the
 #       SHAPE of what was submitted — no model call, no judgement, no new `claude` invocation.
 #
-#   GOVERN_LESSON_EVICT=0|1                      (default 0 = off)
+#   GOVERN_LESSON_EVICT=0|1                      (default 1 = on)
 #       Forced eviction at budget: when the target is at/over GOVERN_LESSON_BUDGET_CHARS, a new
 #       always-on line must NAME the entry it displaces (`lessonPatch.evicts`, matching exactly one
 #       existing heading or rule line in the target). This is the load-bearing item — it converts
 #       "is this useful?" (always yes -> ratchet) into "is this more useful than the weakest
 #       incumbent?" (a comparison -> steady state). No name, or a name matching zero/many lines: the
-#       lesson goes to the appendix instead of growing the always-on file.
+#       lesson goes to the appendix instead of growing the always-on file. Kill switch:
+#       GOVERN_LESSON_EVICT=0 restores the old always-insert-into-CLAUDE.md behaviour.
 #
 #   GOVERN_LESSON_BUDGET_CHARS                   (default: $SHIPLOOP_CLAUDEMD_MAX_CHARS, else 14000)
 #       The budget the eviction gate measures against — deliberately the SAME number the SessionStart
@@ -480,11 +482,11 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         sink_mode="${GOVERN_LESSON_SINK:-claude-md}"
         if [[ "$sink_mode" == "appendix" ]] && ! govern_bk::claims_always_on "$report"; then
           lesson_route="appendix"
-          route_reason="GOVERN_LESSON_SINK=appendix (appendix is the DEFAULT sink) and this patch made no always-on claim — an always-on slot needs lessonPatch.alwaysOn=true PLUS a non-empty .frequency and .reversibility"
+          route_reason="GOVERN_LESSON_SINK=appendix and this patch made no always-on claim: an always-on slot needs lessonPatch.alwaysOn=true PLUS a non-empty .frequency and .reversibility"
         elif [[ "${GOVERN_LESSON_LADDER:-0}" == "1" ]] && ! govern_bk::ladder_ok "$report"; then
           lesson_route="appendix"
           route_reason="ladder gate (guard > lint/test > appendix > always-on): the patch did not declare lessonPatch.rung=\"always-on\" together with a lessonPatch.rungWhyNot explaining why a guard or a lint cannot cover it"
-        elif [[ "${GOVERN_LESSON_EVICT:-0}" == "1" ]]; then
+        elif [[ "${GOVERN_LESSON_EVICT:-1}" == "1" ]]; then
           lesson_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
           lesson_cur_size="$(wc -c < "$target" 2>/dev/null | tr -d '[:space:]')"
           [[ -n "$lesson_cur_size" ]] || lesson_cur_size=0

@@ -61,13 +61,16 @@ the green-or-none merge gate, --setting-sources). Do NOT edit tests, common.sh, 
 settings.json, or any other file. Do NOT run git or any shell command — just edit the file(s).
 If nothing is both safe and worthwhile, make NO change at all."
 
+# Hoisted out of the invocation below so the session ceiling has a seam to clamp: a `--model` that
+# expands its own default inline is a dispatch site the rail cannot reach.
+apply_model="$(govern::model_clamp "${GOVERN_IMPROVE_MODEL:-sonnet}")"
 agent_cmd="${GOVERN_APPLY_AGENT_CMD:-}"
 if [[ -n "$agent_cmd" ]]; then
   ( cd "$WS_ROOT" && eval "$agent_cmd" ) || true
 else
   ( cd "$WS_ROOT" && "${GOVERN_CLAUDE_BIN:-claude}" -p "$prompt" --output-format stream-json --verbose \
       --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" --permission-mode acceptEdits \
-      --model "${GOVERN_IMPROVE_MODEL:-sonnet}" >/dev/null 2>&1 ) || true
+      --model "$apply_model" >/dev/null 2>&1 ) || true
 fi
 
 after="$(git status --porcelain | sort)"

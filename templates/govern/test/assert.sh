@@ -43,6 +43,15 @@ unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
 # it needs explicitly.
 export GOVERN_SCOUT=0
 
+# Hermetic model ceiling: govern::model_clamp derives its ceiling from the model of the session that
+# is spawning the process, and this suite is routinely run BY a governor worker (or a driver session)
+# whose model is whatever the operator happened to be on. Leaving it ambient would make the sizing
+# tests assert against a moving ceiling: a haiku-driven run clamps nothing (opus is the floor of the
+# ceiling), but a run driven from a tier above opus would let a fable tier through where the fixture
+# expects it clamped. Pin it to `opus`, the same value an undetectable session falls back to, so the
+# suite behaves exactly like the fail-safe path. The ceiling's own test sets what it needs per case.
+export GOVERN_SESSION_MODEL=opus
+
 # Dispatch-path mechanisms added by the token-efficiency work, forced OFF for the whole suite.
 #
 # This follows the GOVERN_FIX_CI precedent and the standing rule it produced: a new mechanism on the
@@ -62,6 +71,8 @@ export GOVERN_STALENESS_RUN_TESTS=0  # §4.5 never execute a queue-authored comm
 export GOVERN_EARLY_ABORT=0          # §4.4 in-flight worker watchdog
 export GOVERN_RUN_MAX_TOKENS=0       # §5.7 run-level spend ceiling (0 = off)
 export GOVERN_EVENTS=0               # fleet event log (lib/events.sh) — OFF for the whole suite
+export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
+export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
 
 # §4.3 index rebuild fires post-resolve in run-loop.sh. It is git/grep only — no model call — but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
