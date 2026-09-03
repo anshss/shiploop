@@ -24,6 +24,17 @@ if warns="$(govern::prose_dep_warnings "$file")" && [[ -n "$warns" ]]; then
   printf '  → canonicalize to a bold **Depends on:** / **Blocks:** marker so the dependency gate sees it.\n' >&2
 fi
 
+# ── Non-blocking pass: a dependency on a ticket that no longer exists. Advisory only, like the
+# prose-dep pass above. Findings are durable; "blocked on #M" is a claim about the PRESENT, and #M
+# gets resolved and deleted (often by another session on the same queue) while the blocker line goes
+# on reading authoritative. Warn rather than fail: a dangling ref can be deliberate history, and
+# this lint gates the Stop hook for everyone.
+if dangling="$(govern::dangling_dep_refs "$file")" && [[ -n "$dangling" ]]; then
+  printf 'WARN: dependency on a ticket that no longer exists in %s:\n' "$file" >&2
+  printf '%s\n' "$dangling" | sed 's/^/  - /' >&2
+  printf '  → the blocker is resolved or was never filed. Re-check and update the ticket, do not just delete the ref.\n' >&2
+fi
+
 if dups="$(govern::duplicate_ticket_headings "$file")"; then
   exit 0
 fi
