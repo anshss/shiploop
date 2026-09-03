@@ -45,6 +45,7 @@ self-correcting and does not clear the bar, **delete it rather than demote it**.
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
 | `npm run govern:budgets` | Enforce context budgets outside a dispatch (`--dry` to preview) |
+| `npm run govern:trim` | Evidence-based CLAUDE.md trim: auto-move provably dead or duplicate blocks, propose the rest |
 | `npm run govern:externalize` | File open Low-severity tickets as public issues (no-op until opted in) |
 | `npm run govern:validations` | Run the governor validation suite |
 

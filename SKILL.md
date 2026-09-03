@@ -60,7 +60,8 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
-| `npm run govern:budgets` | Enforce context budgets (lesson cap, CLAUDE.md total, learnings TTL) outside a dispatch |
+| `npm run govern:budgets` | Enforce context budgets (lesson cap, learnings TTL) and run the evidence-based CLAUDE.md trim outside a dispatch |
+| `npm run govern:trim` | Evidence-based CLAUDE.md trim alone: auto-move provably dead or duplicate blocks, propose the rest |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (no-op until `GOVERN_EXTERNALIZE_REPO` is set) |
 | `npm run govern:validations` | Run the governor validation suite |
 | `/shiploop:flows extract` | Inventory every user-facing path that might break (staged, no billing) |

@@ -245,7 +245,12 @@ if [ -f "$ROOT/CLAUDE.md" ]; then
   _cb_size="$(wc -c < "$ROOT/CLAUDE.md" 2>/dev/null | tr -d '[:space:]')"
   _cb_size="${_cb_size:-0}"
   if [ "$_cb_size" -gt "$_cb_budget" ]; then
-    fail "CLAUDE.md is $_cb_size chars, over the $_cb_budget budget (re-sent every turn) — run '${ROOT_PM:-npm} run govern:budgets' to demote the heaviest sections into CLAUDE-APPENDIX.md"
+    fail "CLAUDE.md is $_cb_size chars, over the $_cb_budget budget (re-sent every turn): run '${ROOT_PM:-npm} run govern:budgets' for the evidence-based trim (provably dead blocks auto-move to CLAUDE-APPENDIX.md, the rest becomes proposals)"
+    if [ -f "$ROOT/governor/claudemd-trim-proposals.md" ]; then
+      _cb_props="$(grep -c '^- `' "$ROOT/governor/claudemd-trim-proposals.md" 2>/dev/null || true)"
+      _cb_props="${_cb_props:-0}"
+      warn "$_cb_props trim proposals pending: review governor/claudemd-trim-proposals.md, then 'claudemd-trim.sh --apply <hash>' or '--still-true <hash>'"
+    fi
   else
     ok "CLAUDE.md $_cb_size/$_cb_budget chars"
   fi

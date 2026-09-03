@@ -134,10 +134,11 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |
 | `npm run govern:audit` | Manual audit: review a run's state on demand, zero model spend unless invoked |
-| `npm run govern:budgets` | Enforce context budgets (lesson char cap, CLAUDE.md total, learnings TTL) outside a dispatch; `--dry` to preview |
+| `npm run govern:budgets` | Enforce context budgets (lesson char cap, learnings TTL) and run the evidence-based CLAUDE.md trim, all outside a dispatch; `--dry` to preview |
+| `npm run govern:trim` | Evidence-based CLAUDE.md trim on its own: auto-move provably dead or duplicate blocks to the appendix, propose the rest (`--apply <hash>`, `--still-true <hash>`, `--dry-run`) |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (opt-in, off until `GOVERN_EXTERNALIZE_REPO` is set) |
 
-`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases, and **fails** when root `CLAUDE.md` exceeds its context budget (`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000), since an over-budget file is a tax on every turn of every session. `npm run govern:budgets` brings it back under.
+`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases, and **fails** when root `CLAUDE.md` exceeds its context budget (`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000), since an over-budget file is a tax on every turn of every session. `npm run govern:budgets` then trims on evidence, never on size: blocks whose every cited path or knob is provably gone (and exact duplicates) auto-move to `CLAUDE-APPENDIX.md`, everything else becomes a ranked proposal in `governor/claudemd-trim-proposals.md` for you to `--apply` or stamp `--still-true`. Doctor also reports how many proposals are pending.
 
 ## Configuration
 
@@ -156,7 +157,8 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `GOVERN_PARALLEL_DEFAULT` | `4` | Locality groups a named `run-loop.sh <N> ...` dispatch works at once: `N > 1` runs N concurrent full-driver children, one per group (N× the spend); per-run `--parallel[=N]` / `--serial` override it. Naming exactly one ticket, or resolving to a single group, always collapses to sequential |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_LESSON_MAX_CHARS` | `600` | Char cap on a single lesson promoted into `CLAUDE.md`; overflow keeps the lead rule inline and parks the full text in `CLAUDE-APPENDIX.md` |
-| `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); enforced by `npm run govern:budgets` and checked by `doctor`, with named eviction past the ceiling |
+| `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); enforced by `npm run govern:budgets` and checked by `doctor`. Past the ceiling the evidence-based trim proposes candidates, it never blind-evicts |
+| `GOVERN_TRIM_DEAD` | `1` (on) | Lane 1 of the CLAUDE.md trim: auto-move blocks whose every cited path/knob is provably absent from the workspace, plus exact duplicates, into `CLAUDE-APPENDIX.md`. `0` disables auto-moves, leaving proposals only |
 | `SHIPLOOP_LEARNINGS_TTL` | `0` (off) | Age out `learnings.md` entries older than `SHIPLOOP_LEARNINGS_TTL_DAYS` (default `14`) when `npm run govern:budgets` runs |
 | `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
