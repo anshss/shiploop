@@ -62,6 +62,7 @@ export GOVERN_STALENESS_RUN_TESTS=0  # §4.5 never execute a queue-authored comm
 export GOVERN_EARLY_ABORT=0          # §4.4 in-flight worker watchdog
 export GOVERN_RUN_MAX_TOKENS=0       # §5.7 run-level spend ceiling (0 = off)
 export GOVERN_EVENTS=0               # fleet event log (lib/events.sh) — OFF for the whole suite
+export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
 
 # §4.3 index rebuild fires post-resolve in run-loop.sh. It is git/grep only — no model call — but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

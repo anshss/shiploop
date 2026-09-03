@@ -1942,6 +1942,189 @@ govern::batch_ticket_note() { # report-json ticket -> note|""
     | if . == null then "" else . end' 2>/dev/null || true
 }
 
+# ── dispatch-time overlap nudge, zero model calls (#139) ────────────────────
+# Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45% of
+# overlapping pairs were ALREADY QUEUED at dispatch time, batchable if the operator had known.
+# Post-#137 (named dispatch is the only front door), govern::locality_groups already batches
+# overlap WITHIN a named set, but it has no visibility into the rest of the queue: a ticket the
+# operator did not name is invisible to it. This is the gap-surfacing counterpart: a cheap,
+# non-blocking hint, not a batching decision. It never changes what gets dispatched.
+#
+# Two path-extraction tiers, deliberately asymmetric:
+#   • The NAMED set's own paths trust the scout's MEASURED targetPaths first (cache-read only, no
+#     model call, `scout-ticket.sh --paths N`). Falling back to prose here would let a vague
+#     mention drag a real dispatch off course, so the fallback is narrow: only BACKTICKED tokens
+#     in the ticket's own body (an operator/worker who wrote `path/to/file.sh` meant it as a path).
+#   • Every OTHER open ticket's paths are extracted from its WHOLE body, backticks or not: the
+#     candidate is only ever printed as a hint, never dispatched, so a broader net costs nothing
+#     and a missed nudge (false negative) is the worse failure mode there.
+# A path-like token: contains `/`, or ends in one of the extensions this queue actually names
+# (.sh .md .ts .js .go .py .json). Trailing punctuation (a sentence's `.`, a list's `,` etc.) is
+# stripped, and `file:line` counts as its file (the `:line` suffix is dropped).
+
+# Reads text on stdin, prints path-like tokens found ANYWHERE in it, one per line.
+govern::_overlap_pathlike_tokens() {
+  awk '
+    {
+      gsub(/[`*_]/, " ")
+      n = split($0, tok, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        t = tok[i]
+        if (t == "") continue
+        sub(/^[(\[{"'"'"']+/, "", t)
+        sub(/[)\]}"'"'"',;:.!?]+$/, "", t)
+        if (t == "") continue
+        sub(/:[0-9]+$/, "", t)
+        if (t == "") continue
+        if (t ~ /\//) { print t; continue }
+        if (t ~ /\.(sh|md|ts|js|go|py|json)$/) { print t; continue }
+      }
+    }
+  '
+  return 0
+}
+
+# Reads text on stdin, prints path-like tokens found ONLY inside `backticks`, one per line.
+govern::_overlap_pathlike_tokens_backticked() {
+  awk '
+    {
+      line = $0
+      while (match(line, /`[^`]+`/)) {
+        seg = substr(line, RSTART + 1, RLENGTH - 2)
+        print seg
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' | govern::_overlap_pathlike_tokens
+  return 0
+}
+
+# A single named ticket's target paths for the nudge, most to least trusted:
+#   1. govern::ticket_paths, the scout's MEASURED targetPaths (cache-read only, no model call), or
+#      an explicit `**Files:**` field: the same measured signal locality batching keys off.
+#   2. backticked path-like tokens from the ticket's own body, narrower than the general body-text
+#      extraction used for OTHER (non-named) tickets below: a bare mention in prose is too weak a
+#      signal to steer a nudge about the ticket actually being dispatched.
+# Newline-separated, deduped, empty if none of the above yields anything.
+govern::_overlap_named_paths() { # N [tickets-file]
+  local n="$1" f="${2:-$TICKETS_FILE}" out=""
+  out="$(govern::ticket_paths "$n" "$f" 2>/dev/null || true)"
+  if [[ -z "$out" ]]; then
+    out="$(govern::ticket_block "$n" "$f" 2>/dev/null | tail -n +2 | govern::_overlap_pathlike_tokens_backticked || true)"
+  fi
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | sed -e 's#^\./##' -e 's#//*#/#g' | awk 'NF && !seen[$0]++'
+  return 0
+}
+
+# Common leading DIRECTORY-segment count of two repo-relative paths (the filename itself is
+# excluded from both sides, this measures shared directory, not shared basename). 0 if either
+# path has no directory component or they diverge at the first segment.
+govern::_overlap_dir_prefix_depth() { # pathA pathB -> integer
+  local a="$1" b="$2"
+  local da="${a%/*}"
+  local db="${b%/*}"
+  [[ "$da" != "$a" ]] || da=""
+  [[ "$db" != "$b" ]] || db=""
+  [[ -n "$da" && -n "$db" ]] || { printf '0'; return 0; }
+  local -a pa pb
+  IFS='/' read -r -a pa <<< "$da"
+  IFS='/' read -r -a pb <<< "$db"
+  local i=0 c=0
+  while [[ "$i" -lt "${#pa[@]}" && "$i" -lt "${#pb[@]}" ]]; do
+    [[ "${pa[$i]}" == "${pb[$i]}" ]] || break
+    c=$((c+1)); i=$((i+1))
+  done
+  printf '%s' "$c"
+  return 0
+}
+
+# govern::overlap_nudge "n1,n2,..." [tickets-file]: the whole feature, one call from run-loop.sh
+# right before dispatch proceeds. Prints up to 5 non-blocking `[overlap]`/`[overlap-dir]` stdout
+# lines and returns 0 always: this NEVER blocks, NEVER modifies the queue, and NEVER changes what
+# gets dispatched. GOVERN_OVERLAP_NUDGE=0 silences it entirely (default on, log line only).
+govern::overlap_nudge() { # named-csv [tickets-file]
+  {
+    [[ "${GOVERN_OVERLAP_NUDGE:-1}" != "0" ]] || return 0
+    local named_csv="${1:-}" f="${2:-$TICKETS_FILE}"
+    [[ -n "$named_csv" && -f "$f" ]] || return 0
+
+    local -a named_n=() named_p=()
+    local nn nc=0
+    IFS=',' read -r -a named_n <<< "$named_csv" || true
+    for nn in ${named_n[@]+"${named_n[@]}"}; do
+      nn="${nn//[^0-9]/}"; [[ -n "$nn" ]] || continue
+      named_p[nc]="$(govern::_overlap_named_paths "$nn" "$f" 2>/dev/null || true)"
+      nc=$((nc+1))
+    done
+    [[ "$nc" -gt 0 ]] || return 0
+
+    local shown=0 other block other_paths np nline is_named tier match_path depth idx tn
+    while IFS= read -r other; do
+      [[ "$other" =~ ^[0-9]+$ ]] || continue
+      [[ "$shown" -lt 5 ]] || break
+      # Exclude #6a: never nudge about a ticket already in the current named set.
+      is_named=0
+      for nn in "${named_n[@]}"; do [[ "${nn//[^0-9]/}" == "$other" ]] && { is_named=1; break; }; done
+      [[ "$is_named" -eq 0 ]] || continue
+      # Exclude #6b: a ticket a live driver already claimed (trivially detectable: the per-ticket
+      # claim lock dir exists). Best-effort only; a stale lock just costs one skipped nudge.
+      [[ ! -d "$GOVERNOR_DIR/.locks/ticket-$other" ]] || continue
+
+      block="$(govern::ticket_block "$other" "$f" 2>/dev/null | tail -n +2)"
+      [[ -n "$block" ]] || continue
+      other_paths="$(printf '%s\n' "$block" | govern::_overlap_pathlike_tokens 2>/dev/null | awk 'NF && !seen[$0]++')"
+      # Exclude #6c: nothing extractable from this ticket's body.
+      [[ -n "$other_paths" ]] || continue
+
+      # Find the FIRST (other-path, named-ticket) pair that overlaps, exact tier before dir tier,
+      # a small nested scan, but named_n/other_paths are both queue-sized, never large.
+      tier=""; match_path=""; tn=""
+      while IFS= read -r nline && [[ -z "$tier" ]]; do
+        [[ -n "$nline" ]] || continue
+        idx=0
+        for nn in "${named_n[@]}"; do
+          nn="${nn//[^0-9]/}"; [[ -n "$nn" ]] || continue
+          np="${named_p[$idx]:-}"; idx=$((idx+1))
+          [[ -n "$np" ]] || continue
+          if printf '%s\n' "$np" | grep -qxF "$nline"; then
+            match_path="$nline"; tn="$nn"; tier="exact"; break
+          fi
+        done
+      done <<< "$other_paths"
+      if [[ -z "$tier" ]]; then
+        while IFS= read -r nline && [[ -z "$tier" ]]; do
+          [[ -n "$nline" ]] || continue
+          idx=0
+          for nn in "${named_n[@]}"; do
+            nn="${nn//[^0-9]/}"; [[ -n "$nn" ]] || continue
+            np="${named_p[$idx]:-}"; idx=$((idx+1))
+            [[ -n "$np" ]] || continue
+            while IFS= read -r np2; do
+              [[ -n "$np2" ]] || continue
+              depth="$(govern::_overlap_dir_prefix_depth "$nline" "$np2")"
+              if [[ "$depth" -ge 2 ]]; then match_path="$nline"; tn="$nn"; tier="dir"; break; fi
+            done <<< "$np"
+            [[ -n "$tier" ]] && break
+          done
+        done <<< "$other_paths"
+      fi
+      [[ -n "$tier" ]] || continue
+
+      if [[ "$tier" == "exact" ]]; then
+        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: batch with npm run govern -- $tn $other"
+      else
+        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider npm run govern -- $tn $other"
+      fi
+      shown=$((shown+1))
+      if [[ "${GOVERN_EVENTS:-0}" == "1" ]]; then
+        govern::event overlap_nudge "queued=$other" "named=$tn" "path=$match_path" "tier=$tier"
+      fi
+    done < <(grep -oE '^##[[:space:]]+#[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+' || true)
+  } || true
+  return 0
+}
+
 # Add/merge ONE wait entry (a JSON object carrying at least `.ticket`; optional `.pr`+`.repo` and/or
 # `.dependsOn`) into pending-waits.json, de-duped by ticket number (newest wins). Creates the file if
 # absent. No-op without jq / a ticket field. Live-only side effect — callers gate on MODE.

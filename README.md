@@ -230,6 +230,7 @@ prints nothing at all when there is no fleet.
 | `GOVERN_INTERRUPT_RETRY` | `1` | Retries for a worker killed mid-flight |
 | `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the manual audit (`govern:audit`) runs at |
 | `GOVERN_BATCH_MAX` | `2` | Tickets with overlapping scout-measured file paths that one worker may take as a group, exploring once and opening one PR. Kept low because no production A/B measurement of batching exists yet; `1` disables it |
+| `GOVERN_OVERLAP_NUDGE` | `1` (on) | Dispatch-time hint, zero model calls: before a named dispatch proceeds, print up to 5 `[overlap]`/`[overlap-dir]` lines naming any OTHER open ticket that shares a file (or, weaker, a directory) with what you named, so you can re-run with both on `npm run govern --`. Log line only, never blocks and never touches the queue; `0` silences it |
 
 ### Binaries
 
