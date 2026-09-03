@@ -4,16 +4,16 @@
 
 ### Changed
 
-**CI shards the govern suite across 8 runners: ~9.2 min of sequential tests becomes ~1.9 min, with
-no test removed.**
+**CI shards the govern suite across 8 runners: the workflow's critical path drops from 267s to 47s
+(5.7x), with no test removed.**
 
 - `scaffold-and-test` is now an 8-way matrix (`fail-fast: false`). Every test is self-contained in
   its own `mktemp` workspace, so the suite is embarrassingly parallel.
-- Shard packing is cost-aware. Measured on a full green run (158 tests, 552.8s), the cost is
-  concentrated rather than spread: the 25 slowest tests are 66% of the runtime and the 71 fastest
-  are 4.9% combined. Round-robin over an alphabetical list therefore packs badly (slowest shard
-  137s vs fastest 28s), so CI orders the expensive tests first using the new
-  `tools/slow-tests-first.txt` hint, which evens the split (slowest shard ~113s).
+- Shard packing is cost-aware. Timing a full green run (158 tests) shows the cost is concentrated
+  rather than spread: the 25 slowest tests are 66% of the runtime and the 71 fastest are 4.9%
+  combined. Round-robin over an alphabetical list therefore packs badly, so CI orders the expensive
+  tests first using the new `tools/slow-tests-first.txt` hint. Measured on this workflow: 8 shards
+  land between 24s and 47s, against 267s for the old single sequential job.
 - That hint file cannot affect coverage. CI builds the order as "listed tests that still exist,
   then every remaining test file alphabetically", and then asserts the built order covers every
   test file exactly once before running anything. A stale entry is skipped, a new test lands in the
