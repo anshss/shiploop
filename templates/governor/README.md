@@ -375,6 +375,19 @@ auto-apply (`GOVERN_SELF_APPLY=1`, default OFF) applies ONE proposal under stric
 agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-end so it takes effect
 next run.
 
+## Shipped agents (`.claude/agents/`)
+The scaffold installs two subagent definitions so the driver's delegation posture (router-posture
+hooks + CLAUDE.md) has a pre-sized, cheap-tier destination instead of "spawn something generic":
+- **`lookup`** (haiku): a single-fact question, where something is defined, what a value is, which
+  file imports what. Contract: answer only the question asked, max 15 lines, cite `file:line`, never
+  paste a whole file.
+- **`investigator`** (sonnet): multi-file diagnosis, why something fails, how something flows
+  through the system. Contract: verdict first, evidence after as `file:line` references, max 30
+  lines, no file dumps.
+
+Both are copy-only templates (`templates/.claude/agents/*.md`), installed by `scaffold.sh
+--component agents` on fresh scaffold and on `/shiploop:update`; they are not workspace-customized.
+
 ## Constraints to respect
 - Workers never write `queue/tickets.md` — `govern-bookkeep.sh` does, in the main checkout.
 - Going live from a dry-run is just running without `--dry-run`; no code change.
