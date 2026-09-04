@@ -233,8 +233,9 @@ Wired into `.claude/settings.json` by setup:
   `check-main-on-main.sh` (warn on drift) · optional project drift check.
 - **UserPromptSubmit:** `router-posture-reminder.sh` (prime delegate-heavy-work-to-a-child posture
   once per session).
-- **PreToolUse (Read|Bash):** `router-posture-guard.sh` (catch a router-posture violation in the
-  moment).
+- **PreToolUse (Read|Bash|Agent):** `router-posture-guard.sh` (catch a router-posture violation in
+  the moment; on `Agent` it DENIES a ticket-shaped call that is not
+  `subagent_type: "worker"`, kill switch `GOVERN_TICKET_ROUTE_GUARD=0`).
 - **Stop:** `ticket-sweep-reminder.sh` (reconcile tickets once per code-touching session).
 - **SessionEnd:** `worktree/session-end-cleanup.sh` (project cleanup, then kill this worktree's
   stack ports).
