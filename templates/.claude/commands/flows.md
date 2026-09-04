@@ -20,19 +20,19 @@ Run from the workspace root (main checkout or a worktree). First learn the layou
 
 ## `extract` — inventory the flows (staged, operator-gated)
 
-Build the combinatorial list of "paths a user might take that might break." **Fan out with `Agent`** —
-one worker per surface, so no single context has to hold the whole codebase:
+Build the combinatorial list of "paths a user might take that might break." **Fan out with `Agent`**
+across subagents, one per surface, so no single context has to hold the whole codebase:
 
 1. **Enumerate the surfaces to inventory.** Typically: every UI route/page, every API endpoint, every
    provider/integration matrix (a dimension that's *enumerable* — e.g. N providers × {deploy, feature-X,
    migration} — expands combinatorially into one flow id per cell), plus any snapshot/migration/backup
    paths. Use `$REPOS` to scope.
-2. **Dispatch `Agent` workers** (general-purpose), one per surface, each returning a list of proposed
-   flow blocks in the registry grammar (`## <id>` + `Kind` / `Surface` / `Paths` / `Status: UNTESTED`;
+2. **Dispatch one subagent per surface** (sized per the delegation table; the shipped `investigator`
+   agent type fits most surfaces), each returning a list of proposed flow blocks in the registry grammar (`## <id>` + `Kind` / `Surface` / `Paths` / `Status: UNTESTED`;
    `Gate` for an effectiveness flow). Ids are lowercase dot-kebab, coarse→fine (`deploy-gpu.vastai`).
    Derive `Paths:` from the real imports/dependencies, not just the obvious feature dir — first segment
    of every glob MUST be a sub-repo folder name.
-3. **Collect the workers' blocks into ONE staged file**, e.g. `logs/investigations/flows-extract/staged.md`
+3. **Collect the subagents' blocks into ONE staged file**, e.g. `logs/investigations/flows-extract/staged.md`
    (gitignored scratch — not the registry).
 4. **Vet gate — merge is staged and operator-approved.** Show the diff, then apply only on an explicit yes:
    ```bash
@@ -78,8 +78,12 @@ scripts/govern/flows-file.sh deploy-gpu.vastai comfyui.vastai --yes  # actually 
   `GOVERN_WORKER_TIMEOUT` are flagged.
 - **Never auto-file on staleness** — staleness is advisory, filing is a human act (the `--yes`).
 
-Review the dry plan with the operator, confirm, then re-run with `--yes`. Dispatch the filed tickets
-by name on the next `run-loop.sh` pass; the worker stamps each flow's verdict back into the registry.
+Review the dry plan with the operator, confirm, then re-run with `--yes`. A filed flow is now a
+ticket, so it is WORKER work, never a stock subagent: dispatch it in-session as
+`Agent(subagent_type: "worker")`, one worker per ticket, or hand the batch to the autonomous lane with
+`npm run govern -- <N...>` on the next `run-loop.sh` pass. Either way the worker stamps each flow's
+verdict back into the registry; the interactive lane stops at PR-open plus its report, and merge plus
+bookkeeping go through govern's PR-adoption path.
 
 ## Kill path (an INEFFECTIVE flow the operator wants gone)
 
