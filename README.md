@@ -47,7 +47,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Routine changes are handled by code, not a model.** Much of a backlog is mechanical: flip a default, add a key, bump a version, apply a known rename. Shiploop detects those during the survey it already runs, then applies and verifies them deterministically, with no model in the loop. Anything ambiguous, unverified, or unsafe falls back to the normal worker automatically.
 
-- **Successful outputs are kept out of the transcript.** Everything in a session is re-sent on every turn that follows, and test output is most of what a worker generates. A green run carries no information, so it never enters; failures come through trimmed to the useful part. Failing CI logs arrive the same way: a short scripted excerpt, not a fresh investigation.
+- **Successful outputs are kept out of the transcript.** Everything in a session is re-sent on every turn that follows, and test output is most of what a worker generates. A green run carries no information, so it never enters; failures come through trimmed to the useful part. Failing CI logs arrive the same way: a short scripted excerpt, not a fresh investigation. The same wrapper is one `npm run vf -- <cmd>` away in the interactive driver session, which nudges toward it on an unwrapped test/build run and can hand a lookup or a multi-file diagnosis to the shipped `lookup`/`investigator` agents instead of doing it inline.
 
 - **A watchdog cuts sessions that loop, stall, or just keep erroring.** A stuck worker would otherwise burn tokens all the way to its timeout; the watchdog kills it the moment its transcript shows the pattern. Hard token budgets work the same way, per worker and per run: past the ceiling the worker is killed and its worktree kept, so the work resumes instead of restarting. Both ship off and turn on with one knob each.
 
@@ -172,6 +172,7 @@ Everything lives in one file: `scripts/lib/workspace.sh`. Advanced lanes ship **
 | `WSP_PR_FOOTER` | on | "shipped by shiploop" attribution line on worker PRs (`off` to suppress) |
 | `GOVERN_EVENTS` | `0` (off) | Fleet event log: append one JSON line per worker spawn/finish/escalation/park to `governor/events.jsonl`. Nothing reads it until you turn it on, and nothing about a run changes when you do. This is what `npm run govern:status`, the statusline segment, and the plugin monitor all fold; see **Fleet visibility** below |
 | `GOVERN_EVENTS_FILE` | `governor/events.jsonl` | Where that log lives |
+| `GOVERN_VF_NUDGE` | `1` (on) | Driver-session advisory: an unwrapped test/build command (`npm test`, `pytest`, `go test`, `cargo test`, `vitest`, `jest`, `tsc`, ...) gets a one-line nudge toward `npm run vf -- <cmd>`. Advisory only, capped per session, silent for workers and sub-agents; `0` disables it |
 
 ### Fleet visibility
 
