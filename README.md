@@ -87,7 +87,29 @@ your-project/
 
 **The worker** is a fresh, headless `claude -p` session in that worktree. It receives a fixed prompt skeleton, your operator doctrine from `governor/preferences.md`, the ticket text, the scout’s verified file paths, and the previous handoff on retries. It is also intentionally restricted: no MCP servers, slash commands, personal user settings, or unnecessary tools. This is not only about cost. A single-purpose worker does not need scheduling, notification, or orchestration tools, and every unused schema is dead weight resent across roughly 218 turns. The worker completes the task, opens a PR, and writes a structured report that the bash driver uses to determine the next step.
 
+That headless session is the worker's **autonomous lane**. The same worker, one doctrine, also runs
+**interactively** inside your own session as `Agent(subagent_type: "worker")` when you hand it a single
+ticket: same sonnet floor, same trimmed tools, its own workspace worktree, and it stops at PR-open plus
+its structured report. Merge, CI await, and queue bookkeeping always go back through the governor
+(`npm run govern -- <N>` after the PR is open adopts that PR instead of redoing the work), so the queue
+block is never deleted before merge.
+
 Autonomy is bounded by the trust ladder below, not the scaffolding. Workers bypass permissions by design, but operate only in a disposable worktree and on the branch they push.
+
+## Glossary
+
+One noun, one meaning. Every page pairs a term with its definition on first use, because none of these
+words is exclusively ours: Factory's docs, for one, call their in-session delegated children "worker
+agents". In shiploop they mean exactly this:
+
+| Term | Definition |
+|---|---|
+| **governor** | The pure-bash driver, `scripts/govern/run-loop.sh <N…>`. It owns state and control flow deterministically, spawns workers, and never calls a model itself. |
+| **driver** | The orchestrating session: the governor on the autonomous side, your interactive Claude Code session on the other. A driver dispatches and relays verdicts; it does not bulk-read product source. |
+| **worker** | The trim, single-ticket session. One definition, **two lanes**: the *autonomous* lane is the headless `claude -p` session `spawn-worker.sh` launches, the *interactive* lane is `Agent(subagent_type: "worker")` in your own session. Both run the same doctrine at the same model floor in their own worktree, and both end at a PR plus a structured report. Never used for any other kind of child. |
+| **scout** | The cheap pre-dispatch survey pass (haiku). It only surveys: verified file paths, whether tests cover the area, whether history holds a precedent commit. Cached per run, so a retry never re-scouts. |
+| **supervisor** | The review pass over a run's state (`npm run govern:audit`, `GOVERN_SUPERVISOR_MODEL`). It can return a `halt` verdict; it never edits code. |
+| **subagent** | The platform's own term for an Agent-tool child that is **not** `subagent_type: "worker"` (the shipped `lookup` and `investigator` agent types, or a stock `Agent` call). Sized per the delegation table for investigation, sweeps, and diagnosis. A subagent is never called a worker, and ticket-shaped work never goes to one. |
 
 ## How it works
 
