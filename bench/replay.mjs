@@ -149,10 +149,41 @@ function parseTranscript(file) {
   const sessions = [];
   let excluded = 0;
   let turns = [];
+  let initModel = null;
   const seen = new Set();
 
-  const flushExcluded = () => {
-    if (turns.length) excluded++;
+  // A session killed before it emitted a result event still has an exactly recoverable input side:
+  // the deduplicated per-turn context sums to the result event's own input, cache-read and
+  // cache-write totals to the token. Its OUTPUT is not recoverable at any accuracy, so a recovered
+  // session is built with output 0 and flagged `partial`. Partials are EXCLUDED from the measured
+  // arm by default; the report prints what including them would do, because dropping our own spend
+  // is the one exclusion that flatters us.
+  const recover = () => {
+    if (!turns.length) return;
+    excluded++;
+    const billed = turns.reduce(
+      (a, t) => ({
+        input: a.input + t.input,
+        cacheRead: a.cacheRead + t.cacheRead,
+        cacheCreation: a.cacheCreation + t.cacheCreation,
+      }),
+      { input: 0, cacheRead: 0, cacheCreation: 0 },
+    );
+    if (billed.input + billed.cacheRead + billed.cacheCreation > 0) {
+      sessions.push({
+        file,
+        sessionId: null,
+        reportedCostUsd: null,
+        numTurns: turns.length,
+        partial: true,
+        billed: { ...billed, output: 0 },
+        write1h: billed.cacheCreation,
+        write5m: 0,
+        modelUsage: null,
+        initModel,
+        turns,
+      });
+    }
     turns = [];
     seen.clear();
   };
@@ -165,7 +196,11 @@ function parseTranscript(file) {
     } catch {
       continue;
     }
-    if (ev.type === 'assistant' && ev.message) {
+    if (ev.type === 'system' && ev.subtype === 'init' && ev.model) {
+      // The init event names the session's model even when the result event omits modelUsage and
+      // every assistant message is a synthetic notice. It is the authoritative fallback.
+      initModel = ev.model;
+    } else if (ev.type === 'assistant' && ev.message) {
       const id = ev.message.id;
       const u = ev.message.usage || {};
       const ctx =
@@ -178,6 +213,8 @@ function parseTranscript(file) {
       turns.push({
         ctx,
         model: ev.message.model || null,
+        input: u.input_tokens || 0,
+        cacheRead: u.cache_read_input_tokens || 0,
         cacheCreation: u.cache_creation_input_tokens || 0,
       });
     } else if (ev.type === 'result') {
@@ -207,13 +244,15 @@ function parseTranscript(file) {
         write1h,
         write5m,
         modelUsage: ev.modelUsage || null,
+        initModel,
+        partial: false,
         turns,
       });
       turns = [];
       seen.clear();
     }
   }
-  flushExcluded();
+  recover();
   return { sessions, excluded };
 }
 
@@ -221,7 +260,7 @@ function parseTranscript(file) {
 // Cost is recomputed from published rates for BOTH arms, so the comparison never mixes a
 // reported dollar figure with a modeled one. The reported total_cost_usd is used only as the
 // reconciliation check.
-function sessionCost(sess, unknownModels) {
+function sessionCost(sess, fb) {
   const totalWrite = sess.write1h + sess.write5m;
   const frac1h = totalWrite > 0 ? sess.write1h / totalWrite : 1;
   const writeMult = frac1h * CACHE_WRITE_1H_MULT + (1 - frac1h) * CACHE_WRITE_5M_MULT;
@@ -245,7 +284,7 @@ function sessionCost(sess, unknownModels) {
   let outputUsd = 0;
   for (const p of parts) {
     const tier = tierOf(p.model);
-    if (!tier) unknownModels.add(p.model);
+    if (!tier && fb) fb.models.add(p.model);
     const r = RATES[tier || 'opus'];
     outputUsd += (p.output * r.output) / 1e6;
     usd +=
@@ -258,11 +297,15 @@ function sessionCost(sess, unknownModels) {
   return { usd, outputUsd };
 }
 
-// Older CLI versions omit modelUsage. Fall back to the first assistant turn whose model name is
-// a recognizable tier, never to a synthetic or absent one.
+// Older CLI versions omit modelUsage, and an aborted session's only assistant messages can all be
+// synthetic notices carrying no model. Resolve in order: the first assistant turn naming a real
+// tier, then the session's `system`/`init` event, which names the model the session was spawned
+// with. Only a transcript with neither is unresolvable.
 function fallbackModel(sess) {
   const t = sess.turns.find((x) => tierOf(x.model));
-  return t ? t.model : 'unknown';
+  if (t) return t.model;
+  if (tierOf(sess.initModel)) return sess.initModel;
+  return 'unresolved';
 }
 
 function dominantTier(sess) {
@@ -373,11 +416,15 @@ function scanFleet(fleetDir) {
 // Output is identical in both arms. It is the same work and the same code written, so it is a
 // shared fixed cost and it appears in both arms in full. That is also why the reduction has a
 // hard ceiling well under 100%.
-function replayRun(ticketsInOrder, window, unknownModels) {
+function replayRun(allTicketsInOrder, window, includePartial) {
+  const ticketsInOrder = includePartial
+    ? allTicketsInOrder
+    : allTicketsInOrder.filter((t) => t.sessions.some((x) => !x.partial));
   let carry = 0;
   const rows = [];
   for (let k = 0; k < ticketsInOrder.length; k++) {
     const t = ticketsInOrder[k];
+    const sessions = includePartial ? t.sessions : t.sessions.filter((x) => !x.partial);
     let shipTokens = 0;
     const shipParts = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
     let shipCost = 0;
@@ -390,15 +437,15 @@ function replayRun(ticketsInOrder, window, unknownModels) {
     let reportedCost = 0;
     let reconcilable = 0;
 
-    for (let s = 0; s < t.sessions.length; s++) {
-      const sess = t.sessions[s];
+    for (let s = 0; s < sessions.length; s++) {
+      const sess = sessions[s];
       const b = sess.billed;
       shipTokens += b.input + b.output + b.cacheRead + b.cacheCreation;
       shipParts.input += b.input;
       shipParts.output += b.output;
       shipParts.cacheRead += b.cacheRead;
       shipParts.cacheCreation += b.cacheCreation;
-      const c = sessionCost(sess, unknownModels);
+      const c = sessionCost(sess, null);
       shipCost += c.usd;
       outputCost += c.outputUsd;
       if (sess.reportedCostUsd != null) {
@@ -444,7 +491,7 @@ function replayRun(ticketsInOrder, window, unknownModels) {
       ticket: t.ticket,
       status: t.status,
       counted: t.counted !== false,
-      sessions: t.sessions.length,
+      sessions: sessions.length,
       shipTokens,
       shipParts,
       outputCost,
@@ -490,7 +537,6 @@ function main() {
   const fleets = opts.fleets.length ? opts.fleets : discoverFleets(process.cwd());
   const armNames = opts.arm === 'all' ? Object.keys(ARMS) : [opts.arm];
 
-  const unknownModels = new Set();
   const allTickets = [];
   let excludedSessions = 0;
   const fleetNotes = [];
@@ -522,11 +568,10 @@ function main() {
     arr.sort((a, b) => orderKey(a) - orderKey(b) || String(a.ticket).localeCompare(String(b.ticket)));
   }
 
-  const armResults = {};
-  for (const arm of armNames) {
+  const computeArm = (arm, includePartial) => {
     const window = ARMS[arm].window;
     const all = [];
-    for (const arr of runs.values()) all.push(...replayRun(arr, window, unknownModels));
+    for (const arr of runs.values()) all.push(...replayRun(arr, window, includePartial));
     const rows = all.filter((r) => r.counted);
 
     const shipTokens = rows.reduce((s, r) => s + r.shipTokens, 0);
@@ -556,7 +601,7 @@ function main() {
       curve[p] = { n: at.length, medianTokenReductionPct: median(at) };
     }
 
-    armResults[arm] = {
+    return {
       arm,
       contextWindow: window === Infinity ? null : window,
       label: ARMS[arm].label,
@@ -587,7 +632,68 @@ function main() {
       ceilingCostReductionPct: pct(outputCost, vanCost),
       positionCurve: curve,
     };
+  };
+
+  const armResults = {};
+  for (const arm of armNames) {
+    armResults[arm] = computeArm(arm, false);
+    // Sensitivity, always computed and always printed. The measured arm drops every session that
+    // never emitted a result event, and those are OUR spend, so dropping them is the exclusion
+    // that flatters us. This is what the same arm reports when their exactly recoverable input
+    // side is added back (output stays 0, because output is not recoverable).
+    const withPartials = computeArm(arm, true);
+    armResults[arm].sensitivityWithRecoveredPartials = {
+      shiploopTokens: withPartials.shiploopTokens,
+      vanillaTokens: withPartials.vanillaTokens,
+      shiploopCostUsd: withPartials.shiploopCostUsd,
+      vanillaCostUsd: withPartials.vanillaCostUsd,
+      tokenReductionPct: withPartials.tokenReductionPct,
+      costReductionPct: withPartials.costReductionPct,
+      tokenReductionDeltaPts:
+        withPartials.tokenReductionPct == null || armResults[arm].tokenReductionPct == null
+          ? null
+          : withPartials.tokenReductionPct - armResults[arm].tokenReductionPct,
+      costReductionDeltaPts:
+        withPartials.costReductionPct == null || armResults[arm].costReductionPct == null
+          ? null
+          : withPartials.costReductionPct - armResults[arm].costReductionPct,
+    };
   }
+
+  // Tier resolution audit, computed once over the session list rather than inside the arm loop.
+  // A session is resolvable when modelUsage names a known tier, or any assistant turn does, or the
+  // init event does. Anything left is priced at the Opus rate, which inflates BOTH arms.
+  const tierFallback = { sessions: 0, tokens: 0, measuredSessions: 0, measuredTokens: 0 };
+  for (const arr of runs.values()) {
+    for (const t of arr) {
+      for (const sess of t.sessions) {
+        const named =
+          (sess.modelUsage && Object.keys(sess.modelUsage).some(tierOf)) || tierOf(fallbackModel(sess));
+        if (named) continue;
+        const b = sess.billed;
+        const tk = b.input + b.output + b.cacheRead + b.cacheCreation;
+        tierFallback.sessions++;
+        tierFallback.tokens += tk;
+        if (!sess.partial) {
+          tierFallback.measuredSessions++;
+          tierFallback.measuredTokens += tk;
+        }
+      }
+    }
+  }
+
+  const partialSessions = [];
+  for (const arr of runs.values()) {
+    for (const t of arr) for (const sess of t.sessions) if (sess.partial) partialSessions.push(sess);
+  }
+  const partialRecovery = {
+    sessions: partialSessions.length,
+    recoverableInputSideTokens: partialSessions.reduce(
+      (a, x) => a + x.billed.input + x.billed.cacheRead + x.billed.cacheCreation,
+      0,
+    ),
+    outputRecoverable: false,
+  };
 
   // Reconciliation: computed cost over reported cost, per session, median. Uses the 1m arm's
   // rows because the shiploop side is identical across arms.
@@ -597,7 +703,7 @@ function main() {
     for (const t of arr) {
       for (const sess of t.sessions) {
         if (sess.reportedCostUsd == null || sess.reportedCostUsd <= 0) continue;
-        ratios.push(sessionCost(sess, unknownModels).usd / sess.reportedCostUsd);
+        ratios.push(sessionCost(sess, null).usd / sess.reportedCostUsd);
       }
     }
   }
@@ -615,7 +721,8 @@ function main() {
     scope: opts.scope,
     fleets: fleetNotes,
     sessionsExcludedNoResultEvent: excludedSessions,
-    unknownModels: [...unknownModels],
+    partialRecovery,
+    tierFallback,
     reconciliation: recon,
     arms: armResults,
   };
@@ -667,22 +774,40 @@ function render(out) {
     L.push(`  arm ${name}  (vs ${a.label})`);
     L.push(`    tokens    shiploop ${fmtTok(a.shiploopTokens)}  vanilla ${fmtTok(a.vanillaTokens)}   reduction ${fmtPct(a.tokenReductionPct)}`);
     L.push(`    cost      shiploop ${fmtUsd(a.shiploopCostUsd)}  vanilla ${fmtUsd(a.vanillaCostUsd)}   reduction ${fmtPct(a.costReductionPct)}`);
-    L.push(`    corpus    ${a.runs} runs, ${a.tickets} tickets, median run clears ${a.medianTicketsPerRun} ${a.medianTicketsPerRun === 1 ? 'ticket' : 'tickets'}, ${out.sessionsExcludedNoResultEvent} sessions excluded (no result event)`);
+    L.push(`    corpus    ${a.runs} runs, ${a.tickets} tickets, median run clears ${a.medianTicketsPerRun} ${a.medianTicketsPerRun === 1 ? 'ticket' : 'tickets'}, ${out.sessionsExcludedNoResultEvent} sessions excluded, ${out.partialRecovery.sessions} of them recoverable`);
     const curve = CURVE_POSITIONS.map((p) => {
       const c = a.positionCurve[p];
       return `#${p} ${c.n ? fmtPct(c.medianTokenReductionPct) : 'n/a'}`;
     }).join('  ');
     L.push(`    by ticket position (median token reduction): ${curve}`);
     L.push(`    ceiling    ${fmtPct(a.ceilingTokenReductionPct)} tokens / ${fmtPct(a.ceilingCostReductionPct)} cost, the most any architecture could save here`);
+    const sv = a.sensitivityWithRecoveredPartials;
+    if (out.partialRecovery.sessions) {
+      L.push(
+        `    if the ${out.partialRecovery.sessions} killed sessions' recoverable input side is added back to OUR arm: ` +
+          `${fmtPct(sv.tokenReductionPct)} tokens / ${fmtPct(sv.costReductionPct)} cost`,
+      );
+    }
     L.push('');
   }
 
+  const tokensAll = names.length ? out.arms[names[0]].shiploopTokens : 0;
   L.push(`  rates reconciliation: median computed/reported = ${out.reconciliation.medianComputedOverReported == null ? 'n/a' : out.reconciliation.medianComputedOverReported.toFixed(3)} over ${out.reconciliation.n} sessions`);
   if (out.reconciliation.within2pct != null) {
     L.push(`                        ${(out.reconciliation.within2pct * 100).toFixed(1)}% of sessions within 2% of reported`);
   }
-  if (out.unknownModels.length) {
-    L.push(`  models priced as opus because their tier is unrecognized: ${out.unknownModels.join(', ')}`);
+  const tf = out.tierFallback;
+  if (!tf.sessions) {
+    L.push('  tier fallback: none. Every session named a real model in modelUsage, on a turn, or on its init event.');
+  } else {
+    const share = tokensAll ? (100 * tf.tokens) / tokensAll : 0;
+    L.push(
+      `  tier fallback: ${tf.measuredSessions} of the measured arm's sessions and ${tf.sessions - tf.measuredSessions} recovered partial(s)`,
+    );
+    L.push(
+      `                 name no model anywhere, holding ${tf.tokens.toLocaleString('en-US')} tokens = ${share.toFixed(3)}% of the corpus.`,
+    );
+    L.push('                 Priced at the Opus rate, which inflates both arms and very nearly cancels.');
   }
   L.push('');
   L.push('  Ticket 1 saves exactly 0%: there is nothing carried yet. The saving is entirely the');

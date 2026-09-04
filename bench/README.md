@@ -43,6 +43,25 @@ excluded for having no result event, the ceiling no architecture could beat, the
 reconciliation ratio, and the **per-ticket-position curve**. Ticket 1 saves exactly 0%, because
 nothing has been carried into it yet. That is the most useful line in the output.
 
+## The number, on the author's corpus
+
+Every fleet workspace the author runs, unfiltered: 251 runs, 607 tickets, 7 workspaces.
+
+| vs a session with | tokens | cost |
+|---|---|---|
+| 1M context | **70.3%** | 57.4% |
+| 200k context + compaction | 37.6% | 21.9% |
+
+Published unfiltered on purpose. Restricting to runs that clear five or more tickets raises the 1M
+figure to about 74%, and a single deep-backlog workspace reaches 77%, because **the saving is a
+property of backlog depth, not of the harness**. Ticket 1 saves exactly 0%: a fresh session against
+a fresh session is the same session. By ticket 3 it is 63%, by ticket 5 it is 74%, by ticket 8 it is
+87%. The median run in this corpus clears one ticket, so the aggregate is carried by the minority of
+long runs, and a two-ticket backlog will not see 70%.
+
+Quote the arm alongside the number. Against the 200k default the same corpus gives 37.6% tokens, and
+someone reproducing this will run the default.
+
 ## Path 2: the live A/B harness (the measured path, not yet run)
 
 Everything below this line is the harness for a real measured run: two arms actually executed

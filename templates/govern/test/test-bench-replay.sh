@@ -127,6 +127,53 @@ missing="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/no-such-fle
 assert_eq "$?" "1" "a fleet path that does not exist exits non-zero"
 assert_contains "$missing" "Nothing to replay" "and does not crash"
 
+# ── tier resolution: the init event is a real model name and must be used ────
+# fixtures/replay-init-model-fleet holds one session whose result event omits modelUsage and whose
+# only assistant message is a synthetic notice with no model. The model exists in exactly one
+# place: the system/init event. Priced correctly (haiku) the session costs $0.029. A tool that
+# ignores the init event falls back to the most expensive tier and charges $0.145, a 5x error, and
+# then reports a "tier unrecognized" line that reads like a data problem rather than a parser bug.
+iflt="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-init-model-fleet" --arm 1m --json 2>&1)"
+assert_eq "$?" "0" "the init-model fleet replays"
+assert_eq "$(printf '%s' "$iflt" | jq -r '(.arms["1m"].shiploopCostUsd * 1000 | round)')" "29" \
+  "a session that names its model only on the init event is priced at that model's tier"
+assert_eq "$(printf '%s' "$iflt" | jq -r '.tierFallback.sessions')" "0" \
+  "and does not count as a tier fallback"
+assert_eq "$(printf '%s' "$iflt" | jq -r '.reconciliation.medianComputedOverReported')" "1" \
+  "which is what makes its reported cost reconcile"
+
+# ── the tier-fallback audit is reported, not hidden ──────────────────────────
+assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback | keys | join(",")')" \
+  "measuredSessions,measuredTokens,sessions,tokens" "the tier-fallback audit has a fixed shape"
+assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback.measuredSessions')" "0" \
+  "no measured fixture session falls back to a guessed tier"
+assert_contains "$(run_replay --arm 1m)" "tier fallback: none" \
+  "and the report says so in words rather than printing the word unknown"
+
+# ── recovering the sessions that were killed before a result event ───────────
+# Ticket 105 was killed mid-session. Its OUTPUT is unrecoverable, but its input side is exact:
+# 10,000 input + 12,000 cache write + 28,000 cache read = 50,000 tokens. Dropping it makes OUR arm
+# look cheaper than it was, so the tool computes and prints what adding it back would do.
+assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery.sessions')" "1" "the killed session is counted"
+assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery.recoverableInputSideTokens')" "50000" \
+  "and its exactly recoverable input side is reported"
+assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery.outputRecoverable')" "false" \
+  "output is never recovered: summing per-message output is the settled trap"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].shiploopTokens')" "5215000" \
+  "the DEFAULT arm stays purely measured: the recovered session is not folded into it"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].sensitivityWithRecoveredPartials.shiploopTokens')" "5265000" \
+  "the sensitivity arm adds exactly the 50,000 recovered tokens"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].sensitivityWithRecoveredPartials.vanillaTokens')" "12767000" \
+  "and charges the vanilla arm its carry: 950,000 capped by a 1M window, less the 12,000 re-prime"
+assert_eq "$(printf '%s' "$j" | jq -r '(.arms["1m"].sensitivityWithRecoveredPartials.tokenReductionPct * 100 | round)')" \
+  "5876" "the sensitivity reduction is reported, not just the flattering one"
+# The delta is signed and can go either way. On the 200k arm the recovered session costs more than
+# the carry it earns, so the cost reduction goes NEGATIVE. That must be reported, not floored.
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["200k"].sensitivityWithRecoveredPartials.costReductionPct < 0')" "true" \
+  "a recovery that makes our arm look worse is reported as worse"
+assert_contains "$(run_replay --arm 1m)" "added back to OUR arm" \
+  "the sensitivity is a line in the default human report, not a JSON-only field"
+
 # ── argument validation ──────────────────────────────────────────────────────
 bad="$(node "$HUB/bench/replay.mjs" --arm 500k 2>&1)"
 assert_eq "$?" "2" "an unknown arm is a usage error"

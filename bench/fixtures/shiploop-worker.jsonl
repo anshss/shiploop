@@ -1,4 +1,4 @@
-{"type":"system","subtype":"init","session_id":"fixture-worker","model":"fixture-cheap"}
-{"type":"assistant","message":{"usage":{"input_tokens":5000,"output_tokens":2000,"cache_read_input_tokens":120000,"cache_creation_input_tokens":30000}}}
-{"type":"assistant","message":{"usage":{"input_tokens":4000,"output_tokens":1500,"cache_read_input_tokens":130000,"cache_creation_input_tokens":10000}}}
-{"type":"result","subtype":"success","is_error":false,"num_turns":18,"duration_ms":300000,"total_cost_usd":0.55,"usage":{"input_tokens":9000,"output_tokens":3500,"cache_read_input_tokens":250000,"cache_creation_input_tokens":40000}}
+{"type":"system","subtype":"init","session_id":"fixture-worker","model":"claude-opus-4-8"}
+{"type":"assistant","message":{"id":"fixture-worker-msg-0","model":"claude-opus-4-8","usage":{"input_tokens":1717,"output_tokens":3,"cache_read_input_tokens":461061,"cache_creation_input_tokens":20620,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":20620}}}}
+{"type":"assistant","message":{"id":"fixture-worker-msg-1","model":"claude-opus-4-8","usage":{"input_tokens":1717,"output_tokens":3,"cache_read_input_tokens":1383182,"cache_creation_input_tokens":20620,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":20620}}}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":18,"session_id":"fixture-worker","total_cost_usd":1.6287815,"usage":{"input_tokens":3434,"output_tokens":11084,"cache_read_input_tokens":1844243,"cache_creation_input_tokens":41239,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":41239}}}

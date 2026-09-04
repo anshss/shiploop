@@ -24,7 +24,7 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "arms,fleets,kind,provenance,reconciliation,scope,sessionsExcludedNoResultEvent,unknownModels" \
+  "arms,fleets,kind,partialRecovery,provenance,reconciliation,scope,sessionsExcludedNoResultEvent,tierFallback" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
@@ -36,7 +36,7 @@ assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "No vanilla session 
 assert_eq "$(printf '%s' "$j" | jq -r '.arms | keys | join(",")')" "1m,200k,uncapped" \
   "--arm all emits every arm"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | keys | join(",")')" \
-  "arm,ceilingCostReductionPct,ceilingTokenReductionPct,contextWindow,costReductionPct,label,medianTicketsPerRun,positionCurve,runs,sharedOutputCostUsd,shiploopBreakdown,shiploopCostUsd,shiploopTokens,tickets,ticketsInModeledRuns,tokenReductionPct,vanillaBreakdown,vanillaCostUsd,vanillaTokens" \
+  "arm,ceilingCostReductionPct,ceilingTokenReductionPct,contextWindow,costReductionPct,label,medianTicketsPerRun,positionCurve,runs,sensitivityWithRecoveredPartials,sharedOutputCostUsd,shiploopBreakdown,shiploopCostUsd,shiploopTokens,tickets,ticketsInModeledRuns,tokenReductionPct,vanillaBreakdown,vanillaCostUsd,vanillaTokens" \
   "each arm carries its own key set"
 assert_eq "$(printf '%s' "$j" | jq -r '[.arms[] | select(.runs > 0 and .tickets > 0)] | length')" "3" \
   "every arm reports its own n runs and n tickets"
@@ -94,8 +94,19 @@ assert_eq "$(printf '%s' "$j" | jq -r '.reconciliation | keys | join(",")')" \
   "medianComputedOverReported,n,within2pct" "the reconciliation self-check has a fixed shape"
 assert_eq "$(printf '%s' "$j" | jq -r '.sessionsExcludedNoResultEvent')" "1" \
   "exclusions are reported as a count, never dropped silently"
-assert_eq "$(printf '%s' "$j" | jq -r '.unknownModels | length')" "0" \
-  "no fixture model falls outside the rate table"
+assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback.sessions')" "0" \
+  "no fixture session falls outside the rate table"
+assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery | keys | join(",")')" \
+  "outputRecoverable,recoverableInputSideTokens,sessions" "the recovery audit has a fixed shape"
+assert_eq "$(printf '%s' "$j" | jq -r '[.arms[].sensitivityWithRecoveredPartials | keys | join(",")] | unique | join(" | ")')" \
+  "costReductionDeltaPts,costReductionPct,shiploopCostUsd,shiploopTokens,tokenReductionDeltaPts,tokenReductionPct,vanillaCostUsd,vanillaTokens" \
+  "every arm carries the same sensitivity shape"
+# The delta must be the signed difference the two figures imply, so a consumer cannot read it
+# backwards and turn a drag on the headline into a boost.
+assert_eq "$(printf '%s' "$j" | jq -r '
+  [.arms[] | ((.sensitivityWithRecoveredPartials.tokenReductionPct - .tokenReductionPct)
+              - .sensitivityWithRecoveredPartials.tokenReductionDeltaPts | fabs < 1e-9)] | all')" "true" \
+  "tokenReductionDeltaPts is the signed difference from the measured arm"
 
 # ── fleets ───────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r '.fleets | length')" "1" "one fleet was read"

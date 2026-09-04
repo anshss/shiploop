@@ -91,8 +91,16 @@ assert_eq "$(printf '%s' "$row" | jq -r '.costUsd')" "null" \
   "7. a stream with no result event records costUsd null, never 0"
 assert_eq "$(printf '%s' "$row" | jq -r '.usageSource')" "assistant-partial" \
   "7. its tokens are recovered from the per-turn assistant events"
-assert_eq "$(printf '%s' "$row" | jq -r '.tokens.total')" "53200" \
+assert_eq "$(printf '%s' "$row" | jq -r '.tokens.total')" "397674" \
   "7. recovered token total is the sum of every assistant event"
+# The INPUT side of that recovery is exact: summing the per-turn context reproduces a result
+# event's own totals to the token. The OUTPUT side is not, because the per-message output_tokens
+# is a truncated snapshot that undercounts real output by a median factor of 33 in the corpus.
+# govern::stream_usage is a shared harness primitive, so this row's output is left as it is and
+# the defect is recorded in bench/METHODOLOGY.md rather than patched from a bench change.
+# bench/replay.mjs never uses this path: it recovers the input side only and sets output to 0.
+assert_eq "$(printf '%s' "$row" | jq -r '.tokens.output')" "6" \
+  "7. the recovered OUTPUT is the truncated snapshot sum, which is why replay.mjs never uses it"
 
 # The fixture backlog is for the suite only. A real run must refuse it rather than failing halfway
 # through a clone, and it must never be counted toward a published backlog total.

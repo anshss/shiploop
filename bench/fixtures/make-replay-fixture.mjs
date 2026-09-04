@@ -193,6 +193,59 @@ fs.writeFileSync(path.join(EMPTY, 'logs', 'govern', '.keep'), '');
 
 console.log(`wrote ${ROOT} and ${EMPTY}`);
 
+// ── replay-init-model-fleet ──────────────────────────────────────────────────
+// One session whose result event omits modelUsage and whose only assistant message is a synthetic
+// notice carrying no model. The model name exists in exactly one place: the `system`/`init` event.
+// A tool that does not read it prices this session at the most expensive tier by default. It lives
+// in its own fleet so the main golden numbers stay untouched.
+const INIT_FLEET = path.join(HERE, 'replay-init-model-fleet');
+const INIT_MODEL = 'claude-haiku-4-5-20251001';
+{
+  fs.rmSync(INIT_FLEET, { recursive: true, force: true });
+  const dir = path.join(INIT_FLEET, 'logs', 'govern', RUN, 'ticket-201');
+  fs.mkdirSync(dir, { recursive: true });
+  const billed = { input: 5_000, cacheCreation: 5_000, cacheRead: 40_000 };
+  const output = 2_000;
+  const r = RATES.haiku;
+  const cost =
+    (billed.input * r.i + output * r.o + billed.cacheRead * r.i * 0.1 + billed.cacheCreation * r.i * 2) / 1e6;
+  fs.writeFileSync(
+    path.join(dir, 'worker.jsonl'),
+    [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fixture-201', model: INIT_MODEL }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          id: 'msg_fixture_201_0',
+          model: '<synthetic>',
+          usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 },
+        },
+        session_id: 'fixture-201',
+      }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        num_turns: 1,
+        session_id: 'fixture-201',
+        total_cost_usd: cost,
+        usage: {
+          input_tokens: billed.input,
+          cache_creation_input_tokens: billed.cacheCreation,
+          cache_read_input_tokens: billed.cacheRead,
+          output_tokens: output,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: billed.cacheCreation },
+        },
+      }),
+    ].join('\n') + '\n',
+  );
+  fs.mkdirSync(path.join(INIT_FLEET, 'governor'), { recursive: true });
+  fs.writeFileSync(
+    path.join(INIT_FLEET, 'governor', 'ticket-history.jsonl'),
+    JSON.stringify({ ticket: 201, run: RUN, status: 'resolved', ts: 1_800_000_001 }) + '\n',
+  );
+}
+
 // ── golden-results.jsonl ─────────────────────────────────────────────────────
 // The rollup's golden fixture, expressed from the SAME sessions. The shiploop rows are the
 // fixture's four worker sessions verbatim. The vanilla row is not an invented measurement and not
@@ -296,3 +349,191 @@ rows.push({
 
 fs.writeFileSync(path.join(HERE, 'golden-results.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
 console.log('wrote golden-results.jsonl');
+
+// ── the live-A/B fixtures ────────────────────────────────────────────────────
+// These feed bench/run.sh --dry-run and the selection test. They used to carry invented round
+// dollars ($24.00 vanilla against $3.70 shiploop, an 84.6% saving nobody had measured or modeled;
+// $40.00 against $2.00 in the selection file, 95%). Both read as results.
+//
+// They are now built from the token MIX the real corpus actually has, and every dollar figure is
+// computed from the published rate table rather than chosen. The one thing still chosen is each
+// backlog's carry multiplier, because a spread of deltas is what the selection ranking exists to
+// sort. The multipliers span 1.3x to 3.4x, which lands the deltas inside the 4% to 77% range the
+// replay model produces across real fleets, so no percentage in these files reads as a headline.
+
+// Real corpus mix, 1M-context arm, from `node bench/replay.mjs --arm 1m`.
+const CORPUS = {
+  shiploop: { input: 6_260_208, output: 20_207_850, cacheRead: 3_362_466_006, cacheCreation: 75_188_684 },
+  vanilla: { input: 6_260_208, output: 20_207_850, cacheRead: 11_565_453_790, cacheCreation: 67_063_435 },
+};
+const CORPUS_TOTAL = Object.values(CORPUS.shiploop).reduce((a, b) => a + b, 0);
+
+// Scale the corpus mix to a target token total. Cache reads absorb the remainder so the parts
+// always sum to the total exactly, with no rounding drift.
+function mix(base, total) {
+  const f = total / CORPUS_TOTAL;
+  const input = Math.round(base.input * f);
+  const output = Math.round(base.output * f);
+  const cacheCreation = Math.round(base.cacheCreation * f);
+  return { input, output, cacheRead: total - input - output - cacheCreation, cacheCreation };
+}
+// Opus list rates. Every fixture cost below is this function's output, never a chosen number.
+function priceOpus(t) {
+  return (t.input * 5 + t.output * 25 + t.cacheRead * 0.5 + t.cacheCreation * 10) / 1e6;
+}
+const round2 = (x) => Math.round(x * 100) / 100;
+
+// The four canned streams. A worker session is a real one's order of magnitude (~250k cache read,
+// ~3.5k output); the vanilla session is one long session over a whole backlog.
+function stream(sessionId, model, total, turnCount) {
+  const t = mix(CORPUS.shiploop, total);
+  const cost = priceOpus(t);
+  const out = [JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId, model })];
+  // Two truncated per-turn snapshots, the shape the real stream emits. Nothing sums them.
+  for (let i = 0; i < 2; i++) {
+    out.push(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          id: `${sessionId}-msg-${i}`,
+          model,
+          usage: {
+            input_tokens: Math.round(t.input / 2),
+            output_tokens: 3,
+            cache_read_input_tokens: Math.round((t.cacheRead / 2) * (i + 0.5)),
+            cache_creation_input_tokens: Math.round(t.cacheCreation / 2),
+            cache_creation: {
+              ephemeral_5m_input_tokens: 0,
+              ephemeral_1h_input_tokens: Math.round(t.cacheCreation / 2),
+            },
+          },
+        },
+      }),
+    );
+  }
+  out.push(
+    JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      num_turns: turnCount,
+      session_id: sessionId,
+      total_cost_usd: cost,
+      usage: {
+        input_tokens: t.input,
+        output_tokens: t.output,
+        cache_read_input_tokens: t.cacheRead,
+        cache_creation_input_tokens: t.cacheCreation,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: t.cacheCreation },
+      },
+    }),
+  );
+  return out.join('\n') + '\n';
+}
+
+// Sizes come from the real per-session distribution: 522 corpus sessions have a median of
+// 3,061,307 tokens ($3.14) and a 25th percentile of 1,859,253 ($1.87). The worker is set at that
+// 25th percentile so a six-ticket dry run stays comfortably under the default BENCH_MAX_USD of 60
+// while still being a real session's order of magnitude, not a toy.
+fs.writeFileSync(path.join(HERE, 'vanilla-session.jsonl'), stream('fixture-vanilla', 'claude-opus-4-8', 12_000_000, 96));
+fs.writeFileSync(path.join(HERE, 'shiploop-worker.jsonl'), stream('fixture-worker', 'claude-opus-4-8', 1_900_000, 18));
+fs.writeFileSync(path.join(HERE, 'shiploop-driver.jsonl'), stream('fixture-driver', 'claude-opus-4-8', 600_000, 3));
+// Killed before a result event: two turns, no result. Recovery of its input side is exact; its
+// output is gone for good.
+{
+  const t = mix(CORPUS.shiploop, 400_000);
+  const half = {
+    input_tokens: Math.round(t.input / 2),
+    output_tokens: 3,
+    cache_read_input_tokens: Math.round(t.cacheRead / 2),
+    cache_creation_input_tokens: Math.round(t.cacheCreation / 2),
+  };
+  fs.writeFileSync(
+    path.join(HERE, 'partial-no-result.jsonl'),
+    [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fixture-partial', model: 'claude-opus-4-8' }),
+      JSON.stringify({ type: 'assistant', message: { id: 'fixture-partial-0', model: 'claude-opus-4-8', usage: half } }),
+      JSON.stringify({ type: 'assistant', message: { id: 'fixture-partial-1', model: 'claude-opus-4-8', usage: half } }),
+    ].join('\n') + '\n',
+  );
+}
+
+// ── selection-results.jsonl ──────────────────────────────────────────────────
+// Five backlogs whose only job is to exercise the ranking, the floor, and the two drop rules.
+// shiploopTokens is the corpus mix at a chosen scale; the vanilla arm is that same run with a
+// carry multiplier applied to its cache reads, which is the one thing that actually varies between
+// real runs (a run that clears more tickets carries more). Every cost is priced, not chosen.
+const BACKLOGS = [
+  { id: 'bl-a', tickets: 8, shipTokens: 24_000_000, carry: 3.4, cleared: 8, vanillaCleared: true, status: 'resolved' },
+  { id: 'bl-b', tickets: 7, shipTokens: 21_000_000, carry: 2.3, cleared: 7, vanillaCleared: true, status: 'resolved' },
+  { id: 'bl-c', tickets: 6, shipTokens: 18_000_000, carry: 1.3, cleared: 6, vanillaCleared: true, status: 'resolved' },
+  // The delta looks good and the backlog still drops: the vanilla arm cleared 5 of 8.
+  { id: 'bl-d', tickets: 8, shipTokens: 20_000_000, carry: 2.8, cleared: 5, vanillaCleared: false, status: 'resolved' },
+  { id: 'bl-e', tickets: 6, shipTokens: 18_000_000, carry: 2.0, cleared: 6, vanillaCleared: true, status: 'capped' },
+];
+const selRows = [];
+for (const b of BACKLOGS) {
+  const ship = mix(CORPUS.shiploop, b.shipTokens);
+  // One long session re-primes once, not once per ticket, so its cache WRITES are lower even as
+  // its cache reads climb. 0.8919 is the ratio the real corpus shows (67,063,435 / 75,188,684).
+  const van = {
+    ...ship,
+    cacheRead: Math.round(ship.cacheRead * b.carry),
+    cacheCreation: Math.round(ship.cacheCreation * 0.8919),
+  };
+  const mk = (arm, t, cleared, status, resolved) => {
+    const total = t.input + t.output + t.cacheRead + t.cacheCreation;
+    const cost = round2(priceOpus(t));
+    return {
+      kind: 'rollup',
+      run: 'selection',
+      backlog: b.id,
+      task: b.id,
+      arm,
+      rep: 1,
+      model: 'claude-opus-4-8',
+      cli_version: 'fixture',
+      status,
+      resolved,
+      provenance: arm === 'vanilla' ? 'modeled' : 'measured',
+      turns: 10,
+      tokens: { ...t, cacheRead: t.cacheRead, total },
+      costUsd: cost,
+      usageSource: 'rollup',
+      wallMs: 600000,
+      verifyExit: 0,
+      startedAt: 1780000000,
+      sessions: arm === 'vanilla' ? 1 : b.tickets + 1,
+      costUsdSessions: arm === 'vanilla' ? 1 : b.tickets + 1,
+      ticketsCleared: cleared,
+      ticketsTotal: b.tickets,
+      costUsdTotal: cost,
+      tokensTotal: total,
+    };
+  };
+  if (b.status === 'capped') {
+    selRows.push(mk('vanilla', van, b.tickets, 'resolved'));
+    // The run hit BENCH_MAX_USD before the shiploop arm was dispatched, so its cost is recorded
+    // as zero. A zero must never be readable as a saving, which is what rule 3 exists to enforce.
+    const capped = mk('shiploop', { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }, 0, 'capped', false);
+    capped.costUsd = 0;
+    capped.costUsdTotal = 0;
+    selRows.push(capped);
+  } else {
+    selRows.push(mk('vanilla', van, b.cleared, b.vanillaCleared ? 'resolved' : 'failed', b.vanillaCleared));
+    selRows.push(mk('shiploop', ship, b.tickets, 'resolved', true));
+  }
+}
+fs.writeFileSync(path.join(HERE, 'selection-results.jsonl'), selRows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+console.log('wrote the live-A/B stream fixtures and selection-results.jsonl');
+for (const b of BACKLOGS) {
+  const ship = mix(CORPUS.shiploop, b.shipTokens);
+  const van = {
+    ...ship,
+    cacheRead: Math.round(ship.cacheRead * b.carry),
+    cacheCreation: Math.round(ship.cacheCreation * 0.8919),
+  };
+  const sc = round2(priceOpus(ship));
+  const vc = round2(priceOpus(van));
+  console.log(`  ${b.id}: shiploop $${sc.toFixed(2)}  vanilla $${vc.toFixed(2)}  cut ${(100 * (vc - sc) / vc).toFixed(2)}%`);
+}
