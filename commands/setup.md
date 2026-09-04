@@ -265,7 +265,8 @@ These live INSIDE the single interview (W1 / Phase 1) — never as separate late
    add to `REPOS` (fresh: before scaffold; wrap: after W2, then re-run
    `--component workspace-sh --yes`). One repo is a fine workspace.
 2. **Autonomy rung (`GOVERN_AUTONOMY`)**:
-   - **observe** — workers do the work and open a DRAFT PR; nothing merges. Watch-only.
+   - **observe** — workers (each a trim, single-ticket session) do the work and open a DRAFT PR;
+     nothing merges. Watch-only.
    - **pr-only** (default) — normal ready-for-review PRs; governor never auto-merges. You review.
    - **auto** — allowlisted repos auto-merge on green-or-no-checks CI (three-factor guard still gates).
    Scaffold seeds `pr-only`. To set another rung AFTER scaffold:

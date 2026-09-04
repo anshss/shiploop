@@ -43,7 +43,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Model orchestration.** Start with the lowest-cost capable model and escalate only after a clear failure. Failed attempts are usually far cheaper than successful ones, so a cheap first pass reduces average cost without compromising difficult work.
 
-- **A Worker runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the ticket actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
+- **A worker (a trim, single-ticket session) runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the ticket actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
 
 - **Routine changes are handled by code, not a model.** Much of a backlog is mechanical: flip a default, add a key, bump a version, apply a known rename. Shiploop detects those during the survey it already runs, then applies and verifies them deterministically, with no model in the loop. Anything ambiguous, unverified, or unsafe falls back to the normal worker automatically.
 
@@ -98,7 +98,7 @@ Autonomy is bounded by the trust ladder below, not the scaffolding. Workers bypa
 
 ## Glossary
 
-One noun, one meaning. Every page pairs a term with its definition on first use, because none of these
+One noun, one meaning. Every page pairs a term with its definition on its first prose use, because none of these
 words is exclusively ours: Factory's docs, for one, call their in-session delegated children "worker
 agents". In shiploop they mean exactly this:
 
