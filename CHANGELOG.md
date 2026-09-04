@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.18.3 — 2026-09-04
+
+### Fixed
+
+**The README Glossary claimed something about the docs that the docs did not do.** v1.18.1 shipped
+the sentence "Every page pairs a term with its definition on first use" while four pages introduced
+"worker" with no definition anywhere near it: `commands/flows.md`, `commands/setup.md`,
+`commands/update.md` and `commands/statusline.md`, plus a README whose first mention was image alt
+text ninety-five lines above the Glossary. A claim about the documentation, made inside the
+documentation, that nothing verified.
+
+The claim is now true rather than softened. Every page carries a clause-sized appositive on its first
+prose mention, and the Glossary sentence is tightened to "first prose use", which is what it always
+meant (alt text cannot carry a definition gracefully).
+
+The appositive is deliberately lane-neutral: **"a trim, single-ticket session"**, never "headless
+single-ticket session". A worker has one definition and two lanes, and the interactive lane is not
+headless, so baking "headless" into the noun would contradict `.claude/agents/worker.md`.
+
+**New tripwire so the claim cannot decay again.** `test-vocab-worker-pairing.sh` strips fenced code
+blocks and HTML tags, finds each page's first prose mention of "worker", and fails if it lacks the
+appositive. It also asserts the Glossary sentence still exists, so deleting the claim instead of
+satisfying it cannot turn the test green over nothing, and carries a non-vacuity self-check. Verified
+by removing a pairing and confirming the test fails with the offending line quoted.
+
 ## 1.18.2 — 2026-09-04
 
 ### Fixed

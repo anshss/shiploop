@@ -232,7 +232,7 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verif
 ```
 The govern test suite is hub-only (never installed into a workspace) — there is nothing to run here.
 
-**`dry-run.sh` spawns a live authenticated Claude worker** — inside a nested Claude session or headless
+**`dry-run.sh` spawns a live authenticated Claude worker** (a trim, single-ticket session) — inside a nested Claude session or headless
 env with no worker auth it will fail. That's the auth caveat, not an update regression.
 
 ## Phase 5 — Report
