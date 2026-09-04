@@ -91,6 +91,20 @@ Anything else you spawn with the `Agent` tool is a **subagent**, never a worker.
 load-bearing rather than cosmetic: `worker` is a literal string in the call, so a routing rule that
 says "worker" cannot be satisfied by a generic spawn that merely feels worker-like.
 
+**If your CLI does not support agent definitions, use the autonomous lane.** Custom subagent
+definitions (`.claude/agents/*.md` invoked via `subagent_type`) are a Claude Code feature, so a fleet
+on an older CLI may not read `worker.md` at all. Two things are UNVERIFIED here and are deliberately
+not guessed at: the minimum CLI version that reads these files, and what an older CLI actually does
+when it finds one (silently ignore it, error, or fall back to a generic subagent). The official
+sub-agents documentation specifies neither, and no version was tested for this note.
+
+The practical consequence is what matters, and it is safe either way: if
+`Agent(subagent_type: "worker")` does not behave like a worker on your CLI, **`npm run govern -- <N>`
+is the fallback and always works.** It is the same doctrine and the same worker, spawned headlessly
+by `spawn-worker.sh`, which depends on no agent-definition support whatsoever. Nothing about the
+autonomous lane is gated on this feature. If you are unsure which you have, run a ticket through
+govern once and compare.
+
 **Why the interactive lane stops at PR-open.** Merge, the CI await, the park-on-red-CI recovery path
 and the queue edit all live in govern's run loop, and a session that merged its own PR would bypass
 every one of them. Dispatching `npm run govern -- <N>` once the PR is open adopts that PR instead of
