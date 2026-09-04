@@ -1,8 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.18.1 — 2026-09-04
 
 ### Added
+
+**The worker gets an interactive lane: `Agent(subagent_type: "worker")`.** New scaffolded agent
+definition `.claude/agents/worker.md` (sonnet, tools mirroring `GOVERN_WORKER_TOOLS_DEFAULT`) so a
+live driver session can dispatch one `## #N` ticket to the same worker the governor spawns headlessly,
+instead of a generic subagent. It carries **no doctrine of its own**: it reads
+`governor/worker-prompt.md`, the canonical file `spawn-worker.sh` already sends, and adds only the
+interactive deltas (the ticket arrives in the task prompt rather than by `{{TICKET_BLOCK}}`
+substitution, the worktree is self-service via `npm run worktree:new -- t<N>` because the `Agent`
+tool's `isolation: "worktree"` cannot carry a meta-repo's nested sub-repo `.git` dirs, and the report
+contract is unchanged). New govern-suite test `test-worker-agent-doctrine.sh` fails the build if the
+agent definition and the canonical prompt ever fork, or if the frontmatter model/tools drift from
+`spawn-worker.sh`.
 
 **`verify-filter.sh` reaches the interactive driver lane, plus two shipped subagents.** `npm run vf --
 <cmd>` now runs `scripts/govern/verify-filter.sh` from the workspace root (wired into scaffold.sh's
@@ -14,6 +26,17 @@ nudge toward `npm run vf --`, sharing the existing per-session cap and driver-on
 `GOVERN_VF_NUDGE=0`. New `.claude/agents/{lookup,investigator}.md` (haiku single-fact lookup, sonnet
 multi-file investigation) ship as a new `agents` component, installed on fresh scaffold and by
 `/shiploop:update`.
+
+### Changed
+
+**Seed `CLAUDE.md` routes delegation by shape, as a table.** Ticket-shaped work goes to
+`Agent(subagent_type: "worker")` one per ticket; a multi-ticket batch, a cron run or no open session
+goes to `npm run govern -- <N...>`; heavy-but-not-ticket-shaped work stays a plain `Agent` sized by the
+existing haiku/sonnet table; trivial stays inline; a worker that failed once is retried once at
+`model: opus` and then reported. Stated alongside it as a hard rule: **the interactive lane ends at
+PR-open plus report**: merge, the CI await and queue bookkeeping always go through govern, where
+`npm run govern -- <N>` on an open PR adopts that PR instead of redoing the work, and a queue block is
+never deleted before merge. `CLAUDE-APPENDIX.md` gains the "Two lanes, one worker" rationale.
 
 ## 1.18.0 — 2026-09-04
 

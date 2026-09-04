@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Merge a STAGED flow-extraction diff into .claude/shiploop/validation/flows.md (validations Phase 4, `/shiploop:flows
-# extract`). Extraction fans out over the codebase via Agent workers and writes a proposed registry
+# extract`). Extraction fans out over the codebase via subagents and writes a proposed registry
 # fragment (a flows.md-format file of `## <id>` blocks); this script is the deterministic, operator-
 # gated MERGE — the model never writes the registry directly.
 #

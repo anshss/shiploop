@@ -787,7 +787,7 @@ component_settings() {
     "UserPromptSubmit": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
-    "PreToolUse": [{ "matcher": "Read|Bash", "hooks": [
+    "PreToolUse": [{ "matcher": "Read|Bash|Agent", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
     "Stop": [{ "matcher": "*", "hooks": [
@@ -885,7 +885,7 @@ EOF
         {marker:"validations-pending-hook\\.sh", hook:$ss_val}
       ]},
       {event:"UserPromptSubmit", matcher:"*",         items:[{marker:"router-posture-reminder\\.sh", hook:$up}]},
-      {event:"PreToolUse",       matcher:"Read|Bash", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
+      {event:"PreToolUse",       matcher:"Read|Bash|Agent", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
       {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
       {event:"SessionEnd",       matcher:"*",         items:[{marker:"session-end-cleanup\\.sh",     hook:$se}]}
     ]') || die "settings-merge: failed to build hook spec (jq error)"
@@ -906,6 +906,18 @@ def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
           else . end)
       else . end)
   else . end )
+# MIGRATION (in place, not append): the PreToolUse matcher gained `Agent` when the
+# router-posture guard grew its ticket-route deny. Marker-presence alone would call the
+# existing stanza "already installed" and leave it matching only Read|Bash forever, so the
+# guard would never see an Agent call on any workspace scaffolded before that. Widen the
+# matcher on the entry that actually carries our guard; leave every other entry alone.
+| ( if .hooks.PreToolUse then
+      .hooks.PreToolUse |= map(
+        if ((.matcher? // "") == "Read|Bash")
+           and ([ (.hooks // [])[]?.command ] | join("\n") | test("router-posture-guard\\.sh"))
+        then .matcher = "Read|Bash|Agent"
+        else . end)
+    else . end )
 # REPAIR (in place): a hook already wired under this event but whose command string no
 # longer matches what the hub ships — the workspace path moved, a redirect/flag changed,
 # or the timeout was retuned. Marker-presence alone would call that "already installed"

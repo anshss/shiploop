@@ -26,6 +26,7 @@ test-reconcile-update
 test-scaffold-verify-standalone
 test-detect-inputs
 test-events-monitor
+test-vocab-agent-worker
 
 # QUARANTINED — test-wrap-in-place passes on macOS and fails on the Ubuntu runner with 31
 # assertion failures: the undo path exits 127 (a command the test shells out to is absent or
