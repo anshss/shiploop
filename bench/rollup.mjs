@@ -298,8 +298,12 @@ out("");
 
 out("Cut 2: tokens to clear the same backlog");
 if (agg) {
-  out(`  billable (input + output + cache creation)   ${f1(agg.tokenPctBillable)}% fewer`);
-  out(`  all-in   (billable + cache reads)            ${f1(agg.tokenPctAllIn)}% fewer`);
+  // A negative cut is a real outcome, not a rendering accident: on the billable reading the
+  // shiploop arm can write MORE cache than one long session, because it primes a fresh context
+  // per ticket. Print the direction the number actually has rather than the word "fewer".
+  const dir = (v) => (v < 0 ? `${f1(-v)}% MORE` : `${f1(v)}% fewer`);
+  out(`  billable (input + output + cache creation)   ${dir(agg.tokenPctBillable)}`);
+  out(`  all-in   (billable + cache reads)            ${dir(agg.tokenPctAllIn)}`);
 } else {
   out("  n/a: no eligible backlog");
 }

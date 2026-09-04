@@ -1,16 +1,61 @@
 # bench
 
-The benchmark that produces shiploop's cost claim. It measures **a full session clearing a
-backlog**, not a ticket: the unit is the whole loop (scout, cheap-floor dispatch, escalation, fresh
-context per worker) against the whole alternative (one Claude Code session grinding the same
-backlog, top to bottom).
+The benchmark behind shiploop's cost claim. The unit is **a full session clearing a backlog**, not a
+ticket: the whole loop (scout, cheap-floor dispatch, escalation, fresh context per worker) against
+the whole alternative (one Claude Code session grinding the same backlog, top to bottom).
+
+There are two paths. **The replay path is the one that produces a number today.** The live A/B
+harness is the measured path, and it has not been run.
 
 Design and rationale: `.specs/2026-09-03-benchmark-design.md`.
+
+## Path 1: replay (what produces the number today)
+
+`bench/replay.mjs` reads governor transcripts a fleet has already written, sums the measured billed
+usage, and models what the same tickets would have cost inside one accumulating Claude Code session.
+Zero dependencies, read only, no `claude` process, no spend.
+
+```bash
+# reproduce the published number: every fleet workspace beside you
+node bench/replay.mjs --arm all
+
+# get your own: point it at your workspace
+node bench/replay.mjs --fleet /path/to/your-workspace --arm all
+
+# or, with the plugin installed, from inside your workspace
+/shiploop:bench
+```
+
+**The number it prints is a modeled counterfactual.** The shiploop arm is measured billed usage.
+The vanilla arm never ran: it is a model. The tool prints that as a line in its own output, not as
+a footnote, and every assumption with its bias direction is in `bench/METHODOLOGY.md`. Read that
+before quoting a percentage.
+
+| Flag | Meaning |
+|---|---|
+| `--fleet <path>` | a workspace to read, repeatable. Omit for auto-discovery of the current workspace and its siblings |
+| `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all`. `uncapped` is computed and labelled unphysical |
+| `--scope all\|resolved` | count every ticket the loop paid for, or only the resolved ones. Default `all` |
+| `--json` | machine-readable, same numbers |
+
+The report always carries the pieces that make the number checkable: n runs, n tickets, sessions
+excluded for having no result event, the ceiling no architecture could beat, the rates
+reconciliation ratio, and the **per-ticket-position curve**. Ticket 1 saves exactly 0%, because
+nothing has been carried into it yet. That is the most useful line in the output.
+
+## Path 2: the live A/B harness (the measured path, not yet run)
+
+Everything below this line is the harness for a real measured run: two arms actually executed
+against a pinned backlog set with a SWE-bench-shaped oracle. It is complete and tested, and it has
+not been executed against a published backlog. When it is, its numbers supersede the replay path's,
+and the replay path stays as the tool that computes a number for someone else's fleet.
 
 ## What is here
 
 ```
 bench/
+  replay.mjs                      replay path: fleet transcripts -> measured vs modeled matrix
+  METHODOLOGY.md                  what is measured, what is modeled, every assumption and its bias
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
@@ -18,7 +63,7 @@ bench/
   arms.sh                         the three arm shapes
   record.sh                       result events -> results.jsonl rows
   rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
-  fixtures/                       canned streams and golden results for the test suite
+  fixtures/                       canned streams, the replay fixture fleet, golden results
   results/<run-id>/               results.jsonl + session logs, gitignored
 ```
 
@@ -32,9 +77,10 @@ bench/
 
 Ticket text is byte-identical across arms. Neither arm has WebFetch or WebSearch.
 
-## Reproducing the published number
+## Running the live A/B harness
 
-Requires `node`, `jq`, `git`, and a `claude` CLI on PATH. It spends real quota.
+Requires `node`, `jq`, `git`, and a `claude` CLI on PATH. It spends real quota. The replay path
+above needs none of that and spends nothing.
 
 ```bash
 # 1. Dry run first. Zero network, zero spend, canned fixtures for both arm shapes.
@@ -127,3 +173,9 @@ and run by the `hub-context-tests` CI job from the checkout, where a skip is a h
 ```bash
 for t in templates/govern/test/test-bench-*.sh; do bash "$t"; done
 ```
+
+`test-bench-replay.sh` and `test-bench-replay-schema.sh` cover the replay path against
+`fixtures/replay-fleet`, a synthetic fleet whose every expected figure is derivable by hand from the
+table in `fixtures/README.md`. They assert, among other things, that summing the stream's
+`output_tokens` snapshots (which undercounts real output by a median of 33x) is not what produced
+the shiploop arm.

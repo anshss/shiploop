@@ -36,6 +36,8 @@ test-bench-arms
 test-bench-rollup
 test-bench-selection
 test-bench-validate
+test-bench-replay
+test-bench-replay-schema
 
 # QUARANTINED — test-wrap-in-place passes on macOS and fails on the Ubuntu runner with 31
 # assertion failures: the undo path exits 127 (a command the test shells out to is absent or
