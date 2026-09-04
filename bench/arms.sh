@@ -30,43 +30,60 @@ BENCH_ARMS_HUB="$(cd "$BENCH_ARMS_DIR/.." && pwd)"
 # Tool list shared by both arms: the governor's measured default minus WebFetch and WebSearch.
 BENCH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
 
-# ── --max-turns capability probe ────────────────────────────────────────────
+# ── --max-turns / --max-budget-usd capability probe ─────────────────────────
 # CLAUDE.md anti-pattern 12: never put a new `claude` flag on a dispatch path unguarded. The fleet's
 # CLI is not ours, and an unknown flag makes `claude -p` die at argument parsing, which the failure
 # classifier reports as a generic `failed`. A marketing benchmark that silently fails is worse than
 # an honest one.
 #
-# The probe itself is NOT reimplemented here. `govern::claude_supports_max_turns` lives in
-# templates/govern/lib/common.sh beside the --tools and --exclude-dynamic-system-prompt-sections
-# probes: a cached, bounded `--help` grep, never a version compare, with a
-# `_GOVERN_MAXTURNS_SUPPORTED` pre-seed test seam. Both arms need the same answer, and the shiploop
-# arm's workers reach it through spawn-worker.sh's GOVERN_WORKER_MAX_TURNS, so one probe is the only
-# way the two arms can be guaranteed to agree.
+# Neither probe is reimplemented here. `govern::claude_supports_max_turns` and
+# `govern::claude_supports_max_budget_usd` live in templates/govern/lib/common.sh beside the
+# --tools and --exclude-dynamic-system-prompt-sections probes: cached, bounded `--help` greps,
+# never a version compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test seam. Both arms
+# need the same answer, and the shiploop arm's workers reach the same two probes through
+# spawn-worker.sh's GOVERN_WORKER_MAX_TURNS / GOVERN_WORKER_MAX_BUDGET_USD, so the probes are the
+# only way the two arms can be guaranteed to agree.
 #
-#   BENCH_MAX_TURNS_FLAG=0        kill switch: never pass --max-turns
-#   _GOVERN_MAXTURNS_SUPPORTED    pre-seed 1|0 to skip the probe entirely (test seam)
+# --max-turns is tried FIRST; --max-budget-usd is the fallback for a CLI release that dropped
+# --max-turns entirely (observed: claude 2.1.246 has no --max-turns, only --max-budget-usd). A
+# dollar ceiling is not turn-shaped, but it is the closest available substitute for capping a
+# spend-bearing session, and the run-level BENCH_MAX_USD cap still bounds the whole run either way.
 #
-# Unsupported CLI is a HARD STOP, not a silent degrade: BENCH_MAX_TURNS is an always-on rail (spec
-# section 5) and dropping it would spawn an uncapped, spend-bearing session.
+#   BENCH_MAX_TURNS_FLAG=0        kill switch: never pass --max-turns or --max-budget-usd
+#   _GOVERN_MAXTURNS_SUPPORTED    pre-seed 1|0 to skip the --max-turns probe (test seam)
+#   _GOVERN_MAXBUDGETUSD_SUPPORTED pre-seed 1|0 to skip the --max-budget-usd probe (test seam)
+#
+# Unsupported CLI (neither flag) is a HARD STOP, not a silent degrade: a per-session ceiling is an
+# always-on rail (spec section 5) and dropping it would spawn an uncapped, spend-bearing session.
 # `BENCH_ALLOW_UNCAPPED_TURNS=1` is the deliberate operator override.
 bench::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
   govern::claude_supports_max_turns "$1"
 }
 
-# Sets the global `bench_max_turns_flag` (empty, or `--max-turns N`). Always returns 0; the caller
-# decides what an empty flag means, because the two arms differ (a vanilla session refuses to run
-# uncapped, a shiploop worker still has GOVERN_WORKER_TIMEOUT under it).
-bench::resolve_max_turns_flag() { # <claude_bin> <turns>
-  local bin="$1" turns="$2"
+bench::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 not
+  govern::claude_supports_max_budget_usd "$1"
+}
+
+# Sets the global `bench_max_turns_flag` (empty, `--max-turns N`, or `--max-budget-usd D`). Always
+# returns 0; the caller decides what an empty flag means, because the two arms differ (a vanilla
+# session refuses to run uncapped, a shiploop worker still has GOVERN_WORKER_TIMEOUT under it).
+bench::resolve_max_turns_flag() { # <claude_bin> <turns> <budget_usd>
+  local bin="$1" turns="$2" budget="$3"
   bench_max_turns_flag=""
   if [[ "${BENCH_MAX_TURNS_FLAG:-1}" == "0" ]]; then
-    bench::log "BENCH_MAX_TURNS_FLAG=0, omitting --max-turns (turn ceiling disabled by operator)"
+    bench::log "BENCH_MAX_TURNS_FLAG=0, omitting the per-session ceiling flag (disabled by operator)"
     return 0
   fi
   if bench::claude_supports_max_turns "$bin"; then
     bench_max_turns_flag="--max-turns $turns"
+    return 0
+  fi
+  bench::log "claude CLI ($bin) does not support --max-turns, so the BENCH_MAX_TURNS rail cannot be enforced"
+  if bench::claude_supports_max_budget_usd "$bin"; then
+    bench_max_turns_flag="--max-budget-usd $budget"
+    bench::log "falling back to --max-budget-usd $budget as the per-session ceiling"
   else
-    bench::log "claude CLI ($bin) does not support --max-turns, so the BENCH_MAX_TURNS rail cannot be enforced"
+    bench::log "claude CLI ($bin) does not support --max-budget-usd either, so no per-session ceiling flag can be enforced"
   fi
   return 0
 }
@@ -117,7 +134,7 @@ bench::arm_vanilla() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local prompt jsonl
   jsonl="$logdir/01-$name.jsonl"
   prompt="$(bench::backlog_prompt "$backlog")"
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_VANILLA"
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_VANILLA" "$BENCH_SESSION_USD_VANILLA"
   bench::require_turn_ceiling vanilla
   bench::spawn "$wd" "$prompt" "$jsonl" ${bench_max_turns_flag:-}
   return 0
@@ -129,7 +146,7 @@ bench::arm_vanilla() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
 bench::arm_vanilla_fresh() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3"
   local i=0 id prompt jsonl
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER"
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER" "$BENCH_SESSION_USD_WORKER"
   bench::require_turn_ceiling vanilla-fresh
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
@@ -154,18 +171,26 @@ bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   nums="$(jq -rs 'to_entries | map((.key + 1) | tostring) | join(" ")' "$backlog")"
   # Same rails as the vanilla arm, expressed through the governor's own knobs so the loop under
   # measurement is the shipped one:
-  #   GOVERN_WORKER_TOOLS      the same web-free tool list, gated by the same --tools probe
-  #   GOVERN_WORKER_MAX_TURNS  the per-worker turn ceiling; spawn-worker resolves the flag behind
-  #                            govern::claude_supports_max_turns, the same probe checked here
-  # The ceiling is checked HERE too, so an arm that cannot enforce it refuses to run rather than
-  # spending uncapped and reporting a number nothing bounded.
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER"
+  #   GOVERN_WORKER_TOOLS          the same web-free tool list, gated by the same --tools probe
+  #   GOVERN_WORKER_MAX_TURNS      the per-worker turn ceiling, when --max-turns is supported
+  #   GOVERN_WORKER_MAX_BUDGET_USD the per-worker dollar ceiling, the fallback when it is not
+  # spawn-worker.sh resolves whichever flag applies behind the SAME two probes checked here, so
+  # the two arms can never disagree about which one is in play.
+  # The ceiling is checked HERE too, so an arm that cannot enforce EITHER refuses to run rather
+  # than spending uncapped and reporting a number nothing bounded.
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER" "$BENCH_SESSION_USD_WORKER"
   bench::require_turn_ceiling shiploop
+  local worker_turns="0" worker_budget="0"
+  case "${bench_max_turns_flag:-}" in
+    "--max-turns "*)       worker_turns="$BENCH_TURNS_WORKER" ;;
+    "--max-budget-usd "*)  worker_budget="$BENCH_SESSION_USD_WORKER" ;;
+  esac
   (
     cd "$ws"
     GOVERN_WS_ROOT="$ws" \
     GOVERN_WORKER_TOOLS="$BENCH_TOOLS" \
-    GOVERN_WORKER_MAX_TURNS="$BENCH_TURNS_WORKER" \
+    GOVERN_WORKER_MAX_TURNS="$worker_turns" \
+    GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget" \
     GOVERN_MAX_TICKETS="$(jq -s 'length' "$backlog")" \
     bash "$ws/scripts/govern/run-loop.sh" --serial $nums
   ) >"$logdir/00-driver.log" 2>&1 || true

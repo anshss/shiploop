@@ -24,10 +24,22 @@
 #                    Identical behavior on a subscription (caps quota burn) and on an API key
 #                    (caps real spend), because total_cost_usd is API-list-rate denominated either
 #                    way, which is also why the published number is a percentage (section 4).
-#   BENCH_MAX_TURNS  per-session turn ceiling. Defaults are shape-specific: 200 for a vanilla
-#                    backlog session, 80 per shiploop worker. Setting BENCH_MAX_TURNS overrides
-#                    both. A run that hits the ceiling clears fewer tickets, so it records as
-#                    failed-to-clear and the backlog drops out of the published set (section 3).
+#   BENCH_MAX_TURNS  per-session turn ceiling, when the running claude CLI supports --max-turns.
+#                    Defaults are shape-specific: 200 for a vanilla backlog session, 80 per
+#                    shiploop worker. Setting BENCH_MAX_TURNS overrides both. A run that hits the
+#                    ceiling clears fewer tickets, so it records as failed-to-clear and the
+#                    backlog drops out of the published set (section 3).
+#   BENCH_MAX_SESSION_USD  the per-session dollar ceiling used INSTEAD of BENCH_MAX_TURNS when the
+#                    CLI has no --max-turns (observed on claude 2.1.246, which ships
+#                    --max-budget-usd in its place; see bench/METHODOLOGY.md). Applies to the
+#                    shiploop arm's workers; default $5, sized for one ticket's worth of work,
+#                    the dollar analogue of the 80-turn worker default. The vanilla arm's
+#                    per-session cap is NOT this value: vanilla is one session doing the WHOLE
+#                    backlog, so its cap is BENCH_MAX_USD (the run budget) directly — capping it
+#                    at a flat per-ticket number would bind it far tighter than the shiploop arm
+#                    and make a loss look real when it is only the rail. A vanilla session that
+#                    hits its cap records status "capped" for the whole cell, never "resolved" or
+#                    "failed": a budget-truncated run is not a completed comparison.
 #
 # Every function ends `return 0` and dependent locals are split across statements: a function whose
 # LAST statement is a bare `[[ c ]] && cmd` returns the test's status and aborts the caller under
@@ -48,7 +60,12 @@ BENCH_MAX_USD="${BENCH_MAX_USD:-60}"
 BENCH_TURNS_VANILLA="${BENCH_MAX_TURNS:-200}"
 BENCH_TURNS_WORKER="${BENCH_MAX_TURNS:-80}"
 BENCH_CLAUDE_BIN="${BENCH_CLAUDE_BIN:-claude}"
-export BENCH_TURNS_VANILLA BENCH_TURNS_WORKER BENCH_CLAUDE_BIN
+# Per-session dollar ceiling, the --max-budget-usd fallback for a CLI with no --max-turns.
+# Asymmetric by design (see the usage header above): vanilla's cap is the WHOLE run budget because
+# it is one session doing the whole backlog; the worker default is a flat, documented dollar figure.
+BENCH_SESSION_USD_WORKER="${BENCH_MAX_SESSION_USD:-5}"
+BENCH_SESSION_USD_VANILLA="$BENCH_MAX_USD"
+export BENCH_TURNS_VANILLA BENCH_TURNS_WORKER BENCH_CLAUDE_BIN BENCH_SESSION_USD_WORKER BENCH_SESSION_USD_VANILLA
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -312,6 +329,14 @@ for name in "${backlogs[@]}"; do
       read -r cleared total worst < <(bench::verify_backlog "$backlog_file" "$workdir" "$RUN_DIR/verify/$cell.jsonl")
       wall_ms=$(( ( $(date +%s) - started ) * 1000 ))
       if [[ "$cleared" -eq "$total" ]]; then status="resolved"; else status="failed"; fi
+      # A session cut off by its OWN per-session ceiling (--max-turns / --max-budget-usd) never
+      # gets to be a completed comparison, even if it happened to clear every ticket anyway: the
+      # cap decided how far it got, not the arm. Overrides resolved/failed to "capped" so the
+      # rollup drops it from the published set the same way a run-level BENCH_MAX_USD cap does.
+      if bench::cell_hit_session_cap "$logdir"; then
+        status="capped"
+        bench::log "cell $cell: a session hit its per-session ceiling mid-run; forcing status=capped"
+      fi
       sessions="$(bench::record_sessions "$logdir" "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" \
         "$MODEL_NAME" "$CLI_VERSION" "$status" "$worst" "$wall_ms" "$started" "$cleared" "$total")"
       bench::record_rollup "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" "$status" \

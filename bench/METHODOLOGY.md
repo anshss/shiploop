@@ -182,6 +182,46 @@ The token ceiling is nearly 100% because output is a rounding error in token cou
 read. **Anything claiming to beat roughly 93% on cost against a 1M session is claiming to have
 removed the writing.**
 
+## The live harness's per-session ceiling
+
+`bench/run.sh` and `bench/arms.sh` (the live A/B path, not replay) need a hard per-session ceiling
+on every spend-bearing session in BOTH arms: an always-on rail, not an option, per the spec. The
+ceiling was originally `--max-turns`, gated on a cached `claude --help` probe
+(`govern::claude_supports_max_turns` in `templates/govern/lib/common.sh`). A later CLI release
+(observed: claude 2.1.246) dropped `--max-turns` entirely and ships `--max-budget-usd`, a
+per-session dollar cap, in its place. The harness now probes for `--max-turns` FIRST and falls back
+to `--max-budget-usd` (`govern::claude_supports_max_budget_usd`, same cached-probe pattern) only
+when turns support is absent. A CLI with neither flag is still a hard stop:
+`BENCH_ALLOW_UNCAPPED_TURNS=1` is the only, deliberate, operator override, exactly as it was before
+the fallback existed.
+
+**The dollar cap is not neutral between arms**, and this is a deliberate, documented choice rather
+than an accident: the vanilla arm is ONE session doing the WHOLE backlog, while the shiploop arm is
+many short worker sessions. Giving both the identical flat per-session dollar figure would bind
+vanilla far tighter than shiploop, because vanilla has to fit every ticket's work under one ceiling
+that a worker only has to fit one ticket's work under.
+
+The harness resolves this by NOT using one flat number for both:
+
+- **Vanilla's per-session cap is `BENCH_MAX_USD`, the whole run's budget.** Since vanilla's session
+  is already doing all of the run's work, capping it at anything less than the run budget would be
+  a second, tighter ceiling that the shiploop arm's workers never individually face.
+- **Each shiploop worker's cap is `BENCH_MAX_SESSION_USD`, default $5.** This is a flat, documented
+  dollar figure sized for one ticket's worth of work, the dollar analogue of the pre-existing
+  80-turn worker default (vanilla: 200 turns for the backlog vs. 80 turns per worker; the dollar
+  defaults follow the same shape, a whole-run figure vs. a per-ticket figure).
+
+**A vanilla session truncated by its own cap is not a loss for vanilla and not a win for shiploop.**
+`bench::stream_hit_session_cap` (`bench/record.sh`) reads the truncated session's `"type":"result"`
+event and detects the CLI's own `error_max_*` subtype (covering both `error_max_turns` and the
+budget ceiling's matching subtype, by prefix rather than an exact string, so either ceiling is
+caught without a version compare). `run.sh` checks every session stream in a cell for this BEFORE
+deriving a status from ticket completion; a cell containing even one capped session is forced to
+`status: "capped"`, overriding whatever `resolved`/`failed` the ticket count alone would have given
+it. The rollup already drops a `capped` backlog from the published set for the run-level
+`BENCH_MAX_USD` cap (see the assumptions below); this reuses that same drop path for a per-session
+truncation, so a rail artifact can never be published as a measured result in either direction.
+
 ## Every assumption, and which arm it flatters
 
 Stated worst-first: the assumptions that inflate shiploop's number come first.

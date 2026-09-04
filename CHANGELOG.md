@@ -30,6 +30,18 @@ that trap by number.
   generated from the same four sessions as the replay fixture, its vanilla row is `replay.mjs`'s own
   model rather than an invented measurement, and every row carries `provenance: measured|modeled`.
 - `bench/rollup.mjs` prints a negative token cut as `MORE` instead of rendering it as "fewer".
+- **The live A/B harness's per-session ceiling now falls back to `--max-budget-usd` when the
+  running `claude` CLI has no `--max-turns`** (observed on claude 2.1.246, which dropped
+  `--max-turns` entirely). New capability probe `govern::claude_supports_max_budget_usd` in
+  `templates/govern/lib/common.sh`, mirroring the existing `--max-turns` probe: cached, bounded
+  `--help` grep, `_GOVERN_MAXBUDGETUSD_SUPPORTED` pre-seed test seam, off by default. Matching
+  `GOVERN_WORKER_MAX_BUDGET_USD` knob in `spawn-worker.sh`. New `BENCH_MAX_SESSION_USD` env
+  (default $5) sizes the shiploop arm's per-worker dollar cap; the vanilla arm's cap is
+  `BENCH_MAX_USD` (the whole run budget), documented asymmetrically in `bench/METHODOLOGY.md`
+  because vanilla is one session doing the whole backlog. A session truncated by its own
+  per-session ceiling now forces its cell's status to `capped` (`bench::stream_hit_session_cap` in
+  `bench/record.sh`) rather than recording a truncated run as a completed comparison. A CLI with
+  neither flag still hard-stops; `BENCH_ALLOW_UNCAPPED_TURNS=1` is still the only override.
 
 
 ## 1.18.3 — 2026-09-04

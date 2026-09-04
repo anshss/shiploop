@@ -400,23 +400,33 @@ resolve_tools_flag() { # <claude_bin>
   return 0
 }
 
-# Optional hard per-attempt TURN ceiling. Third ceiling beside wall-clock (GOVERN_WORKER_TIMEOUT)
-# and tokens (GOVERN_WORKER_MAX_TOKENS). OFF by default: GOVERN_WORKER_MAX_TURNS=0 (or unset) means
-# no flag and a spawn byte-identical to the pre-existing one, so no fleet changes behavior on an
-# update. When set, the flag is added only once the cached `--help` probe confirms the running CLI
-# knows it; an unrecognized flag would kill every worker at argument parsing.
-# Sets the global `max_turns_flag` (empty, or `--max-turns N`) and always returns 0.
+# Optional hard per-attempt ceiling: TURNS if the CLI supports it, else a per-session DOLLAR
+# budget as fallback (bench/arms.sh probes the same two flags in the same order, for a CLI release
+# that dropped --max-turns entirely). Third/fourth ceiling beside wall-clock
+# (GOVERN_WORKER_TIMEOUT) and tokens (GOVERN_WORKER_MAX_TOKENS). OFF by default:
+# GOVERN_WORKER_MAX_TURNS=0 and GOVERN_WORKER_MAX_BUDGET_USD=0 (or unset) mean no flag and a spawn
+# byte-identical to the pre-existing one, so no fleet changes behavior on an update. When set, a
+# flag is added only once the cached `--help` probe confirms the running CLI knows it; an
+# unrecognized flag would kill every worker at argument parsing.
+# Sets the global `max_turns_flag` (empty, or `--max-turns N` / `--max-budget-usd N`), rc always 0.
 resolve_max_turns_flag() { # <claude_bin>
   local bin="$1"
   local n="${GOVERN_WORKER_MAX_TURNS:-0}"
+  local budget="${GOVERN_WORKER_MAX_BUDGET_USD:-0}"
   max_turns_flag=""
-  if [[ -z "$n" || "$n" == "0" || "$n" == "off" ]]; then
-    return 0   # default: no ceiling, no flag, no probe
-  fi
-  if govern::claude_supports_max_turns "$bin"; then
-    max_turns_flag="--max-turns $n"
-  else
+  if [[ -n "$n" && "$n" != "0" && "$n" != "off" ]]; then
+    if govern::claude_supports_max_turns "$bin"; then
+      max_turns_flag="--max-turns $n"
+      return 0
+    fi
     govern::log "worker #$N: claude CLI ($bin) does not support --max-turns (older build), so GOVERN_WORKER_MAX_TURNS=$n cannot be enforced this run"
+  fi
+  if [[ -n "$budget" && "$budget" != "0" && "$budget" != "off" ]]; then
+    if govern::claude_supports_max_budget_usd "$bin"; then
+      max_turns_flag="--max-budget-usd $budget"
+    else
+      govern::log "worker #$N: claude CLI ($bin) does not support --max-budget-usd either, so GOVERN_WORKER_MAX_BUDGET_USD=$budget cannot be enforced this run"
+    fi
   fi
   return 0
 }

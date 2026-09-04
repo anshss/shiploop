@@ -170,6 +170,39 @@ bench::record_rollup() {
   return 0
 }
 
+# Did a session stream get cut off by its OWN per-session ceiling (--max-turns or
+# --max-budget-usd), rather than finishing the work it was given? The claude CLI marks a
+# limit-truncated session with a distinct `subtype` on its `"type":"result"` event
+# (`error_max_turns` for the turn ceiling; the budget ceiling's own CLI-assigned subtype matches
+# the same `error_max_*` shape). Detected by prefix, not an exact string, so either ceiling — or a
+# future one with the same naming convention — is caught without a version compare.
+#
+# This matters because a truncated session clears fewer tickets for a reason that has nothing to
+# do with the arm's competence: recording it as an ordinary "failed" cell would let a rail artifact
+# read as a real result. bench::run_cell_capped is checked by run.sh BEFORE it derives cleared/total
+# into a status, so a cell containing even one capped session is forced to "capped", never
+# "resolved" or "failed".
+bench::stream_hit_session_cap() { # <jsonl> -> rc 0 if this stream's session was cut off by its ceiling
+  local jsonl="$1" subtype
+  subtype="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
+    | jq -r '.subtype // empty' 2>/dev/null || true)"
+  [[ "$subtype" == error_max_* ]]
+}
+
+# rc 0 if ANY *.jsonl stream under <session-log-dir> was cut off by its per-session ceiling.
+bench::cell_hit_session_cap() { # <session-log-dir>
+  local logdir="$1" f
+  shopt -s nullglob
+  for f in "$logdir"/*.jsonl; do
+    if bench::stream_hit_session_cap "$f"; then
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
 # Total API-rate dollars recorded so far in <results.jsonl>, over kind:"session" rows only
 # (folding rollups too would double count). Prints a decimal; "0" when nothing is readable.
 # This is what BENCH_MAX_USD is compared against.

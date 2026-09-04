@@ -9,8 +9,9 @@
 #   3. ticket text is byte-identical across arms (an asymmetric prompt voids even true numbers)
 #   4. neither arm can reach the network: no WebFetch, no WebSearch in the tool list
 #   5. --max-turns is gated on a cached --help probe with a _GOVERN_MAXTURNS_SUPPORTED pre-seed
-#      seam and a BENCH_MAX_TURNS_FLAG kill switch, never a version compare
-#   6. an unsupported CLI is a HARD STOP, not a silent uncapped spawn; BENCH_ALLOW_UNCAPPED_TURNS=1
+#      seam and a BENCH_MAX_TURNS_FLAG kill switch, never a version compare; --max-budget-usd is
+#      the fallback ceiling, gated on its own probe/seam, for a CLI with no --max-turns
+#   6. a CLI with NEITHER flag is a HARD STOP, not a silent uncapped spawn; BENCH_ALLOW_UNCAPPED_TURNS=1
 #      is the only way past it
 #   7. the shiploop arm seeds one queue ticket per backlog line, numbered so run-loop.sh can be
 #      handed the whole set in ONE named dispatch (a per-ticket fan-out would bypass the loop's
@@ -105,39 +106,58 @@ assert_not_contains "$tools" "WebSearch" "4. WebSearch is not in either arm's to
 assert_contains "$tools" "Bash" "4. the working tools are still there"
 assert_contains "$tools" "Edit" "4. the working tools are still there (Edit)"
 
-# 5. The probe: pre-seed supported, pre-seed unsupported, kill switch. No version compare anywhere.
-got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200; printf "%s" "$bench_max_turns_flag"')"
+# 5. The probe: pre-seed supported, pre-seed unsupported, kill switch, and the --max-budget-usd
+# FALLBACK for a CLI that has neither turns support nor... has budget support but not turns. No
+# version compare anywhere.
+got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; printf "%s" "$bench_max_turns_flag"')"
 assert_eq "$got" "--max-turns 200" "5. probe seam 1 puts the rail on the command line"
-got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=0 bench::resolve_max_turns_flag /bin/true 200; printf "[%s]" "$bench_max_turns_flag"')"
-assert_contains "$got" "[]" "5. probe seam 0 omits the flag rather than passing an unknown one"
+got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUDGETUSD_SUPPORTED=0 bench::resolve_max_turns_flag /bin/true 200 5; printf "[%s]" "$bench_max_turns_flag"')"
+assert_contains "$got" "[]" "5. neither flag supported omits the flag rather than passing an unknown one"
 assert_contains "$got" "does not support --max-turns" "5. and says so out loud"
-got="$(armsh 'BENCH_MAX_TURNS_FLAG=0 _GOVERN_MAXTURNS_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200; printf "[%s]" "$bench_max_turns_flag"')"
+got="$(armsh 'BENCH_MAX_TURNS_FLAG=0 _GOVERN_MAXTURNS_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; printf "[%s]" "$bench_max_turns_flag"')"
 assert_contains "$got" "[]" "5. the kill switch wins over a supported CLI"
-# The probe is NOT a bench-local reimplementation: it lives in common.sh beside the --tools and
+# The fallback: --max-turns unsupported, --max-budget-usd IS. This is the observed shape on
+# claude 2.1.246, the CLI that motivated the fallback.
+got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUDGETUSD_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; printf "[%s]" "$bench_max_turns_flag"')"
+assert_contains "$got" "[--max-budget-usd 5]" "5. --max-turns absent falls back to --max-budget-usd"
+got="$(armsh 'BENCH_MAX_TURNS_FLAG=0 _GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUDGETUSD_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; printf "[%s]" "$bench_max_turns_flag"')"
+assert_contains "$got" "[]" "5. the kill switch also suppresses the budget fallback"
+# The probes are NOT bench-local reimplementations: they live in common.sh beside the --tools and
 # --exclude-dynamic-system-prompt-sections probes, so the vanilla arm and the shiploop arm's
-# workers (which reach it through spawn-worker.sh) can never disagree about CLI support.
+# workers (which reach them through spawn-worker.sh) can never disagree about CLI support.
 probe="$(sed -n '/^govern::claude_supports_max_turns/,/^}/p' "$HUB/templates/govern/lib/common.sh")"
-assert_contains "$probe" "_bounded_help_grep" "5. the probe is a bounded --help grep"
+assert_contains "$probe" "_bounded_help_grep" "5. the max-turns probe is a bounded --help grep"
 assert_contains "$probe" "_GOVERN_MAXTURNS_SUPPORTED" "5. with the pre-seed test seam"
+budget_probe="$(sed -n '/^govern::claude_supports_max_budget_usd/,/^}/p' "$HUB/templates/govern/lib/common.sh")"
+assert_contains "$budget_probe" "_bounded_help_grep" "5. the max-budget-usd probe is also a bounded --help grep"
+assert_contains "$budget_probe" "_GOVERN_MAXBUDGETUSD_SUPPORTED" "5. with its own pre-seed test seam"
 assert_contains "$(cat "$HUB/templates/govern/lib/common.sh")" "_GOVERN_MAXTURNS_PROBE_CACHE" \
   "5. and a run-scoped cache, so a long run probes at most once"
+assert_contains "$(cat "$HUB/templates/govern/lib/common.sh")" "_GOVERN_MAXBUDGETUSD_PROBE_CACHE" \
+  "5. same for the budget probe's cache"
 # grep -F still treats a leading-dash NEEDLE as a flag, so count the matches with an explicit
 # pattern argument rather than pushing "--version" through assert_not_contains.
 assert_eq "$(printf '%s' "$probe" | grep -c -e '--version')" "0" \
   "5. the probe never shells out to --version"
-assert_contains "$(sed -n '/^resolve_max_turns_flag/,/^}/p' "$HUB/templates/govern/spawn-worker.sh")" \
-  "govern::claude_supports_max_turns" \
+spawn_worker_resolve="$(sed -n '/^resolve_max_turns_flag/,/^}/p' "$HUB/templates/govern/spawn-worker.sh")"
+assert_contains "$spawn_worker_resolve" "govern::claude_supports_max_turns" \
   "5. spawn-worker gates GOVERN_WORKER_MAX_TURNS on the same probe"
-assert_contains "$(sed -n '/^resolve_max_turns_flag/,/^}/p' "$HUB/templates/govern/spawn-worker.sh")" \
-  'return 0   # default: no ceiling, no flag, no probe' \
-  "5. and it is OFF by default, so a fleet update changes no spawn"
+assert_contains "$spawn_worker_resolve" "govern::claude_supports_max_budget_usd" \
+  "5. and GOVERN_WORKER_MAX_BUDGET_USD on the matching budget probe"
+assert_contains "$spawn_worker_resolve" 'GOVERN_WORKER_MAX_TURNS:-0' \
+  "5. both knobs default to 0 (off), so an unset fleet spawns exactly as it did before"
+assert_contains "$spawn_worker_resolve" 'GOVERN_WORKER_MAX_BUDGET_USD:-0' \
+  "5. same default-off shape for the budget knob"
 
 # 6. Refusal.
 got="$(armsh 'bench_max_turns_flag=""; bench::require_turn_ceiling vanilla; echo "rc=$?"')"
-assert_contains "$got" "Refusing to spawn an uncapped session" "6. no turn ceiling means no spawn"
+assert_contains "$got" "Refusing to spawn an uncapped session" "6. no ceiling flag means no spawn"
 got="$(armsh 'bench_max_turns_flag=""; BENCH_ALLOW_UNCAPPED_TURNS=1 bench::require_turn_ceiling vanilla; echo "rc=$?"')"
 assert_contains "$got" "rc=0" "6. the explicit operator override is the only way past it"
 assert_contains "$got" "running UNCAPPED" "6. and the override is logged"
+# A cell hard-stops only when NEITHER flag resolves; the budget fallback alone is enough to pass.
+got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUDGETUSD_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; bench::require_turn_ceiling vanilla; echo "rc=$?"')"
+assert_contains "$got" "rc=0" "6. the budget fallback alone satisfies the ceiling requirement, no override needed"
 
 # ── 7. the shiploop arm seeds a real queue ──────────────────────────────────
 assert_eq "$slug" "bench" "7. the sub-repo slug is a NAME derived from the repo, not the clone URL"
@@ -158,8 +178,10 @@ assert_not_contains "$seeded" "Repo: fixture://" "7. never the clone URL"
 assert_contains "$(cat "$HUB/bench/arms.sh")" 'run-loop.sh" --serial $nums' \
   "7. the arm hands run-loop.sh every ticket number in one dispatch"
 # The shiploop arm carries the SAME two rails as the vanilla arm, through the governor's own knobs.
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_TURNS="$BENCH_TURNS_WORKER"' \
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_TURNS="$worker_turns"' \
   "7. the per-worker turn ceiling reaches the loop's workers"
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget"' \
+  "7. and so does the budget fallback, whichever one the probe resolved"
 assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_TOOLS="$BENCH_TOOLS"' \
   "7. and so does the web-free tool list"
 
