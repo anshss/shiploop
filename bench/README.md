@@ -50,7 +50,7 @@ Every fleet workspace the author runs, unfiltered: 251 runs, 607 tickets, 7 work
 | vs a session with | tokens | cost |
 |---|---|---|
 | 1M context | **70.3%** | 57.4% |
-| 200k context + compaction | 37.6% | 21.9% |
+| 200k context + compaction | 30.0% | 18.1% |
 
 Published unfiltered on purpose. Restricting to runs that clear five or more tickets raises the 1M
 figure to about 74%, and a single deep-backlog workspace reaches 77%, because **the saving is a
@@ -59,7 +59,21 @@ a fresh session is the same session. By ticket 3 it is 63%, by ticket 5 it is 74
 87%. The median run in this corpus clears one ticket, so the aggregate is carried by the minority of
 long runs, and a two-ticket backlog will not see 70%.
 
-Quote the arm alongside the number. Against the 200k default the same corpus gives 37.6% tokens, and
+Restricting the same corpus by run depth, 1M arm:
+
+| runs of depth | runs | tickets | tokens | cost |
+|---|---|---|---|---|
+| all | 251 | 607 | 70.3% | 57.4% |
+| >= 2 | 109 | 465 | 73.7% | 61.4% |
+| >= 3 | 86 | 435 | 75.0% | 62.6% |
+| >= 5 | 67 | 390 | 76.0% | 63.9% |
+| >= 8 | 24 | 255 | 80.2% | 69.3% |
+
+142 of the 251 runs clear a single ticket and contribute a 0% saving by construction, which is what
+holds the unfiltered figure at 70.3%. From depth 2 onward the number is stable in a 74 to 76 band,
+so a backlog of three to five tickets is enough for a measurement to mean something.
+
+Quote the arm alongside the number. Against the 200k default the same corpus gives 30.0% tokens, and
 someone reproducing this will run the default.
 
 ## Path 2: the live A/B harness (the measured path, not yet run)
