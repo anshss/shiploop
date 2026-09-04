@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
-Lightweight orchestration layer that makes Claude Code faster and more token-efficient to your entire project. Adds capability, not bloat.
+Everyone's shipping with Claude Code now. shiploop is the harness you'll need for speed and token efficiency across your whole project. Adds capability, not bloat.
 
 ## Get Started
 
@@ -62,6 +62,31 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 - **Related tickets can duplicate the same exploration.** One worker can take several tickets whose scout-measured file paths actually overlap, so it explores that area once instead of once per ticket resulting in token savings. A 5-ticket batch is nowhere near 5× cheaper than 5 workers.
 
 Tokens are the currency: shiploop breaks work into tickets, you choose which ones matter, and each dispatched ticket gets done at the least spend. A few practical notes: the coordination layer itself does not consume model tokens. The zero-model lane ships off until you enable it. Parallel work improves throughput, not per-ticket efficiency.
+
+## How it compares
+
+There are three places a Claude Code bill actually gets smaller: what the model **writes** (output tokens, like a terser reply), what the model **reads** (input tokens: tool results, logs, diffs, and the schema block every request pays for), and **how many turns carry it** (whether a byte from turn three still gets resent on turn thirty). Most tools that promise savings work the first lever, some work the second. shiploop is built entirely around the third: every ticket runs in its own disposable session, so nothing it costs gets carried forward into the next one.
+
+See the specific comparisons against [caveman](https://shiploop.fun/vs/caveman) and the [Ralph loop](https://shiploop.fun/vs/ralph-loop) at [shiploop.fun/vs](https://shiploop.fun/vs).
+
+## Trust
+
+Autonomy is a ladder, not a switch. One knob, `GOVERN_AUTONOMY` in `scripts/lib/workspace.sh`, controls it:
+
+| Rung | Behavior |
+|---|---|
+| `observe` | Workers do real work but every PR opens as a **draft**; nothing merges |
+| `pr-only` | *(default on new scaffolds)* Normal PRs; a human clicks merge |
+| `auto` | Auto-merge on green-or-no-checks CI, but only for repos on `GOVERN_MERGE_REPOS` (empty by default) |
+
+What makes the top rung safe to reach for:
+
+- **Three-factor merge guard.** A PR auto-merges only if its author is the governor's own worker identity, its branch matches the governor's naming, and its head is not from a fork. Any factor missing → stays open for a human.
+- **Hard-stops.** Destructive git, prod data, destructive schema, secrets: the doctrine in `governor/preferences.md` makes a worker park + escalate instead of acting.
+- **Bounded blast radius.** Workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
+- **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
+
+Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample predates the current cheap-floor default and skews `opus`-heavy on self-referential harness tickets, so treat it as an upper bound rather than an average; a `sonnet` floor observed ~$2.22/ticket. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## How Shiploop Runs
 
@@ -126,25 +151,6 @@ The governor is a **pure-bash driver** (`scripts/govern/run-loop.sh <N> ...`): y
 - **Cheap floor, escalate once.** Every ticket dispatches at `GOVERN_WORKER_MODEL` (default `sonnet`); a classified failure escalates it exactly once to `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`). No per-ticket prediction, because prediction was tried and measured as a rubber stamp. Both are clamped by a session ceiling: nothing spawns above `max(opus, the model of the session that spawned it)`. A cheap **scout pass** (haiku) still runs before dispatch, but it now only *surveys* (verified file paths, whether tests cover the area, whether history holds a precedent commit) which the worker gets as a warm start, the batching layer keys on, and the zero-model lane uses as its patch source. Its result is cached per run, so a retry never re-scouts.
 - **A manual audit** (`npm run govern:audit`, another cheap fresh session) reviews a run's state on demand and can return a `halt` verdict. Hard-stops land in `governor/escalations.md` for you. Zero model spend unless you invoke it.
 - **It gets better over time.** Every resolved ticket promotes its durable lesson into the right `CLAUDE.md` before the entry is deleted: memory you can read, diff, and edit. Harness improvements accrete in `governor/improvements.md` (observe → propose → triage; never auto-applied to safety rails), and the hub channel (`/shiploop:update` / `/shiploop:push`) moves mechanism fixes between your workspace and the template repo. Always via human-reviewed PR.
-
-## Trust
-
-Autonomy is a ladder, not a switch. One knob, `GOVERN_AUTONOMY` in `scripts/lib/workspace.sh`, controls it:
-
-| Rung | Behavior |
-|---|---|
-| `observe` | Workers do real work but every PR opens as a **draft**; nothing merges |
-| `pr-only` | *(default on new scaffolds)* Normal PRs; a human clicks merge |
-| `auto` | Auto-merge on green-or-no-checks CI, but only for repos on `GOVERN_MERGE_REPOS` (empty by default) |
-
-What makes the top rung safe to reach for:
-
-- **Three-factor merge guard.** A PR auto-merges only if its author is the governor's own worker identity, its branch matches the governor's naming, and its head is not from a fork. Any factor missing → stays open for a human.
-- **Hard-stops.** Destructive git, prod data, destructive schema, secrets: the doctrine in `governor/preferences.md` makes a worker park + escalate instead of acting.
-- **Bounded blast radius.** Workers run `claude -p --permission-mode bypassPermissions` by design, scoped to a throwaway worktree plus the branch it pushes; `.githooks/pre-push` rejects any harness-repo push except a sanctioned governor run.
-- **Fail-closed evidence gates** on the self-improvement and sync ports: `bash -n`, a forbidden-identity-strings gate, and a scaffold-test baseline diff. Any failure escalates instead of merging.
-
-Cost, observed: **$3.03 median / $4.49 mean per resolved ticket** ($1.34-$12.00 range, N=32 tracked tickets), from Claude Code's own reported cost, not an estimate. See **[PROOF.md](PROOF.md#4-cost-per-resolved-ticket)** for the full distribution and methodology. That sample predates the current cheap-floor default and skews `opus`-heavy on self-referential harness tickets, so treat it as an upper bound rather than an average; a `sonnet` floor observed ~$2.22/ticket. `config-check.sh` is the only truly free smoke ($0, no auth); `scripts/govern/run-loop.sh --dry-run` (say "dry-run the queue") runs a real worker in plan mode. Zero side effects, but it costs tokens. For your first run: keep the allowlist empty, watch one ticket end-to-end, and set a spend cap in your Anthropic dashboard.
 
 ## Commands
 
@@ -273,10 +279,6 @@ Knobs not listed here (`GOVERN_TICKETS_FILE`, `GOVERN_QUEUE_DIR`, `GOVERN_LOG_RO
 - **`jq`**: hard-required; the scaffolder and governor fail closed without it
 - **`gh` CLI**, authenticated, for the governor (opens PRs, reads CI); not needed for the risk map
 - **git ≥ 2.20**, **bash ≥ 4** (macOS's 3.2 also works, templates are guarded for both)
-
-## How it compares
-
-Devin, Cursor, Copilot, and Claude Code all do one task you hand them well. shiploop is the layer above: it runs a **backlog** across a **fleet** (a manager, not another IC). If your bottleneck is one hard task, use those. If it's a growing queue of small-to-medium changes across N repos, and you'd rather do the spec work than the shipping, use this.
 
 ## Proof
 
