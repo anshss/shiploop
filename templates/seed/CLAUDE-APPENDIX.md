@@ -72,6 +72,36 @@ answer needs more than one or two file reads, delegate; if you already know the 
 
 ---
 
+## Two lanes, one worker
+
+A **worker** is the trim, single-ticket session that resolves one `## #N` end to end and opens one
+PR. There are two ways to start one, and both run the same doctrine file,
+`governor/worker-prompt.md`:
+
+- **Interactive lane:** `Agent(subagent_type: "worker")` from a live session. The scaffolded
+  definition at `.claude/agents/worker.md` pins the model and the tool set in frontmatter (so
+  right-sizing is not left to judgment) and points at the canonical doctrine rather than restating
+  it. The run shows up in the session UI with live token counts and an openable transcript, and its
+  structured report comes back to the driver.
+- **Autonomous lane:** `npm run govern -- <N> ...`, or just say "work on 42 51". Same doctrine,
+  headless, plus the full gate stack: dependency ordering, cross-driver re-verify, failure-streak
+  escalation, merge, and queue bookkeeping.
+
+Anything else you spawn with the `Agent` tool is a **subagent**, never a worker. The distinction is
+load-bearing rather than cosmetic: `worker` is a literal string in the call, so a routing rule that
+says "worker" cannot be satisfied by a generic spawn that merely feels worker-like.
+
+**Why the interactive lane stops at PR-open.** Merge, the CI await, the park-on-red-CI recovery path
+and the queue edit all live in govern's run loop, and a session that merged its own PR would bypass
+every one of them. Dispatching `npm run govern -- <N>` once the PR is open adopts that PR instead of
+redoing the work, so the two lanes compose rather than duplicate.
+
+**Why the worker makes its own worktree.** The `Agent` tool's `isolation: "worktree"` worktrees the
+root repo only, and a meta-repo's nested sub-repo `.git` directories do not come along, leaving a
+tree that cannot commit or push. `npm run worktree:new -- t<N>` allocates the real thing.
+
+---
+
 ## Why filing happens at a checkpoint, not mid-discussion
 
 Filing a ticket the moment a gap is mentioned pre-empts the discussion twice over: it hijacks a thread

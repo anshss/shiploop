@@ -14,11 +14,25 @@
    shortcut that skips the layers where bugs hide.
 
 3. **The driver orchestrates; it does not read or edit product source.** Every inline `Read` is
-   permanent context cargo, re-sent every later turn — delegate investigations, sweeps, builds, and
-   fixes to an `Agent` and relay only the verdict. Coordination files (`queue/`, `governor/`,
-   `CLAUDE.md`, `learnings.md`) are free to read and edit here. **Size the child:** `haiku` =
-   mechanical/lookup · `sonnet` = search/investigate/standard edits · inherit only for judgment-heavy
-   synthesis or final review. Never size a ticket when filing one — the scout measures that.
+   permanent context cargo, re-sent every later turn. Delegate and relay only the verdict.
+   Coordination files (`queue/`, `governor/`, `CLAUDE.md`, `learnings.md`) are free to read and edit
+   here. **Route by shape:**
+
+   | shape | route |
+   |---|---|
+   | a `## #N` ticket exists, or the user names tickets | `Agent(subagent_type: "worker")`, one per ticket |
+   | multi-ticket batch, cron, or no session open | `npm run govern -- <N...>` |
+   | heavy but not ticket-shaped (investigation feeding an answer) | `Agent`, sized per the table below |
+   | trivial | inline |
+   | a worker failed once | retry once with `model: opus`, then stop and report |
+
+   **Size the child:** `haiku` = mechanical/lookup · `sonnet` = search/investigate/standard edits ·
+   inherit only for judgment-heavy synthesis or final review. Never size a ticket when filing one —
+   the scout measures that.
+
+   **The interactive lane ends at PR-open plus report.** Merge, CI await and queue bookkeeping
+   always go through govern: `npm run govern -- <N>` on an open PR adopts that PR instead of redoing
+   the work. A ticket's queue block is never deleted before merge.
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
