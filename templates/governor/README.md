@@ -376,8 +376,14 @@ agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-
 next run.
 
 ## Shipped agents (`.claude/agents/`)
-The scaffold installs two subagent definitions so the driver's delegation posture (router-posture
-hooks + CLAUDE.md) has a pre-sized, cheap-tier destination instead of "spawn something generic":
+The scaffold installs three agent definitions so the driver's delegation posture (router-posture
+hooks + CLAUDE.md) has a pre-sized destination instead of "spawn something generic":
+- **`worker`** (sonnet, the interactive lane of the worker): one `## #N` ticket end to end, in its
+  own workspace worktree, stopping at PR-open plus the structured JSON report. It carries no
+  doctrine of its own: it reads `governor/worker-prompt.md`, the same canonical file
+  `spawn-worker.sh` sends the headless lane, and adds only the interactive deltas (the ticket
+  arrives in the task prompt, the worktree is self-service, merge and bookkeeping stay with govern).
+  `test-worker-agent-doctrine.sh` fails if the two ever fork.
 - **`lookup`** (haiku): a single-fact question, where something is defined, what a value is, which
   file imports what. Contract: answer only the question asked, max 15 lines, cite `file:line`, never
   paste a whole file.
@@ -385,7 +391,7 @@ hooks + CLAUDE.md) has a pre-sized, cheap-tier destination instead of "spawn som
   through the system. Contract: verdict first, evidence after as `file:line` references, max 30
   lines, no file dumps.
 
-Both are copy-only templates (`templates/.claude/agents/*.md`), installed by `scaffold.sh
+All three are copy-only templates (`templates/.claude/agents/*.md`), installed by `scaffold.sh
 --component agents` on fresh scaffold and on `/shiploop:update`; they are not workspace-customized.
 
 ## Constraints to respect
