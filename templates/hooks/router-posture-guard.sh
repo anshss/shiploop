@@ -21,6 +21,13 @@
 #     (GOVERN_RUN set): those throwaway sub-sessions are the delegation *target*,
 #     so nudging them to "delegate" is noise.
 #
+# Second advisory (same file, same cap, same driver-only guard): a test/build
+# runner (npm test, npm run build/test/check, pytest, go test, cargo test,
+# vitest, jest, tsc) invoked WITHOUT verify-filter.sh / `npm run vf` wrapping it
+# loses the context savings verify-filter exists for (see templates/govern/
+# verify-filter.sh): a passing run's output still lands in the transcript and
+# is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
+#
 # Output contract: a PreToolUse hook that prints
 #   {"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"..."}}
 # on stdout (exit 0) injects that text into the model's context WITHOUT blocking
@@ -107,7 +114,19 @@ case "$tool_name" in
     fi
     ;;
 esac
-[ -n "$reason" ] || exit 0
+
+# --- separate advisory: unwrapped test/build runner should use verify-filter
+vf_reason=""
+if [ "$tool_name" = "Bash" ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
+  if printf '%s' "$command" | grep -Eq \
+      '(^|[[:space:];&|])(npm[[:space:]]+(run[[:space:]]+)?(test|build|check)([[:space:]]|$)|pytest([[:space:]]|$)|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|vitest([[:space:]]|$)|jest([[:space:]]|$)|tsc([[:space:]]|$))' \
+    && ! printf '%s' "$command" | grep -Eq \
+      '(verify-filter\.sh|npm[[:space:]]+run[[:space:]]+vf([[:space:]]|$))'; then
+    vf_reason="a test/build run not wrapped in verify-filter"
+  fi
+fi
+
+[ -n "$reason" ] || [ -n "$vf_reason" ] || exit 0
 
 # --- rate-limit: cap warns per session --------------------------------------
 # sanitize session_id for use in a filename (it's a UUID in practice, but never
@@ -122,7 +141,14 @@ case "$count" in (*[!0-9]*) count=0 ;; esac
 printf '%s' "$((count + 1))" > "$counter" 2>/dev/null || true
 
 # --- emit the non-blocking warn ---------------------------------------------
-warn="[ROUTER POSTURE] About to do ${reason} inline. Delegate to an \`Agent\` worker (run_in_background if long); relay only its verdict. Size the model when delegating (haiku=mechanical, sonnet=search/edits, inherit=judgment-heavy). Proceed inline only for a quick one-off check."
+warn=""
+if [ -n "$reason" ]; then
+  warn="[ROUTER POSTURE] About to do ${reason} inline. Delegate to an \`Agent\` worker (run_in_background if long); relay only its verdict. Size the model when delegating (haiku=mechanical, sonnet=search/edits, inherit=judgment-heavy). Proceed inline only for a quick one-off check."
+fi
+if [ -n "$vf_reason" ]; then
+  vf_warn="[ROUTER POSTURE] ${vf_reason}: wrap it as \`npm run vf -- <cmd>\` (or \`bash scripts/govern/verify-filter.sh -- <cmd>\`) so a passing run emits nothing into context and a failing run still shows its bounded tail."
+  if [ -n "$warn" ]; then warn="$warn $vf_warn"; else warn="$vf_warn"; fi
+fi
 
 python3 -c '
 import json, sys

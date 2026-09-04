@@ -111,7 +111,7 @@ Safe to refresh without an interview — these only read `workspace.sh`. Must co
 `--diff-only` tracks, or an untracked one loops "behind" forever:
 
 ```bash
-for c in core-scripts worktrees govern githooks commands workflows; do
+for c in core-scripts worktrees govern githooks commands agents workflows; do
   bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component "$c" --yes
 done
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component config-merge --yes

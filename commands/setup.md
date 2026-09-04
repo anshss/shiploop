@@ -378,6 +378,7 @@ Build a `component | status` table (`present (current)` / `present (outdated)` /
 | worktrees | `scripts/worktree/{new,rm,status,exec,main,session-end-cleanup}.sh` + `lib/registry.sh` |
 | tickets | `queue/tickets.md` present (old workspaces: root-level `tickets.md` — migrate) |
 | commands | `.claude/commands/flows.md` present |
+| agents | `.claude/agents/{lookup,investigator}.md` present (tracked by `--diff-only`) |
 | workflows | `.claude/workflows/*.js` + bundled `.claude/skills/*/SKILL.md` (tracked by `--diff-only`) |
 | govern | `scripts/govern/` + `governor/` present |
 | hooks | `scripts/{check-main-on-main,ticket-sweep-reminder,session-snapshot,router-posture-*}.sh` + `.claude/settings.json` wiring |
@@ -392,11 +393,12 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component worktrees    --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component govern       --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component githooks     --yes
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component commands     --yes
+bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component agents       --yes   # shipped lookup/investigator agents
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component workflows    --yes   # workflows + bundled skills
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component seeds        --yes   # only fills absent seeds
 ```
 
-Cover every component `--diff-only` tracks (`core-scripts worktrees govern githooks commands
+Cover every component `--diff-only` tracks (`core-scripts worktrees govern githooks commands agents
 workflows`), or an untracked one loops "behind" forever. `.gitignore` is deliberately excluded — it's
 placeholder-filled + merge-only (never overwritten), not byte-comparable.
 

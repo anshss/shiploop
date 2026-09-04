@@ -33,6 +33,6 @@ marker="${TMPDIR:-/tmp}/metarepo-router-posture-${session_id}"
 : > "$marker" 2>/dev/null || true
 
 cat <<'EOF'
-[ROUTER POSTURE] Classify before acting: trivial (single answer/edit/command/known lookup) → inline. Heavier (multi-file investigation, codebase sweep, diagnosis, build/test, multi-file change) → delegate to an `Agent` worker (run_in_background if long); relay ONLY its verdict — don't Read big files or run verbose builds here. Multi-stage dependent steps → drive with a `Workflow` (final object only). Size children per CLAUDE.md's delegation rule.
+[ROUTER POSTURE] Classify before acting: trivial (single answer/edit/command/known lookup) → inline. Heavier (multi-file investigation, codebase sweep, diagnosis, build/test, multi-file change) → delegate to an `Agent` worker (run_in_background if long); relay ONLY its verdict — don't Read big files or run verbose builds here. Multi-stage dependent steps → drive with a `Workflow` (final object only). Size children per CLAUDE.md's delegation rule, reaching for the shipped `lookup` (single-fact, haiku) or `investigator` (multi-file diagnosis, sonnet) agents when they fit; wrap test/build commands as `npm run vf -- <cmd>` so a passing run stays silent.
 EOF
 exit 0
