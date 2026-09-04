@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.18.2 — 2026-09-04
+
+### Fixed
+
+**The govern lane is documented as the fallback where agent definitions are unsupported.** Custom
+subagent definitions are a Claude Code feature, so a fleet on an older CLI may not read
+`.claude/agents/worker.md` at all and v1.18.1 said nothing about it. The seed appendix now states the
+consequence that matters and is safe either way: `npm run govern -- <N>` spawns the same worker
+through `spawn-worker.sh` and is gated on no agent-definition support whatsoever. Two things are
+marked UNVERIFIED rather than guessed, because the official sub-agents documentation specifies
+neither: the minimum CLI version that reads these files, and what an older CLI does when it finds one
+(silently ignore, error, or fall back to a generic subagent).
+
+**`marketplace.json` was a version behind through twelve green CI checks.** v1.18.1 bumped `VERSION`
+and `plugin.json` while `marketplace.json` stayed at 1.18.0. The manifest job validates each file's
+shape and never compares their versions, so nothing caught it. Repaired by hand before the merge;
+the missing guard is tracked separately.
+
+**`component_agents`' header comment still listed only lookup and investigator.** `worker.md` joined
+that component in v1.18.1, so the one place a reader looks to learn what ships in `.claude/agents/`
+omitted the definition the release was named after. Also records that the copy is a glob, so a new
+definition needs no edit there.
+
 ## 1.18.1 — 2026-09-04
 
 ### Added
