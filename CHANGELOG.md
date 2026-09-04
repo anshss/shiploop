@@ -38,6 +38,40 @@ PR-open plus report**: merge, the CI await and queue bookkeeping always go throu
 `npm run govern -- <N>` on an open PR adopts that PR instead of redoing the work, and a queue block is
 never deleted before merge. `CLAUDE-APPENDIX.md` gains the "Two lanes, one worker" rationale.
 
+**Ticket-shaped `Agent` calls without `subagent_type: "worker"` are denied at the decision point.**
+`router-posture-guard.sh` gains a PreToolUse branch on the `Agent` tool: a prompt matching `#[0-9]+`
+or `/ticket/i` that is not routed to a worker returns `permissionDecision: "deny"`, and the deny
+message carries the exact call to paste plus the `npm run govern -- <N>` alternative. The PreToolUse
+matcher widens from `Read|Bash` to `Read|Bash|Agent`, with an in-place jq migration so existing
+installs pick it up on `/shiploop:update` rather than only on a fresh scaffold. Kill switch
+`GOVERN_TICKET_ROUTE_GUARD=0`, default on. It never fires under `GOVERN_RUN` (the autonomous lane),
+never inside a spawned worker sub-delegating, and never on a call that already names the worker type;
+the deny sits ahead of the per-session warn cap, so it is never rate-limited away. New
+`test-ticket-route-guard.sh` covers the deny path, the kill switch and both no-fire rails.
+
+**One meaning for "worker", enforced by a lint.** The word had been doing two jobs: the trim
+single-ticket session, and any `Agent`-tool child. A model told to "delegate to an `Agent` worker"
+would spawn a generic subagent while believing it complied with the worker doctrine. The phrase is
+now banned and `test-vocab-agent-worker.sh` fails on it across `commands/`, `templates/`, `README.md`
+and `SKILL.md`. `commands/flows.md` says "subagents" for fan-out and dispatches a worker for
+ticket-shaped surfaces. The README gains a Glossary pairing governor, driver, worker (one definition,
+two lanes), scout, supervisor and subagent with their definitions, because "worker agent" is not
+exclusively our term.
+
+### Fixed
+
+**The vocab lint no longer flags the path it is meant to protect.** Its first pattern,
+`Agent.{0,3}workers?`, used `.`, which matches `/`, so it flagged the real path
+`.claude/agents/worker.md` ("agent" + "s/" + "worker"). Narrowed to an explicit separator class,
+`Agent('?s)?[ _-]{0,2}workers?`, which still catches "Agent worker", "Agent-worker",
+"Agentworker", "Agent's worker" and the plurals, with a negative self-check beside the existing
+positive one so neither direction can regress.
+
+**`marketplace.json` and `seed-hashes.txt` no longer drift on a version bump.** `marketplace.json`
+was left at the previous version while `VERSION` and `plugin.json` moved, and the manifest job
+validates each file's shape without cross-checking their versions. `templates/lib/seed-hashes.txt`
+went stale once the seed `CLAUDE.md` changed. Both corrected.
+
 ## 1.18.0 — 2026-09-04
 
 ### Added
