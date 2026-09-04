@@ -22,11 +22,16 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 [ -f "$HUB/README.md" ] && [ -d "$HUB/templates" ] && [ -d "$HUB/commands" ] || \
   { echo "SKIP: not running from a hub checkout ($HUB)" >&2; exit 77; }
 
-# The banned phrase, in one place. `.{0,3}` catches "Agent worker", "Agent-worker",
-# "Agentworker", "Agent's worker" and the plurals; grep is line-oriented, so a legitimate
-# multi-line construct (a pasteable `Agent(` call whose `subagent_type: "worker"` sits on the
-# next line) can never trip it.
-PATTERN='Agent.{0,3}workers?'
+# The banned phrase, in one place. The separator class catches "Agent worker",
+# "Agent-worker", "Agent_worker", "Agentworker", "Agent's worker" and the plurals; grep is
+# line-oriented, so a legitimate multi-line construct (a pasteable `Agent(` call whose
+# `subagent_type: "worker"` sits on the next line) can never trip it.
+#
+# The separator is a CHARACTER CLASS, not `.{0,3}`, for one reason: `.` matches `/`, so a bare
+# `.{0,3}` also flags the real path `.claude/agents/worker.md` ("agent" + "s/" + "worker").
+# That path is the correct name of the interactive lane's agent definition and appears all over
+# the hub, so a dot-based pattern is unusable here. Keep `/` out of the class.
+PATTERN="Agent('?s)?[ _-]{0,2}workers?"
 SELF="$(basename "${BASH_SOURCE[0]}")"
 
 targets=(commands templates README.md SKILL.md)
@@ -50,7 +55,9 @@ printf 'dispatch an Agent worker per surface\n' > "$probe/commands/decoy.md"
 printf 'README\n' > "$probe/README.md"
 printf 'SKILL\n' > "$probe/SKILL.md"
 mkdir -p "$probe/templates"
+printf 'see .claude/agents/worker.md and templates/.claude/agents/worker.md\n' > "$probe/templates/legit.md"
 probe_hits="$(cd "$probe" && grep -rInE -i --exclude="$SELF" --exclude-dir=.git "$PATTERN" commands templates README.md SKILL.md 2>/dev/null)"
 assert_contains "$probe_hits" "commands/decoy.md" "self-check: the pattern really does catch a planted 'Agent worker'"
+assert_not_contains "$probe_hits" "templates/legit.md" "self-check: the pattern does NOT flag the real agents/worker.md path"
 
 assert_done
