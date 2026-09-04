@@ -365,11 +365,14 @@ component_project_commands() {
   info "installed .claude/commands/"
 }
 
-# component_agents — shipped subagent definitions (lookup, investigator). These give the
-# interactive driver lane cheap-tier targets for the delegation posture (router-posture
-# hooks + CLAUDE.md) that already tells it to delegate: without them "delegate to an
-# Agent" had no pre-sized, cheap-model destination, so haiku delegation stayed near zero
-# in practice. Mirrors component_project_commands: copy-only, no substitution.
+# component_agents — shipped agent definitions: lookup and investigator (subagents), plus
+# worker (the interactive lane of the single-ticket session the governor also spawns
+# headlessly). These give the interactive driver lane pre-sized destinations for the
+# routing posture (router-posture hooks + CLAUDE.md) that already tells it to delegate:
+# without them "delegate this" had no pre-sized, cheap-model destination, so haiku
+# delegation stayed near zero in practice, and ticket-shaped work had nowhere to go but a
+# generic subagent. Copies by glob, so a new definition needs no edit here. Mirrors
+# component_project_commands: copy-only, no substitution.
 component_agents() {
   log "component: shipped subagent definitions (.claude/agents/)"
   mkdir -p .claude/agents
