@@ -74,7 +74,7 @@ scripts/govern/flows-file.sh --all-untested --max-deploys 5          # plan the 
 scripts/govern/flows-file.sh deploy-gpu.vastai comfyui.vastai --yes  # actually file
 ```
 - **Resource-group batching:** flows sharing a `Resource-group:` are filed as ONE ticket (comma-list
-  `Flow:` field) — one worker, one deploy, N flows validated.
+  `Flow:` field) — one worker (a trim, single-ticket session), one deploy, N flows validated.
 - **BLOCKED excluded; in-flight guard** skips a flow that already has an open `Flow:` ticket.
 - **Capability gate:** a flow that `Requires:` a workspace capability whose knob is unset (`browser` →
   `WSP_BROWSER_CMD`, `analytics` → `WSP_ANALYTICS_QUERY_CMD`, `test-account` → `TEST_USER_EMAIL`,

@@ -11,7 +11,8 @@ Adds a fleet segment to your Claude Code statusline:
 ⚙ 4/6 · #94 opus 22m
 ```
 
-live workers · tickets answered this run · the oldest live worker (ticket, tier, elapsed). **Silent
+live workers (a worker is a trim, single-ticket session) · tickets answered this run · the oldest
+live worker (ticket, tier, elapsed). **Silent
 when no fleet is running** — in a session with no governor run it prints nothing at all.
 
 `$ARGUMENTS` selects the action: `install` (default) · `uninstall` · `status`.

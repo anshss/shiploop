@@ -11,7 +11,7 @@ A workspace root holding N independent git repos as sub-folders — each its own
 — where the root is *also* its own git repo holding config, cross-cutting scripts, the ticket queue,
 the governor, and shared AI context. A self-improving multi-agent harness sits on top (worktrees +
 tickets + governor + hooks): the governor drives a ticket loop through fresh headless `claude -p`
-workers, one per ticket, dispatched at a cheap model floor and escalated once on a classified failure; every resolved ticket promotes a durable lesson
+workers (a worker is a trim, single-ticket session), one per ticket, dispatched at a cheap model floor and escalated once on a classified failure; every resolved ticket promotes a durable lesson
 into the git-tracked `CLAUDE.md`.
 
 Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git

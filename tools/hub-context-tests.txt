@@ -36,3 +36,4 @@ test-vocab-agent-worker
 # only became visible because this test had never once executed in CI. It stays listed so the
 # cross-check keeps seeing it; un-quarantine when the Linux failures are fixed.
 !test-wrap-in-place
+test-vocab-worker-pairing
