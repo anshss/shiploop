@@ -48,6 +48,15 @@ decision (`escalations.md`).
   (with the reactive mitigation already shipped) stays parked/closed-as-mitigated per that deferral.
   Don't autonomously re-attempt before its stated condition is met, even if technically feasible —
   especially when the only remaining path is a hard-stop (live prod infra/secrets).
+- Meta-repo file fixes are a delivery, not a park. When the deliverable is meta-repo/coordination
+  files (root `scripts/*`, root `*.md` beyond an append-only `lessonPatch`, `package.json`,
+  `.claude/*`, `governor/*`, `.githooks/*`) rather than a sub-repo, commit on the meta checkout with
+  a pathspec-scoped `git commit -- <paths>`, never a bare `git commit` (it sweeps a co-tenant's
+  staged index). If the meta-repo has no `origin` (or `GOVERN_NO_PUSH=1`) there is no PR channel:
+  the local `main` commit IS the delivery, so report `status:"resolved"` with `pr: null` and
+  `repo:"harness"`. With a remote, the governor's `ticket-<N>` PR lane applies instead
+  (`.githooks/pre-push`). Park a meta-repo ticket only for a real hard-stop, never merely because it
+  touches `scripts/`.
 
 ## Default rule
 Anything not clearly covered → park and escalate. Don't guess on a consequential/ambiguous choice.
