@@ -164,10 +164,12 @@ bench::arm_vanilla_fresh() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
 # named dispatch. Nothing here reimplements the loop; the gates being measured are the product.
 bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3" name="$4"
-  local ws nums slug
+  local ws nums slug ghbin
   slug="$(bench::repo_slug "$backlog")"
   ws="$(bench::scaffold_workspace "$wd" "$name" "$slug")"
+  bench::assert_offline "$ws"
   bench::seed_tickets "$backlog" "$ws/queue/tickets.md" "$slug"
+  ghbin="$(bench::install_local_gh "$ws" "$slug")"
   nums="$(jq -rs 'to_entries | map((.key + 1) | tostring) | join(" ")' "$backlog")"
   # Same rails as the vanilla arm, expressed through the governor's own knobs so the loop under
   # measurement is the shipped one:
@@ -187,14 +189,56 @@ bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   esac
   (
     cd "$ws"
+    PATH="$ghbin:$PATH" \
     GOVERN_WS_ROOT="$ws" \
     GOVERN_WORKER_TOOLS="$BENCH_TOOLS" \
     GOVERN_WORKER_MAX_TURNS="$worker_turns" \
     GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget" \
     GOVERN_MAX_TICKETS="$(jq -s 'length' "$backlog")" \
+    GOVERN_AUTONOMY=auto \
+    GOVERN_PR_TICKET_REF=1 \
+    _GOVERN_ASSUME_MERGE_ALLOWED=1 \
+    env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GH_HOST -u GH_REPO \
     bash "$ws/scripts/govern/run-loop.sh" --serial $nums
   ) >"$logdir/00-driver.log" 2>&1 || true
   bench::collect_govern_streams "$ws" "$logdir"
+  # Write-back: the loop above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace
+  # made of $wd (arms.sh cp -R). run.sh's main loop verifies "$wd" (the ORIGINAL), never the copy —
+  # so without this, verify always sees the pristine pre-run checkout and the shiploop arm can never
+  # register a cleared ticket, no matter how correct the worker's fix was. The copy IS the fully
+  # evolved tree (governor commits + local merges happened there), so replace $wd with it wholesale.
+  if [[ -d "$ws/$slug/.git" ]]; then
+    rm -rf "$wd"
+    cp -R "$ws/$slug" "$wd"
+  else
+    bench::log "arm_shiploop: $ws/$slug has no .git — write-back skipped, $wd left as the pristine checkout (verify will show 0 cleared)"
+  fi
+  return 0
+}
+
+# Install the purely-local `gh` shim (bench/local-gh.sh) for one cell's shiploop run and prints its
+# bin directory. Env it needs is exported here, not left for the caller, so "the shim's contract"
+# lives in one place. See bench/local-gh.sh's header for exactly what it does and does not emulate.
+bench::install_local_gh() { # <workspace> <repo-slug-short-name> -> bin dir on stdout
+  local ws="$1" repo="$2" bindir
+  bindir="$ws.gh-bin"
+  rm -rf "$bindir"; mkdir -p "$bindir"
+  cat > "$bindir/gh" <<EOF
+#!/usr/bin/env bash
+export BENCH_GH_REPO_DIR="$ws/$repo"
+export BENCH_GH_DEFAULT_BRANCH="main"
+export BENCH_GH_LEDGER="$ws.gh-ledger.jsonl"
+exec "$BENCH_ARMS_DIR/local-gh.sh" "\$@"
+EOF
+  chmod +x "$bindir/gh"
+  : > "$ws.gh-ledger.jsonl"
+  # Pre-seed the repo-visibility cache (templates/govern/lib/common.sh: govern::repo_is_public) so
+  # the governor never calls `gh repo view` at all — the shim doesn't implement it, and a benchmark
+  # repo is never public. GOVERN_RUN_DIR is unset for a plain run-loop.sh invocation, so the cache
+  # resolves to $GOVERNOR_DIR/.repo-visibility = "$ws/governor/.repo-visibility".
+  mkdir -p "$ws/governor"
+  printf '%s private\n' "$repo" > "$ws/governor/.repo-visibility"
+  printf '%s\n' "$bindir"
   return 0
 }
 
@@ -212,7 +256,11 @@ bench::collect_govern_streams() { # <workspace> <logdir>
     rel="${f#"$ws"/logs/govern/}"
     tag="$(printf '%s' "$rel" | tr '/' '-' | sed 's/\.jsonl$//')"
     cp "$f" "$(printf '%s/%02d-%s.jsonl' "$logdir" "$i" "$tag")"
-  done < <(find "$ws/logs/govern" -name '*.jsonl' -type f | LC_ALL=C sort)
+  # -name '*.jsonl' -a -not -name 'state.jsonl': state.jsonl is the governor's OWN event log, not
+  # a claude session stream (bench/replay.mjs's walkJsonl excludes it for the identical reason).
+  # Without this, record.sh's session-row pass reads it as a zero-usage "session" — harmless to the
+  # cost TOTAL (it contributes 0) but it inflates the reported session COUNT with a phantom entry.
+  done < <(find "$ws/logs/govern" -name '*.jsonl' -not -name 'state.jsonl' -type f | LC_ALL=C sort)
   return 0
 }
 
@@ -258,10 +306,23 @@ bench::scaffold_workspace() { # <repo-workdir> <name> <repo-slug> -> workspace p
     --pm npm \
     --org bench \
     --repos "$repo:3999:echo dev" \
-    --merge-allowlist "" \
+    --merge-allowlist "$repo" \
     --worktree-base "$ws.wt" \
     --git-init \
     --yes >"$BENCH_STATE_DIR/scaffold-$name.log" 2>&1
+  # A throwaway benchmark workspace has no reviewer, so GOVERN_AUTONOMY's scaffold-seeded default
+  # (pr-only — templates/lib/workspace.sh) would leave every worker's fix stranded on an unmerged
+  # branch forever: the tree bench/run.sh verifies never receives the work. bench::arm_shiploop
+  # exports GOVERN_AUTONOMY=auto into run-loop.sh's own env, which — because workspace.sh seeds it
+  # as `${GOVERN_AUTONOMY:-pr-only}` — wins over the file's default without editing the scaffold.
+  # --merge-allowlist above is the OTHER half: GOVERN_AUTONOMY=auto alone still refuses to merge a
+  # repo that isn't in GOVERN_MERGE_REPOS (govern::is_merge_repo), which an empty allowlist always
+  # fails.
+  # A real offline install would say this too — it is genuine operator guidance, not a benchmark
+  # trick — so it goes in the scaffolded workspace's OWN CLAUDE.md, never worker-prompt.md.
+  if [[ -f "$ws/CLAUDE.md" ]]; then
+    printf '\n## Offline workspace\n\nThis workspace has no git remotes. Do not `git push` — it has\nnowhere to push to and will only waste turns. `gh pr create` (and every other `gh pr` step) works\ndirectly against your local branch.\n' >> "$ws/CLAUDE.md"
+  fi
   printf '%s\n' "$ws"
   return 0
 }
@@ -278,9 +339,14 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
     bench::die "claude CLI ($BENCH_CLAUDE_BIN) does not support --tools, so WebFetch/WebSearch cannot be excluded. Spec section 3 forbids running an arm that can reach the upstream PRs."
   fi
   mkdir -p "$(dirname "$jsonl")"
+  # -u GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/GH_REPO: offline guard, part 2 (run.sh's
+  # bench::assert_offline covers git remotes; this covers the OTHER way a gh credential reaches a
+  # real repo — an ambient token in the operator's own shell, which a bare `gh` call honors with no
+  # remote and no stored login required. Scrubbed from every spawned session, both arms, always.
   ( cd "$wd" && exec env \
       -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
       -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
+      -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GH_HOST -u GH_REPO \
       "$BENCH_CLAUDE_BIN" -p "$prompt" \
       --output-format stream-json --verbose \
       --setting-sources project,local \

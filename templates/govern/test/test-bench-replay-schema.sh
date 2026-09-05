@@ -24,13 +24,21 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "arms,fleets,kind,partialRecovery,provenance,reconciliation,scope,sessionsExcludedNoResultEvent,tierFallback" \
+  "arms,fleets,kind,meta,partialRecovery,provenance,reconciliation,scope,sessionsExcludedNoResultEvent,tierFallback" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
   "provenance travels inside the JSON, so a consumer cannot quote the number without it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "No vanilla session was run" \
   "and states plainly that the vanilla arm was never executed"
+
+# ── meta (ticket #104: version/model/date next to the headline, not buried in stdout) ─────────
+assert_eq "$(printf '%s' "$j" | jq -r '.meta | keys | join(",")')" \
+  "cliVersions,dateRange,models,runsSeenKept,runsSeenTotal,since" \
+  "meta carries exactly the fields the headline prints"
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.since')" "null" "no --since given -> since is null"
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.runsSeenKept')" "$(printf '%s' "$j" | jq -r '.meta.runsSeenTotal')" \
+  "no --since given -> nothing is filtered out"
 
 # ── arms ─────────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r '.arms | keys | join(",")')" "1m,200k,uncapped" \
@@ -126,5 +134,16 @@ assert_eq "$rc" "1" "an empty fleet exits non-zero"
 assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tickets')" "0" "and reports zero tickets"
 assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tokenReductionPct')" "null" \
   "and reports no reduction rather than a fabricated one"
+
+# ── --rows: the anonymized recomputable evidence, ticket #104 ────────────────
+rows="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 1m --rows 2>&1)"
+assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(select(true)) | length > 0')" "true" \
+  "--rows emits at least one line"
+assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("run") and has("position") and has("shipTokens") and has("shipCostUsd") and has("vanillaTokens") and has("vanillaCostUsd")) | all')" \
+  "true" "every row carries run id, depth, and both arms' tokens/cost"
+assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("fleet") or has("ticket")) | any')" "false" \
+  "no row leaks the fleet path or the internal ticket id"
+assert_eq "$(printf '%s\n' "$rows" | jq -r '.run' | head -1 | grep -Ec '^[0-9a-f]{16}$')" "1" \
+  "the run id is an opaque hash, not the real run-<timestamp> directory name"
 
 assert_done

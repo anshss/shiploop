@@ -4,10 +4,19 @@ The benchmark behind shiploop's cost claim. The unit is **a full session clearin
 ticket: the whole loop (scout, cheap-floor dispatch, escalation, fresh context per worker) against
 the whole alternative (one Claude Code session grinding the same backlog, top to bottom).
 
-There are two paths. **The replay path is the one that produces a number today.** The live A/B
-harness is the measured path, and it has not been run.
+There are two numbers, and this file states which side of each is measured and which is modeled,
+in the same sentence as the number, per `bench/KNOWN-LIMITS.md` (read that file first — it leads
+with what does not hold).
 
-Design and rationale: `.specs/2026-09-03-benchmark-design.md`.
+- **The best-case number** (below): `bench/replay.mjs` over real governor transcripts already on
+  disk. The shiploop arm is measured billed usage. The vanilla arm is a **model** of one
+  accumulating session over the same tickets — no vanilla session was run for this number.
+- **The honest number** (`## Path 2`): a real, live, two-arm run — `claude -p` vs the actual
+  governor loop — where BOTH arms are measured, on the same tiny pilot backlog, same model, no
+  remotes, nothing that can push.
+
+Design and rationale: `.specs/2026-09-03-benchmark-design.md`. Where either number does not hold:
+`bench/KNOWN-LIMITS.md`.
 
 ## Path 1: replay (what produces the number today)
 
@@ -43,45 +52,84 @@ excluded for having no result event, the ceiling no architecture could beat, the
 reconciliation ratio, and the **per-ticket-position curve**. Ticket 1 saves exactly 0%, because
 nothing has been carried into it yet. That is the most useful line in the output.
 
-## The number, on the author's corpus
+## The best-case number, on the author's corpus
 
-Every fleet workspace the author runs, unfiltered: 251 runs, 607 tickets, 7 workspaces.
+**Measured 2026-09-05.** Every shiploop fleet workspace on the author's machine, unfiltered:
+251 runs, 607 tickets, 7 workspaces. Reproduce with:
+
+```bash
+node bench/replay.mjs --fleet /path/to/aquanode --fleet /path/to/claude-keepalive \
+  --fleet /path/to/splito --fleet /path/to/tokenjam --fleet /path/to/vibelab \
+  --fleet /path/to/vibetrading --fleet /path/to/shiploop --arm all --json
+```
 
 | vs a session with | tokens | cost |
 |---|---|---|
-| 1M context | **70.3%** | 57.4% |
-| 200k context + compaction | 30.0% | 18.1% |
+| 1M context | **70.2%** | 57.3% |
+| 200k context + compaction | 30.1% | 18.2% |
 
-Published unfiltered on purpose. Restricting to runs that clear five or more tickets raises the 1M
-figure to about 74%, and a single deep-backlog workspace reaches 77%, because **the saving is a
-property of backlog depth, not of the harness**. Ticket 1 saves exactly 0%: a fresh session against
-a fresh session is the same session. By ticket 3 it is 63%, by ticket 5 it is 74%, by ticket 8 it is
-87%. The median run in this corpus clears one ticket, so the aggregate is carried by the minority of
-long runs, and a two-ticket backlog will not see 70%.
+**This spans many CLI releases and models, not one "current shiploop version" run** — no transcript
+carries the shiploop package version (`bench/KNOWN-LIMITS.md`). CLI versions seen: `2.1.126` through
+`2.1.246`. Models seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`,
+`claude-sonnet-5`. Date range: 2026-06-12 to 2026-09-04. Restricting to sessions on the CURRENT
+release (1.18.3, released 2026-09-04) leaves **4 run directories and 0 usable tickets** — every
+session from that day was interrupted before finishing — so a current-version-only percentage
+cannot be reported yet from replay; see `## Path 2` below for the current-version data point that
+exists instead, and `bench/KNOWN-LIMITS.md` for the full disclosure.
 
-Restricting the same corpus by run depth, 1M arm:
+**The saving is a property of backlog depth, not of the harness.** Ticket 1 saves exactly 0%: a
+fresh session against a fresh session is the same session. Per-position median token reduction
+(1M arm, pooled): ticket 1 (n=248) 0%, ticket 2 (n=71) 38.7%, ticket 3 (n=54) 63.2%, ticket 5
+(n=32) 74.4%, ticket 8 (n=15) 87.2%. Per-fleet breakdown, same measurement date, 1M arm:
 
-| runs of depth | runs | tickets | tokens | cost |
+| Fleet | tickets | runs | median depth | tokens | cost |
+|---|---|---|---|---|---|
+| aquanode | 338 | 80 | 2 | 77.1% | 63.1% |
+| claude-keepalive | 31 | 4 | 8 | 72.7% | 57.7% |
+| tokenjam | 83 | 26 | 2.5 | 69.0% | 59.2% |
+| vibelab | 5 | 1 | 5 | 50.9% | 34.8% |
+| vibetrading | 105 | 98 | 1 | 4.4% | 1.8% |
+| shiploop (the hub's own workspace) | 43 | 40 | 1 | 5.6% | 4.3% |
+| splito | 2 | 2 | 1 | 0% | 0% |
+
+The three fleets at the bottom are not worse-run fleets: they dispatch close to one ticket per run,
+so by this model almost nothing is ever carried. Any single figure quoted from the pooled corpus is
+an average over that spread, and the spread is wider than the figure. Quote the arm alongside the
+number — against the 200k default the same corpus gives 30.1% tokens, and someone reproducing this
+will run the default.
+
+Raw per-(run, ticket-position) rows behind these numbers, fleet/run/ticket identifiers replaced
+with an opaque hash (`replay.mjs --rows`, `bench/KNOWN-LIMITS.md` for what "recomputable" does and
+does not mean here): `bench/published-rows/replay-2026-09-05.jsonl`.
+
+## Path 2: the live A/B harness, and the honest number it produced
+
+**Measured 2026-09-05, `claude 2.1.246`, model default (see the model-mismatch caveat below),
+`bench/pilot-backlogs/shiploop-mini` (2 tickets, mined from shiploop's own history, gitignored,
+not the published 6+-ticket backlog set — `bench/KNOWN-LIMITS.md`).** Two arms actually executed,
+same tickets, no remotes, nothing that can push.
+
+| Arm | tokens | cost | tickets cleared | sessions |
 |---|---|---|---|---|
-| all | 251 | 607 | 70.3% | 57.4% |
-| >= 2 | 109 | 465 | 73.7% | 61.4% |
-| >= 3 | 86 | 435 | 75.0% | 62.6% |
-| >= 5 | 67 | 390 | 76.0% | 63.9% |
-| >= 8 | 24 | 255 | 80.2% | 69.3% |
+| `vanilla` (one `claude -p` session) | 6.1M | $5.43 | 0/2 | 1 |
+| `shiploop` (the real governor loop) | 17.4M | $4.53 | 0/2 | 89 (2 with billed usage; the rest are retries/near-zero — see below) |
 
-142 of the 251 runs clear a single ticket and contribute a 0% saving by construction, which is what
-holds the unfiltered figure at 70.3%. From depth 2 onward the number is stable in a 74 to 76 band,
-so a backlog of three to five tickets is enough for a measurement to mean something.
+**Read this as a cost comparison on unresolved work, not a savings claim.** Neither arm cleared
+either ticket against the golden-test-patch oracle, for reasons that are specific to this pilot
+backlog and disclosed in full in `bench/KNOWN-LIMITS.md` — a resolution-rate or reduction
+percentage is not meaningful when the numerator on both sides is zero. What this run DOES show,
+for what it's worth at n=2: shiploop spent more tokens (retries, driver overhead, a park-and-review
+pass) but less money than one long opus session, partly because the governor's own per-ticket model
+sizing put one of the two workers on sonnet rather than opus — a real product behavior, but one that
+the ticket asked to hold constant across arms and this run did not.
 
-Quote the arm alongside the number. Against the 200k default the same corpus gives 30.0% tokens, and
-someone reproducing this will run the default.
+Raw session rows for this run are NOT included in the published-rows file (`bench/KNOWN-LIMITS.md`
+covers why the pilot backlog itself is private); the numbers above are the full disclosure.
 
-## Path 2: the live A/B harness (the measured path, not yet run)
-
-Everything below this line is the harness for a real measured run: two arms actually executed
-against a pinned backlog set with a SWE-bench-shaped oracle. It is complete and tested, and it has
-not been executed against a published backlog. When it is, its numbers supersede the replay path's,
-and the replay path stays as the tool that computes a number for someone else's fleet.
+Everything below this line is the harness itself: two arms actually executed against a pinned
+backlog with a SWE-bench-shaped oracle, exercised for real above. The replay path (Path 1) remains
+the tool for computing a number from a fleet's own accumulated logs; this path is the one that
+measures both sides at once.
 
 ## What is here
 

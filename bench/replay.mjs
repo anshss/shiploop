@@ -12,6 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 // ── published Anthropic rates, USD per million tokens ────────────────────────
 // Cache read is 0.1x input. Cache write is 2x input at the 1-hour TTL, 1.25x at 5 minutes.
@@ -49,6 +50,8 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--scope') opts.scope = argv[++i];
     else if (a === '--fleet') opts.fleets.push(path.resolve(argv[++i]));
+    else if (a === '--since') opts.since = argv[++i];
+    else if (a === '--rows') opts.rows = true;
     else if (a === '-h' || a === '--help') opts.help = true;
     else return { error: `unknown argument: ${a}` };
   }
@@ -62,7 +65,7 @@ function parseArgs(argv) {
 }
 
 const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|uncapped|all]
-                            [--scope all|resolved] [--json]
+                            [--scope all|resolved] [--since YYYYMMDD[-HHMMSS]] [--json]
 
   --fleet   a shiploop workspace to read (repeatable). Defaults to auto-discovery of the
             current workspace and its siblings. Read only, never written to.
@@ -70,7 +73,16 @@ const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|u
   --scope   all (every ticket the loop paid for) or resolved (only tickets that
             ticket-history.jsonl marks resolved). Default all. Scope selects what is
             COUNTED, never what happened: a failed ticket keeps contributing carry.
-  --json    machine-readable output instead of the report.`;
+  --since   keep only runs whose run-dir timestamp (run-YYYYMMDD-HHMMSS-<pid>, local time) is
+            >= this value. A transcript carries no shiploop package version, so this is the
+            disclosable proxy for "sessions on version X or later": pass X's release commit
+            timestamp. Prints the resulting date range and CLI/model versions next to the number.
+  --json    machine-readable output instead of the report.
+  --rows    print one anonymized JSONL row per (run, ticket position) instead of the aggregate
+            report — the recomputable evidence behind a published percentage. fleet/run/ticket
+            identifiers are replaced with an opaque hash; run id, position (depth), sessions,
+            measured tokens/cost, and modeled tokens/cost survive. Combine with --arm to pick
+            which counterfactual's rows to emit (default: every arm, one row set per arm).`;
 
 // ── fleet discovery ──────────────────────────────────────────────────────────
 function isFleet(dir) {
@@ -150,6 +162,7 @@ function parseTranscript(file) {
   let excluded = 0;
   let turns = [];
   let initModel = null;
+  let initVersion = null;
   const seen = new Set();
 
   // A session killed before it emitted a result event still has an exactly recoverable input side:
@@ -181,6 +194,7 @@ function parseTranscript(file) {
         write5m: 0,
         modelUsage: null,
         initModel,
+        initVersion,
         turns,
       });
     }
@@ -198,8 +212,12 @@ function parseTranscript(file) {
     }
     if (ev.type === 'system' && ev.subtype === 'init' && ev.model) {
       // The init event names the session's model even when the result event omits modelUsage and
-      // every assistant message is a synthetic notice. It is the authoritative fallback.
+      // every assistant message is a synthetic notice. It is the authoritative fallback. It also
+      // carries the Claude Code CLI version the session actually ran under (claude_code_version) —
+      // no event carries the shiploop PACKAGE version, so that is what --since's run-dir-timestamp
+      // filter is for instead.
       initModel = ev.model;
+      if (ev.claude_code_version) initVersion = ev.claude_code_version;
     } else if (ev.type === 'assistant' && ev.message) {
       const id = ev.message.id;
       const u = ev.message.usage || {};
@@ -245,6 +263,7 @@ function parseTranscript(file) {
         write5m,
         modelUsage: ev.modelUsage || null,
         initModel,
+        initVersion,
         partial: false,
         turns,
       });
@@ -366,6 +385,13 @@ function locate(file, fleetDir) {
   }
   if (!ticket) ticket = path.basename(path.dirname(file));
   return { run, ticket };
+}
+
+// run-YYYYMMDD-HHMMSS-<pid> -> "YYYYMMDD-HHMMSS" (lexically sortable, local time — see run-loop.sh's
+// `date +%Y%m%d-%H%M%S`, no `-u`). null for a run name that doesn't match (e.g. "adhoc").
+function runDateKey(run) {
+  const m = /^run-(\d{8}-\d{6})/.exec(run || '');
+  return m ? m[1] : null;
 }
 
 function scanFleet(fleetDir) {
@@ -548,11 +574,53 @@ function main() {
     fleetNotes.push({ fleet, tickets: tickets.length, transcripts: files });
   }
 
+  // --since: the disclosable date-cutoff proxy for "sessions on shiploop version X or later" (no
+  // transcript carries the shiploop package version — see the USAGE text). Runs whose run-dir
+  // name doesn't parse as a timestamp (e.g. "adhoc") are dropped by a --since filter: an
+  // unparseable run can never be shown to be on-or-after the cutoff.
+  const runsSeenTotal = new Set(allTickets.map((t) => `${t.fleet}#${t.run}`)).size;
+  const keptByDate = opts.since
+    ? allTickets.filter((t) => {
+        const k = runDateKey(t.run);
+        return k != null && k >= opts.since;
+      })
+    : allTickets;
+  const runsSeenKept = new Set(keptByDate.map((t) => `${t.fleet}#${t.run}`)).size;
+
+  // Corpus metadata for the headline: CLI version(s) and model(s) actually seen, and the date span
+  // of the run dirs that made the cut — printed next to the number, not left for stdout to bury.
+  const cliVersions = new Set();
+  const models = new Set();
+  let minDate = null;
+  let maxDate = null;
+  for (const t of keptByDate) {
+    const dk = runDateKey(t.run);
+    if (dk) {
+      if (minDate == null || dk < minDate) minDate = dk;
+      if (maxDate == null || dk > maxDate) maxDate = dk;
+    }
+    for (const sess of t.sessions) {
+      if (sess.initVersion) cliVersions.add(sess.initVersion);
+      const m = (sess.modelUsage && Object.keys(sess.modelUsage)) || [fallbackModel(sess)];
+      for (const mm of m) if (mm && mm !== 'unresolved') models.add(mm);
+    }
+  }
+  const meta = {
+    since: opts.since || null,
+    runsSeenTotal,
+    runsSeenKept,
+    dateRange: minDate ? { from: minDate, to: maxDate } : null,
+    cliVersions: [...cliVersions].sort(),
+    models: [...models].sort(),
+  };
+
+  const allTicketsAfterSince = keptByDate;
+
   // Scope selects which tickets are COUNTED, never which ones happened. A ticket the loop failed
   // still consumed the loop's tokens and still would have grown a single session's context, so it
   // keeps contributing carry to the tickets after it under either scope. Dropping it from the run
   // outright would shorten the modeled session and mechanically flatter whichever arm.
-  const kept = allTickets.filter((t) => t.sessions.length > 0);
+  const kept = allTicketsAfterSince.filter((t) => t.sessions.length > 0);
   for (const t of kept) t.counted = opts.scope === 'all' ? true : t.status === 'resolved';
 
   // Group into runs and order tickets within a run by completion time. That ordering is what a
@@ -568,11 +636,15 @@ function main() {
     arr.sort((a, b) => orderKey(a) - orderKey(b) || String(a.ticket).localeCompare(String(b.ticket)));
   }
 
+  // --rows evidence, keyed by arm. Populated once per real (non-sensitivity) computeArm call.
+  const rowsByArm = {};
+
   const computeArm = (arm, includePartial) => {
     const window = ARMS[arm].window;
     const all = [];
     for (const arr of runs.values()) all.push(...replayRun(arr, window, includePartial));
     const rows = all.filter((r) => r.counted);
+    if (opts.rows && !includePartial) rowsByArm[arm] = all;
 
     const shipTokens = rows.reduce((s, r) => s + r.shipTokens, 0);
     const vanTokens = rows.reduce((s, r) => s + r.vanTokens, 0);
@@ -660,6 +732,32 @@ function main() {
     };
   }
 
+  if (opts.rows) {
+    // Anonymized, recomputable evidence: one line per (run, ticket position), fleet/run/ticket
+    // replaced with a hash so a workspace name or internal ticket number never leaves the machine.
+    // Same numbers the aggregate above was built from — sum shipTokens/shipCost per run and you
+    // reproduce the corresponding arm's shiploopTokens/shiploopCostUsd exactly.
+    for (const arm of armNames) {
+      for (const r of rowsByArm[arm] || []) {
+        const runHash = crypto.createHash('sha256').update(`${r.fleet}#${r.run}`).digest('hex').slice(0, 16);
+        console.log(
+          JSON.stringify({
+            arm,
+            run: runHash,
+            position: r.position,
+            counted: r.counted,
+            sessions: r.sessions,
+            shipTokens: r.shipTokens,
+            shipCostUsd: r.shipCost,
+            vanillaTokens: r.vanTokens,
+            vanillaCostUsd: r.vanCost,
+          }),
+        );
+      }
+    }
+    process.exit(0);
+  }
+
   // Tier resolution audit, computed once over the session list rather than inside the arm loop.
   // A session is resolvable when modelUsage names a known tier, or any assistant turn does, or the
   // init event does. Anything left is priced at the Opus rate, which inflates BOTH arms.
@@ -719,6 +817,7 @@ function main() {
       'MODELED COUNTERFACTUAL. The shiploop arm is measured billed usage from result events. ' +
       'The vanilla arm is a model of one accumulating session over the same tickets. No vanilla session was run.',
     scope: opts.scope,
+    meta,
     fleets: fleetNotes,
     sessionsExcludedNoResultEvent: excludedSessions,
     partialRecovery,
@@ -750,6 +849,16 @@ function fmtUsd(x) {
 function render(out) {
   const L = [];
   L.push('shiploop bench: replay');
+  // Version/model/date next to the headline, not buried in stdout (ticket #104): a transcript
+  // carries no shiploop package version, so `since` (if given) + the CLI/model actually seen +
+  // the covered date range are the disclosable stand-in, printed before a single number.
+  const m = out.meta;
+  L.push(
+    `  corpus: CLI ${m.cliVersions.length ? m.cliVersions.join(', ') : 'unknown'}` +
+      `   model ${m.models.length ? m.models.join(', ') : 'unknown'}` +
+      `   dates ${m.dateRange ? `${m.dateRange.from} .. ${m.dateRange.to}` : 'n/a'}` +
+      `   runs ${m.runsSeenKept}/${m.runsSeenTotal}${m.since ? ` (--since ${m.since})` : ''}`,
+  );
   L.push('');
   L.push(`  MODELED COUNTERFACTUAL: shiploop arm measured from result events, vanilla arm modeled as`);
   const names = Object.keys(out.arms);

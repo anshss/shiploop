@@ -9,11 +9,14 @@ Read this before quoting a percentage from this repository.
 
 **The shiploop arm is measured. The vanilla arm is modeled. No vanilla session was ever run.**
 
-The published number is a *counterfactual*: an estimate of what the same backlog would have cost
-inside one long Claude Code session, computed from what the shiploop sessions actually did. It is
-not a measurement of two things that both happened. Nothing in this repository has ever measured a
-stock Claude Code session clearing a shiploop backlog, and until `bench/run.sh` is executed against
-a real backlog set, nothing here will have.
+The published *best-case* number is a *counterfactual*: an estimate of what the same backlog would
+have cost inside one long Claude Code session, computed from what the shiploop sessions actually
+did. It is not a measurement of two things that both happened.
+
+`bench/run.sh` HAS now been executed against a real (if small, private, pilot-scale) backlog —
+`bench/README.md`'s "Path 2" section and `bench/KNOWN-LIMITS.md` carry that result and its caveats
+in full. This section's counterfactual model is still what produces the larger, published
+best-case number below, over the much larger real-fleet corpus.
 
 This distinction is the whole reason the document exists. A tool's self-reported saving is a claim
 about its counterfactual, not about anyone's bill. `replay.mjs` prints that on its own first line,
@@ -149,18 +152,20 @@ The saving is carry, carry accumulates across a run, and ticket 1 saves exactly 
 a fleet shows is mostly a statement about **how many tickets its runs clear**, not about how good
 the harness is. The report prints the median tickets per run next to every arm for that reason.
 
-Across the author's five fleets with transcripts, on the `1m` arm:
+Across the author's seven fleets with transcripts (measured 2026-09-05), on the `1m` arm:
 
 | Fleet | tickets | runs | tokens | cost |
 |---|---|---|---|---|
 | aquanode | 338 | 80 | 77% | 63% |
-| claude-keepalive | 31 | 4 | 72% | 57% |
+| claude-keepalive | 31 | 4 | 73% | 58% |
 | tokenjam | 83 | 26 | 69% | 59% |
-| vibetrading | 105 | 98 | 4% | 1% |
-| shiploop (the hub's own workspace) | 43 | 40 | 5% | 4% |
+| vibelab | 5 | 1 | 51% | 35% |
+| vibetrading | 105 | 98 | 4% | 2% |
+| shiploop (the hub's own workspace) | 43 | 40 | 6% | 4% |
+| splito | 2 | 2 | 0% | 0% |
 
-The two fleets at the bottom are not worse-run fleets. They dispatched roughly one ticket per run,
-so nothing was ever carried, so by this model they saved nothing. Any single figure quoted from the
+The bottom three fleets are not worse-run fleets. They dispatched close to one ticket per run, so
+nothing was ever carried, so by this model they saved nothing. Any single figure quoted from the
 pooled corpus is an average over that spread, and the spread is wider than the figure.
 
 ## The ceiling
@@ -169,13 +174,14 @@ Output is a cost no architecture removes. The work still has to be written, and 
 same code a single session would. So the maximum reduction any tool could report against a given
 arm is the point where everything except output has gone to zero.
 
-`replay.mjs` computes and prints this per arm. On the author's corpus:
+`replay.mjs` computes and prints this per arm. On the author's corpus (measured 2026-09-05, the
+same 7-fleet/251-run/607-ticket corpus as `README.md`'s best-case number):
 
 | Arm | Ceiling, tokens | Ceiling, cost |
 |---|---|---|
 | `200k` | 99.6% | 85.7% |
-| `1m` | 99.8% | 92.6% |
-| `uncapped` | 99.9% | 96.1% |
+| `1m` | 99.8% | 92.5% |
+| `uncapped` | 99.9% | 96.0% |
 
 The token ceiling is nearly 100% because output is a rounding error in token count (20.2M of
 3,464M). The cost ceiling is the meaningful one, because output is billed at 5x input and 50x cache

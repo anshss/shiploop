@@ -84,6 +84,16 @@ done
 
 [[ "${#SEL_ARMS[@]}" -gt 0 ]] || SEL_ARMS=(vanilla shiploop)
 [[ -n "$RUN_ID" ]] || RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+
+# Absolutize --backlogs / --out NOW, before anything below can `cd` out from under a relative one.
+# bench::arm_shiploop's subshell does `cd "$ws"` before re-reading the backlog file (to compute
+# GOVERN_MAX_TICKETS); a relative --backlogs there silently resolves against $ws instead of the
+# caller's cwd, jq fails to open it, the command substitution yields an empty string, and
+# GOVERN_MAX_TICKETS collapses to run-loop.sh's own `${VAR:-0}` default — the loop dispatches ZERO
+# tickets and exits clean, which reads exactly like a working run that happened to clear nothing.
+BACKLOG_DIR="$(cd "$BACKLOG_DIR" && pwd)" || bench::die "--backlogs dir does not exist: $BACKLOG_DIR"
+mkdir -p "$OUT_ROOT"
+OUT_ROOT="$(cd "$OUT_ROOT" && pwd)"
 # A bare `[[ c ]] && cmd` at statement position returns the TEST's status, and under
 # `set -euo pipefail` a false test aborts the script. Every such pair in this file is an `if`.
 if [[ "$DRY_RUN" -eq 1 ]]; then RUN_ID="${RUN_ID}-dry"; fi
@@ -152,6 +162,47 @@ bench::validate_backlog() { # <backlog.jsonl>
   return 0
 }
 
+# ── offline guard ───────────────────────────────────────────────────────────
+# Non-negotiable (ticket #104): the shiploop arm runs the REAL governor loop, which opens PRs
+# against whatever remote it can reach. Every clone this driver makes has its remote(s) stripped
+# immediately, and nothing is allowed to spawn while any remote survives anywhere under the cell's
+# workdir. BENCH_ALLOW_REMOTES=1 is the deliberate, documented escape hatch — no benchmark needs it.
+bench::strip_remotes() { # <git-dir>
+  local d="$1" r
+  [[ -d "$d/.git" || -f "$d/.git" ]] || return 0
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    git -C "$d" remote remove "$r" >/dev/null 2>&1 || true
+  done < <(git -C "$d" remote 2>/dev/null)
+  return 0
+}
+
+# Fail-closed in the style of bench::require_turn_ceiling (arms.sh): walk every `.git` under <root>
+# (bounded depth — a scaffolded workspace nests a sub-repo a few levels down, never deep) and abort
+# the whole run the instant one still carries a remote. Called before EITHER arm is allowed to
+# spawn, per cell, so a stray remote can never slip in between checkout and dispatch.
+bench::assert_offline() { # <root-dir>
+  if [[ "${BENCH_ALLOW_REMOTES:-0}" == "1" ]]; then
+    bench::log "offline guard: BENCH_ALLOW_REMOTES=1 — remotes NOT stripped/asserted. No published benchmark number may use this."
+    return 0
+  fi
+  local gitdir d leftover
+  while IFS= read -r gitdir; do
+    d="${gitdir%/.git}"
+    leftover="$(git -C "$d" remote 2>/dev/null || true)"
+    [[ -z "$leftover" ]] || bench::die "offline guard: $d still has git remote(s): $leftover — refusing to spawn any arm. Set BENCH_ALLOW_REMOTES=1 to override (documented: no benchmark needs this)."
+  done < <(find "$1" -maxdepth 6 -name .git 2>/dev/null)
+  # A `gh` credential is host-scoped, not workspace-scoped: an authenticated `gh` on PATH can reach
+  # a real repo via an explicit --repo regardless of this workspace's git state, so "zero remotes"
+  # cannot by itself close that door. The shiploop arm never lets the real `gh` run at all (arms.sh
+  # shadows it on PATH with a purely-local shim — see bench::install_local_gh); GH_TOKEN /
+  # GITHUB_TOKEN / GH_ENTERPRISE_TOKEN / GH_HOST / GH_REPO are additionally scrubbed from every
+  # spawned session's environment (bench::spawn) so an ambient credential in the operator's shell
+  # cannot flow through either arm. What is NOT closed, and is recorded as such in
+  # bench/KNOWN-LIMITS.md: nothing here sandboxes raw network syscalls from a worker's Bash tool.
+  return 0
+}
+
 # ── checkout ────────────────────────────────────────────────────────────────
 # One fresh checkout of the pinned ref per cell, so no arm ever inherits another's commits. In a
 # dry run there is no upstream to clone, so a git repo is synthesized locally: the arms never touch
@@ -172,7 +223,32 @@ bench::prepare_workdir() { # <backlog.jsonl> <cell-id> -> path on stdout
     )
   else
     git clone -q "$repo" "$wd"
-    ( cd "$wd" && git checkout -q "$ref" )
+    bench::strip_remotes "$wd"
+    # -B, not a bare checkout: the governor's worktree base-ref fallback (no origin ⇒ branch off
+    # local `main`, templates/worktree/lib/base-ref.sh) must resolve to the BACKLOG'S PINNED ref,
+    # not whatever `main` the clone happened to carry. Forcing the local `main` branch onto $ref
+    # (whether $ref names a branch, tag, or bare SHA) makes that fallback correct instead of merely
+    # not-crashing.
+    ( cd "$wd" && git checkout -q -B main "$ref" )
+    # A `git clone` of a LOCAL path (the common case: mining a backlog from a repo already on this
+    # machine) brings every OTHER ref along too — branches, remote-tracking refs, AND TAGS — fully
+    # reachable with `git log --all` / `git branch -a` / `git tag`, including, if the backlog's
+    # source repo is still under active development, commits made AFTER the merge this ticket was
+    # mined from (a release tag cut after the fix is exactly such a ref). That is a direct leak of
+    # the answer: an arm never needs to solve the bug if it can `git show` the real fix. Deleting
+    # EVERY ref except `refs/heads/main` and expiring the reflog closes the practical leak — an arm
+    # would need to already know the future commit's exact SHA to reach it as a dangling object, not
+    # merely list it. `git gc` then removes the now-unreachable objects outright.
+    (
+      cd "$wd"
+      while IFS= read -r _r; do
+        [[ -n "$_r" && "$_r" != "refs/heads/main" ]] || continue
+        git update-ref -d "$_r" >/dev/null 2>&1 || true
+      done < <(git for-each-ref --format='%(refname)')
+      git reflog expire --expire=now --all >/dev/null 2>&1 || true
+      git gc --prune=now --quiet >/dev/null 2>&1 || true
+    )
+    bench::assert_offline "$wd"
   fi
   printf '%s\n' "$wd"
   return 0
