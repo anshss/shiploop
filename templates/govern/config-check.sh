@@ -137,7 +137,7 @@ fi
 # dedicated notice — NOT buried among the ~9 neutral optional-knob lines below — so the operator sees
 # it before a worker is ever burned on it.
 if [[ -z "${GOVERN_MIGRATE_CMD:-}" && -f "${TICKETS_FILE:-}" ]]; then
-  h_migrate_hit="$(grep -inE 'migration|schema change|alter table' "$TICKETS_FILE" 2>/dev/null | head -1 || true)"
+  h_migrate_hit="$(grep -inE 'migration|schema change|alter table' "$TICKETS_FILE" 2>/dev/null | sed -n '1p' || true)"
   if [[ -n "$h_migrate_hit" ]]; then
     warn_only+=("GOVERN_MIGRATE_CMD is unset but tickets.md has a migration-shaped entry — it will escalate for a manual apply if/when picked up: $h_migrate_hit")
   fi

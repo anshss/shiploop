@@ -291,7 +291,7 @@ govern::flows_pii_scan() { # file [file...] -> "file:line: token" per un-allowed
       [[ -n "$m" ]] || continue
       lineno="${m%%:*}"; text="${m#*:}"
       case "$text" in *"lint:allow"*) continue;; esac
-      tok="$(printf '%s' "$text" | grep -oE "$GOVERN_FLOW_PII_RE" | head -1)"
+      tok="$(printf '%s' "$text" | grep -oE "$GOVERN_FLOW_PII_RE" | sed -n '1p')"
       printf '%s:%s: %s\n' "$f" "$lineno" "$tok"
       hit=1
     done < <(grep -nE "$GOVERN_FLOW_PII_RE" "$f" 2>/dev/null || true)
@@ -415,7 +415,7 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
   v="$(govern::flow_field "$id" Validated "$f")"
   # `|| true` — no recorded pin (UNTESTED flow / grep no-match) is normal, not an error to abort a
   # set -e caller (bookkeep/run-loop) on.
-  printf '%s' "$v" | grep -oE "(^|[^A-Za-z0-9._-])${repo}@[0-9a-f]+" 2>/dev/null | head -1 | sed -E "s/.*${repo}@//" || true
+  printf '%s' "$v" | grep -oE "(^|[^A-Za-z0-9._-])${repo}@[0-9a-f]+" 2>/dev/null | sed -n '1p' | sed -E "s/.*${repo}@//" || true
 }
 
 # ── Runner-facing entry point (durable validation runner, spec §5) ──────────
@@ -827,7 +827,7 @@ govern::flows_passive_evidence() { # [meta-root] [--attach] -> advisory lines
     status="$(govern::flow_field "$id" Status "$flows")"
     # Only a flow that is SUPPOSED to be in use (a positive verdict, or measuring) can be "0 usage".
     case "$status" in PASS|EFFECTIVE|MEASURING) ;; *) continue ;; esac
-    usage="$(govern::flow_analytics_query "$src" | head -1 | grep -oE '^-?[0-9]+' | head -1 || true)"
+    usage="$(govern::flow_analytics_query "$src" | head -1 | grep -oE '^-?[0-9]+' | sed -n '1p' || true)"
     [[ -n "$usage" ]] || continue         # non-numeric / query failed → can't judge, skip
     if [[ "$usage" -eq 0 ]]; then
       printf 'PASSIVE %s: 0 usage from analytics (source: %s) — INEFFECTIVE-leaning; operator decides (never auto-stamped).\n' "$id" "$src"
@@ -852,8 +852,8 @@ govern::flows_passive_evidence() { # [meta-root] [--attach] -> advisory lines
 # Extract a day-count N from a policy string like "every 14d", "7d", "14 days" → prints N (or "").
 govern::_flows_days_of() { # str -> N | ""
   local s="$1" n
-  n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*d([[:space:]]|$)' | head -1 | grep -oE '[0-9]+' | head -1 || true)"
-  [[ -n "$n" ]] || n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*day' | head -1 | grep -oE '[0-9]+' | head -1 || true)"
+  n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*d([[:space:]]|$)' | sed -n '1p' | grep -oE '[0-9]+' | sed -n '1p' || true)"
+  [[ -n "$n" ]] || n="$(printf '%s' "$s" | grep -oE '[0-9]+[[:space:]]*day' | sed -n '1p' | grep -oE '[0-9]+' | sed -n '1p' || true)"
   printf '%s' "$n"
 }
 

@@ -62,7 +62,7 @@ compute_stale_escalations() {
     govern::is_placeholder "$ans" || continue
     govern::is_placeholder "$disp" || continue
     opened="$(jq -r '.opened' <<<"$line")"
-    od="$(printf '%s' "$opened" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 || true)"
+    od="$(printf '%s' "$opened" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sed -n '1p' || true)"
     age_json="null"
     if [[ -n "$od" ]] && oe="$(govern::date_to_epoch "$od")" && [[ -n "$oe" ]]; then
       age=$(( (now - oe) / 86400 ))

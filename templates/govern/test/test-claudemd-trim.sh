@@ -114,8 +114,8 @@ assert_eq "$(cat "$T/CLAUDE-APPENDIX.md")" "$preap" "D4: appendix untouched"
 props="$(cat "$T/governor/claudemd-trim-proposals.md")"
 assert_contains "$props" "no citations: judgment call" "D5: no-citation candidates say judgment call"
 assert_contains "$props" "cannot auto-prove dead" "D6: live-citation candidates say why lane 1 could not act"
-big_ln="$(grep -n "big judgment block" "$T/governor/claudemd-trim-proposals.md" | head -1 | cut -d: -f1)"
-small_ln="$(grep -n "small judgment block" "$T/governor/claudemd-trim-proposals.md" | head -1 | cut -d: -f1)"
+big_ln="$(grep -n "big judgment block" "$T/governor/claudemd-trim-proposals.md" | sed -n '1p' | cut -d: -f1)"
+small_ln="$(grep -n "small judgment block" "$T/governor/claudemd-trim-proposals.md" | sed -n '1p' | cut -d: -f1)"
 if [[ -n "$big_ln" && -n "$small_ln" && "$big_ln" -lt "$small_ln" ]]; then f=1; else f=0; fi
 assert_eq "$f" "1" "D7: candidates ranked largest first"
 # --dry-run: reports both lanes, writes nothing
@@ -130,7 +130,7 @@ rm -rf "$T"
 # ── E: --apply moves exactly the addressed block; a stale hash is refused ─────────────────────
 T="$(mktemp -d)"; mk_clean "$T"
 rc=0; GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=100 bash "$CT" >/dev/null 2>&1 || rc=$?
-h_big="$(grep -B2 "big judgment block" "$T/governor/claudemd-trim-proposals.md" | grep -o '[0-9a-f]\{64\}' | head -1)"
+h_big="$(grep -B2 "big judgment block" "$T/governor/claudemd-trim-proposals.md" | grep -o '[0-9a-f]\{64\}' | sed -n '1p')"
 rc=0; out="$(GOVERN_WS_ROOT="$T" bash "$CT" --apply "$h_big" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "E1: --apply on a live hash succeeds"
 if grep -qF 'big judgment block' "$T/CLAUDE.md"; then f=1; else f=0; fi
@@ -149,7 +149,7 @@ rm -rf "$T"
 # ── F: --still-true suppresses re-proposal; editing the text revives it ───────────────────────
 T="$(mktemp -d)"; mk_clean "$T"
 rc=0; GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=100 bash "$CT" >/dev/null 2>&1 || rc=$?
-h_small="$(grep -B2 "small judgment block" "$T/governor/claudemd-trim-proposals.md" | grep -o '[0-9a-f]\{64\}' | head -1)"
+h_small="$(grep -B2 "small judgment block" "$T/governor/claudemd-trim-proposals.md" | grep -o '[0-9a-f]\{64\}' | sed -n '1p')"
 rc=0; out="$(GOVERN_WS_ROOT="$T" bash "$CT" --still-true "$h_small" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "F1: --still-true records a verdict"
 assert_eq "$(jq -r --arg h "$h_small" '.[$h].verdict' "$T/governor/claudemd-verdicts.json")" "still-true" "F2: verdict stored under the block's full hash"
