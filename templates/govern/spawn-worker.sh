@@ -1345,8 +1345,12 @@ if [[ -z "$report" ]]; then
 fi
 
 # 6. Validate; synthesize a report ONLY if no parseable status-bearing object exists anywhere.
-#    Three distinct no-report outcomes — never conflated, because each needs a different response:
+#    Four distinct no-report outcomes — never conflated, because each needs a different response:
 #      infra   — worker died on an auth/transport outage (#90): NOT the ticket's fault → run halts.
+#      usage-error — the CLI rejected the WORKER'S OWN INVOCATION, e.g. an unsupported flag/subcommand
+#                (#56, a harness-vs-installed-CLI version skew): NOT the ticket's fault, and every
+#                subsequent worker would die identically → run halts, distinct from a genuine ticket
+#                failure and from an infra/auth outage (re-auth would not fix a bad flag).
 #      timeout — worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its verdict (#241):
 #                NOT a genuine FAIL. The killed worker may have done real, green work and just never
 #                reached the report write — recording that as `failed` masks a working result as broken
@@ -1361,13 +1365,19 @@ fi
 if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
   # #90: a real timeout (worker_killed) is a kill, not infra, so skip the infra signature check in
   # that case (a genuine wall-clock timeout is the dominant cause and the timeout status is
-  # recoverable either way).
-  infra_sig=""; intr_sig=""
+  # recoverable either way). Same reasoning extends to usage-error: a kill-before-verdict never gets
+  # the chance to reject its own invocation, so it can't be a usage error either.
+  infra_sig=""; intr_sig=""; usage_sig=""
   if [[ "$worker_killed" -eq 0 ]]; then
     infra_sig="$(govern::infra_error_signature "$jsonl" || true)"
     # #34: only when it's NOT a persistent infra/auth outage, check for a TRANSIENT mid-stream
     # connection drop (laptop sleep / network suspend) — that gets its own recoverable status.
     [[ -z "$infra_sig" ]] && intr_sig="$(govern::interrupted_error_signature "$jsonl" || true)"
+    # #56: only once BOTH infra and interrupted are ruled out, check for a CLI usage error (the CLI
+    # rejected its own invocation, e.g. an unsupported flag from a harness/CLI version skew) — this
+    # must stay last among the three so a genuine transport outage or connection drop is never
+    # misclassified as a usage error just because its stream also happens to lack a JSON result event.
+    [[ -z "$infra_sig" && -z "$intr_sig" ]] && usage_sig="$(govern::usage_error_signature "$jsonl" || true)"
   fi
   if [[ -n "$infra_sig" ]]; then
     govern::log "worker for #$N → INFRA/auth outage (not a ticket fault): $infra_sig"
@@ -1379,10 +1389,18 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     # NOT the timeout watchdog. NOT a ticket fault and NOT a persistent infra outage: the worktree is
     # preserved + resumable, so emit a DISTINCT status:"interrupted" → run-loop auto-retries the SAME
     # ticket ONCE instead of burning it as `failed` and mis-attributing a sleep artifact to ticket
-    # difficulty. Order matters: infra (halt-class) is checked FIRST, then interrupted, then timeout.
+    # difficulty. Order matters: infra (halt-class) is checked FIRST, then interrupted, then usage-error,
+    # then timeout.
     govern::log "worker for #$N → INTERRUPTED — transient connection drop mid-response (e.g. laptop sleep), worktree preserved at $wtpath (auto-retry resumes): $intr_sig"
     report="$(jq -nc --arg e "$intr_sig" --arg wt "$wtpath" \
       '{status:"interrupted",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},interrupted:{error:$e},escalation:null}')"
+  elif [[ -n "$usage_sig" ]]; then
+    # #56: the CLI rejected the invocation itself — a fleet-wide condition (every worker would die
+    # identically), not this ticket's fault. run-loop halts the run on this status instead of
+    # continuing to burn the rest of the backlog as N indistinguishable `failed` tickets.
+    govern::log "worker for #$N → USAGE-ERROR (CLI rejected its own invocation, not a ticket fault): $usage_sig"
+    report="$(jq -nc --arg e "$usage_sig" --arg wt "$wtpath" \
+      '{status:"usage-error",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},usageError:{error:$e},escalation:null}')"
   elif [[ "$worker_early_abort" -eq 1 ]]; then
     # §4.4a: kill-before-verdict via the EARLY-ABORT watchdog. Placed FIRST among the three kill
     # classes (before budget-exceeded and before timeout) deliberately:

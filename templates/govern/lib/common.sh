@@ -2467,6 +2467,35 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
+# ── CLI usage-error detection (#56) ──────────────────────────────────────────
+# A harness bump can ship a `claude` invocation flag/subcommand the fleet's INSTALLED CLI doesn't
+# support yet (version skew, a renamed/removed flag). The CLI then exits fast on the invocation
+# itself, e.g. `error: unknown option '--definitely-not-a-real-flag'` — a single PLAIN-TEXT line,
+# never touching the streaming JSON protocol at all (spawn-worker redirects 2>&1 into $jsonl, so
+# this lands as the whole file). That trips NEITHER worker_killed (a usage rejection exits fast,
+# not >128) NOR infra/interrupted (no result event, no matching signature) NOR extract_report (not
+# JSON), so without this it falls through to the generic synthesized "failed" bucket — indistinguishable
+# from an ordinary ticket failure, even though every worker in the fleet would die identically until
+# the flag/CLI mismatch is fixed.
+#
+# Distinguishing signal: the stream's FIRST line fails to parse as JSON at all. A real worker's
+# stream-json protocol wraps EVERY outcome (success, model error, is_error result) in a JSON object,
+# so a first line that isn't JSON means the CLI never entered the protocol — it rejected the
+# invocation before doing any ticket work. Deliberately a GENERAL catch-all (not a per-message regex
+# list): a hardcoded pattern for today's wording would just as easily miss the next CLI version's
+# phrasing, which is the exact failure mode this ticket exists to fix. Callers must check this only
+# AFTER infra/interrupted have been ruled out (see spawn-worker.sh), so a genuine transport outage is
+# never misclassified as a usage error.
+govern::usage_error_signature() { # worker-jsonl -> signature|""
+  local jsonl="${1:-}" first
+  [[ -n "$jsonl" && -s "$jsonl" ]] || return 0
+  first="$(LC_ALL=C head -n1 "$jsonl" 2>/dev/null || true)"
+  [[ -n "$first" ]] || return 0
+  printf '%s' "$first" | jq empty >/dev/null 2>&1 && return 0   # a real JSON first line → not this class
+  printf '%s' "$first" | tr -d '\r' | cut -c1-160
+  return 0
+}
+
 # ── in-flight token-budget monitoring (#16) ─────────────────────────────────
 # The only ceiling on a worker used to be wall-clock (GOVERN_WORKER_TIMEOUT) — a worker that wanders
 # could burn tens of millions of tokens before that fired. GOVERN_WORKER_MAX_TOKENS adds a cumulative

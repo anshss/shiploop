@@ -185,6 +185,7 @@ MAX_RUNTIME="${GOVERN_MAX_RUNTIME:-0}"   # 0 = no runtime cap (default)
 BATCH_MAX="${GOVERN_BATCH_MAX:-2}"; BATCH_MAX="${BATCH_MAX//[^0-9]/}"; [[ -n "$BATCH_MAX" ]] || BATCH_MAX=1
 [[ "$BATCH_MAX" -ge 1 ]] || BATCH_MAX=1
 START_EPOCH="$(date +%s)"; INTERRUPTED=0; INFRA_HALT=0; INFRA_HALT_ERR=""
+USAGE_ERROR_HALT=0; USAGE_ERROR_HALT_ERR=""
 # #151: abnormal-abort + in-flight-ticket tracking. ABORTED/ABORT_RC are set by on_exit when the run
 # ends on a non-zero exit that is NOT a handled interrupt or infra halt (e.g. `set -e` fired on an
 # unguarded post-merge migrate/verify failure). CUR_TICKET is the ticket currently being processed
@@ -431,7 +432,10 @@ record() { # ticket status note
   # #34: same for `interrupted` — a transient mid-stream connection drop (laptop sleep) is an
   # ENVIRONMENT artifact, not ticket difficulty; recording it would falsely auto-escalate a
   # perfectly-good ticket as a #60 systemic blocker.
-  case "$2" in infra|interrupted) return 0;; esac
+  # #56: same for `usage-error` — the CLI rejected the WORKER'S OWN INVOCATION (a harness/CLI version
+  # skew), not this ticket; recording it would falsely auto-escalate a perfectly-good ticket once the
+  # flag/CLI mismatch is fixed and the ticket is re-run.
+  case "$2" in infra|interrupted|usage-error) return 0;; esac
   # #23: same exemption, opt-in via a 4th arg, for a ticket that was CO-BATCHED into another ticket's
   # worker and simply didn't get finished. It never had a worker of its own, so it is not evidence of
   # ticket difficulty — recording it would let two unlucky batches auto-escalate a perfectly good
@@ -667,6 +671,7 @@ write_summary() {
   [[ "${ABORTED:-0}" -eq 1 ]] && reason="ABORTED (exit ${ABORT_RC:-1}) — a step exited non-zero before the loop finished cleanly${CUR_TICKET:+, mid-ticket #$CUR_TICKET}; e.g. a post-merge migrate/verify step failed. See the run log + any ⚠ in-flight note below."
   [[ "$INTERRUPTED" -eq 1 ]] && reason="INTERRUPTED (crash / kill / Ctrl-C / battery / OOM)"
   [[ "${INFRA_HALT:-0}" -eq 1 ]] && reason="HALTED — infra/auth outage: ${INFRA_HALT_ERR:-unknown} (re-auth: \`claude login\`, then re-run)"
+  [[ "${USAGE_ERROR_HALT:-0}" -eq 1 ]] && reason="HALTED — CLI usage error: ${USAGE_ERROR_HALT_ERR:-unknown} (check for a harness/claude CLI version mismatch, then re-run)"
   local f="$RUNDIR/summary.md"
   {
     echo "# Governor session — $(basename "$RUNDIR")"; echo
@@ -720,6 +725,12 @@ write_summary() {
       echo "- Fix: run \`claude login\` (or restore network / VPN), then re-run the governor."
       echo "- No ticket was recorded as \`failed\` — affected tickets keep clean cross-run history and are retried next run (#90)."; echo
     fi
+    if [[ "${USAGE_ERROR_HALT:-0}" -eq 1 ]]; then
+      echo "## ⚠ Action needed — CLI usage error"
+      echo "- The run HALTED because the claude CLI rejected a worker's own invocation: \`${USAGE_ERROR_HALT_ERR:-unknown}\`."
+      echo "- Fix: this usually means a harness bump shipped a CLI flag/subcommand the installed \`claude\` binary doesn't support (version skew) — update the installed CLI or roll back the flag, then re-run the governor."
+      echo "- No ticket was recorded as \`failed\` — affected tickets keep clean cross-run history and are retried next run (#56)."; echo
+    fi
     echo "## What it did, ticket by ticket"
     if [[ -s "$STATE" ]]; then
       jq -r '"- #\(.ticket): \(.status)" + (if (.note//"")!="" then " — \(.note)" else "" end)' "$STATE" 2>/dev/null || cat "$STATE"
@@ -754,18 +765,19 @@ on_exit() {
   govern_teardown_worker   # #242: backstop — never leave an in-flight worker subtree on any exit path
   # #151: distinguish a CLEAN finish (the loop reached its bottom `exit 0`) from an ABNORMAL abort —
   # a non-zero exit that is neither a handled interrupt (INTERRUPTED, exits 130) nor an infra halt
-  # (INFRA_HALT, exits 0). `set -euo pipefail` can abort mid-ticket on an unguarded non-zero exit
+  # (INFRA_HALT, exits 0) nor a usage-error halt (USAGE_ERROR_HALT, exits 0). `set -euo pipefail` can
+  # abort mid-ticket on an unguarded non-zero exit
   # (the #151 root cause: a post-merge migrate/verify command failing). Flag it so write_summary names
   # the cause + surfaces any merged-but-unbookkept in-flight ticket instead of reporting "completed
   # normally" and dropping it.
-  if [[ "$rc" -ne 0 && "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 ]]; then
+  if [[ "$rc" -ne 0 && "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 && "${USAGE_ERROR_HALT:-0}" -eq 0 ]]; then
     ABORTED=1; ABORT_RC="$rc"
   fi
   write_summary
-  # TokenJam run id: KEEP the run-id file on an INTERRUPTED / infra-halted run so a resume reuses the
-  # same id (its workers still group with the original Run); REMOVE it on a clean finish so the next
-  # invocation starts a fresh Run (one run id per loop invocation).
-  if [[ "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 && -n "${TJ_RUN_ID_FILE:-}" ]]; then
+  # TokenJam run id: KEEP the run-id file on an INTERRUPTED / infra-halted / usage-error-halted run so
+  # a resume reuses the same id (its workers still group with the original Run); REMOVE it on a clean
+  # finish so the next invocation starts a fresh Run (one run id per loop invocation).
+  if [[ "${INTERRUPTED:-0}" -eq 0 && "${INFRA_HALT:-0}" -eq 0 && "${USAGE_ERROR_HALT:-0}" -eq 0 && -n "${TJ_RUN_ID_FILE:-}" ]]; then
     rm -f "$TJ_RUN_ID_FILE" 2>/dev/null || true
   fi
   [[ -n "$CUR_CLAIM" ]] && govern::lock_release "$CUR_CLAIM"   # free the in-flight ticket for a re-run (#41)
@@ -1758,6 +1770,27 @@ for _grp in ${DISPATCH_GROUPS[@]+"${DISPATCH_GROUPS[@]}"}; do
       govern::log "INFRA HALT — workers cannot authenticate / reach the API ($INFRA_HALT_ERR). Re-authenticate (\`claude login\`) or restore connectivity, then re-run. #$N and the remaining tickets were NOT recorded as failed (#90)."
       break
       ;;
+    usage-error)
+      # #56: the claude CLI rejected the WORKER'S OWN INVOCATION — a flag/subcommand it doesn't
+      # support (a harness bump vs. an un-upgraded fleet CLI, i.e. version skew) — rather than doing
+      # any ticket work. NOT a ticket fault, and unlike an infra/auth outage no `claude login` or
+      # network fix helps: EVERY subsequent worker would die on the SAME rejected invocation until the
+      # flag/CLI mismatch itself is fixed. record() drops `usage-error` from the cross-run history (no
+      # #60 pollution), we file NO per-ticket escalation, and it does NOT touch bad_streak — same
+      # treatment as the infra halt above, just a distinct cause and a distinct operator message. HALT
+      # the whole run instead of burning the rest of the backlog as N indistinguishable `failed`
+      # tickets. The ticket stays in tickets.md with clean history, so the next (fixed) run picks it
+      # up normally.
+      USAGE_ERROR_HALT_ERR="$(printf '%s' "$report" | jq -r '.usageError.error // "CLI usage error"' 2>/dev/null || echo 'CLI usage error')"
+      USAGE_ERROR_HALT=1
+      record "$N" usage-error "CLI usage error — not a ticket fault; worktree preserved: $(wt_path "$N")"
+      slim_worktree "$N"
+      [[ -n "$CUR_CLAIM" ]] && { govern::lock_release "$CUR_CLAIM"; CUR_CLAIM=""; }
+      release_batch_claims; BATCH=()   # #23: a usage-error halt breaks the loop before the per-ticket
+                                       # mapping below, so free the group's claims here too.
+      govern::log "USAGE-ERROR HALT — the claude CLI rejected a worker's own invocation ($USAGE_ERROR_HALT_ERR). Likely a harness/CLI version mismatch (a flag/subcommand the installed claude binary doesn't support) — fix the flag or update the CLI, then re-run. #$N and the remaining tickets were NOT recorded as failed (#56)."
+      break
+      ;;
     timeout)
       # #241: the worker was HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write a verdict.
       # This is INCOMPLETE, not a genuine FAIL — the killed worker may have done real, green work and
@@ -1968,6 +2001,9 @@ fi
 
 if [[ "${INFRA_HALT:-0}" -eq 1 ]]; then
   govern::log "RUN HALTED on infra/auth outage ($INFRA_HALT_ERR) — re-authenticate (\`claude login\`) or restore connectivity, then re-run. No ticket recorded \`failed\`; affected tickets keep clean #60 history (#90)."
+fi
+if [[ "${USAGE_ERROR_HALT:-0}" -eq 1 ]]; then
+  govern::log "RUN HALTED on CLI usage error ($USAGE_ERROR_HALT_ERR) — check for a harness/claude CLI version mismatch, fix it, then re-run. No ticket recorded \`failed\`; affected tickets keep clean #60 history (#56)."
 fi
 # #272: emit the governor ROI (park rate + churn + tokens/ticket) to the run log at run-end too, so
 # it's visible in a tailed session even without opening summary.md. Best-effort, never fatal.
