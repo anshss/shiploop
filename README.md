@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
-Everyone's shipping with Claude Code now. shiploop is the harness you'll need for speed and token efficiency across your whole project. Adds capability, not bloat.
+Everyone's shipping with Claude Code now. shiploop gets you more from what you pay: 70% fewer tokens across your whole product. Adds capability, not bloat.
 
 ## Get Started
 
@@ -25,15 +25,15 @@ git clone https://github.com/anshss/shiploop.git ~/.claude/skills/shiploop &&
 bash ~/.claude/skills/shiploop/install.sh
 ```
 
-Then set it up on a project, once per project:
+Then set it up on a product, once per product:
 
 ```bash
-cd ~/code/your-project && claude   # then run: /shiploop:setup
+cd ~/code/your-product && claude   # then run: /shiploop:setup
 ```
 
 Setup adapts to the folder’s state. An existing repo is wrapped in place: it moves into a subfolder but remains a separate Git repo, with history verified byte-for-byte and your cd path unchanged. A folder of repos, or an empty folder, gets a new scaffold. An existing workspace is upgraded component by component without changing your config.
 
-You can add all repos related to you project into this folder.
+You can add all repos related to your product into this folder.
 
 Shiploop detects sub-repos, ports, dev commands, and your package manager, asks all questions in one batch, then completes setup. It never overwrites your README.md, CLAUDE.md, config, or governor files without --yes; before wrapping, it creates .wrap-undo.sh.
 
@@ -45,7 +45,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **A Worker runs on a stripped down session.** Shiploop trims tool definitions to each worker’s actual needs, reducing request overhead that otherwise compounds across long-running sessions. No slash commands, no personal settings, no MCP servers, and only the tools the task actually needs. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
 
-- **Routine changes are handled by code, not a model.** Much of a backlog is mechanical: flip a default, add a key, bump a version, apply a known rename. Shiploop detects those during the survey it already runs, then applies and verifies them deterministically, with no model in the loop. Anything ambiguous, unverified, or unsafe falls back to the normal worker automatically.
+- **Routine changes are handled by code, not a model.** Much of what you name is mechanical: flip a default, add a key, bump a version, apply a known rename. Shiploop detects those during the survey it already runs, then applies and verifies them deterministically, with no model in the loop. Anything ambiguous, unverified, or unsafe falls back to the normal worker automatically.
 
 - **Successful outputs are kept out of the transcript.** Everything in a session is re-sent on every turn that follows, and test output is most of what a worker generates. A green run carries no information, so it never enters; failures come through trimmed to the useful part. Failing CI logs arrive the same way: a short scripted excerpt, not a fresh investigation. The same wrapper is one `npm run vf -- <cmd>` away in the interactive driver session, which nudges toward it on an unwrapped test/build run and can hand a lookup or a multi-file diagnosis to the shipped `lookup`/`investigator` agents instead of doing it inline.
 
@@ -90,14 +90,14 @@ Cost, observed: **$3.03 median / $4.49 mean per resolved task** ($1.34-$12.00 ra
 
 ## How Shiploop Runs
 
-You pick the tasks. Naming them is the only way work starts: there is no backlog sweep, because a
+You pick the tasks. Naming them is the only way work starts: there is no automatic sweep, because a
 sweep spends on queue-order priorities and you have your own. Two layers are created for you: one
 **workspace** and a fresh **worker** for every task.
 
 **The workspace.** `/shiploop:setup` wraps your existing repo instead of absorbing it. Your code moves into a subfolder but remains its own git repo with its full history. The path you `cd` into stays the same. Everything alongside it is plain text you can read and edit:
 
 ```yaml
-your-project/
+your-product/
   <your-repo>/              # your code, untouched, still its own git repo
   queue/tickets.md          # the queue you dispatch from, one `## #N` per task
   governor/                 # doctrine, escalations, improvements
