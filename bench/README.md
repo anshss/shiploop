@@ -63,10 +63,31 @@ node bench/replay.mjs --fleet /path/to/aquanode --fleet /path/to/claude-keepaliv
   --fleet /path/to/vibetrading --fleet /path/to/shiploop --arm all --json
 ```
 
-| vs a session with | tokens | cost |
+| vs a session with (modeled vanilla arm) | tokens saved (shiploop measured vs. vanilla modeled) | cost saved (shiploop measured vs. vanilla modeled) |
 |---|---|---|
 | 1M context | **70.2%** | 57.3% |
 | 200k context + compaction | 30.1% | 18.2% |
+
+The shiploop side of every cell above is measured billed usage from real transcripts. The vanilla
+side is a model: no vanilla session was run to produce these numbers (`bench/METHODOLOGY.md`).
+
+**Recompute these three numbers yourself, from the committed rows, with no access to the author's
+machine** (needs only `jq`, and the file already in this repo):
+
+```bash
+jq -s '
+  group_by(.arm)[] |
+  {
+    arm: .[0].arm,
+    tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
+    costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
+  }
+' bench/published-rows/replay-2026-09-05.jsonl
+```
+
+That reproduces 70.2%/57.3% (1M), 30.1%/18.2% (200k) and 85.5%/77.4% (uncapped) to one decimal
+place directly from the 1,821 committed rows: sum `shipTokens`/`vanillaTokens` (or the `*CostUsd`
+columns) per arm and the percentage falls out; no transcript, fleet, or `replay.mjs` re-run needed.
 
 **This spans many CLI releases and models, not one "current shiploop version" run** — no transcript
 carries the shiploop package version (`bench/KNOWN-LIMITS.md`). CLI versions seen: `2.1.126` through
@@ -77,10 +98,12 @@ session from that day was interrupted before finishing — so a current-version-
 cannot be reported yet from replay; see `## Path 2` below for the current-version data point that
 exists instead, and `bench/KNOWN-LIMITS.md` for the full disclosure.
 
-**The saving is a property of backlog depth, not of the harness.** Ticket 1 saves exactly 0%: a
-fresh session against a fresh session is the same session. Per-position median token reduction
-(1M arm, pooled): ticket 1 (n=248) 0%, ticket 2 (n=71) 38.7%, ticket 3 (n=54) 63.2%, ticket 5
-(n=32) 74.4%, ticket 8 (n=15) 87.2%. Per-fleet breakdown, same measurement date, 1M arm:
+**The saving is a property of backlog depth, not of the harness.** Ticket 1 saves 0% at the
+median: a fresh session against a fresh session is the same session (3 of 753 position-1 rows are
+the one documented exception, from a same-ticket retry: `bench/METHODOLOGY.md`). Per-position
+median token reduction (1M arm, pooled): ticket 1 (n=248) 0%, ticket 2 (n=71) 38.7%, ticket 3
+(n=54) 63.2%, ticket 5 (n=32) 74.4%, ticket 8 (n=15) 87.2%. Per-fleet breakdown, same measurement
+date, 1M arm:
 
 | Fleet | tickets | runs | median depth | tokens | cost |
 |---|---|---|---|---|---|

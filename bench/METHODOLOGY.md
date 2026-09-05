@@ -254,7 +254,18 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    if it were permanently warm. Real cache entries expire, and a real session re-writes them at 2x
    input. Charging every re-write would make the vanilla arm substantially more expensive.
 6. **The re-prime refund is generous.** The whole first-turn cache write of every later session is
-   refunded to the vanilla arm, as if a single session would need none of it.
+   refunded to the vanilla arm, as if a single session would need none of it. The refund fires on
+   *any* session boundary after the run's very first session, including a same-ticket retry, not
+   only a boundary between two different tickets. That is why 3 of the 753 position-1 rows in
+   `bench/published-rows/replay-2026-09-05.jsonl` show `vanillaTokens` slightly *below*
+   `shipTokens` (all three are the same run, `sessions: 2` at position 1, replayed once per arm):
+   a retried ticket 1 still earns the refund on its second attempt even though nothing has been
+   carried across tickets yet. This is the correct application of the rule above, not a separate
+   bug, and it moves the reported reduction in vanilla's favor (smaller), the same direction as
+   every other item in this section. It does not move the median: `README.md`'s "ticket 1 (n=248)
+   0%" is the median across all 248 position-1 rows in the `1m`-arm pool, and a 0.3%-of-corpus
+   exception does not shift a median. Read "ticket 1 saves 0%" everywhere in this repository as
+   the median / single-session case, not a per-row guarantee.
 7. **`200k` carry is bounded by observed context that came from 1M-window sessions.** Many worker
    turns in the corpus already exceed 200k of context on their own, which leaves the modeled 200k
    session no headroom for carry at all and drives its reduction toward zero. A real 200k session
@@ -293,6 +304,28 @@ node bench/replay.mjs --arm all
 # machine-readable, same numbers
 node bench/replay.mjs --arm 1m --json
 ```
+
+Those three commands need the author's own fleet transcripts, which are private workspaces and are
+not in this repository. **Recomputing the published headline needs neither the transcripts nor
+`replay.mjs`** -- only the anonymized rows already committed at
+`bench/published-rows/replay-2026-09-05.jsonl` and `jq`:
+
+```bash
+jq -s '
+  group_by(.arm)[] |
+  {
+    arm: .[0].arm,
+    tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
+    costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
+  }
+' bench/published-rows/replay-2026-09-05.jsonl
+```
+
+This sums the same `shipTokens`/`vanillaTokens` (and `*CostUsd`) columns `replay.mjs --json` summed
+to build the published aggregate, over every one of the 1,821 committed rows, and reproduces
+70.2%/57.3% (`1m`), 30.1%/18.2% (`200k`) and 85.5%/77.4% (`uncapped`) exactly. That is what
+"recomputable" means in this document: a reader never has to trust the author's run of the tool,
+only arithmetic over rows they can read themselves.
 
 The tests that lock the arithmetic are `templates/govern/test/test-bench-replay.sh` and
 `test-bench-replay-schema.sh`, running against `bench/fixtures/replay-fleet`, a synthetic fleet

@@ -919,8 +919,9 @@ function render(out) {
     L.push('                 Priced at the Opus rate, which inflates both arms and very nearly cancels.');
   }
   L.push('');
-  L.push('  Ticket 1 saves exactly 0%: there is nothing carried yet. The saving is entirely the');
-  L.push('  context that a single session accumulates and a fresh worker never loads.');
+  L.push('  Ticket 1 saves 0% at the median: there is nothing carried yet. The saving is entirely');
+  L.push('  the context that a single session accumulates and a fresh worker never loads. (A ticket');
+  L.push('  needing a same-ticket retry is the one documented exception -- METHODOLOGY.md.)');
   L.push('  Method, assumptions, and which arm each one flatters: bench/METHODOLOGY.md');
 
   console.log(L.join('\n'));
