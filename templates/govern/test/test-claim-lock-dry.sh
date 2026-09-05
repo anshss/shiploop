@@ -136,7 +136,7 @@ if grep -q "#1 already claimed by another driver" "$logB1" "$logB2"; then f=1; e
 assert_eq "$f" "1" "B: the losing driver visibly contends on .locks/ticket-1 (logs 'already claimed')"
 
 # ── Part C — wiring: the claim is no longer gated on MODE=="live" ──
-claim_line="$(grep -n 'govern::lock_try "\$CUR_CLAIM"' "$RL" | head -1)"
+claim_line="$(grep -n 'govern::lock_try "\$CUR_CLAIM"' "$RL" | sed -n '1p')"
 assert_contains "$claim_line" "lock_try" "C: run-loop still takes the per-ticket claim lock"
 if printf '%s' "$claim_line" | grep -q 'MODE" == "live"'; then f=1; else f=0; fi
 assert_eq "$f" "0" "C: the claim's live-only gate is gone (dry runs acquire it too)"

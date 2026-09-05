@@ -99,8 +99,8 @@ assert_contains "$out" "merged api#66"    "merged the reported api PR (#129)"
 # B. frontend sibling (web) left open, SURFACED (not silently dropped)
 assert_contains "$out" "web#266 left open (frontend is PR-only)" "frontend sibling left open + surfaced (#129)"
 # C. alpha merges BEFORE api (merge-repo-first: alpha precedes api in REPOS)
-apos="$(printf '%s' "$out" | grep -n 'merged alpha#281' | head -1 | cut -d: -f1)"
-ipos="$(printf '%s' "$out" | grep -n 'merged api#66' | head -1 | cut -d: -f1)"
+apos="$(printf '%s' "$out" | grep -n 'merged alpha#281' | sed -n '1p' | cut -d: -f1)"
+ipos="$(printf '%s' "$out" | grep -n 'merged api#66' | sed -n '1p' | cut -d: -f1)"
 [[ -n "$apos" && -n "$ipos" && "$apos" -lt "$ipos" ]] && bo=ok || bo="alpha=$apos api=$ipos"
 assert_eq "$bo" "ok" "alpha PR merged before api PR (merge-repo-first ordering)"
 # ticket resolved + block deleted (the whole multi-repo change shipped)

@@ -110,7 +110,7 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
     eb_today_n="${eb_today//-/}"
     while IFS=$'\t' read -r _sz head; do
       eb_d="$(awk -v h="$head" 'BEGIN{on=0} $0==h{on=1} on{print} on && /^## / && $0!=h{exit}' "$eb_learnings" \
-        | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 || true)"
+        | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sed -n '1p' || true)"
       [[ -n "$eb_d" ]] || continue                       # undated entries are never aged out
       eb_age=$(( ( $(date -j -f %Y-%m-%d "$eb_today" +%s 2>/dev/null || date -d "$eb_today" +%s 2>/dev/null || echo 0) \
                  - $(date -j -f %Y-%m-%d "$eb_d" +%s 2>/dev/null || date -d "$eb_d" +%s 2>/dev/null || echo 0) ) / 86400 ))
