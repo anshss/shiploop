@@ -12,6 +12,9 @@
 #   2. The word "ticket" alone (no `#N`) is ticket-shaped too.
 #   3. subagent_type "worker" is never denied, however ticket-shaped it is.
 #   4. A non-ticket Agent call (investigation, sweep) is never denied.
+#   4b. Two signals, not one keyword: a prompt that merely CITES a ticket artifact
+#      (`queue/tickets.md`, `ticket-<N>`, `GOVERN_MAX_TICKETS`) is not dispatch, and a
+#      read-only framing over ticket vocabulary with no write marker is exempt.
 #   5. GOVERN_TICKET_ROUTE_GUARD=0 is the kill switch: silent even on a ticket-shaped call.
 #   6. Never fires inside a worker: autonomous lane (GOVERN_RUN set) and interactive lane
 #      (transcript under .../subagents/) are both silent. Workers hold the Agent tool for
@@ -84,6 +87,30 @@ payload "investigator" "Find where the retry classifier reads its inputs and rep
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "4. non-ticket investigation subagent passes untouched"
 clear_counter "$sid"
+
+# ── 4b. cited identifiers and read-only framings are NOT dispatch ───────────
+# Regression: the guard used to be a blind `/ticket/i` + `/#[0-9]+/` scan, so it denied
+# a prompt that quoted the real filename `queue/tickets.md` and a prompt whose whole job
+# was auditing ticket TERMINOLOGY. Both are read-only work naming an identifier.
+not_denied() { # <label> <sid> <prompt>
+  clear_counter "$2"
+  payload "" "$3" "$2" "/tmp/fake-transcript.jsonl"
+  local o; o="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+  assert_eq "$o" "" "$1"
+  clear_counter "$2"
+}
+not_denied "4b-i. citing the filename queue/tickets.md is not ticket dispatch" \
+  "ticketroute-filename" \
+  "The real fix was queue/tickets.md, not the fictional queue.md I was correcting. Update the diagram."
+not_denied "4b-ii. auditing ticket terminology is read-only, not ticket dispatch" \
+  "ticketroute-audit" \
+  "Audit the README ticket terminology rules and report back. Do not edit anything."
+not_denied "4b-iii. the identifier GOVERN_MAX_TICKETS is not a ticket reference" \
+  "ticketroute-envvar" \
+  "Check whether GOVERN_MAX_TICKETS is respected in run-loop.sh and fix the off-by-one."
+not_denied "4b-iv. the branch prefix ticket-<N> is not a ticket reference" \
+  "ticketroute-branchprefix" \
+  "Rename the ticket-<N> branch prefix docs in CONTRIBUTING.md"
 
 # ── 5. kill switch ─────────────────────────────────────────────────────────
 sid="ticketroute-killswitch"; clear_counter "$sid"
