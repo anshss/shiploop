@@ -21,6 +21,9 @@ for _b in "$@"; do
   BATCH+=("$_b")
 done
 slug="ticket-$N"
+# #57: refuse a fixture/stub claude_bin write under the real, unconfigured log root before it can
+# happen — see govern::guard_real_log_write in lib/common.sh.
+govern::guard_real_log_write "${GOVERN_CLAUDE_BIN:-claude}"
 # #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set by run-loop),
 # so a re-run never reads a PRIOR run's worker.jsonl. Standalone invocation falls back to the flat
 # logs/govern/ticket-N/.
