@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-Shiploop is a harness for Claude Code. It changes how work in a session is runs, <br> so the same work ships on fewer tokens.
+Shiploop is a harness for Claude Code. It changes how work in a session is run, <br> so the same work ships on fewer tokens.
 </p>
 
 ## Get Started
@@ -35,7 +35,7 @@ Add every repo related to your project to the folder. Shiploop detects sub-repos
 
 One goal: minimize tokens per shipped work. These are the levers that materially change that outcome.
 
-- **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker.
+- **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a worker: a single-ticket session that reads the code and does the job.
 
 - **Workers run lean.** Each Shiploop worker gets only the tools it needs: no slash commands, personal settings, MCP servers, or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
 
