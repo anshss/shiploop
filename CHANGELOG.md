@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.18.4 — 2026-09-05
+
+### Fixed
+
+**The ticket-route guard denied read-only work for naming a file.** `router-posture-guard.sh`
+classified an `Agent` call as ticket-shaped with a blind scan: `#[0-9]+` OR `/ticket/i`, no word
+boundaries, no notion of what the task was for. Two real denials from one session: a prompt that
+quoted the actual filename `queue/tickets.md` while correcting a diagram, and a prompt whose entire
+job was auditing the README's *terminology* around the word "ticket". Neither edited anything, and
+the guard's own deny text says exactly that case should be exempt.
+
+The guard is fragile against this project's own vocabulary specifically: `queue/tickets.md`,
+`GOVERN_MAX_TICKETS`, `ticket-<N>` branches. Every identifier a careful session cites by name.
+
+A deny now needs TWO signals. A ticket **reference** — the word "ticket" with boundaries that
+exclude `/ . - _` on both sides, so a path, a filename, a branch prefix and a SHOUTING env var are
+all cited identifiers rather than tickets — plus **dispatch intent**, a verb that means "go make
+this ticket done" (resolve / fix / implement / land / work on / …). A read-only framing (audit,
+investigate, explain, report back, terminology) with no write marker overrides both, which makes the
+escape hatch the deny text already advertised actually real. Kill switch is unchanged:
+`GOVERN_TICKET_ROUTE_GUARD=0`.
+
+`test-ticket-route-guard.sh` gains four regression cases, one per false-positive shape.
+
 ## 1.18.3 — 2026-09-04
 
 ### Fixed
