@@ -42,7 +42,7 @@ for page in $PAGES; do
       { line = $0
         while (match(line, /<[^>]*>/)) { line = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH) }
         print line }
-    ' "$f" | grep -inE '\bworkers?\b' | head -1)"
+    ' "$f" | grep -inE '\bworkers?\b' | sed -n '1p')"
 
   if [ -z "$first" ]; then
     # A page that never says "worker" in prose has nothing to pair. Not a failure.
@@ -71,7 +71,7 @@ assert_eq "$([ "$glossary_claim" -ge 1 ] && echo present || echo missing)" "pres
 probe="$(mktemp -d)"; trap 'rm -rf "$probe"' EXIT
 printf 'a bare worker mention with no definition\n' > "$probe/p.md"
 probe_first="$(awk '/^[[:space:]]*```/ { infence = !infence; next } infence { next } { print }' "$probe/p.md" \
-  | grep -inE '\bworkers?\b' | head -1)"
+  | grep -inE '\bworkers?\b' | sed -n '1p')"
 assert_not_contains "$probe_first" "$DEFN" \
   "pairing: self-check, an undefined first mention really is detected as undefined"
 
