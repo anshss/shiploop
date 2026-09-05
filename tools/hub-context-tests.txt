@@ -28,6 +28,17 @@ test-detect-inputs
 test-events-monitor
 test-vocab-agent-worker
 
+# bench/ lives only in the hub checkout (scaffold.sh never installs it into a fleet workspace), so
+# these resolve the hub as $DIR/../../.. and skip anywhere else, same as the update-channel tests.
+test-bench-schema
+test-bench-cap
+test-bench-arms
+test-bench-rollup
+test-bench-selection
+test-bench-validate
+test-bench-replay
+test-bench-replay-schema
+
 # QUARANTINED — test-wrap-in-place passes on macOS and fails on the Ubuntu runner with 31
 # assertion failures: the undo path exits 127 (a command the test shells out to is absent or
 # named differently on Linux), and --preflight returns 3 where the test expects 5/4, so the

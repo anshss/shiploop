@@ -79,6 +79,16 @@ export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): it
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
 export GOVERN_INDEX=0
 
+# bench/arms.sh adds a `--max-turns` capability probe (CLAUDE.md anti-pattern 12: never put a new
+# `claude` flag on a spawning path without a cached --help gate). Pre-seed it UNSUPPORTED for the
+# whole suite so no test can ever shell out to a real `claude --help` and so the new mechanism is
+# OFF by default here, exactly like the dispatch-path knobs above. test-bench-arms.sh sets it
+# explicitly per case, which is what exercises the gate.
+export _GOVERN_MAXTURNS_SUPPORTED=0
+# Same for the --max-budget-usd fallback probe (bench's per-session ceiling when --max-turns is
+# unsupported): pre-seeded UNSUPPORTED so the whole suite is hermetic, its own test cases opt in.
+export _GOVERN_MAXBUDGETUSD_SUPPORTED=0
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it

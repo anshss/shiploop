@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"fixture-105"}
+{"type":"assistant","message":{"id":"msg_fixture_105_0","model":"claude-opus-4-8","usage":{"input_tokens":10000,"cache_creation_input_tokens":12000,"cache_read_input_tokens":28000,"output_tokens":4}},"session_id":"fixture-105"}

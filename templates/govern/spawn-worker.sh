@@ -403,6 +403,37 @@ resolve_tools_flag() { # <claude_bin>
   return 0
 }
 
+# Optional hard per-attempt ceiling: TURNS if the CLI supports it, else a per-session DOLLAR
+# budget as fallback (bench/arms.sh probes the same two flags in the same order, for a CLI release
+# that dropped --max-turns entirely). Third/fourth ceiling beside wall-clock
+# (GOVERN_WORKER_TIMEOUT) and tokens (GOVERN_WORKER_MAX_TOKENS). OFF by default:
+# GOVERN_WORKER_MAX_TURNS=0 and GOVERN_WORKER_MAX_BUDGET_USD=0 (or unset) mean no flag and a spawn
+# byte-identical to the pre-existing one, so no fleet changes behavior on an update. When set, a
+# flag is added only once the cached `--help` probe confirms the running CLI knows it; an
+# unrecognized flag would kill every worker at argument parsing.
+# Sets the global `max_turns_flag` (empty, or `--max-turns N` / `--max-budget-usd N`), rc always 0.
+resolve_max_turns_flag() { # <claude_bin>
+  local bin="$1"
+  local n="${GOVERN_WORKER_MAX_TURNS:-0}"
+  local budget="${GOVERN_WORKER_MAX_BUDGET_USD:-0}"
+  max_turns_flag=""
+  if [[ -n "$n" && "$n" != "0" && "$n" != "off" ]]; then
+    if govern::claude_supports_max_turns "$bin"; then
+      max_turns_flag="--max-turns $n"
+      return 0
+    fi
+    govern::log "worker #$N: claude CLI ($bin) does not support --max-turns (older build), so GOVERN_WORKER_MAX_TURNS=$n cannot be enforced this run"
+  fi
+  if [[ -n "$budget" && "$budget" != "0" && "$budget" != "off" ]]; then
+    if govern::claude_supports_max_budget_usd "$bin"; then
+      max_turns_flag="--max-budget-usd $budget"
+    else
+      govern::log "worker #$N: claude CLI ($bin) does not support --max-budget-usd either, so GOVERN_WORKER_MAX_BUDGET_USD=$budget cannot be enforced this run"
+    fi
+  fi
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -422,6 +453,8 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   dr_exclude_dynamic="$exclude_dynamic_prompt"
   resolve_tools_flag "${GOVERN_CLAUDE_BIN:-claude}"
   dr_tools="$tools_flag"
+  resolve_max_turns_flag "${GOVERN_CLAUDE_BIN:-claude}"
+  dr_max_turns="$max_turns_flag"
   jq -nc \
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
@@ -432,6 +465,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg mcp "$dr_strict_mcp" \
     --arg edp "$dr_exclude_dynamic" \
     --arg tools "$dr_tools" \
+    --arg maxturns "$dr_max_turns" \
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
@@ -439,7 +473,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg rreason "$retry_reason" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
   exit 0
 fi
 
@@ -977,6 +1011,9 @@ resolve_exclude_dynamic_prompt "$claude_bin"
 # resolve_tools_flag for the opt-in contract and the keep/purge gate.
 resolve_tools_flag "$claude_bin"
 
+# Optional per-attempt turn ceiling (GOVERN_WORKER_MAX_TURNS). Off unless set; capability-gated.
+resolve_max_turns_flag "$claude_bin"
+
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
 effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
@@ -1260,7 +1297,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
-    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag \
+    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag $max_turns_flag \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
