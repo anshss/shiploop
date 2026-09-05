@@ -1379,6 +1379,54 @@ govern::_run_with_manual_timeout() { # <secs> <cmd...>
   return "$rc"
 }
 
+# ── Real-vs-stub claude_bin guard (#57) ──────────────────────────────────────────────────────────
+# 227+ files (re-verified as ~529) under the workspace's logs/govern/run-*/ticket-*/worker*.jsonl
+# turned out to be test-fixture output, not real worker sessions: an ad-hoc manual repro wired a
+# fake `claude` onto PATH/GOVERN_CLAUDE_BIN to poke at the harness by hand, without also exporting
+# GOVERN_WS_ROOT or GOVERN_LOG_ROOT (every test under templates/govern/test/ DOES export one of
+# those, via mk_ws_stub or inline, so the suite itself was never the source). WS_ROOT then silently
+# fell through to the real workspace and the fixture output landed in the real tree.
+#
+# Same `--help`-probe idiom as the capability checks above, but the needle here is authenticity,
+# not a specific flag: the real CLI's `--help` banner names itself ("Claude Code - starts an
+# interactive session…"), which a hand-rolled fixture script has no reason to fake. Cached the same
+# way (run-scoped file) so a long run probes at most once.
+# Test seam: pre-seed _GOVERN_REAL_CLAUDE_BIN=1|0 to skip the probe entirely.
+_GOVERN_REAL_BIN_PROBE_CACHE="${GOVERN_REAL_BIN_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-real-bin}"
+govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecognized
+  local bin="$1" cached=""
+  if [[ -n "${_GOVERN_REAL_CLAUDE_BIN:-}" ]]; then
+    if [[ "$_GOVERN_REAL_CLAUDE_BIN" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_REAL_BIN_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_REAL_BIN_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" 'Claude Code'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_REAL_BIN_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_REAL_BIN_PROBE_CACHE" 2>/dev/null || true
+  fi
+  [[ "$cached" == "1" ]]
+}
+
+# Refuses a write under the REAL, unconfigured log root ($WS_ROOT/logs/govern — i.e. both
+# GOVERN_LOG_ROOT and GOVERN_WS_ROOT unset) when claude_bin doesn't look like the real CLI. A
+# normal production spawn is untouched (no override, but a real claude_bin passes the probe
+# above); a hermetic test is untouched (mk_ws_stub always exports GOVERN_WS_ROOT, and every
+# non-mk_ws_stub test that actually spawns exports GOVERN_LOG_ROOT). Only the exact ad-hoc
+# combination that caused #57 — real-tree resolution plus a fixture/stub binary — is refused, and
+# only unless the caller opts in with GOVERN_ALLOW_REAL_LOG_WRITE=1.
+govern::guard_real_log_write() { # <claude_bin>
+  local bin="$1"
+  [[ -n "${GOVERN_WS_ROOT:-}" ]] && return 0
+  [[ -n "${GOVERN_LOG_ROOT:-}" ]] && return 0
+  [[ "${GOVERN_ALLOW_REAL_LOG_WRITE:-0}" == "1" ]] && return 0
+  govern::claude_bin_is_real "$bin" && return 0
+  govern::die "refusing to write worker logs under the real log root ($LOG_ROOT): claude_bin ($bin) does not look like the real Claude Code CLI, and this is exactly how #57's fixture pollution happened. Export GOVERN_WS_ROOT or GOVERN_LOG_ROOT to a scratch dir for a manual/test repro, or set GOVERN_ALLOW_REAL_LOG_WRITE=1 to proceed anyway."
+}
+
 # The branch name a worker should use for ticket N on a given repo: neutral `sl-<hex>` on a PUBLIC
 # repo, the classic `ticket-<N>` on a private repo. Used to (a) instruct the worker and (b) recover
 # the expected head for PR discovery.
@@ -2525,6 +2573,35 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
   msg="$(govern::stream_grep "$jsonl" -oiE 'API Error:[^"]*' | grep -iE "$GOVERN_INTERRUPTED_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
+  return 0
+}
+
+# ── CLI usage-error detection (#56) ──────────────────────────────────────────
+# A harness bump can ship a `claude` invocation flag/subcommand the fleet's INSTALLED CLI doesn't
+# support yet (version skew, a renamed/removed flag). The CLI then exits fast on the invocation
+# itself, e.g. `error: unknown option '--definitely-not-a-real-flag'` — a single PLAIN-TEXT line,
+# never touching the streaming JSON protocol at all (spawn-worker redirects 2>&1 into $jsonl, so
+# this lands as the whole file). That trips NEITHER worker_killed (a usage rejection exits fast,
+# not >128) NOR infra/interrupted (no result event, no matching signature) NOR extract_report (not
+# JSON), so without this it falls through to the generic synthesized "failed" bucket — indistinguishable
+# from an ordinary ticket failure, even though every worker in the fleet would die identically until
+# the flag/CLI mismatch is fixed.
+#
+# Distinguishing signal: the stream's FIRST line fails to parse as JSON at all. A real worker's
+# stream-json protocol wraps EVERY outcome (success, model error, is_error result) in a JSON object,
+# so a first line that isn't JSON means the CLI never entered the protocol — it rejected the
+# invocation before doing any ticket work. Deliberately a GENERAL catch-all (not a per-message regex
+# list): a hardcoded pattern for today's wording would just as easily miss the next CLI version's
+# phrasing, which is the exact failure mode this ticket exists to fix. Callers must check this only
+# AFTER infra/interrupted have been ruled out (see spawn-worker.sh), so a genuine transport outage is
+# never misclassified as a usage error.
+govern::usage_error_signature() { # worker-jsonl -> signature|""
+  local jsonl="${1:-}" first
+  [[ -n "$jsonl" && -s "$jsonl" ]] || return 0
+  first="$(LC_ALL=C head -n1 "$jsonl" 2>/dev/null || true)"
+  [[ -n "$first" ]] || return 0
+  printf '%s' "$first" | jq empty >/dev/null 2>&1 && return 0   # a real JSON first line → not this class
+  printf '%s' "$first" | tr -d '\r' | cut -c1-160
   return 0
 }
 
