@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-Shiploop is a harness for Claude Code. It changes how work in a session is runs, so the same work ships on fewer tokens.
+Shiploop is a harness for Claude Code. It changes how work in a session is runs, <br> so the same work ships on fewer tokens.
 </p>
 
 ## Get Started
