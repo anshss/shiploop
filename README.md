@@ -1,11 +1,10 @@
 # shiploop
 
 <p align="center">
-  <img src="assets/shiploop.png" width="880" alt="Shiploop, the harness loop, after Karpathy: a manager delegates each ticket to a fresh worker at a cheap model floor, escalating once on a classified failure, through an objective gate; learnings feed back into the manager. Self-improving.">
+  <img src="assets/shiploop-readme-header.png" width="880" alt="Shiploop">
 </p>
 
 <p align="center">
-  <a href="https://github.com/anshss/shiploop/actions/workflows/ci.yml"><img src="https://github.com/anshss/shiploop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
