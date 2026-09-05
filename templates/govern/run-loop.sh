@@ -198,6 +198,7 @@ ABORTED=0; ABORT_RC=0; CUR_TICKET=""; CUR_TICKET_MERGED=""
 # children within the same wall-clock second, and each computes its own RUNDIR independently — the
 # suffix keeps their run directories from colliding, and lets the orchestrator find a given child's
 # RUNDIR afterward by globbing on that child's known pid (see govern::_parallel_run below).
+govern::guard_real_log_write "${GOVERN_CLAUDE_BIN:-claude}"  # #57
 RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"; mkdir -p "$RUNDIR"
 # #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
