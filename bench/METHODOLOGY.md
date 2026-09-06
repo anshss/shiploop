@@ -244,16 +244,33 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    session carrying full history might finish some tickets in fewer turns because it already knows
    the codebase. The model gives it no such credit. This is the most arguable assumption in the
    document, and it is the one most likely to be attacked.
+4. **A mixed-model session prices its measured cost per model, but its modeled overhead at a
+   single tier.** `sessionCost()` (`bench/replay.mjs:282-317`) walks a session's `modelUsage` map
+   and prices each model's own tokens at that model's own rate, so a session that escalated from,
+   say, sonnet to opus has its ship-side cost billed at the accurate blend (`shipCost`, credited via
+   `replayRun` at `replay.mjs:474-475`). `dominantTier()` (`replay.mjs:330-345`) instead resolves ONE
+   tier for the whole session, the model with the largest token volume, and that single tier's rate
+   prices ALL of that session's overhead-read and re-prime-credit at `replay.mjs:482-484` (used at
+   lines 491-492 and 499-501). A session's later, heavier-context turns tend to carry the larger
+   accumulated cache-read volume, which pulls `dominantTier` toward the tokens of whichever model
+   handled those later turns; when that is the pricier escalated tier, the entire session's modeled
+   overhead gets priced at the pricier rate even for turns actually run on a cheaper model earlier in
+   the same session. That inflates the modeled vanilla cost, which biases the COST reduction (57.3%)
+   slightly in shiploop's favor. **It does not touch the TOKEN reduction (70.2%):** the token path
+   (`vanTokens = shipTokens + overheadTokens - creditTokens`, `replay.mjs:511`) sums raw token
+   counts and never multiplies by a rate, mixed-model or otherwise, so tokens are immune to this by
+   construction. See `bench/KNOWN-LIMITS.md` for the disclosure and `README.md`'s "Tokens vs. cost"
+   section for why this means 57.3% should never be quoted with the same confidence as 70.2%.
 
 ### Flatters vanilla (makes the published number conservative)
 
-4. **Compaction is free.** The `200k` arm bounds carry to the window but charges nothing for the
+5. **Compaction is free.** The `200k` arm bounds carry to the window but charges nothing for the
    compaction calls a real 200k session would make, which are real tokens and real latency. A real
    200k session is more expensive than this arm.
-5. **The carry never needs re-writing.** Carry is charged at the cache-read rate for every turn, as
+6. **The carry never needs re-writing.** Carry is charged at the cache-read rate for every turn, as
    if it were permanently warm. Real cache entries expire, and a real session re-writes them at 2x
    input. Charging every re-write would make the vanilla arm substantially more expensive.
-6. **The re-prime refund is generous.** The whole first-turn cache write of every later session is
+7. **The re-prime refund is generous.** The whole first-turn cache write of every later session is
    refunded to the vanilla arm, as if a single session would need none of it. The refund fires on
    *any* session boundary after the run's very first session, including a same-ticket retry, not
    only a boundary between two different tickets. That is why 3 of the 753 position-1 rows in
@@ -266,7 +283,7 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    0%" is the median across all 248 position-1 rows in the `1m`-arm pool, and a 0.3%-of-corpus
    exception does not shift a median. Read "ticket 1 saves 0%" everywhere in this repository as
    the median / single-session case, not a per-row guarantee.
-7. **`200k` carry is bounded by observed context that came from 1M-window sessions.** Many worker
+8. **`200k` carry is bounded by observed context that came from 1M-window sessions.** Many worker
    turns in the corpus already exceed 200k of context on their own, which leaves the modeled 200k
    session no headroom for carry at all and drives its reduction toward zero. A real 200k session
    would have compacted its own working context to fit, freeing room for carry and paying for the
@@ -275,11 +292,11 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
 
 ### Direction unknown
 
-8. **Ticket order is completion order.** Runs that dispatched tickets concurrently are replayed as
+9. **Ticket order is completion order.** Runs that dispatched tickets concurrently are replayed as
    if they were sequential in the order they finished. A different order changes which tickets sit
    at which position, and therefore how much carry each one is charged.
-9. **Escalation attempts are summed into one ticket.** A ticket that failed and was retried
-   contributes both attempts' tokens to the shiploop arm and both attempts' residue to the carry.
+10. **Escalation attempts are summed into one ticket.** A ticket that failed and was retried
+    contributes both attempts' tokens to the shiploop arm and both attempts' residue to the carry.
 
 ## What is not measured at all
 

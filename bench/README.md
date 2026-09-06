@@ -18,6 +18,38 @@ with what does not hold).
 Design and rationale: `.specs/2026-09-03-benchmark-design.md`. Where either number does not hold:
 `bench/KNOWN-LIMITS.md`.
 
+## The published claim
+
+The shiploop GitHub repo description and the project website both carry this sentence, verbatim:
+
+> Shiploop minimizes tokens per shipped work, making Claude Code up to 70% more efficient and
+> faster by cutting wasted model work and getting more from its warm prompt cache with lean,
+> context-aware, resilient workers.
+
+This section maps every element of that sentence to what backs it, or states plainly that nothing
+does. Read this before repeating the sentence anywhere else.
+
+| Element of the sentence | Backing |
+|---|---|
+| "up to 70%" | **Backed.** 70.2% token reduction, `1m` arm (1M-context vanilla), shiploop side measured / vanilla side modeled (`## The best-case number` below). "Up to" is load-bearing: reproduce this against the CLI's own default 200k-context session, the arm most readers will actually run, and the same corpus gives **30.1%**, not 70%. |
+| "more efficient" | Ambiguous between tokens and cost, and the two are not the same number. On the same `1m` arm, token reduction is 70.2% but cost reduction is only 57.3% (see "Tokens vs. cost" below). If "efficient" is read as cost, the honest same-arm figure is 57.3%, not 70%. |
+| "and faster" | **NOT BACKED.** This benchmark measures tokens and cost only. No wall-clock timing was ever collected anywhere in this repository (`bench/METHODOLOGY.md`, "What is not measured at all"). Running N fresh worker sessions sequentially may well be SLOWER in wall-clock time than one continuous session: nothing here supports the speed half of the sentence in either direction. The word should not appear next to a number this benchmark produced. |
+| "by cutting wasted model work" | Descriptive mechanism claim, not an independently measured quantity. It is consistent with the token result (fresh workers avoid re-reading carried context that one accumulating session would re-read) but "wasted model work" is not itself a metric this repo computes. |
+| "getting more from its warm prompt cache" | Same treatment: describes *why* the modeled effect exists (the vanilla arm's cost model charges carried context at the cache-read rate every turn), not a separate figure. |
+| "lean, context-aware, resilient workers" | Product description, carries no number, not something this benchmark tests. |
+
+### Tokens vs. cost: not the same robustness
+
+The token reduction is **model-independent by construction**: `vanillaTokens = shipTokens +
+overheadTokens - creditTokens` (`bench/replay.mjs`, `replayRun`) involves no dollar rate at any
+step, so 70.2% would be the same number on a corpus billed at any prices. The cost reduction is
+**not**: it is computed by applying the published per-tier rate table to both arms, so 57.3% is a
+function of this specific corpus's mix of haiku/sonnet/opus sessions and moves if that mix changes,
+even if the underlying token behavior is identical. Do not treat 57.3% as carrying the same
+confidence as 70.2% anywhere it is quoted. See also the mixed-model pricing note in
+`bench/METHODOLOGY.md` ("Flatters shiploop") and `bench/KNOWN-LIMITS.md`, which biases the cost
+figure specifically, not the token one.
+
 ## Path 1: replay (what produces the number today)
 
 `bench/replay.mjs` reads governor transcripts a fleet has already written, sums the measured billed

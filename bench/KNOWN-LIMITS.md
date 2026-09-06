@@ -81,6 +81,29 @@ per ticket that a genuinely CI-less installed workspace would also pay — it is
 and it is not free, but it is honest: a repo with no CI provider configured gets the identical
 `none`-verified path in production.
 
+## A mixed-model session biases the COST figure (not the token one) slightly in shiploop's favor
+
+`bench/replay.mjs` prices the measured ship-side cost and the modeled vanilla-side overhead/credit
+at different granularities. `sessionCost()` (`replay.mjs:282-317`) prices a session's real cost per
+model, walking `sess.modelUsage` and applying each model's own tier rate to its own tokens: a
+session that escalated from a cheaper model to a pricier one is billed at the accurate blend.
+`dominantTier()` (`replay.mjs:330-345`) instead resolves ONE tier for the WHOLE session (the model
+with the largest token volume) and that single tier's rate prices ALL of that session's modeled
+overhead-read and re-prime-credit (`replay.mjs:482-484`, consumed at lines 491-492 and 499-501).
+
+A session's later, heavier-context turns tend to carry the largest accumulated cache-read volume,
+which tends to pull `dominantTier` toward whichever model handled those later turns. When that is
+the pricier escalated tier, the entire session's modeled overhead is priced at the pricier rate,
+including turns that were actually run on a cheaper model earlier in the same session. That inflates
+the modeled vanilla cost, which biases the published COST reduction (57.3% on the `1m` arm) slightly
+in shiploop's favor.
+
+**This does not touch the TOKEN reduction (70.2%).** The token path (`vanTokens = shipTokens +
+overheadTokens - creditTokens`, `replay.mjs:511`) sums raw token counts and never multiplies by a
+rate, mixed-model or otherwise, so it is immune to this by construction. Full mechanism and the
+"Flatters shiploop" classification: `bench/METHODOLOGY.md`. Never quote 57.3% with the same
+confidence as 70.2%; `README.md`'s "Tokens vs. cost" section states why.
+
 ## The replay ("best-case") number's corpus is thin for the current version
 
 No transcript carries the shiploop *package* version — only the Claude Code CLI version
