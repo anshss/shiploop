@@ -1,4 +1,7 @@
 # Benchmark runtime state. Raw results are teardown fuel (spec section 4): only derived claims go
-# public, and the candidate backlog pool is private by design.
+# public, and the candidate backlog pool is private by design. `bench/results/*` (not `/results/`)
+# so the one committed exception below can still be tracked: a bare `dir/` pattern would exclude
+# the directory itself and git never re-descends into it to check a negation (#104 part 2).
 bench/pilot-backlogs/
-bench/results/
+bench/results/*
+!bench/results/proof-table.txt

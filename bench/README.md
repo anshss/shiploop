@@ -4,6 +4,15 @@ The benchmark behind shiploop's cost claim. The unit is **a full session clearin
 ticket: the whole loop (scout, cheap-floor dispatch, escalation, fresh context per worker) against
 the whole alternative (one Claude Code session grinding the same backlog, top to bottom).
 
+**What the percentage is a percentage of.** Every number in this file is a reduction in total
+billed tokens across a backlog run (context read, context write, and the response itself), not a
+fraction of your bill. Output tokens, the actual code and prose written, are paid in full by BOTH
+arms: it is the same work and the same code either arm has to produce, and no architecture removes
+that cost. That sets a hard ceiling well under 100% (the `1m` arm's own ceiling is 99.8% tokens /
+92.5% cost, `bench/METHODOLOGY.md`, "The ceiling"). A token or cost reduction quoted from this file
+is never the same claim as cutting your bill by that same fraction, because the bill also carries
+the output share that no reduction touches.
+
 There are two numbers, and this file states which side of each is measured and which is modeled,
 in the same sentence as the number, per `bench/KNOWN-LIMITS.md` (read that file first — it leads
 with what does not hold).
@@ -49,6 +58,30 @@ even if the underlying token behavior is identical. Do not treat 57.3% as carryi
 confidence as 70.2% anywhere it is quoted. See also the mixed-model pricing note in
 `bench/METHODOLOGY.md` ("Flatters shiploop") and `bench/KNOWN-LIMITS.md`, which biases the cost
 figure specifically, not the token one.
+
+## Where the number is worst
+
+Publishing a bad row is the category's cheapest credibility, and it costs nothing to keep doing.
+Three, each with its source, none softened:
+
+- **Ticket position 1 saves exactly 0%.** A fresh session against a fresh session is the same
+  session: nothing has been carried into the first ticket of any run, in every arm, at every fleet,
+  so a per-task claim is indefensible and the claim only exists at the run/backlog level. Measured
+  2026-09-05, n=251 position-1 rows across the corpus (`bench/published-rows/replay-2026-09-05.jsonl`,
+  `bench/results/proof-table.txt`).
+- **The arm most readers will actually run is 30.1%, not 70%.** The published "up to 70%" is the
+  `1m` (1M-context) arm. Against the CLI's own 200k-context default with compaction, the identical
+  corpus gives 30.1% tokens and 18.2% cost (see "The best-case number" below, and
+  `bench/results/proof-table.txt`).
+- **The one live, both-arms-measured run cleared 0 of 2 tickets on either side, and produced no
+  usable savings figure.** `bench/pilot-backlogs/shiploop-mini`, measured 2026-09-05: the shiploop
+  arm spent 17.4M tokens against vanilla's 6.1M, more tokens, not fewer, while costing $4.53 against
+  vanilla's $5.43 (about $0.90 cheaper, driven partly by the governor's own cheap-tier model sizing,
+  not by the architecture the run was meant to isolate). Read this as a cost comparison on
+  unresolved work, not a savings result (see "Path 2" below, and `bench/KNOWN-LIMITS.md`, "The
+  honest live run: both arms scored 0/2 on the mechanical oracle").
+
+Do not quote a number from this file without also carrying the fact directly above it.
 
 ## Path 1: replay (what produces the number today)
 
@@ -121,6 +154,16 @@ That reproduces 70.2%/57.3% (1M), 30.1%/18.2% (200k) and 85.5%/77.4% (uncapped) 
 place directly from the 1,821 committed rows: sum `shipTokens`/`vanillaTokens` (or the `*CostUsd`
 columns) per arm and the percentage falls out; no transcript, fleet, or `replay.mjs` re-run needed.
 
+The same recompute, formatted as a human-readable table with all three arms side by side, tokens
+and cost per arm, and the per-ticket-position curve, is committed at `bench/results/proof-table.txt`
+(the one path carved out of the otherwise-gitignored `bench/results/`). `node
+bench/gen-proof-table.mjs` regenerates it deterministically from the committed rows alone, no fleet
+or network involved, and `templates/govern/test/test-bench-proof-table.sh` fails CI if the committed
+table ever drifts from what the generator produces, so the published table and the published data
+cannot silently disagree the way two of the category's three benchmarks currently allow (neither
+caveman nor RTK commits a results file a reader can diff against; headroom does, and this follows
+its shape).
+
 **This spans many CLI releases and models, not one "current shiploop version" run** — no transcript
 carries the shiploop package version (`bench/KNOWN-LIMITS.md`). CLI versions seen: `2.1.126` through
 `2.1.246`. Models seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`,
@@ -191,9 +234,11 @@ measures both sides at once.
 ```
 bench/
   replay.mjs                      replay path: fleet transcripts -> measured vs modeled matrix
+  gen-proof-table.mjs             published-rows -> bench/results/proof-table.txt, deterministic
   METHODOLOGY.md                  what is measured, what is modeled, every assumption and its bias
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
+  published-rows/*.jsonl          anonymized per-(run,position) rows behind the published numbers
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
   validate-backlog.sh             offline fail-to-pass gate; decides which backlogs are eligible
   arms.sh                         the three arm shapes
@@ -201,6 +246,7 @@ bench/
   rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
   fixtures/                       canned streams, the replay fixture fleet, golden results
   results/<run-id>/               results.jsonl + session logs, gitignored
+  results/proof-table.txt         the one committed exception: generated, human-readable, tested
 ```
 
 ## Arms
@@ -315,3 +361,8 @@ for t in templates/govern/test/test-bench-*.sh; do bash "$t"; done
 table in `fixtures/README.md`. They assert, among other things, that summing the stream's
 `output_tokens` snapshots (which undercounts real output by a median of 33x) is not what produced
 the shiploop arm.
+
+`test-bench-proof-table.sh` regenerates `bench/results/proof-table.txt` with
+`bench/gen-proof-table.mjs` from the committed `bench/published-rows/*.jsonl` and fails if the
+result differs from the committed file by a single byte, from any working directory. This is the
+guard that makes the published table and the published rows unable to silently disagree.
