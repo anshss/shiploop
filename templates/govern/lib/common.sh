@@ -1256,6 +1256,67 @@ govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
 }
 
+# Capability probe: does $claude_bin support `--max-turns`? Same reasoning as the two probes above,
+# and the same run-scoped `--help` cache. Added for the bench harness (bench/arms.sh), which needs a
+# per-session turn ceiling on BOTH arms, but the flag is useful to any spawn: GOVERN_WORKER_MAX_TURNS
+# is a hard per-attempt turn cap alongside the existing wall-clock (GOVERN_WORKER_TIMEOUT) and token
+# (GOVERN_WORKER_MAX_TOKENS) ceilings. It is OFF by default (0 = no flag), so a fleet that never sets
+# it spawns exactly as it did before.
+# Test seam: pre-seed _GOVERN_MAXTURNS_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_MAXTURNS_PROBE_CACHE="${GOVERN_MAXTURNS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-turns-support}"
+govern::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_MAXTURNS_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_MAXTURNS_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_MAXTURNS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-turns'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-turns"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_MAXTURNS_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
+# Capability probe: does $claude_bin support `--max-budget-usd`? Same reasoning and cache pattern
+# as the probe above. Added when a CLI release dropped `--max-turns` entirely and shipped a
+# per-session dollar ceiling in its place: not turn-shaped, but the closest available substitute
+# for capping a spend-bearing session, so bench/arms.sh probes this SECOND, only once --max-turns
+# comes back unsupported. GOVERN_WORKER_MAX_BUDGET_USD is the matching per-worker knob in
+# spawn-worker.sh, OFF by default (0 = no flag), so a fleet that never sets it spawns exactly as it
+# did before.
+# Test seam: pre-seed _GOVERN_MAXBUDGETUSD_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_MAXBUDGETUSD_PROBE_CACHE="${GOVERN_MAXBUDGETUSD_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-budget-usd-support}"
+govern::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_MAXBUDGETUSD_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_MAXBUDGETUSD_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-budget-usd'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-budget-usd"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
 # Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
 # Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
 # macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled

@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-partial","model":"claude-opus-4-8"}
+{"type":"assistant","message":{"id":"fixture-partial-0","model":"claude-opus-4-8","usage":{"input_tokens":362,"output_tokens":3,"cache_read_input_tokens":194131,"cache_creation_input_tokens":4341}}}
+{"type":"assistant","message":{"id":"fixture-partial-1","model":"claude-opus-4-8","usage":{"input_tokens":362,"output_tokens":3,"cache_read_input_tokens":194131,"cache_creation_input_tokens":4341}}}

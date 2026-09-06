@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.18.5 — 2026-09-06
+
+### Added
+
+**`bench/replay.mjs` and `/shiploop:bench` — the benchmark you can run on your own fleet.**
+
+Reads governor transcripts a workspace has already written, sums the measured billed usage of every
+worker session, and models what the same tickets would have cost inside one accumulating Claude Code
+session. Zero dependencies, read only, no `claude` process, no spend. Three arms (`200k`, `1m`, and
+an `uncapped` one that is computed and labelled unphysical), a `--scope all|resolved` cut, `--json`,
+and auto-discovery of sibling fleet workspaces.
+
+The number it prints is a **modeled counterfactual**: the shiploop arm is measured, the vanilla arm
+never ran. The tool says so as a line in its own default output, and `bench/METHODOLOGY.md` states
+every assumption with the direction it biases, the ceiling no architecture could beat, and what is
+not measured at all. The report also carries a rates-reconciliation ratio (computed cost over the
+cost the CLI reported, median 1.000 over 610 sessions) so a stale rate table is visible rather than
+silent, and a per-ticket-position curve, where ticket 1 saves exactly 0%.
+
+Billed usage is taken only from each session's `{"type":"result"}` event. The streamed
+per-`assistant` `output_tokens` is a truncated snapshot that undercounts real output by a median
+factor of 33; a tool that sums it publishes a saving that does not exist, and the test suite asserts
+that trap by number.
+
+### Changed
+
+- `bench/fixtures/golden-results.jsonl` no longer hardcodes a fabricated 84.6% saving. It is
+  generated from the same four sessions as the replay fixture, its vanilla row is `replay.mjs`'s own
+  model rather than an invented measurement, and every row carries `provenance: measured|modeled`.
+- `bench/rollup.mjs` prints a negative token cut as `MORE` instead of rendering it as "fewer".
+- **The live A/B harness's per-session ceiling now falls back to `--max-budget-usd` when the
+  running `claude` CLI has no `--max-turns`** (observed on claude 2.1.246, which dropped
+  `--max-turns` entirely). New capability probe `govern::claude_supports_max_budget_usd` in
+  `templates/govern/lib/common.sh`, mirroring the existing `--max-turns` probe: cached, bounded
+  `--help` grep, `_GOVERN_MAXBUDGETUSD_SUPPORTED` pre-seed test seam, off by default. Matching
+  `GOVERN_WORKER_MAX_BUDGET_USD` knob in `spawn-worker.sh`. New `BENCH_MAX_SESSION_USD` env
+  (default $5) sizes the shiploop arm's per-worker dollar cap; the vanilla arm's cap is
+  `BENCH_MAX_USD` (the whole run budget), documented asymmetrically in `bench/METHODOLOGY.md`
+  because vanilla is one session doing the whole backlog. A session truncated by its own
+  per-session ceiling now forces its cell's status to `capped` (`bench::stream_hit_session_cap` in
+  `bench/record.sh`) rather than recording a truncated run as a completed comparison. A CLI with
+  neither flag still hard-stops; `BENCH_ALLOW_UNCAPPED_TURNS=1` is still the only override.
+
+
 ## 1.18.4 — 2026-09-05
 
 ### Fixed
@@ -238,6 +282,7 @@ already queued at dispatch time, batchable if the operator had known.
   the current named set, a ticket with nothing extractable, and a ticket a live driver already holds
   the per-ticket claim lock on. Emits one `overlap_nudge` fleet event per line when `GOVERN_EVENTS=1`.
 - Kill switch `GOVERN_OVERLAP_NUDGE=0` (default on, log line only).
+### Removed
 
 **The autonomous backlog sweep is gone. Naming the tickets you want is now the only way to dispatch.**
 
