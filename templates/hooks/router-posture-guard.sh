@@ -37,9 +37,14 @@
 # session. It has two lanes and one doctrine: the interactive lane is
 # `Agent(subagent_type: "worker")`, the autonomous lane is govern's headless
 # spawn-worker.sh. Any Agent-tool child that is NOT subagent_type "worker" is a
-# **subagent** (the platform's own term). An `Agent` call whose prompt is
-# ticket-shaped (`#<N>` or the word "ticket") WITHOUT subagent_type "worker" is
-# a full-fat subagent doing a worker's job: it inherits the driver's posture,
+# **subagent** (the platform's own term). "Ticket-shaped" needs TWO signals, not
+# one keyword: a real ticket REFERENCE (the word "ticket" on its own, or a bare
+# `#<N>`) AND DISPATCH intent (a verb meaning "go make this ticket done"). A
+# read-only framing (audit / investigate / explain) with no write marker
+# overrides both. A blind `/ticket/i` scan denied prompts that merely NAMED a
+# ticket artifact (`queue/tickets.md`, `ticket-<N>`, `GOVERN_MAX_TICKETS`) or
+# audited ticket vocabulary. An `Agent` call that IS ticket-shaped WITHOUT
+# subagent_type "worker" is a full-fat subagent doing a worker's job: it inherits the driver's posture,
 # skips the worker doctrine, and costs multiples of a worker for the same
 # ticket. That call is DENIED with the correct call written out to paste, plus
 # the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0 (default ON,
@@ -126,7 +131,17 @@ if [ "$tool_name" = "Agent" ]; then
   # Already the worker agent type: nothing to route.
   [ "$subagent_type" = "worker" ] && exit 0
   probe="$agent_prompt $agent_desc"
-  if printf '%s' "$probe" | grep -Eq '#[0-9]+' || printf '%s' "$probe" | grep -Eqi 'ticket'; then
+  # Two signals, never one keyword (see the header). Word boundaries here exclude
+  # `/` `.` `-` `_` on purpose: `queue/tickets.md`, `tickets.md`, `ticket-<N>` and
+  # `GOVERN_MAX_TICKETS` are IDENTIFIERS being cited, not tickets being dispatched.
+  ticket_ref_re='(^|[^[:alnum:]_/.#-])tickets?([^[:alnum:]_/.-]|$)|(^|[^[:alnum:]])#[0-9]+'
+  dispatch_re='(^|[^[:alnum:]])(resolv(e|es|ing)|fix(es|ing)?|implement(s|ing)?|clos(e|es|ing)|land|ship|complet(e|es|ing)|handl(e|es|ing)|solv(e|es|ing)|address(es)?|work (on|the)|working on|works on|pick up|take on|do the|end[- ]to[- ]end)([^[:alnum:]]|$)'
+  readonly_re='(^|[^[:alnum:]])(audit(s|ing)?|review(s|ing)?|investigat(e|es|ing|ion)|analy[sz]|diagnos|read[- ]only|report back|explain|survey|inventor(y|ies)|summari[sz]|terminology|wording|no edits?|do not (edit|commit)|without editing)'
+  write_re='(^|[^[:alnum:]])(open (a|the) pr|commit|worktree|branch|patch|edit|rewrite|apply the fix|merge)'
+  if printf '%s' "$probe" | grep -Eqi "$ticket_ref_re" \
+     && printf '%s' "$probe" | grep -Eqi "$dispatch_re" \
+     && ! { printf '%s' "$probe" | grep -Eqi "$readonly_re" \
+            && ! printf '%s' "$probe" | grep -Eqi "$write_re"; }; then
     tnum="$(printf '%s' "$probe" | grep -oE '#[0-9]+' 2>/dev/null | head -1 | tr -d '#' || true)"
     [ -n "$tnum" ] || tnum="N"
     deny="$(cat <<EOF
@@ -146,7 +161,7 @@ Autonomous lane, for a multi-ticket batch, a cron run, or no open session:
 
 The interactive lane STOPS at PR-open plus the report. Merge, CI await and queue bookkeeping go through govern's PR-adoption path: run \`npm run govern -- ${tnum}\` once the PR is open and it ADOPTS that PR instead of redoing the work. Never delete the queue block before merge. If the worker fails once, retry it once with \`model: opus\`, then stop and report.
 
-Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer)? Drop the ticket reference from the prompt and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
+Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") with no write marker is already exempt. Otherwise drop the dispatch verb or the ticket reference and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
 )"
     python3 -c '
