@@ -33,7 +33,8 @@ SLOT="${WORKTREE_SLOT:-0}"
 # wsp_repo_port <repo> <slot>  (base + slot * SLOT_PORT_STEP).
 #
 # Per-repo dev commands in REPO_CMDS (workspace.sh) must accept a PORT env or explicit
-# --port flag so this override reaches the process. See the workspace.sh REPO_CMDS
+# --port flag so this override reaches the process: run_one EXPORTS PORT=<slot port>
+# into the child shell it execs the command in. See the workspace.sh REPO_CMDS
 # comment block for the convention per project type (Next.js, Go, Rust, etc.).
 
 SCOPE="$(wsp_repos_csv)"
@@ -59,6 +60,7 @@ trap cleanup INT TERM
 run_one() {
   local name="$1"
   local cmd="$2"
+  local port="${3:-}"
   local dir="$ROOT/$name"
   local log="$LOGS/$name.log"
   : > "$log"
@@ -74,6 +76,14 @@ run_one() {
 
   (
     cd "$dir" || exit 1
+    # Hand the slot port to the service as an EXPORTED env var. run_one execs the
+    # REPO_CMDS entry via `bash -c` in a CHILD shell, so a command that reads $PORT
+    # (or interpolates it, e.g. `--port $PORT`) sees nothing unless it is exported
+    # first — which makes the central slot override above a silent no-op: the service
+    # falls back to its own package.json/Makefile default port (so two worktree slots
+    # collide), or a CLI that rejects an empty PORT refuses to start at all. Exported
+    # per child, so one repo's port never leaks into another repo's command.
+    [ -n "$port" ] && export PORT="$port"
     bash -c "$cmd" 2>&1 | while IFS= read -r line; do
       printf '[%s] %s\n' "$name" "$line"
       printf '%s\n' "$line" >> "$log"
@@ -102,7 +112,7 @@ for repo in "${REPOS[@]}"; do
   cmd="$(wsp_repo_cmd "$repo")"
   port=$(wsp_repo_port "$repo" "$SLOT")
   free_port "$port"
-  run_one "$repo" "$cmd"
+  run_one "$repo" "$cmd" "$port"
 done
 
 echo ""

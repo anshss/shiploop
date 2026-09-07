@@ -91,24 +91,38 @@ sync_repo() {
   current=$(git branch --show-current)
 
   # 4. update local main from origin/main without checkout if on a feature branch
+  #
+  # `git pull` re-contacts origin, so a nonzero exit here is usually a transient
+  # network/auth hiccup, NOT divergence. Never guess the cause — measure it
+  # against the refs we just fetched and print git's own error.
   if [ "$current" = "main" ]; then
-    if git pull --ff-only >/dev/null 2>&1; then
-      local count
-      count=$(git rev-list --count HEAD@{1}..HEAD 2>/dev/null || echo 0)
-      if [ "$count" -gt 0 ]; then
+    local before after pull_out pull_rc
+    before=$(git rev-parse HEAD)
+    pull_out=$(git pull --ff-only 2>&1); pull_rc=$?
+    after=$(git rev-parse HEAD)
+    if [ "$pull_rc" -eq 0 ]; then
+      if [ "$before" != "$after" ]; then
+        local count
+        count=$(git rev-list --count "$before".."$after" 2>/dev/null || echo 0)
         ok "main fast-forwarded $count commits"
       else
         ok "main already up-to-date"
       fi
+    elif git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+      # HEAD is contained in the origin/main we just fetched, so the tree is not
+      # diverged — the pull itself failed.
+      warn "pull failed but main is NOT diverged (transient?): $(printf '%s' "$pull_out" | tr '\n' ' ')"
     else
-      warn "could not ff main from origin (diverged?) — inspect manually"
+      fail "main has diverged from origin/main — inspect manually: $(printf '%s' "$pull_out" | tr '\n' ' ')"
     fi
   else
     # On feature branch — update local main in place
-    if git fetch origin main:main >/dev/null 2>&1; then
+    local ffout ffrc
+    ffout=$(git fetch origin main:main 2>&1); ffrc=$?
+    if [ "$ffrc" -eq 0 ]; then
       ok "local main updated (you're on $current)"
     else
-      dim "could not update main from here (likely no upstream change, OR local main diverged)"
+      dim "could not update main from here (you're on $current): $(printf '%s' "$ffout" | tr '\n' ' ')"
     fi
   fi
 
