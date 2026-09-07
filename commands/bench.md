@@ -51,13 +51,23 @@ Default, from the workspace root:
 node "$HUB/bench/replay.mjs" --fleet "$PWD" --arm all
 ```
 
-`$ARGUMENTS` passes through verbatim. The flags:
+By default this scopes to sessions stamped with the newest shiploop version this workspace has run
+(`run-.../shiploop-version`, written at dispatch) — not the workspace's entire history. It reports
+how much of the corpus that kept, and how much it excluded, split into older-stamped versions and
+unstamped-legacy runs. If nothing in the corpus is stamped, it says so and falls back to the full
+sweep on its own.
+
+`$ARGUMENTS` passes through verbatim, with one substitution: the **bare word `all`** as the whole
+argument (`/shiploop:bench all`) maps to `--all` before the rest of `$ARGUMENTS` is appended — do
+not confuse it with the `--arm all` flag already in the default command above. The flags:
 
 | Flag | Meaning |
 |---|---|
 | `--fleet <path>` | a workspace to read, repeatable. Omit it entirely and the tool discovers the current workspace and its siblings |
 | `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all` |
 | `--scope all\|resolved` | count every ticket the loop paid for, or only the ones `ticket-history.jsonl` marks resolved. Default `all` |
+| `--all` | use every run this workspace has, spanning every shiploop version, instead of the default newest-version-only scope. `/shiploop:bench all` maps here |
+| `--since YYYYMMDD[-HHMMSS]` | the older run-directory-timestamp cutoff; still works and composes with either version scope |
 | `--json` | machine-readable, same numbers |
 
 A workspace with no `logs/govern` transcripts exits non-zero and says so. That is the correct
@@ -66,9 +76,13 @@ outcome, not a failure to explain away: there is nothing to replay until the gov
 ## Phase 2 — Report
 
 Relay the tool's output as it stands. Do not restate a percentage without the arm it belongs to,
-and do not drop the modeled-counterfactual line. Three things in the output are worth pointing at
+and do not drop the modeled-counterfactual line. Four things in the output are worth pointing at
 explicitly, because they are the parts a reader would otherwise have to be told:
 
+- **Which shiploop version the number covers.** The report's `shiploop version:` line names the
+  version it scoped to (or says it fell back to the full history, and why). Repeat that line
+  alongside any percentage quoted from this run; a number from `all` mixes every harness version
+  the workspace has run and reads differently than a number scoped to one.
 - **Ticket 1 saves exactly 0%.** Nothing has been carried into it yet. The whole saving is context
   that one session accumulates and a fresh worker never loads, so the number is a property of
   backlog length, not of any one ticket.

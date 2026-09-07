@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.19.0 — 2026-09-07
+
+### Added
+
+**`bench/replay.mjs` defaults to one shiploop version, not a workspace's entire history.** A
+transcript event never carried the shiploop package version, so a long-lived workspace's number was
+diluted by every prior harness version it had ever run. `run-loop.sh` now stamps each run directory
+it creates with `run-.../shiploop-version` (`govern::stamp_run_version`, `templates/govern/lib/common.sh`)
+at dispatch, from the workspace's synced hub version (`scripts/lib/.harness-version`). The write is
+best-effort: an unreadable or absent version marker never blocks a dispatch, it just leaves that run
+unstamped.
+
+By default `bench/replay.mjs` now keeps only the runs stamped with the newest version present in the
+corpus, and prints which version it selected plus how many runs and sessions that kept versus
+excluded, split into older-stamped and unstamped-legacy so the two reasons are never conflated. New
+`--all` flag restores the full, unscoped sweep across every version; `/shiploop:bench all` maps to
+it. `--since` still works and composes with either mode. A corpus with no stamp anywhere (a pure
+pre-upgrade workspace) falls back to the full sweep automatically, with a one-line notice, rather
+than reporting a phantom zero-run corpus. `bench/README.md`, `bench/METHODOLOGY.md`, and
+`bench/KNOWN-LIMITS.md` describe the mechanism; the published historical figures predate the stamp
+and are disclosed as such.
+
 ## 1.18.5 — 2026-09-06
 
 ### Added
