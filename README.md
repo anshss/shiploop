@@ -37,7 +37,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a worker: a single-ticket session that reads the code and does the job.
 
-- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no slash commands, personal settings, MCP servers, or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7% and the whole request by **−34.5%** ([full methodology](PROOF.md)).
+- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no slash commands, personal settings, MCP servers, or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7% ([full methodology](PROOF.md)).
 
 - **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this through `npm run vf -- <cmd>` and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
 
