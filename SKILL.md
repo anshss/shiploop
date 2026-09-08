@@ -60,11 +60,12 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
-| `npm run govern:budgets` | Enforce context budgets (lesson cap, learnings TTL) and run the evidence-based CLAUDE.md trim outside a dispatch |
-| `npm run govern:trim` | Evidence-based CLAUDE.md trim alone: auto-move provably dead or duplicate blocks, propose the rest |
+| `npm run govern:budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` |
+| `npm run govern:trim` | Evidence-based CLAUDE.md compression detector alone: classifies every over-budget block, never edits the file |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (no-op until `GOVERN_EXTERNALIZE_REPO` is set) |
 | `npm run govern:validations` | Run the governor validation suite |
 | `/shiploop:flows extract` | Inventory every user-facing path that might break (staged, no billing) |
+| `/shiploop:compress` | Move mechanically-triggered `CLAUDE.md` rules into just-in-time rule packs (no rule is deleted) |
 
 **Pass args/flags after the script with `--`** — npm/pnpm need it or they swallow the flags; yarn
 classic tolerates it either way. Bare verbs are fine without it.
@@ -236,6 +237,12 @@ Wired into `.claude/settings.json` by setup:
 - **PreToolUse (Read|Bash|Agent):** `router-posture-guard.sh` (catch a router-posture violation in
   the moment; on `Agent` it DENIES a ticket-shaped call that is not
   `subagent_type: "worker"`, kill switch `GOVERN_TICKET_ROUTE_GUARD=0`).
+- **PreToolUse (Write|Edit|Bash):** `rules-on-touch.sh` (deliver the rule pack for the surface being
+  touched, so a rule that only matters while editing a shell script is not resident in `CLAUDE.md`
+  for every session that never opens one; advisory only, at most 2 packs per call, kill switch
+  `GOVERN_RULES_ON_TOUCH=0`). It deliberately fires in workers too: a delegate never loads the root
+  `CLAUDE.md`. A workspace adds its own packs in `scripts/rules-on-touch.local.sh` without editing the
+  template.
 - **Stop:** `ticket-sweep-reminder.sh` (reconcile tickets once per code-touching session).
 - **SessionEnd:** `worktree/session-end-cleanup.sh` (project cleanup, then kill this worktree's
   stack ports).
