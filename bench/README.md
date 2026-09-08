@@ -8,8 +8,8 @@ the whole alternative (one Claude Code session grinding the same backlog, top to
 billed tokens across a backlog run (context read, context write, and the response itself), not a
 fraction of your bill. Output tokens, the actual code and prose written, are paid in full by BOTH
 arms: it is the same work and the same code either arm has to produce, and no architecture removes
-that cost. That sets a hard ceiling well under 100% (the `1m` arm's own ceiling is 99.8% tokens /
-92.5% cost, `bench/METHODOLOGY.md`, "The ceiling"). A token or cost reduction quoted from this file
+that cost. That sets a hard ceiling well under 100%, and the ceiling on cost is far lower than the
+ceiling on tokens (`bench/METHODOLOGY.md`, "The ceiling"). A token or cost reduction quoted from this file
 is never the same claim as cutting your bill by that same fraction, because the bill also carries
 the output share that no reduction touches.
 
@@ -87,11 +87,10 @@ Three, each with its source, none softened:
   a substantially smaller number, because a 200k window cannot hold much carry in the first place.
   Quote the arm or quote nothing.
 - **The one live, both-arms-measured run cleared 0 of 2 tickets on either side, and produced no
-  usable savings figure.** `bench/pilot-backlogs/shiploop-mini`, measured 2026-09-05: the shiploop
-  arm spent 17.4M tokens against vanilla's 6.1M, more tokens, not fewer, while costing $4.53 against
-  vanilla's $5.43 (about $0.90 cheaper, driven partly by the governor's own cheap-tier model sizing,
-  not by the architecture the run was meant to isolate). Read this as a cost comparison on
-  unresolved work, not a savings result (see "Path 2" below, and `bench/KNOWN-LIMITS.md`, "The
+  usable savings figure.** `bench/pilot-backlogs/shiploop-mini`: both arms were executed for real
+  against the same two tickets, and neither satisfied the golden-test-patch oracle. The harness arm
+  spent MORE tokens than the single-session arm, not fewer. The magnitudes are not published, for
+  the same reason no favourable magnitude is (see "Path 2" below, and `bench/KNOWN-LIMITS.md`, "The
   honest live run: both arms scored 0/2 on the mechanical oracle").
 
 Do not quote a number from this file without also carrying the fact directly above it.
@@ -184,29 +183,27 @@ instrumentation merges and is switched on, runs accumulate on a version that sta
 harness version and the driver model, and only then does anyone run the bench for a figure and
 publish the rows behind it.
 
-## Path 2: the live A/B harness, and the honest number it produced
+## Path 2: the live A/B harness, and the honest run it produced
 
-**Measured 2026-09-05, `claude 2.1.246`, model default (see the model-mismatch caveat below),
-`bench/pilot-backlogs/shiploop-mini` (2 tickets, mined from shiploop's own history, gitignored,
-not the published 6+-ticket backlog set — `bench/KNOWN-LIMITS.md`).** Two arms actually executed,
-same tickets, no remotes, nothing that can push.
+**`bench/pilot-backlogs/shiploop-mini` (2 tickets, mined from shiploop's own history, gitignored,
+not the published backlog set: `bench/KNOWN-LIMITS.md`).** Two arms actually executed, same tickets,
+no remotes, nothing that can push. This is the path that measures both sides at once, rather than
+modelling one of them.
 
-| Arm | tokens | cost | tickets cleared | sessions |
-|---|---|---|---|---|
-| `vanilla` (one `claude -p` session) | 6.1M | $5.43 | 0/2 | 1 |
-| `shiploop` (the real governor loop) | 17.4M | $4.53 | 0/2 | 89 (2 with billed usage; the rest are retries/near-zero — see below) |
+**The result was adverse, and it is stated here without figures.** Neither arm cleared either ticket
+against the oracle: `vanilla` 0 of 2, `shiploop` 0 of 2. The harness arm spent MORE tokens than the
+single long session, not fewer, and less money, the latter partly because the governor's own
+per-ticket model sizing put one worker on a cheaper tier than the other arm ran on. That is a real
+product behaviour, but the run was supposed to hold the model constant across arms and did not, so
+even the direction of the cost result is confounded. Full disclosure of both failures:
+`bench/KNOWN-LIMITS.md`, "The honest live run" and "The honest run's arms were not on the same
+model".
 
-**Read this as a cost comparison on unresolved work, not a savings claim.** Neither arm cleared
-either ticket against the golden-test-patch oracle, for reasons that are specific to this pilot
-backlog and disclosed in full in `bench/KNOWN-LIMITS.md` — a resolution-rate or reduction
-percentage is not meaningful when the numerator on both sides is zero. What this run DOES show,
-for what it's worth at n=2: shiploop spent more tokens (retries, driver overhead, a park-and-review
-pass) but less money than one long opus session, partly because the governor's own per-ticket model
-sizing put one of the two workers on sonnet rather than opus — a real product behavior, but one that
-the ticket asked to hold constant across arms and this run did not.
-
-Raw session rows for this run are NOT included in the published-rows file (`bench/KNOWN-LIMITS.md`
-covers why the pilot backlog itself is private); the numbers above are the full disclosure.
+**Why no magnitudes.** Adverse results are described without figures here for exactly the same
+reason favourable ones are: nothing in the current corpus is instrumented well enough to quote, and
+a number is either publishable or it is not, regardless of which direction it points. A reader must
+not read the absence of bad numbers as the absence of bad results. The bad result is above, in
+words: the harness lost this run on tokens, and neither arm did the job.
 
 Everything below this line is the harness itself: two arms actually executed against a pinned
 backlog with a SWE-bench-shaped oracle, exercised for real above. The replay path (Path 1) remains
@@ -343,8 +340,8 @@ for t in templates/govern/test/test-bench-*.sh; do bash "$t"; done
 `test-bench-replay.sh` and `test-bench-replay-schema.sh` cover the replay path against
 `fixtures/replay-fleet`, a synthetic fleet whose every expected figure is derivable by hand from the
 table in `fixtures/README.md`. They assert, among other things, that summing the stream's
-`output_tokens` snapshots (which undercounts real output by a median of 33x) is not what produced
-the shiploop arm.
+`output_tokens` snapshots (which undercounts real output badly enough to invent a saving that is
+not there) is not what produced the shiploop arm.
 
 `test-bench-proof-table.sh` exercises `bench/gen-proof-table.mjs` against a rows file generated
 into a temp directory from the synthetic fixture fleet: it asserts the generator is deterministic,

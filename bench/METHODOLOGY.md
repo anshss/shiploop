@@ -77,8 +77,10 @@ resolved from the model name; a session's `modelUsage` map is used when present,
 escalated from Haiku to Opus is priced per model rather than at one blended rate. Models whose tier
 is unrecognized are priced as Opus and listed by name in the report.
 
-Every cache write in the author's corpus is `ephemeral_1h_input_tokens`: across the 534 sessions
-whose result events carry the split, 62,991,225 tokens at the 1-hour TTL and **zero** at 5 minutes.
+Every cache write observed so far is `ephemeral_1h_input_tokens`: of the sessions whose result
+events carry the split, all of the write volume sat at the 1-hour TTL and none at 5 minutes (the
+counts behind that are a corpus measurement and are not published, see
+`bench/published-rows/SCHEMA.md`).
 The 1-hour multiplier therefore does all the work here; the 5-minute rate is applied pro rata where
 a session mixes them, and sessions whose result event omits the split are priced at the 1-hour rate,
 which is the more expensive of the two and applies to both arms equally.
@@ -201,11 +203,13 @@ sum to it (`leverSumCheck` in the JSON, `sum check:` in the report). A component
   of entry section 4a exists to keep out of the bias ledger.
 - **`skip-the-model`** credits a floor, not the work avoided. A deterministic apply resolves a
   ticket with zero model turns, so what it replaced is a whole worker session; the table credits
-  only the context that session would have paid to reach its FIRST turn. The figure is the 25th
-  percentile of observed worker first-turn contexts (47,024 tokens over n=502 sessions across the
-  shiploop and aquanode corpora, measured 2026-09-08), rounded down to 45,000. The five classes are
-  not differentiated from each other, because nothing measured supports differentiating them, and
-  inventing a per-class spread would be precision this bench has not earned.
+  only the context that session would have paid to reach its FIRST turn. That floor is a
+  **provisional calibration parameter, not a result**: it was set from the low end of observed
+  worker first-turn contexts and rounded down, and the statistic behind it is not quoted because the
+  corpus it came off cannot support a published figure (`bench/published-rows/SCHEMA.md`). It has to
+  be re-derived from an instrumented corpus before anything depending on it is published. The five
+  classes are not differentiated from each other, because nothing measured supports differentiating
+  them, and inventing a per-class spread would be precision this bench has not earned.
 
 **`escalation-correction` is a partial correction.** The emitter fires it only for the retry classes
 that actually change tier (budget, judgment, unknown) and deliberately not for infra or CI retries,

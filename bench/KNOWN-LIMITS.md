@@ -144,9 +144,9 @@ zero and the reason, so it can never be mistaken for a measured zero.
 
 `resume-not-restart` credits only context reconstruction (the failed attempt's input plus cache
 creation, output excluded), because a retry redoes the work either way and only the re-reading is
-avoided. `skip-the-model` credits only a worker's first-turn context (45,000 tokens, the rounded-
-down 25th percentile of 502 observed first turns), not the whole session a deterministic apply
-actually replaced. Both understate. `escalation-correction` fires only where a retry changed tier,
+avoided. `skip-the-model` credits only a worker's first-turn context, a provisional floor set from the low
+end of observed first turns and rounded down, not the whole session a deterministic apply actually
+replaced. That floor is a calibration parameter awaiting re-derivation from an instrumented corpus. Both understate. `escalation-correction` fires only where a retry changed tier,
 not on infra or CI retries at the same tier, so it corrects some wasted cheap-tier spend and not
 all of it. None of the three is a measurement of the lever's true size; each is a bound in the
 direction that does not flatter shiploop, except the escalation one, which is a correction that
@@ -249,10 +249,19 @@ applied) finished with **neither arm clearing either ticket** by `verify_cmd` + 
   phrase in its own body.
 
 Because neither arm cleared either ticket, **no resolution-rate or token/cost REDUCTION percentage
-can be honestly reported from this run** — a reduction is only meaningful between two arms that did
-comparable work to a comparable (successful) end. What IS reportable, and is reported in
-`README.md`, is the raw token/cost SPEND each arm put into the same two tickets before both came up
-short — a cost comparison on unresolved work, not a savings claim.
+can be honestly reported from this run**: a reduction is only meaningful between two arms that did
+comparable work to a comparable (successful) end.
+
+The raw spend each arm put into those two tickets was recorded, and it is **not published** either.
+The direction is: the harness arm spent MORE tokens than the single long session, and less money,
+the latter confounded by the arms not being on the same model (next section). The magnitudes are
+withheld for the same reason every favourable magnitude in this directory is withheld: nothing in
+the current corpus is instrumented well enough to quote, and a figure is either publishable or it is
+not, whichever way it points.
+
+**Read that as the deliberate symmetry it is.** Adverse results are described here in words rather
+than deleted, so the absence of bad numbers is never mistakable for the absence of bad results. The
+bad result stands on the record: both arms failed the oracle, and on tokens the harness lost.
 
 ## The honest run's arms were not on the same model, contrary to the ticket's own requirement
 

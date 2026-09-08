@@ -62,9 +62,13 @@ const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3 };
 //
 // The figure is a FLOOR, not an estimate of the work: a deterministic apply resolves the ticket
 // with zero model turns, so what it avoided is a whole worker session, and this credits only the
-// context that session would have paid to reach its FIRST turn. Sourced, not guessed: the 25th
-// percentile of observed worker first-turn contexts is 47,024 tokens (n=502 sessions across the
-// shiploop and aquanode corpora, measured 2026-09-08), rounded down to 45,000.
+// context that session would have paid to reach its FIRST turn.
+//
+// It is a calibration PARAMETER, not a result, and it is PROVISIONAL. It was set from the low end
+// of observed worker first-turn contexts, rounded down. The corpus that observation came off is not
+// instrumented well enough to publish anything from (bench/published-rows/SCHEMA.md), so the
+// statistic behind it is deliberately not quoted here, and this constant must be re-derived from an
+// instrumented corpus before any figure that depends on it is published.
 //
 // The classes are not differentiated from each other because nothing measured supports
 // differentiating them. Inventing a spread per class would be precision this bench has not earned;
