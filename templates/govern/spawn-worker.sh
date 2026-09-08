@@ -60,6 +60,12 @@ MODEL_IS_RETRY=0
 [[ -d "$WORKTREE_BASE/$slug" ]] && MODEL_IS_RETRY=1
 [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
 export TICKET_MODEL MODEL_IS_RETRY
+# Ticket number into the worker environment so a wrapper running INSIDE the worker shell can
+# attribute what it records. verify-filter.sh is the only consumer today: it emits the
+# output-suppression lever event (bench/LEVER-EVENTS.md) and without this the event can only
+# say "some ticket in this run". Plain export, no gate: it is one small string and it must be
+# present whether or not lever events are enabled.
+export GOVERN_TICKET="$N"
 
 # #18: LATCH the per-ticket `Effort:` field the SAME anchored way as Model — reasoning effort is an
 # INDEPENDENT knob from model tier (raising effort is far cheaper than raising tier, so it's the
