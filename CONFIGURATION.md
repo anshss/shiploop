@@ -73,6 +73,8 @@ prints nothing at all when there is no fleet.
 | `GOVERN_MAX_RUNTIME` | `0` (no cap) | Wall-clock seconds. There is **no** time bound unless you set one |
 | `GOVERN_WORKER_TIMEOUT` | `3600` (1h) | Seconds one worker may run before it is killed rather than left stalled |
 | `GOVERN_WORKER_MAX_TOKENS` | `0` (unlimited) | Token ceiling per worker; crossing it kills the worker with a distinct `budget-exceeded` outcome |
+| `GOVERN_WORKER_MAX_TURNS` | `0` (off) | Assistant-turn ceiling per worker attempt, passed as `--max-turns`. Capability-probed against the running CLI's `--help`; unsupported means the cap is logged as unenforceable, never a killed spawn |
+| `GOVERN_WORKER_MAX_BUDGET_USD` | `0` (off) | Dollar ceiling per worker attempt, passed as `--max-budget-usd`. Fallback for a CLI that dropped `--max-turns`; only consulted when `--max-turns` is unset or unsupported |
 | `GOVERN_MIN_FREE_GB` | `5` | Free-disk floor checked before spawning; below it the run stops rather than filling the volume |
 
 ### CI, retries, and cadence
