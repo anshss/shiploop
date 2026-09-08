@@ -403,6 +403,37 @@ resolve_tools_flag() { # <claude_bin>
   return 0
 }
 
+# Optional hard per-attempt ceiling: TURNS if the CLI supports it, else a per-session DOLLAR
+# budget as fallback (bench/arms.sh probes the same two flags in the same order, for a CLI release
+# that dropped --max-turns entirely). Third/fourth ceiling beside wall-clock
+# (GOVERN_WORKER_TIMEOUT) and tokens (GOVERN_WORKER_MAX_TOKENS). OFF by default:
+# GOVERN_WORKER_MAX_TURNS=0 and GOVERN_WORKER_MAX_BUDGET_USD=0 (or unset) mean no flag and a spawn
+# byte-identical to the pre-existing one, so no fleet changes behavior on an update. When set, a
+# flag is added only once the cached `--help` probe confirms the running CLI knows it; an
+# unrecognized flag would kill every worker at argument parsing.
+# Sets the global `max_turns_flag` (empty, or `--max-turns N` / `--max-budget-usd N`), rc always 0.
+resolve_max_turns_flag() { # <claude_bin>
+  local bin="$1"
+  local n="${GOVERN_WORKER_MAX_TURNS:-0}"
+  local budget="${GOVERN_WORKER_MAX_BUDGET_USD:-0}"
+  max_turns_flag=""
+  if [[ -n "$n" && "$n" != "0" && "$n" != "off" ]]; then
+    if govern::claude_supports_max_turns "$bin"; then
+      max_turns_flag="--max-turns $n"
+      return 0
+    fi
+    govern::log "worker #$N: claude CLI ($bin) does not support --max-turns (older build), so GOVERN_WORKER_MAX_TURNS=$n cannot be enforced this run"
+  fi
+  if [[ -n "$budget" && "$budget" != "0" && "$budget" != "off" ]]; then
+    if govern::claude_supports_max_budget_usd "$bin"; then
+      max_turns_flag="--max-budget-usd $budget"
+    else
+      govern::log "worker #$N: claude CLI ($bin) does not support --max-budget-usd either, so GOVERN_WORKER_MAX_BUDGET_USD=$budget cannot be enforced this run"
+    fi
+  fi
+  return 0
+}
+
 # GOVERN_SPAWN_DRY_RUN=1: resolve the model tier as the real spawn would, print the assembled
 # `claude -p` invocation params as ONE JSON line to stdout, and exit 0 WITHOUT creating a
 # worktree and WITHOUT launching a worker. Purely an observation seam for the model-routing
@@ -422,6 +453,8 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   dr_exclude_dynamic="$exclude_dynamic_prompt"
   resolve_tools_flag "${GOVERN_CLAUDE_BIN:-claude}"
   dr_tools="$tools_flag"
+  resolve_max_turns_flag "${GOVERN_CLAUDE_BIN:-claude}"
+  dr_max_turns="$max_turns_flag"
   jq -nc \
     --arg bin "${GOVERN_CLAUDE_BIN:-claude}" \
     --arg model "$dr_model" \
@@ -432,6 +465,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg mcp "$dr_strict_mcp" \
     --arg edp "$dr_exclude_dynamic" \
     --arg tools "$dr_tools" \
+    --arg maxturns "$dr_max_turns" \
     --arg wtpath "$WORKTREE_BASE/$slug" \
     --arg tm "$TICKET_MODEL" \
     --arg te "$TICKET_EFFORT" \
@@ -439,7 +473,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg rreason "$retry_reason" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
   exit 0
 fi
 
@@ -929,6 +963,36 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
 govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
+
+# bench/LEVER-EVENTS.md `resume`: this attempt is actually RESUMING (the notes/handoff block built
+# above, back in the RETRY CONTEXT section, is non-empty) rather than restarting cold. Both sides
+# must be captured HERE, before $jsonl gets rotated aside a little further down (the #19 per-attempt
+# ledger block), because after that this attempt's PRIOR stream is gone and freshStartTokens becomes
+# unrecoverable, exactly as bench/LEVER-EVENTS.md warns.
+#   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
+#                        in bytes over the codebase's own ~4-bytes-per-token estimate (see
+#                        govern-bookkeep.sh's lesson-entry sizing note for the same constant).
+#   freshStartTokens  = the PRIOR (failed) attempt's context-reconstruction spend ONLY: its
+#                        input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens
+#                        (a retry redoes the actual work either way, so the failed attempt's
+#                        output is not a cost resuming avoids) and EXCLUDING
+#                        cache_read_input_tokens (re-paid on EVERY turn for the SAME prefix, so
+#                        summing it across a session counts the same context once per turn, a
+#                        turn-count artifact, not a reconstruction cost, and at real-workspace
+#                        scale, ~20x cacheCreation on a typical ticket, folding it in would hand
+#                        the resume lever an enormous fake saving). See
+#                        govern::cumulative_context_tokens in lib/common.sh, not
+#                        govern::cumulative_tokens. Read from $jsonl one last time before it is
+#                        rotated away further down, while it is still intact.
+if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
+      && ( -n "$notes_body" || -n "$handoff_block" ) ]]; then
+  resume_ckpt_bytes=$(( $(printf '%s' "$notes_body" | wc -c | tr -d '[:space:]') \
+    + $(printf '%s' "$handoff_block" | wc -c | tr -d '[:space:]') ))
+  resume_ckpt_tokens=$(( resume_ckpt_bytes / 4 ))
+  resume_fresh_tokens="$(govern::cumulative_context_tokens "$jsonl")"
+  govern::emit_lever_event resume "$N" worker "$model" \
+    checkpointTokens="${resume_ckpt_tokens:-0}" freshStartTokens="${resume_fresh_tokens:-0}"
+fi
 # A clamp is never silent: model_source already carries the marker into the log line above and the
 # history record, and this makes it queryable on the fleet event log beside worker_escalated.
 if [[ -n "${MODEL_CLAMPED_FROM:-}" ]]; then
@@ -947,6 +1011,18 @@ fi
 if [[ "$ESCALATION_APPLIED" -eq 1 ]]; then
   govern::event worker_escalated "ticket=$N" "from=${ESCALATION_FROM:-unknown}" "to=$model" \
     "effort=${effort:-}" "reason=$retry_class"
+  # bench/LEVER-EVENTS.md `escalation`: failedTokens is the FAILED attempt's own spend, read from the
+  # #19 per-attempt ledger row the PRIOR spawn-worker.sh invocation appended before this one started
+  # (this invocation has not yet rotated $jsonl or written its own row; see the ledger block below).
+  # Carries failedTier instead of tier (the contract's own wording), so tier is passed as "-" → null.
+  # Gated on GOVERN_LEVER_EVENTS itself, not just the emitter's own gate, so the ledger read never
+  # runs in the common opt-out case.
+  if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]]; then
+    esc_failed_tokens="$(tail -n1 "$logdir/attempts.jsonl" 2>/dev/null | jq -r '.tokens.total // 0' 2>/dev/null || echo 0)"
+    [[ "$esc_failed_tokens" =~ ^[0-9]+$ ]] || esc_failed_tokens=0
+    govern::emit_lever_event escalation "$N" worker "-" \
+      failedTier="${ESCALATION_FROM:-unknown}" failedTokens="$esc_failed_tokens"
+  fi
 fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
@@ -976,6 +1052,9 @@ resolve_exclude_dynamic_prompt "$claude_bin"
 # the request (51.7% measured). Same capability-gate reasoning as the flag above; see
 # resolve_tools_flag for the opt-in contract and the keep/purge gate.
 resolve_tools_flag "$claude_bin"
+
+# Optional per-attempt turn ceiling (GOVERN_WORKER_MAX_TURNS). Off unless set; capability-gated.
+resolve_max_turns_flag "$claude_bin"
 
 # #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
@@ -1260,7 +1339,7 @@ set -m
     GOVERN_REPORT_PATH="$report_path" OTEL_RESOURCE_ATTRIBUTES="$otel_attrs" "$claude_bin" -p "$prompt" \
     --output-format stream-json --verbose \
     --setting-sources "${GOVERN_SETTING_SOURCES:-project,local}" \
-    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag \
+    $strict_mcp $disable_slash_cmds $exclude_dynamic_prompt $tools_flag $max_turns_flag \
     --permission-mode "$permflag" --model "$model" $effort_flag ) >"$jsonl" 2>&1 &
 cpid=$!
 set +m
@@ -1323,6 +1402,21 @@ set -e
 if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
 [[ -f "$budget_marker" ]] && { worker_killed=1; worker_budget_exceeded=1; }
 [[ -f "$early_abort_marker" ]] && { worker_killed=1; worker_early_abort=1; }
+
+# bench/LEVER-EVENTS.md `watchdog-kill`: one of the three watchdogs above (wall-clock / token-budget
+# / early-abort) just terminated this attempt. ctxTokens/turns are read from the now-frozen $jsonl
+# (the process is dead; nothing writes to it again until the rotation further down), so this is the
+# true state at the instant of the kill. Gated on GOVERN_LEVER_EVENTS itself (not just left to the
+# emitter's own gate) so the jq/awk scan never runs in the common opt-out case.
+emit_watchdog_kill() { # <reason>
+  [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+  local ctx turns
+  ctx="$(govern::cumulative_tokens "$jsonl")"
+  turns="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } | wc -l | tr -d '[:space:]')"
+  govern::emit_lever_event watchdog-kill "$N" worker "$model" \
+    ctxTokens="${ctx:-0}" turns="${turns:-0}" reason="$1"
+  return 0
+}
 
 # #239: sweep this worker's orphan resources NOW — before report resolution and on EVERY exit path
 # (resolved / failed / parked / timed-out / killed). A worker hard-killed by GOVERN_WORKER_TIMEOUT
@@ -1420,6 +1514,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     ea_detail="$(head -c 400 "$early_abort_marker" 2>/dev/null | tr -d '\n' || true)"
     reason="worker was EARLY-ABORTED by the deterministic stall/loop/error watchdog and hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (the escalated retry resumes from it). Signature: ${ea_detail:-unspecified}. This attempt was going nowhere; the point of killing it at ~turn 30 rather than ~turn 218 is that the retry gets the budget instead (§4.4a)."
     govern::log "worker for #$N → early-abort (killed before verdict; NOT recorded failed) [§4.4a]: $reason"
+    emit_watchdog_kill "stall/loop/error: ${ea_detail:-unspecified}"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"early-abort",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-dispatch the ticket to resume from "+$wt+" at the escalated tier (or set GOVERN_EARLY_ABORT=0 / raise GOVERN_EARLY_ABORT_TURNS if this ticket legitimately explores for a long time before its first edit)"),options:[]}}')"
   elif [[ "$worker_budget_exceeded" -eq 1 ]]; then
@@ -1427,12 +1522,14 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     # not failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded the GOVERN_WORKER_MAX_TOKENS budget (${tok_budget} tokens) and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Distinct from a wall-clock timeout: this worker burned its token budget, which usually means it was still exploring/wandering (#16)."
     govern::log "worker for #$N → budget-exceeded (killed before verdict; NOT recorded failed) [#16]: $reason"
+    emit_watchdog_kill "context-cap"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"budget-exceeded",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_MAX_TOKENS if it legitimately needs a bigger budget)"),options:[]}}')"
   elif [[ "$worker_killed" -eq 1 ]]; then
     # #241: kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result (#241)."
     govern::log "worker for #$N → timeout (killed before verdict; NOT recorded failed) [#241]: $reason"
+    emit_watchdog_kill "wall-clock-timeout"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"timeout",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_TIMEOUT if it legitimately needs longer)"),options:[]}}')"
   else
