@@ -2,8 +2,9 @@
 
 Every knob shiploop reads lives in one file: `templates/lib/workspace.sh` in this hub repo, seeded
 into each workspace as `scripts/lib/workspace.sh` by `/shiploop:setup` and refreshed (never
-clobbered) by `/shiploop:update`. Advanced lanes ship **off** so a fresh install is inert until you
-opt in.
+clobbered) by `/shiploop:update`. Advanced lanes that change dispatch behaviour ship **off** so a
+fresh install is inert until you opt in. `GOVERN_LEVER_EVENTS` is the one exception: it changes
+nothing about a dispatch, only what a run's own log directory records, so it ships **on**.
 
 | Knob | Default | Turns on |
 |---|---|---|
@@ -42,6 +43,7 @@ opt in.
 | `WSP_PR_FOOTER` | on | "shipped by shiploop" attribution line on worker PRs (`off` to suppress) |
 | `GOVERN_EVENTS` | `0` (off) | Fleet event log: append one JSON line per worker spawn/finish/escalation/park to `governor/events.jsonl`. Nothing reads it until you turn it on, and nothing about a run changes when you do. This is what `npm run govern:status`, the statusline segment, and the plugin monitor all fold; see **Fleet visibility** below |
 | `GOVERN_EVENTS_FILE` | `governor/events.jsonl` | Where that log lives |
+| `GOVERN_LEVER_EVENTS` | `1` (on) | Bench lever-event capture: append one JSON line per watchdog-kill / resume / scripted-action / escalation to `logs/govern/<run>/lever-events.jsonl`, so `bench/replay.mjs` can attribute per-lever token savings against a real corpus instead of an uninstrumented one. Write-or-skip, never aborts a dispatch. `0` is the kill switch |
 | `GOVERN_VF_NUDGE` | `1` (on) | Driver-session advisory: an unwrapped test/build command (`npm test`, `pytest`, `go test`, `cargo test`, `vitest`, `jest`, `tsc`, ...) gets a one-line nudge toward `npm run vf -- <cmd>`. Advisory only, capped per session, silent for workers and sub-agents; `0` disables it |
 
 | Surface | What it is | How to get it |

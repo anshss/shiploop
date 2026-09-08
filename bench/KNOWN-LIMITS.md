@@ -129,12 +129,13 @@ figure, that is the one, and it is always lower.
 ## Four levers are credited only where the corpus carries instrumentation
 
 `watchdog`, `resume-not-restart`, `skip-the-model` and `escalation-correction` are read from
-`logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). Runs dispatched before
-that file existed carry none, and the emitter ships **default OFF** (`GOVERN_LEVER_EVENTS=0`), so
-on any corpus in existence today those four levers report `uninstrumented` and contribute nothing. That is an understatement of the harness, not a measurement that it saves
-nothing there, and the report prints the coverage count next to every one of them. A corpus mixing
-instrumented and uninstrumented runs reports a number weighted toward the uninstrumented ones,
-because the levers can only be credited where the events exist.
+`logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). The emitter ships **on**
+by default at runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch), but runs dispatched before that
+shipped carry none, so on any corpus collected before then those four levers report
+`uninstrumented` and contribute nothing. That is an understatement of the harness, not a measurement
+that it saves nothing there, and the report prints the coverage count next to every one of them. A
+corpus mixing instrumented and uninstrumented runs reports a number weighted toward the
+uninstrumented ones, because the levers can only be credited where the events exist.
 
 `output-suppression` is weaker still: it has no event in the wire contract at all, and the bytes it
 withholds are by construction absent from every transcript. It is listed in the lever table with a

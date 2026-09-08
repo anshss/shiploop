@@ -61,8 +61,11 @@ and skipped, never fatal.
   (root CLAUDE.md rule 12 applies only to CLI invocations).
 - Govern bash constraints (root CLAUDE.md rule 11): a function whose last statement is a bare
   `[[ c ]] && cmd` must end `return 0`; no dependent locals in one `local` statement.
-- Default OFF via one `export GOVERN_LEVER_EVENTS=0` in `templates/govern/test/assert.sh`,
-  per root CLAUDE.md rule 12's new-mechanism default.
+- ON by default at runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch): this is pure log-format
+  instrumentation with a proven never-abort contract, not a mechanism that changes dispatch
+  behavior, so root CLAUDE.md rule 12's usual new-mechanism-defaults-off is satisfied at the TEST
+  layer instead, via one `export GOVERN_LEVER_EVENTS=0` in `templates/govern/test/assert.sh`
+  (fixtures must not accumulate event files).
 
 ## Reader rules
 

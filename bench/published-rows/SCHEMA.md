@@ -7,11 +7,11 @@ Empty on purpose. **No benchmark number is published from this repository right 
 A published row set is the evidence behind a performance claim, and the claim would not survive
 contact with how the corpus was actually collected:
 
-- **Nothing is instrumented.** Four of the levers the bench attributes savings to (`watchdog`,
+- **Nothing is instrumented yet.** Four of the levers the bench attributes savings to (`watchdog`,
   `resume-not-restart`, `skip-the-model`, `escalation-correction`) are read from
-  `logs/govern/<run>/lever-events.jsonl`. That emitter ships default OFF (`GOVERN_LEVER_EVENTS=0`)
-  and has not run anywhere, so every existing run is uninstrumented and those four levers are
-  uncredited.
+  `logs/govern/<run>/lever-events.jsonl`. That emitter now ships **on** by default at runtime
+  (`GOVERN_LEVER_EVENTS=0` is the kill switch), but it has not been live for any run in any existing
+  corpus, so every run collected so far is uninstrumented and those four levers are uncredited.
 - **The driver tier was never recorded.** The default `driver-tier` baseline needs to know which
   model dispatched a run. No run in any existing corpus carries a `driver-model` stamp, so the tier
   falls back to "the highest tier seen in the run" almost every time. That fallback is a guess, and
