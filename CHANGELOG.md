@@ -71,6 +71,134 @@ governor. The only writers left are explicit, single-block operator actions: `cl
 - `test-claudemd-size-trigger.sh` is hermetic again: it was inheriting a live session's exported
   `SHIPLOOP_CLAUDEMD_MAX_CHARS`, so its default-budget cases failed inside any governor run.
 
+## 1.19.0 — 2026-09-08
+
+### Added
+
+**A benchmark mechanism ships, and it publishes no number.** `bench/` replays a workspace's own
+`logs/govern/` transcripts against a counterfactual and reports what the harness saved. It is
+complete and tested, and it publishes nothing: no savings figure is quoted anywhere under `bench/`,
+favourable or adverse. The reason is stated in `bench/README.md` and
+`bench/KNOWN-LIMITS.md`: nothing in any existing corpus is instrumented, no run before this version
+recorded which model dispatched it, and almost no run wrote an orchestration transcript. A
+percentage computed against that measures the instrumentation gap, not the product. The order of
+operations is instrument first, accumulate real runs, benchmark after.
+
+- `/shiploop:bench` (`commands/bench.md`) is the operator entry point. `bench/replay.mjs` is the
+  engine; `bench/record.sh`, `bench/run.sh`, `bench/arms.sh`, `bench/rollup.mjs`,
+  `bench/validate-backlog.sh` and `bench/gen-proof-table.mjs` are the record, live-run, aggregate
+  and render paths around it.
+- `--baseline same-mix|driver-tier|all`, default `driver-tier`, composed with the existing context
+  arms as a matrix. Three metrics printed separately and never blended: tokens, cost USD, and
+  quota-weighted tokens. `--partials price|drop` (default `price`) prints both totals either way,
+  and pre-flight aborts (0-byte `state.jsonl`) are excluded, counted and printed.
+- Per-lever attribution, asserted internally to sum to the arm's saving in all three metrics. A
+  lever with no counterfactual reads `unmeasured` and is named; a lever present in both arms reads
+  `absorbed (uncredited, conservative)`; an event-derived lever on a corpus with no
+  `lever-events.jsonl` reads `uninstrumented`, never a measured 0%.
+- Orchestration-side transcripts (governor, scout, re-verify) are now charged INTO the shiploop arm,
+  with `overhead-uncovered` runs flagged and counted. This lowers shiploop's own number on purpose
+  and closes what `bench/METHODOLOGY.md` called its largest known bias.
+- `bench/replay.mjs` scopes to the newest shiploop version in the corpus by default; `--all`
+  restores the unscoped sweep, and a corpus with no stamp anywhere falls back to the full sweep with
+  a notice. `--rows-file` re-aggregates a published rows file with no workspace present at all.
+
+**Lever-event instrumentation: five events, on by default.** `govern::emit_lever_event`
+(`templates/govern/lib/common.sh`) appends one JSON line per event to
+`logs/govern/<run>/lever-events.jsonl` so a future replay can attribute per-lever savings against a
+real corpus instead of an uninstrumented one.
+
+- `watchdog-kill` from all three watchdogs in `spawn-worker.sh` (wall clock, token budget, early
+  abort), read at the instant each terminates the worker. `resume` from the retry-context block, at
+  the point a preserved worktree's notes and handoff enter the retry prompt. `escalation` from the
+  existing `worker_escalated` site. `scripted-action` from both success exits of
+  `deterministic-apply.sh`'s zero-model lane, keyed on the scout's real deterministic kinds
+  (`config-default`, `version-bump`, `dead-line-delete`, `known-rename`, `add-key`).
+- `output-suppression` from `templates/govern/verify-filter.sh`, which withholds a PASSING wrapped
+  command's output. That instant is the only moment the withheld size exists, since by design those
+  bytes never enter a transcript. Pass only: a failing run is passed through tail-bounded and its
+  withheld remainder is left uncredited. Coverage is structurally partial and the report says so,
+  because wrapping a command is opt-in.
+- `GOVERN_LEVER_EVENTS` defaults to `1` at runtime; `GOVERN_LEVER_EVENTS=0` is the kill switch. This
+  is the one advanced knob that ships on, because it changes nothing about a dispatch, only what a
+  run's own log directory records. The test suite still exports `GOVERN_LEVER_EVENTS=0` in
+  `test/assert.sh`, so fixtures never accumulate event files.
+- The emitter carries `govern::event`'s never-abort contract: write-or-skip, `|| true`, `return 0`.
+  A missing `common.sh`, an unset run dir or an unwritable log leave both stdout and the wrapped
+  command's exit code untouched.
+
+**`logs/govern/<run>/driver-model` stamps the tier that actually dispatched a run.** Written
+unconditionally beside the existing `shiploop-version` stamp, sourced from `govern::session_model`
+and normalised by the new `govern::model_family`. Without it, `replay.mjs`'s `driver-tier` baseline
+falls back to the highest tier seen anywhere in the run, a guess biased toward the most expensive
+tier and so toward shiploop's own credit. It is not gated on `GOVERN_LEVER_EVENTS`: this is
+run-scoped context that must exist even with lever events off. Best effort, matching
+`govern::stamp_run_version`: an undetectable session model writes nothing rather than a guess.
+
+**New tests.** `test-lever-events.sh`, `test-output-suppression.sh`, `test-driver-model-stamp.sh`,
+and twelve `test-bench-*.sh` (`arms`, `cap`, `levers`, `proof-table`, `regression`, `replay`,
+`replay-schema`, `rollup`, `schema`, `selection`, `validate`, `version-scope`). All are registered
+in `tools/hub-context-tests.txt`, which the bench tests were not before: they skip in a scaffolded
+workspace, so they had been running in no CI job at all.
+
+### Changed
+
+- **`dominantTier()` is gone.** Both replay arms price per session per tier, blended across the
+  tiers that actually ran the session's input side. Single-model sessions come out identical to the
+  cent.
+- **The `resume` lever's `freshStartTokens` is context-reconstruction spend only** (`input_tokens` +
+  `cache_creation_input_tokens`), via the new `govern::cumulative_context_tokens`.
+  `output_tokens` is excluded because a retry redoes that work regardless; `cache_read_input_tokens`
+  is excluded because it is re-paid every turn for the same prefix, so summing it across a session
+  is a turn-count artifact. On a real `governor/ticket-history.jsonl` row showing 6.9M cache read
+  against 351K cache creation, folding it in would have inflated the lever roughly 20x.
+  `govern::cumulative_tokens` is unchanged; other callers depend on its full total.
+- **The `scripted-action` estimate is a declared floor, not a measurement.** 45,000 tokens, credited
+  once per deterministic apply, undifferentiated across the five classes because nothing measured
+  supports differentiating them. It is labelled a provisional calibration parameter that must be
+  re-derived from an instrumented corpus.
+- **`escalation` is partial by design:** the emitter fires only where a retry actually changed tier,
+  never on an infra or CI retry at the same tier.
+- Published rows gain `version`, `ts` and `baseline`. An absent version field and the literal string
+  `unknown` are now the same state, counted rather than listed as a version named "unknown".
+- README and `CONFIGURATION.md` rewritten around the landing page, with the configuration reference
+  moved out of the README and the header assets refreshed.
+
+### Fixed
+
+- **`govern::stamp_run_version` aborted the caller when the run dir was unwritable.** A bare
+  `[[ -n "$v" ]] && printf ... > file` is not a no-op under `set -e` when the write itself fails,
+  even with a `return 0` two lines later, which contradicted the function's own "failures here are
+  silent" comment. The write is now `|| true` guarded, matching `stamp_driver_model`. Regression
+  case added for both stamps.
+- `CONFIGURATION.md`'s `GOVERN_LEVER_EVENTS` row listed four events after `output-suppression`
+  made it five.
+
+### Removed
+
+- Every real-corpus savings figure, across `bench/README.md`, `bench/METHODOLOGY.md`,
+  `bench/KNOWN-LIMITS.md` and `CONFIGURATION.md`: the 70.2 / 57.3 / 30.1 / 18.2 / 85.5 / 77.4
+  family, the claim-audit table, the best-case table, the per-fleet spread table and the ceiling
+  table. In each case the FINDING survives as prose, because the finding is a disclosure and the
+  number was a claim. Position 1 still saves 0% structurally, the 200k default is still always the
+  weaker arm, the per-fleet spread is still wider than any pooled figure, and a cost reduction still
+  never carries a token reduction's confidence.
+- The live pilot's adverse figures went for the same reason as the favourable ones, and both files
+  say so explicitly, so the absence of bad numbers cannot be mistaken for the absence of bad
+  results. The findings stand: both arms ran for real against the same two tickets, neither cleared
+  either ticket against the oracle, and the harness arm spent MORE tokens than the single long
+  session, on a confound that the arms were not on the same model.
+- `bench/published-rows/replay-2026-09-05.jsonl`, replaced by `SCHEMA.md` describing the row shape
+  and why nothing is published. `bench/results/proof-table.txt`, replaced by a README placeholder.
+  `gen-proof-table.mjs`'s hard-coded provenance constants now render as "not supplied", with a
+  `PROOF_TABLE_PROVENANCE` override for whoever publishes first.
+- `test-bench-regression.sh` no longer aggregates a frozen corpus, because there is none. It emits a
+  rows file from the synthetic fixture and asserts the round trip: rows aggregate back to the totals
+  of the run that emitted them, by the tool and independently by `METHODOLOGY.md`'s jq recipe. That
+  is the recomputability claim any future publication will be held to, testable without a corpus.
+  Synthetic fixture expectations stay throughout: they are unit assertions over invented data, not
+  performance claims, and they are what keeps the arithmetic honest.
+
 ## 1.18.4 — 2026-09-05
 
 ### Fixed
