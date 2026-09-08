@@ -131,6 +131,102 @@ k additionally re-reads the context carried out of tickets 1..k-1**, at the cach
 `uncapped` exists to show the size of the window's contribution, not to be quoted. It is labelled
 unphysical in the tool's own output.
 
+### The baseline axis: which model the counterfactual ran on
+
+Added 2026-09-08 (#108). The arm above says how much a single session could CARRY. The baseline says
+what MODEL it ran on. They compose into a matrix, 3 arms x 2 baselines, selected with `--baseline`.
+
+| Baseline | The counterfactual | Default |
+|---|---|---|
+| `same-mix` | the same sessions at the same tiers, glued into one session | no |
+| `driver-tier` | one session running entirely on the dispatching session's own tier | **yes** |
+
+`same-mix` is the pre-#108 model, unchanged and kept: it is the arm the published 70.2/57.3 and
+30.1/18.2 were computed on, and `bench/published-rows/replay-2026-09-05.jsonl` re-aggregates to
+those figures to one decimal as a regression guard (`test-bench-regression.sh`).
+
+`same-mix` has one structural blind spot, and it is the harness's most-used lever in practice:
+routing work to cheaper models. Under it, a sonnet worker's tokens are priced as sonnet on BOTH
+arms, so moving work off the driver's expensive tier is worth exactly zero by construction.
+`driver-tier` fixes that by pricing the counterfactual at the tier the operator would actually have
+been sitting on: the real alternative to the harness is one interactive session, on the model they
+chose, doing everything itself.
+
+**How the driver tier is resolved**, in order: the run's `driver-model` stamp, then the tier named
+by the run's own orchestration transcript, then a FALLBACK to the highest tier any session in the
+run touched. The fallback is the generous-to-shiploop choice, so the report counts how many runs
+used it (`driverTierAudit.fromFallbackHighestTier`) rather than hiding it inside an average.
+
+### Three metrics, never blended
+
+| Metric | What moves it | What does not |
+|---|---|---|
+| tokens | context carried, work avoided | **routing.** A token is a token; moving work to a cheaper model cannot change this column, and the report says so where it prints it |
+| cost (USD) | everything, at API list rates | nothing, which is why it is the most fragile of the three |
+| quota-weighted tokens | tokens x the tier's input-rate ratio (opus 5x, sonnet 2x, haiku 1x) | the dollar rate table's absolute level |
+
+Quota-weighted tokens are the subscription framing of the routing credit: a plan meters capacity,
+not dollars, and an opus token eats five haiku tokens' worth of it. The weights are the published
+input-rate ratios and are printed in the report header next to the number that used them. They are
+labelled `quota-weighted` everywhere and are never added to, or presented as, raw tokens.
+
+### Per-lever attribution
+
+The report decomposes each arm's saving into additive components and asserts internally that they
+sum to it (`leverSumCheck` in the JSON, `sum check:` in the report). A component is one of:
+
+| Lever | How it is credited |
+|---|---|
+| carry | the carry-read minus the re-prime refund, as before |
+| routing | the measured work repriced at the driver tier (zero under `same-mix`) |
+| cache-prefix | turn-1 cache READS that would have been cache WRITES without cross-worker prefix preservation, at the 1.9x spread. Worth zero tokens: read and write are the same token count |
+| watchdog | from `watchdog-kill` events: one further turn at the context reached, capped by the arm's window. A floor, not the true counterfactual |
+| resume-not-restart | from `resume` events: fresh-start tokens minus what the checkpoint actually loaded |
+| skip-the-model | from `scripted-action` events: a conservative per-class token estimate, table printed in the report. An unknown class is counted and credited zero |
+| escalation-correction | from `escalation` events: the routing credit claimed for a failed cheap-tier attempt is taken back. Negative by construction |
+| harness-overhead | the orchestration-side transcripts, charged into the shiploop arm. **Negative by construction** |
+| output-suppression | **uninstrumented.** The withheld bytes are, by definition, absent from every transcript, and the wire contract (`bench/LEVER-EVENTS.md`) carries no event for them |
+| shared-exploration, memory-budget, blocked-work-early-catch | **unmeasured.** Each is printed with the counterfactual it would need |
+| lean-worker-session, scripted-codebase-map | **absorbed (uncredited, conservative).** See below |
+
+The four event-derived levers are credited ONLY in runs that carry `logs/govern/<run>/lever-events.jsonl`.
+A run without one is **uninstrumented**, which is not the same as zero-saving and is never reported
+as one: the table prints the word `uninstr.` and the coverage count ("credited in N of M runs")
+rather than a zero row that an average would then drag down.
+
+**Absorbed levers.** The vanilla arm is constructed FROM shiploop's own transcripts, so a saving
+already baked into those transcripts (trimmed tool lists, stripped worker context, the scripted
+codebase map replacing exploratory reads) benefits BOTH arms equally and earns zero credit here. A
+true vanilla session would be fatter than the modeled one on those axes, so the model understates
+shiploop on them. The direction of that error is known, which is why they are `absorbed`, not
+`unmeasured`.
+
+**The honest caveat on the composite.** The pure single-session counterfactual is `coreModel` in
+the JSON, printed on every arm as "carry-only legacy model". The headline number is a COMPOSITE:
+each lever carries its own counterfactual, and they are not all "one accumulating session". The
+prefix, watchdog, resume and skip-the-model levers are measured against "the same harness without
+that lever", not against a single session that would never have spawned a worker at all. The
+composite is what the product actually avoids paying; `coreModel` is the strict single-session
+comparison. Both are printed, always, and neither is presented as the other.
+
+### Partial sessions: `--partials price|drop`
+
+A session killed before it emitted a result event has an exactly recoverable input side and an
+unrecoverable output side. `--partials price` (the default since #108) counts what it did record,
+flags the row `partial`, and leaves output at zero. `--partials drop` is the pre-#108 behaviour and
+is kept because reproducing a historical number requires it. **Both totals are printed either way**,
+so the delta between them is always visible: dropping our own spend is the one exclusion that
+flatters us.
+
+Pre-flight aborts are a different thing and are handled differently. A run whose `state.jsonl` is
+0 bytes never dispatched anything, so there is no work to price. Those runs stay excluded, but the
+report counts and prints them ("N run(s) aborted before dispatch"): they are a dispatch-health
+signal, not a bench input.
+
+Work the loop recorded as resolved with no transcript at all (a direct-to-main completion, or a
+hand-written resolve) is likewise counted and printed. It is out of the bench's scope by design and
+the denominator gap has to be visible rather than silently absent.
+
 ### Scope
 
 `--scope all` (default) counts every ticket the loop paid for, including failures. `--scope
@@ -252,29 +348,42 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    session, and the interactive session that dispatched it, spent tokens that are absent from the
    shiploop arm. This is the largest known bias and it is unquantified, because the transcripts do
    not exist. The live A/B harness (`bench/run.sh`) counts the driver; the replay path cannot.
+
+   **CORRECTION (2026-09-08, #108).** This is no longer unquantified, and it is no longer left
+   uncharged where it can be read. `replay.mjs` now sums every orchestration-side transcript a run
+   produced (any `governor`/`driver`/`scout`/`review`/`re-verify`/`supervise` transcript, and any
+   transcript sitting outside a `ticket-*` directory) INTO the shiploop arm's tokens, cost and
+   quota-weighted totals. That lowers the shiploop number, which is the point. A run that produced
+   no such transcript is flagged `overhead-uncovered` and counted, so the report states in every
+   run how much of the corpus this charge could actually reach. The residual bias is therefore
+   bounded by the uncovered count instead of being a shrug: where coverage is 0 of N runs, the
+   shiploop arm's cost is a stated LOWER bound rather than a measurement. The interactive session
+   that typed `/shiploop:bench` is still not counted anywhere, and never will be by this path.
 2. **Scouts and re-verification are counted only when they wrote a worker transcript.** Anything
    the loop spends outside `logs/govern/**/*.jsonl` is invisible here.
 3. **A modeled session is assumed to do the same work in the same number of turns.** A single
    session carrying full history might finish some tickets in fewer turns because it already knows
    the codebase. The model gives it no such credit. This is the most arguable assumption in the
    document, and it is the one most likely to be attacked.
-4. **A mixed-model session prices its measured cost per model, but its modeled overhead at a
-   single tier.** `sessionCost()` (`bench/replay.mjs:282-317`) walks a session's `modelUsage` map
-   and prices each model's own tokens at that model's own rate, so a session that escalated from,
-   say, sonnet to opus has its ship-side cost billed at the accurate blend (`shipCost`, credited via
-   `replayRun` at `replay.mjs:474-475`). `dominantTier()` (`replay.mjs:330-345`) instead resolves ONE
-   tier for the whole session, the model with the largest token volume, and that single tier's rate
-   prices ALL of that session's overhead-read and re-prime-credit at `replay.mjs:482-484` (used at
-   lines 491-492 and 499-501). A session's later, heavier-context turns tend to carry the larger
-   accumulated cache-read volume, which pulls `dominantTier` toward the tokens of whichever model
-   handled those later turns; when that is the pricier escalated tier, the entire session's modeled
-   overhead gets priced at the pricier rate even for turns actually run on a cheaper model earlier in
-   the same session. That inflates the modeled vanilla cost, which biases the COST reduction (57.3%)
-   slightly in shiploop's favor. **It does not touch the TOKEN reduction (70.2%):** the token path
-   (`vanTokens = shipTokens + overheadTokens - creditTokens`, `replay.mjs:511`) sums raw token
-   counts and never multiplies by a rate, mixed-model or otherwise, so tokens are immune to this by
-   construction. See `bench/KNOWN-LIMITS.md` for the disclosure and `README.md`'s "Tokens vs. cost"
-   section for why this means 57.3% should never be quoted with the same confidence as 70.2%.
+4. **A mixed-model session is now priced per session, per tier, on BOTH arms.** This entry
+   previously described `dominantTier()`, which resolved ONE tier for a whole session (the model
+   holding the largest token volume) and priced all of that session's modeled carry-read and
+   re-prime-credit at it. On a session that escalated mid-ticket, the later heavier-context turns
+   pulled that choice toward the pricier tier and the entire session's modeled overhead was billed
+   there, inflating the modeled vanilla cost in shiploop's favour.
+
+   `dominantTier()` is gone (removed 2026-09-08, #108). The modeled side is now priced at the
+   session's own input-side token mix blended across the tiers that actually ran it
+   (`sessionInputRate()` in `bench/replay.mjs`), so a session that spent 90% of its input side on
+   sonnet has 90% of its modeled overhead priced at sonnet. For a single-model session the two
+   rules are identical to the cent, which is why the frozen fixtures reproduce unchanged. The
+   direction of the old bias was toward shiploop; removing it moves the cost figure slightly
+   AGAINST shiploop on mixed-model corpora and leaves the token figure untouched, because the token
+   path never multiplies by a rate.
+
+   The residue of this entry that still stands: **the cost reduction is a weaker number than the
+   token reduction**, because cost depends on the rate table and on which model ran what, and
+   tokens do not. See `bench/KNOWN-LIMITS.md` and `README.md`'s "Tokens vs. cost" section.
 
 ### Flatters vanilla (makes the published number conservative)
 
@@ -350,6 +459,30 @@ jq -s '
     costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
   }
 ' bench/published-rows/replay-2026-09-05.jsonl
+```
+
+The tool will do the same aggregation over any published rows file without touching a workspace,
+which is what the regression test runs:
+
+```bash
+# the frozen corpus, through the tool: 70.2/57.3 (1m), 30.1/18.2 (200k), 85.5/77.4 (uncapped)
+node bench/replay.mjs --rows-file bench/published-rows/replay-2026-09-05.jsonl --json
+```
+
+Rows published from #108 onward also carry `baseline`, `version` and `ts`, so a version-scoped or
+baseline-scoped recomputation is a filter rather than a re-run. Rows published before that carry
+none of the three; a reader treats a missing `version` as `unknown`, and the tool counts them:
+
+```bash
+# one arm, one baseline, one harness version, straight off published rows
+jq -s '
+  [.[] | select(.arm == "200k" and (.baseline // "same-mix") == "driver-tier" and (.version // "unknown") == "1.19.0")] |
+  {
+    n: length,
+    tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
+    costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
+  }
+' bench/published-rows/<file>.jsonl
 ```
 
 This sums the same `shipTokens`/`vanillaTokens` (and `*CostUsd`) columns `replay.mjs --json` summed

@@ -104,6 +104,52 @@ rate, mixed-model or otherwise, so it is immune to this by construction. Full me
 "Flatters shiploop" classification: `bench/METHODOLOGY.md`. Never quote 57.3% with the same
 confidence as 70.2%; `README.md`'s "Tokens vs. cost" section states why.
 
+**FIXED 2026-09-08 (#108).** `dominantTier()` is removed. The modeled side is now priced at the
+session's own input-side token mix blended across the tiers that actually ran it
+(`sessionInputRate()`), so the whole-session single-tier rounding described above no longer happens.
+For a single-model session the two rules agree to the cent, which is why the frozen fixtures and the
+published rows reproduce unchanged. What survives from this entry is the weaker claim, and it still
+stands: a cost figure depends on the rate table and on the corpus's model mix, and a token figure
+does not. Never quote a cost reduction with the same confidence as a token reduction.
+
+## The headline is a composite of several counterfactuals, not one session
+
+Since #108 the reported saving sums per-lever components, and those levers do not all share one
+counterfactual. Carry and routing are measured against "one accumulating session on the driver's
+tier", which is the arm's stated definition. Cache-prefix, watchdog, resume and skip-the-model are
+measured against "the same harness WITHOUT that lever": a single session would never have spawned a
+second worker, so it would not have paid the cache write the prefix lever credits, nor the restart
+the resume lever credits.
+
+This is deliberate (the levers exist and their spend is real) and it is the design the multi-lever
+spec asked for, but it means the headline is **the harness's total avoided spend**, not a strict
+one-session A/B. The strict one-session comparison is still computed and still printed on every arm
+as `coreModel` / "carry-only legacy model". When a reader wants the conservative apples-to-apples
+figure, that is the one, and it is always lower.
+
+## Four levers are credited only where the corpus carries instrumentation
+
+`watchdog`, `resume-not-restart`, `skip-the-model` and `escalation-correction` are read from
+`logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). Runs dispatched before
+that file existed carry none, so on a historical corpus those four levers report `uninstrumented`
+and contribute nothing. That is an understatement of the harness, not a measurement that it saves
+nothing there, and the report prints the coverage count next to every one of them. A corpus mixing
+instrumented and uninstrumented runs reports a number weighted toward the uninstrumented ones,
+because the levers can only be credited where the events exist.
+
+`output-suppression` is weaker still: it has no event in the wire contract at all, and the bytes it
+withholds are by construction absent from every transcript. It is listed in the lever table with a
+zero and the reason, so it can never be mistaken for a measured zero.
+
+## The harness-overhead charge is bounded by what the corpus recorded
+
+Spec section 4a charges orchestration-side transcripts into the shiploop arm, which is the fix for
+METHODOLOGY's old "largest known bias". It can only charge what exists. On a corpus where the
+governor wrote no transcript of its own model calls, every run is `overhead-uncovered`, the charge
+is zero, and the shiploop arm's cost is a stated LOWER bound rather than a measurement. The report
+prints the covered/uncovered split for exactly this reason. The interactive session that dispatched
+the run is not counted by this path and never will be: it writes no transcript into `logs/govern`.
+
 ## The replay ("best-case") number's corpus is thin for the current version
 
 No transcript event carries the shiploop *package* version — only the Claude Code CLI version

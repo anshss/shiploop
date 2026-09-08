@@ -65,10 +65,19 @@ not confuse it with the `--arm all` flag already in the default command above. T
 |---|---|
 | `--fleet <path>` | a workspace to read, repeatable. Omit it entirely and the tool discovers the current workspace and its siblings |
 | `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all` |
+| `--baseline same-mix\|driver-tier\|all` | which MODEL that session runs on: the same tiers the work actually ran on, or the dispatching session's tier throughout. Default `driver-tier`. Composes with `--arm` as a matrix |
+| `--partials price\|drop` | count a session killed before its result event from the usage it did record, or drop it. Default `price`. Both totals print either way |
 | `--scope all\|resolved` | count every ticket the loop paid for, or only the ones `ticket-history.jsonl` marks resolved. Default `all` |
+| `--rows-file <path>` | aggregate a published rows file instead of reading transcripts; touches no workspace |
 | `--all` | use every run this workspace has, spanning every shiploop version, instead of the default newest-version-only scope. `/shiploop:bench all` maps here |
 | `--since YYYYMMDD[-HHMMSS]` | the older run-directory-timestamp cutoff; still works and composes with either version scope |
 | `--json` | machine-readable, same numbers |
+
+The default baseline is `driver-tier`, not the same model mix the work ran on. That is deliberate:
+the real alternative to the harness is one interactive session on the model the operator chose,
+doing everything itself, so routing work to a cheaper tier is a saving and the counterfactual has
+to price it as one. `--baseline same-mix` is the older, stricter arm and is kept: it is what the
+published historical figures were computed on.
 
 A workspace with no `logs/govern` transcripts exits non-zero and says so. That is the correct
 outcome, not a failure to explain away: there is nothing to replay until the governor has run.
@@ -76,7 +85,7 @@ outcome, not a failure to explain away: there is nothing to replay until the gov
 ## Phase 2 — Report
 
 Relay the tool's output as it stands. Do not restate a percentage without the arm it belongs to,
-and do not drop the modeled-counterfactual line. Four things in the output are worth pointing at
+and do not drop the modeled-counterfactual line. The things in the output worth pointing at are
 explicitly, because they are the parts a reader would otherwise have to be told:
 
 - **Which shiploop version the number covers.** The report's `shiploop version:` line names the
@@ -89,6 +98,15 @@ explicitly, because they are the parts a reader would otherwise have to be told:
 - **The arm changes the number more than the corpus does.** Against a 200k session with compaction
   the reduction is far smaller than against a 1M one, because a 200k window cannot hold much carry
   in the first place. Quote the arm or quote nothing.
+- **Which levers the corpus could actually see.** The lever table prints per-lever coverage. Four
+  levers (watchdog, resume, skip-the-model, escalation) are read from `lever-events.jsonl` and read
+  `uninstrumented` on any run dispatched before that file existed. `uninstrumented` is not `0%`:
+  do not relay it as evidence that a lever saves nothing. Two more are `absorbed`, meaning both arms
+  already have them, and three are `unmeasured` by choice with the reason printed.
+- **How much of the harness's own overhead the corpus covered.** Governor and scout transcripts are
+  charged INTO the shiploop arm, which lowers the number. Where a run wrote no such transcript it
+  is counted as `overhead-uncovered`, and the cost figure is then a lower bound on what the harness
+  really cost. Say which.
 - **The reconciliation ratio** is the self-check. It is computed cost over the cost the CLI itself
   reported, per session. A median far from 1.000 means the rate table no longer matches what the
   user is actually billed, and every dollar figure in the report should be treated as stale.

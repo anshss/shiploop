@@ -22,7 +22,10 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "SKIP: node not on PATH" >&2; exit 77; }
 
 FLEET="$HUB/bench/fixtures/replay-fleet"
-run_replay() { node "$HUB/bench/replay.mjs" --fleet "$FLEET" "$@" 2>&1; }
+# The LEGACY arm, pinned explicitly. #108 changed the defaults (baseline driver-tier, partials
+# priced), so every assertion below that locks the pre-#108 arithmetic names the old pair by hand.
+# The new defaults get their own test: test-bench-levers.sh.
+run_replay() { node "$HUB/bench/replay.mjs" --fleet "$FLEET" --baseline same-mix --partials drop "$@" 2>&1; }
 
 # ── the provenance banner is a line in the report, not a footnote ────────────
 report="$(run_replay --arm 1m)"
@@ -71,9 +74,16 @@ cents() { printf '%s' "$all" | jq -r "(.arms[\"$1\"].$2 * 10000 | round)"; }
 assert_eq "$(printf '%s' "$all" | jq -r '.arms["200k"].vanillaTokens')" "5779000" "200k arm vanilla tokens"
 assert_eq "$(printf '%s' "$all" | jq -r '.arms["1m"].vanillaTokens')" "11779000" "1m arm vanilla tokens"
 assert_eq "$(printf '%s' "$all" | jq -r '.arms["uncapped"].vanillaTokens')" "12679000" "uncapped arm vanilla tokens"
-assert_eq "$(cents 200k vanillaCostUsd)" "59506" "200k arm vanilla cost"
-assert_eq "$(cents 1m vanillaCostUsd)" "85006" "1m arm vanilla cost"
-assert_eq "$(cents uncapped vanillaCostUsd)" "86806" "uncapped arm vanilla cost"
+# Cost: the legacy figures live in coreModel, which is frozen carry-only same-mix pricing with
+# partials dropped and no harness overhead. It is the regression anchor for the published
+# 70.2/57.3/30.1/18.2, so it must not move for any reason short of a rate-table change.
+assert_eq "$(cents 200k coreModel.vanillaCostUsd)" "59506" "200k arm vanilla cost (legacy carry-only model)"
+assert_eq "$(cents 1m coreModel.vanillaCostUsd)" "85006" "1m arm vanilla cost (legacy carry-only model)"
+assert_eq "$(cents uncapped coreModel.vanillaCostUsd)" "86806" "uncapped arm vanilla cost (legacy carry-only model)"
+assert_eq "$(printf '%s' "$all" | jq -r '.arms["1m"].coreModel.vanillaTokens')" "11779000" \
+  "and coreModel carries the legacy token figure too"
+assert_eq "$(printf '%s' "$all" | jq -r '(.arms["1m"].coreModel.costReductionPct * 10 | round)')" "301" \
+  "the 1m arm's legacy cost reduction is 30.1% on this fixture and does not drift"
 assert_eq "$(cents 1m shiploopCostUsd)" "59386" "the shiploop arm is the same measured cost in every arm"
 assert_eq "$(cents 200k shiploopCostUsd)" "59386" "the shiploop arm does not move with the arm"
 
@@ -133,7 +143,8 @@ assert_contains "$missing" "Nothing to replay" "and does not crash"
 # place: the system/init event. Priced correctly (haiku) the session costs $0.029. A tool that
 # ignores the init event falls back to the most expensive tier and charges $0.145, a 5x error, and
 # then reports a "tier unrecognized" line that reads like a data problem rather than a parser bug.
-iflt="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-init-model-fleet" --arm 1m --json 2>&1)"
+iflt="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-init-model-fleet" --arm 1m \
+  --baseline same-mix --partials drop --json 2>&1)"
 assert_eq "$?" "0" "the init-model fleet replays"
 assert_eq "$(printf '%s' "$iflt" | jq -r '(.arms["1m"].shiploopCostUsd * 1000 | round)')" "29" \
   "a session that names its model only on the init event is priced at that model's tier"
@@ -160,7 +171,7 @@ assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery.recoverableInputSideToke
 assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery.outputRecoverable')" "false" \
   "output is never recovered: summing per-message output is the settled trap"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].shiploopTokens')" "5215000" \
-  "the DEFAULT arm stays purely measured: the recovered session is not folded into it"
+  "--partials drop keeps the arm purely measured: the recovered session is not folded into it"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].sensitivityWithRecoveredPartials.shiploopTokens')" "5265000" \
   "the sensitivity arm adds exactly the 50,000 recovered tokens"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].sensitivityWithRecoveredPartials.vanillaTokens')" "12767000" \

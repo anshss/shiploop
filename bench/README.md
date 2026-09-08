@@ -38,6 +38,15 @@ The shiploop GitHub repo description and the project website both carry this sen
 This section maps every element of that sentence to what backs it, or states plainly that nothing
 does. Read this before repeating the sentence anywhere else.
 
+> **Pending re-derivation (2026-09-08, #108).** Every figure in the table below was computed on the
+> `same-mix` baseline with partials dropped and the harness's own overhead uncharged, which is no
+> longer the tool's default arm. They remain exactly reproducible (`--baseline same-mix --partials
+> drop`, and `--rows-file bench/published-rows/replay-2026-09-05.jsonl` re-derives them from the
+> frozen rows), so nothing here is stale arithmetic. They are, however, a DIFFERENT arm from the one
+> `node bench/replay.mjs` now prints by default. Re-deriving this table against the new default arm
+> requires re-running the corpus across all seven fleets, which is tracked separately; until that
+> lands, quote these figures only with the arm named.
+
 | Element of the sentence | Backing |
 |---|---|
 | "up to 70%" | **Backed.** 70.2% token reduction, `1m` arm (1M-context vanilla), shiploop side measured / vanilla side modeled (`## The best-case number` below). "Up to" is load-bearing: reproduce this against the CLI's own default 200k-context session, the arm most readers will actually run, and the same corpus gives **30.1%**, not 70%. |
@@ -109,8 +118,26 @@ before quoting a percentage.
 |---|---|
 | `--fleet <path>` | a workspace to read, repeatable. Omit for auto-discovery of the current workspace and its siblings |
 | `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all`. `uncapped` is computed and labelled unphysical |
+| `--baseline same-mix\|driver-tier\|all` | which MODEL the counterfactual runs on. Default `driver-tier`. Composes with `--arm` as a matrix |
+| `--partials price\|drop` | count a session killed before its result event from the usage it did record, or drop it. Default `price`. Both totals print either way |
 | `--scope all\|resolved` | count every ticket the loop paid for, or only the resolved ones. Default `all` |
 | `--json` | machine-readable, same numbers |
+| `--rows` | one anonymized row per (run, ticket position), carrying the run's harness `version` and `ts` |
+| `--rows-file <path>` | aggregate a published rows file instead of reading transcripts. No workspace is touched |
+
+**Three metrics, never blended.** The report prints tokens, cost in USD, and quota-weighted tokens
+(tokens x the tier's input-rate ratio, the subscription framing). Routing work to a cheaper model
+cannot move the token column, and the report says so where it prints it.
+
+**Every lever, named.** The report decomposes the saving into additive components and asserts that
+they sum to it. Levers with no counterfactual are listed as `unmeasured`; levers already baked into
+both arms are listed as `absorbed (uncredited, conservative)`; levers that need instrumentation the
+corpus does not carry read `uninstrumented`, never `0%`. Full map: `bench/METHODOLOGY.md`.
+
+**The harness pays for itself.** Orchestration-side transcripts (governor, scout, re-verification)
+are summed INTO the shiploop arm. That lowers the shiploop number on purpose. A run that wrote no
+such transcript is flagged `overhead-uncovered` and counted, so what the charge could not reach is
+stated rather than assumed to be zero.
 
 The report always carries the pieces that make the number checkable: n runs, n tickets, sessions
 excluded for having no result event, the ceiling no architecture could beat, the rates

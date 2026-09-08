@@ -16,7 +16,9 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "SKIP: node not on PATH" >&2; exit 77; }
 
 FLEET="$HUB/bench/fixtures/replay-fleet"
-j="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm all --json 2>&1)"
+# Pinned to the LEGACY pair (same-mix, partials dropped). #108 moved the defaults; the invariants
+# below are the ones that must survive that move unchanged, so they name the old arm by hand.
+j="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm all --baseline same-mix --partials drop --json 2>&1)"
 assert_eq "$?" "0" "--json exits 0 on the fixture fleet"
 
 printf '%s' "$j" | jq -e . >/dev/null 2>&1
@@ -24,7 +26,7 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "arms,fleets,kind,meta,partialRecovery,provenance,reconciliation,scope,sessionsExcludedNoResultEvent,tierFallback" \
+  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unmeasuredLevers" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
@@ -56,13 +58,38 @@ assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope.runsKept')" "$(printf 
 assert_eq "$(printf '%s' "$j" | jq -r '.arms | keys | join(",")')" "1m,200k,uncapped" \
   "--arm all emits every arm"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | keys | join(",")')" \
-  "arm,ceilingCostReductionPct,ceilingTokenReductionPct,contextWindow,costReductionPct,label,medianTicketsPerRun,positionCurve,runs,sensitivityWithRecoveredPartials,sharedOutputCostUsd,shiploopBreakdown,shiploopCostUsd,shiploopTokens,tickets,ticketsInModeledRuns,tokenReductionPct,vanillaBreakdown,vanillaCostUsd,vanillaTokens" \
+  "arm,baseline,baselineLabel,ceilingCostReductionPct,ceilingTokenReductionPct,contextWindow,coreModel,costReductionPct,fleetSpread,label,leverSumCheck,levers,medianTicketsPerRun,overhead,partials,partialsTotals,positionCurve,quotaReductionPct,runs,sensitivityWithRecoveredPartials,sharedOutputCostUsd,shiploopBreakdown,shiploopCostUsd,shiploopQuotaWeighted,shiploopTokens,tickets,ticketsInModeledRuns,tokenReductionPct,unknownScriptedActionClasses,vanillaBreakdown,vanillaCostUsd,vanillaQuotaWeighted,vanillaTokens" \
   "each arm carries its own key set"
 assert_eq "$(printf '%s' "$j" | jq -r '[.arms[] | select(.runs > 0 and .tickets > 0)] | length')" "3" \
   "every arm reports its own n runs and n tickets"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].arm')" "1m" "the arm names itself"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].medianTicketsPerRun')" "4" \
   "the arm reports how many tickets a run clears, which is what the saving is a function of"
+assert_eq "$(printf '%s' "$j" | jq -r '.baseline')" "same-mix" "the JSON names the baseline it was computed under"
+assert_eq "$(printf '%s' "$j" | jq -r '.partials')" "drop" "and the partial-session mode"
+assert_eq "$(printf '%s' "$j" | jq -r '.quotaWeights | to_entries | map("\(.key)=\(.value)") | join(",")')" \
+  "opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers | keys | join(",")')" \
+  "cache-prefix,carry,escalation-correction,harness-overhead,output-suppression,resume-not-restart,routing,skip-the-model,watchdog" \
+  "every lever is named in every report, including the ones worth nothing here"
+assert_eq "$(printf '%s' "$j" | jq -r '[.arms[].leverSumCheck | .tokens and .cost and .quotaWeighted] | all')" "true" \
+  "the lever components sum to the arm saving, in all three metrics, in every arm"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers["watchdog"].status')" "uninstrumented" \
+  "an event-derived lever with no events anywhere is uninstrumented, NOT a measured zero"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers["carry"].status')" "measured" \
+  "carry is measured from the transcripts and says so"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers["routing"].status')" "not-in-this-baseline" \
+  "routing earns nothing under same-mix, and is labelled rather than shown as a zero saving"
+assert_eq "$(printf '%s' "$j" | jq -r '[.unmeasuredLevers[].lever] | join(",")')" \
+  "shared-exploration,memory-budget,blocked-work-early-catch" "the unmeasured levers are named, not omitted"
+assert_eq "$(printf '%s' "$j" | jq -r '[.absorbedLevers[].lever] | join(",")')" \
+  "lean-worker-session,scripted-codebase-map" "and the absorbed ones are named separately"
+assert_eq "$(printf '%s' "$j" | jq -r '.harnessOverhead | keys | join(",")')" \
+  "costUsd,covered,quota,runs,sessions,tokens,uncovered" "the harness-overhead charge has a fixed shape"
+assert_eq "$(printf '%s' "$j" | jq -r '.harnessOverhead.uncovered')" "1" \
+  "the fixture run has no orchestration transcript, so it is overhead-uncovered and counted"
+assert_eq "$(printf '%s' "$j" | jq -r '.driverTierAudit.fromFallbackHighestTier')" "1" \
+  "and the driver tier came from the fallback, which is counted rather than assumed"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].label')" "a 1M-context session" \
   "the arm carries the sentence a caller should print beside the number"
 
@@ -87,9 +114,11 @@ assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | .vanillaBreakdown.cacheRead
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | .vanillaBreakdown.cacheCreation < .shiploopBreakdown.cacheCreation')" "true" \
   "and the re-prime that only fresh sessions pay is refunded out of cache writes"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | [.vanillaBreakdown[]] | add')" "11779000" \
-  "the vanilla breakdown sums to the vanilla total"
+  "the vanilla breakdown sums to the vanilla token total"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | [.shiploopBreakdown[]] | add')" "5215000" \
   "the shiploop breakdown sums to the shiploop total"
+assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"] | ([.vanillaBreakdown[]] | add) == .vanillaTokens')" "true" \
+  "the breakdown is the total, not a parallel figure that can drift from it"
 
 # The ceiling is not decoration. Output is a cost no architecture removes, so no arm can ever
 # report a reduction above it, and a model that did would be broken rather than impressive.
@@ -136,11 +165,11 @@ assert_eq "$(printf '%s' "$j" | jq -r '.fleets[0].transcripts')" "5" \
   "state.jsonl is not counted as a transcript"
 
 # ── a single arm emits only that arm ─────────────────────────────────────────
-one="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 200k --json 2>&1)"
+one="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 200k --baseline same-mix --partials drop --json 2>&1)"
 assert_eq "$(printf '%s' "$one" | jq -r '.arms | keys | join(",")')" "200k" "--arm 200k emits one arm"
 
 # ── an empty fleet is still valid JSON with a zeroed arm, not a crash ────────
-e="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-empty-fleet" --arm 1m --json 2>&1)"
+e="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-empty-fleet" --arm 1m --baseline same-mix --json 2>&1)"
 rc=$?
 assert_eq "$rc" "1" "an empty fleet exits non-zero"
 assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tickets')" "0" "and reports zero tickets"
@@ -148,7 +177,7 @@ assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tokenReductionPct')" "null" \
   "and reports no reduction rather than a fabricated one"
 
 # ── --rows: the anonymized recomputable evidence, ticket #104 ────────────────
-rows="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 1m --rows 2>&1)"
+rows="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 1m --baseline same-mix --partials drop --rows 2>&1)"
 assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(select(true)) | length > 0')" "true" \
   "--rows emits at least one line"
 assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("run") and has("position") and has("shipTokens") and has("shipCostUsd") and has("vanillaTokens") and has("vanillaCostUsd")) | all')" \
@@ -157,5 +186,21 @@ assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("fleet") or has("ticket")) 
   "no row leaks the fleet path or the internal ticket id"
 assert_eq "$(printf '%s\n' "$rows" | jq -r '.run' | head -1 | grep -Ec '^[0-9a-f]{16}$')" "1" \
   "the run id is an opaque hash, not the real run-<timestamp> directory name"
+
+# Section 5 of the multi-lever spec: a published row carries the harness version it was produced
+# under and the run's timestamp, so version-scoping a published corpus is a filter rather than
+# date archaeology against raw logs. The fixture is unstamped, which is exactly the "old rows stay
+# valid, missing is unknown" case.
+assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("version") and has("ts") and has("baseline")) | all')" "true" \
+  "every row carries version, ts and the baseline it was computed under"
+assert_eq "$(printf '%s\n' "$rows" | jq -r '.version' | sort -u | tr "\n" ",")" "unknown," \
+  "an unstamped run publishes version unknown rather than omitting the field"
+
+# --rows-file: re-derive a published percentage from committed rows alone. This is the frozen
+# regression path, and it must never need a fleet workspace.
+rf="$(node "$HUB/bench/replay.mjs" --rows-file "$HUB/bench/published-rows/replay-2026-09-05.jsonl" --json 2>&1)"
+assert_eq "$?" "0" "--rows-file aggregates a published rows file"
+assert_eq "$(printf '%s' "$rf" | jq -r '.kind')" "replay-rows" "and names itself as a rows aggregation"
+assert_eq "$(printf '%s' "$rf" | jq -r '.rows')" "1821" "over every committed row"
 
 assert_done

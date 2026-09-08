@@ -11,7 +11,11 @@
 //
 // Two things this file prints CANNOT come from the rows themselves, by design: the rows are
 // privacy-stripped (bench/replay.mjs `--rows`, run/fleet identifiers hashed, no CLI version, no
-// model, no workspace name, no wall-clock date survive the strip). Those four facts (workspace
+// model, no workspace name survive the strip). Rows emitted from #108 onward DO carry the run
+// directory's timestamp (`ts`) and the harness version (`version`), so version-scoping a published
+// corpus is a filter rather than a re-run; nothing else about the strip changed, and rows published
+// before then carry neither. The constants below still stand for pre-#108 rows. Those four facts
+// (workspace
 // count, CLI version span, model span, calendar date span) are carried here as constants sourced
 // from the same 2026-09-05 measurement documented in bench/README.md ("The best-case number, on
 // the author's corpus"). If the corpus is ever refreshed, update PROVENANCE below in the same

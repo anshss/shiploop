@@ -1,0 +1,7 @@
+{"event":"watchdog-kill","ts":1801000000,"ticket":201,"session":"worker","tier":"sonnet","ctxTokens":300000,"turns":40,"reason":"context-cap"}
+{"event":"resume","ts":1801000001,"ticket":202,"session":"worker","tier":"haiku","checkpointTokens":10000,"freshStartTokens":60000}
+{"event":"scripted-action","ts":1801000002,"ticket":null,"session":"driver","tier":null,"class":"version-bump"}
+{"event":"scripted-action","ts":1801000003,"ticket":null,"session":"driver","tier":null,"class":"not-a-known-class"}
+{"event":"escalation","ts":1801000004,"ticket":201,"session":"worker","failedTier":"haiku","failedTokens":50000}
+{"event":"a-future-event-this-reader-does-not-know","ts":1801000005}
+this line is not json at all

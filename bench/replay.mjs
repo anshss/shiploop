@@ -33,6 +33,81 @@ const ARMS = {
 };
 const CURVE_POSITIONS = [1, 2, 3, 5, 8];
 
+// ── baselines (spec section 1) ───────────────────────────────────────────────
+// The context arm says how much a single session could CARRY. The baseline says what MODEL that
+// single session ran on. They compose into a matrix: 3 arms x 2 baselines.
+const BASELINES = {
+  'same-mix': {
+    label: 'the same sessions at the same model tiers, glued into one session',
+    short: 'same model mix',
+  },
+  'driver-tier': {
+    label: "one session running entirely on the dispatching session's own tier",
+    short: "driver's tier",
+  },
+};
+const DEFAULT_BASELINE = 'driver-tier';
+
+// Quota weight = the tier's input rate relative to the cheapest tier's. It is the
+// subscription-plan framing of the routing credit: a plan meters capacity, not dollars, and an
+// opus token eats five haiku tokens' worth of it. Printed in the report header, never mixed with
+// raw token counts.
+const QUOTA_WEIGHTS = { opus: 5, sonnet: 2, haiku: 1 };
+const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3 };
+
+// Conservative per-class estimate of the model turn a `scripted-action` event replaced, in tokens.
+// Deliberately low: a wrong-high estimate would manufacture savings, a wrong-low one only
+// understates. Printed in the report wherever the lever is credited. An unrecognised class is
+// counted, credited zero, and named.
+const SCRIPTED_ACTION_ESTIMATES = {
+  'version-bump': 12_000,
+  'release-notes': 20_000,
+  'queue-edit': 8_000,
+  'lint-fix': 15_000,
+  'doc-sync': 10_000,
+  'merge-pr': 8_000,
+  'status-check': 6_000,
+};
+
+// A transcript that is orchestration rather than ticket work: the governor's own model calls, the
+// scout, a re-verification pass. Spec section 4a charges these into the SHIPLOOP arm, which lowers
+// the shiploop number. Matched by basename (with any `.attemptN` / `.prior` infix) or by sitting
+// outside a `ticket-*` directory.
+const ORCHESTRATION_BASENAMES =
+  /^(governor|driver|scout|supervise|supervisor|improve|review|reverify|re-verify|reverification|porter|bookkeep)(\..*)?\.jsonl$/;
+
+// Levers this bench does NOT put a number on, each with the counterfactual that is missing. They
+// are printed in every report: a lever table that lists only what it can measure reads as a
+// complete accounting of the product, and it is not one.
+const UNMEASURED_LEVERS = [
+  {
+    lever: 'shared-exploration',
+    why: 'needs a counterfactual for what a second worker would have re-read had the first not written its findings down, which no transcript records.',
+  },
+  {
+    lever: 'memory-budget',
+    why: 'needs the size of the memory a session would have grown without a fixed budget, which is unobservable once the budget is enforced.',
+  },
+  {
+    lever: 'blocked-work-early-catch',
+    why: 'needs the cost of the run that a blocked ticket would have consumed had it not been caught, which by definition never ran.',
+  },
+];
+
+// Levers whose saving is already baked INTO the transcripts the vanilla arm is built from, so both
+// arms get them and neither is credited. The direction of the error is known (the model understates
+// shiploop), which is why these are `absorbed`, not `unmeasured`.
+const ABSORBED_LEVERS = [
+  {
+    lever: 'lean-worker-session',
+    why: 'trimmed tool lists and stripped worker context are already in the measured transcripts, so the modeled vanilla session inherits them. A true vanilla session would be fatter.',
+  },
+  {
+    lever: 'scripted-codebase-map',
+    why: 'the map replaced exploratory reads before the transcript existed, so the reads it avoided are absent from BOTH arms.',
+  },
+];
+
 function tierOf(model) {
   const m = String(model || '').toLowerCase();
   if (m.includes('opus')) return 'opus';
@@ -43,21 +118,38 @@ function tierOf(model) {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const opts = { arm: 'all', json: false, scope: 'all', fleets: [], all: false };
+  const opts = {
+    arm: 'all',
+    baseline: DEFAULT_BASELINE,
+    partials: 'price',
+    json: false,
+    scope: 'all',
+    fleets: [],
+    all: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--arm') opts.arm = argv[++i];
+    else if (a === '--baseline') opts.baseline = argv[++i];
+    else if (a === '--partials') opts.partials = argv[++i];
     else if (a === '--json') opts.json = true;
     else if (a === '--scope') opts.scope = argv[++i];
     else if (a === '--fleet') opts.fleets.push(path.resolve(argv[++i]));
     else if (a === '--since') opts.since = argv[++i];
     else if (a === '--all') opts.all = true;
     else if (a === '--rows') opts.rows = true;
+    else if (a === '--rows-file') opts.rowsFile = argv[++i];
     else if (a === '-h' || a === '--help') opts.help = true;
     else return { error: `unknown argument: ${a}` };
   }
   if (opts.arm !== 'all' && !ARMS[opts.arm]) {
     return { error: `unknown arm: ${opts.arm} (expected 200k, 1m, uncapped, or all)` };
+  }
+  if (opts.baseline !== 'all' && !BASELINES[opts.baseline]) {
+    return { error: `unknown baseline: ${opts.baseline} (expected same-mix, driver-tier, or all)` };
+  }
+  if (opts.partials !== 'price' && opts.partials !== 'drop') {
+    return { error: `unknown partials mode: ${opts.partials} (expected price or drop)` };
   }
   if (opts.scope !== 'all' && opts.scope !== 'resolved') {
     return { error: `unknown scope: ${opts.scope} (expected all or resolved)` };
@@ -66,11 +158,23 @@ function parseArgs(argv) {
 }
 
 const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|uncapped|all]
+                            [--baseline same-mix|driver-tier|all] [--partials price|drop]
                             [--scope all|resolved] [--since YYYYMMDD[-HHMMSS]] [--all] [--json]
+                            [--rows] [--rows-file <published-rows.jsonl>]
 
   --fleet   a shiploop workspace to read (repeatable). Defaults to auto-discovery of the
             current workspace and its siblings. Read only, never written to.
   --arm     which counterfactual session to model. Default all.
+  --baseline which MODEL the counterfactual session runs on. Composes with --arm as a matrix.
+            same-mix   = the same sessions at the same tiers, glued together (the pre-#108 model).
+            driver-tier = one session entirely on the dispatching session's tier, which is the
+                          real alternative to the harness. Default driver-tier.
+  --partials price (default) counts a session killed before its result event from the usage it
+            DID record, flagged partial. drop is the pre-#108 behavior, kept to reproduce
+            historical numbers. Both totals are printed either way.
+  --rows-file aggregate a published rows file (bench/published-rows/*.jsonl) instead of reading
+            transcripts, and print the reduction each arm's rows imply. This is the frozen
+            regression corpus: no fleet workspace is touched.
   --scope   all (every ticket the loop paid for) or resolved (only tickets that
             ticket-history.jsonl marks resolved). Default all. Scope selects what is
             COUNTED, never what happened: a failed ticket keeps contributing carry.
@@ -88,8 +192,9 @@ const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|u
   --rows    print one anonymized JSONL row per (run, ticket position) instead of the aggregate
             report — the recomputable evidence behind a published percentage. fleet/run/ticket
             identifiers are replaced with an opaque hash; run id, position (depth), sessions,
-            measured tokens/cost, and modeled tokens/cost survive. Combine with --arm to pick
-            which counterfactual's rows to emit (default: every arm, one row set per arm).`;
+            measured tokens/cost, modeled tokens/cost, and the run's shiploop version and
+            timestamp survive. Combine with --arm to pick which counterfactual's rows to emit
+            (default: every arm, one row set per arm).`;
 
 // ── fleet discovery ──────────────────────────────────────────────────────────
 function isFleet(dir) {
@@ -288,31 +393,35 @@ function parseTranscript(file) {
 // Cost is recomputed from published rates for BOTH arms, so the comparison never mixes a
 // reported dollar figure with a modeled one. The reported total_cost_usd is used only as the
 // reconciliation check.
-function sessionCost(sess, fb) {
+function costParts(sess) {
+  if (sess.modelUsage && Object.keys(sess.modelUsage).length) {
+    return Object.entries(sess.modelUsage).map(([model, mu]) => ({
+      model,
+      input: mu.inputTokens || 0,
+      output: mu.outputTokens || 0,
+      cacheRead: mu.cacheReadInputTokens || 0,
+      cacheCreation: mu.cacheCreationInputTokens || 0,
+    }));
+  }
+  return [{ model: fallbackModel(sess), ...sess.billed }];
+}
+
+function writeMultOf(sess) {
   const totalWrite = sess.write1h + sess.write5m;
   const frac1h = totalWrite > 0 ? sess.write1h / totalWrite : 1;
-  const writeMult = frac1h * CACHE_WRITE_1H_MULT + (1 - frac1h) * CACHE_WRITE_5M_MULT;
+  return frac1h * CACHE_WRITE_1H_MULT + (1 - frac1h) * CACHE_WRITE_5M_MULT;
+}
 
-  const parts = [];
-  if (sess.modelUsage && Object.keys(sess.modelUsage).length) {
-    for (const [model, mu] of Object.entries(sess.modelUsage)) {
-      parts.push({
-        model,
-        input: mu.inputTokens || 0,
-        output: mu.outputTokens || 0,
-        cacheRead: mu.cacheReadInputTokens || 0,
-        cacheCreation: mu.cacheCreationInputTokens || 0,
-      });
-    }
-  } else {
-    parts.push({ model: fallbackModel(sess), ...sess.billed });
-  }
-
+// `forceTier` prices every part of the session at one tier, which is what the `driver-tier`
+// baseline does to the vanilla arm: the same tokens, on the model the driver was already running.
+// Passing null keeps each model's own rate, which is what the measured arm always uses.
+function sessionCost(sess, fb, forceTier) {
+  const writeMult = writeMultOf(sess);
   let usd = 0;
   let outputUsd = 0;
-  for (const p of parts) {
-    const tier = tierOf(p.model);
-    if (!tier && fb) fb.models.add(p.model);
+  for (const p of costParts(sess)) {
+    const tier = forceTier || tierOf(p.model);
+    if (!forceTier && !tierOf(p.model) && fb) fb.models.add(p.model);
     const r = RATES[tier || 'opus'];
     outputUsd += (p.output * r.output) / 1e6;
     usd +=
@@ -323,6 +432,22 @@ function sessionCost(sess, fb) {
       1e6;
   }
   return { usd, outputUsd };
+}
+
+// Quota-weighted tokens: the session's own tokens, each weighted by the tier that actually ran
+// them (or by `forceTier` for the repriced arm). Never presented as, or added to, raw tokens.
+function sessionQuota(sess, forceTier) {
+  let q = 0;
+  for (const p of costParts(sess)) {
+    const tier = forceTier || tierOf(p.model) || 'opus';
+    q += (p.input + p.output + p.cacheRead + p.cacheCreation) * QUOTA_WEIGHTS[tier];
+  }
+  return q;
+}
+
+function sessionTokens(sess) {
+  const b = sess.billed;
+  return b.input + b.output + b.cacheRead + b.cacheCreation;
 }
 
 // Older CLI versions omit modelUsage, and an aborted session's only assistant messages can all be
@@ -336,21 +461,59 @@ function fallbackModel(sess) {
   return 'unresolved';
 }
 
-function dominantTier(sess) {
-  if (sess.modelUsage) {
-    let best = null;
-    let bestTok = -1;
-    for (const [model, mu] of Object.entries(sess.modelUsage)) {
-      const tok = (mu.inputTokens || 0) + (mu.cacheReadInputTokens || 0) + (mu.outputTokens || 0);
-      if (tok > bestTok) {
-        bestTok = tok;
-        best = model;
-      }
-    }
-    const t = tierOf(best);
-    if (t) return t;
+// Per-session input rate for the MODELED side (carry re-reads and the re-prime refund).
+//
+// This replaces the old `dominantTier()`, which resolved one tier for a whole session (the model
+// with the largest token volume) and priced all of that session's modeled overhead at it. On a
+// session that escalated tiers mid-run, the later heavier-context turns pulled that choice toward
+// the pricier tier and the whole session's overhead was billed there, inflating the modeled
+// vanilla cost in shiploop's favour. The rate is now the session's own input-side token mix
+// blended across the tiers that actually ran it, so a session that spent 90% of its input side on
+// sonnet is priced ~90% at sonnet. For a single-model session the two are identical, which is why
+// the legacy fixtures reproduce to the cent.
+function sessionInputRate(sess) {
+  let weighted = 0;
+  let tokens = 0;
+  for (const p of costParts(sess)) {
+    const t = tierOf(p.model);
+    const n = p.input + p.cacheRead + p.cacheCreation;
+    if (!t || n <= 0) continue;
+    weighted += n * RATES[t].input;
+    tokens += n;
   }
-  return tierOf(fallbackModel(sess)) || 'opus';
+  if (tokens > 0) return weighted / tokens;
+  return RATES[tierOf(fallbackModel(sess)) || 'opus'].input;
+}
+
+// The tier a session's tokens weigh against a subscription quota, blended the same way.
+function sessionQuotaRate(sess) {
+  let weighted = 0;
+  let tokens = 0;
+  for (const p of costParts(sess)) {
+    const t = tierOf(p.model);
+    const n = p.input + p.cacheRead + p.cacheCreation;
+    if (!t || n <= 0) continue;
+    weighted += n * QUOTA_WEIGHTS[t];
+    tokens += n;
+  }
+  if (tokens > 0) return weighted / tokens;
+  return QUOTA_WEIGHTS[tierOf(fallbackModel(sess)) || 'opus'];
+}
+
+// The highest tier any session in the run touched: the fallback driver tier when nothing recorded
+// which model dispatched the run. Conservative in the honest direction (it maximises the modeled
+// vanilla cost), so the report counts how often it fired rather than hiding it.
+function highestTier(sessions) {
+  let best = null;
+  for (const sess of sessions) {
+    for (const p of costParts(sess)) {
+      const t = tierOf(p.model);
+      if (t && (best == null || TIER_RANK[t] > TIER_RANK[best])) best = t;
+    }
+    const ft = tierOf(sess.initModel);
+    if (ft && (best == null || TIER_RANK[ft] > TIER_RANK[best])) best = ft;
+  }
+  return best;
 }
 
 // ── fleet scan ───────────────────────────────────────────────────────────────
@@ -493,11 +656,99 @@ function applyVersionScope(tickets, all) {
     kept };
 }
 
+// ── orchestration, aborts and lever events (spec sections 4, 4a, 4b) ─────────
+// Which side of the ledger a transcript belongs to. Ticket work is the measured arm's subject;
+// orchestration is the harness's own overhead, charged into the shiploop arm by section 4a.
+function roleOf(file, fleetDir) {
+  if (ORCHESTRATION_BASENAMES.test(path.basename(file))) return 'orchestration';
+  const rel = path.relative(path.join(fleetDir, 'logs', 'govern'), file);
+  if (!rel.split(path.sep).some((p) => /^ticket-/.test(p))) return 'orchestration';
+  return 'worker';
+}
+
+// A run whose state.jsonl is 0 bytes never dispatched anything: it aborted pre-flight. It is not a
+// bench input (there is no work to price), but it IS a dispatch-health signal, so it is counted
+// and printed rather than silently absent. See queue ticket #109.
+function preflightAborts(fleetDir) {
+  const logs = path.join(fleetDir, 'logs', 'govern');
+  let entries = [];
+  try {
+    entries = fs.readdirSync(logs, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const e of entries) {
+    if (!e.isDirectory() || !/^run-/.test(e.name)) continue;
+    try {
+      if (fs.statSync(path.join(logs, e.name, 'state.jsonl')).size === 0) n++;
+    } catch {
+      // no state.jsonl at all is not an abort we can prove; leave it uncounted.
+    }
+  }
+  return n;
+}
+
+// The four instrumentation events, read from the run's sibling `lever-events.jsonl`. Contract:
+// bench/LEVER-EVENTS.md. A file that does not exist means UNINSTRUMENTED, which is not the same
+// as zero saving and is never reported as one. A line that will not parse is counted and skipped.
+function readLeverEvents(fleetDir, run) {
+  const f = path.join(fleetDir, 'logs', 'govern', run, 'lever-events.jsonl');
+  let raw;
+  try {
+    raw = fs.readFileSync(f, 'utf8');
+  } catch {
+    return { present: false, events: [], malformed: 0, unknownEvents: 0 };
+  }
+  const events = [];
+  let malformed = 0;
+  let unknownEvents = 0;
+  const KNOWN = new Set(['watchdog-kill', 'resume', 'scripted-action', 'escalation']);
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      malformed++;
+      continue;
+    }
+    if (!ev || typeof ev !== 'object' || typeof ev.event !== 'string') {
+      malformed++;
+      continue;
+    }
+    if (!KNOWN.has(ev.event)) {
+      unknownEvents++;
+      continue;
+    }
+    events.push(ev);
+  }
+  return { present: true, events, malformed, unknownEvents };
+}
+
+// The tier the counterfactual session runs on under --baseline driver-tier. Resolution order:
+// an explicit `driver-model` stamp beside the run, then the run's own orchestration transcript,
+// then the highest tier any session in the run touched. The last is the FALLBACK and the report
+// counts how often it fired, per spec section 1.
+function resolveDriverTier(fleetDir, run, workerSessions, orchSessions) {
+  let stamp = null;
+  try {
+    stamp = fs.readFileSync(path.join(fleetDir, 'logs', 'govern', run, 'driver-model'), 'utf8').trim();
+  } catch {
+    stamp = null;
+  }
+  if (tierOf(stamp)) return { tier: tierOf(stamp), source: 'stamp' };
+  const fromOrch = highestTier(orchSessions);
+  if (fromOrch) return { tier: fromOrch, source: 'orchestration-transcript' };
+  return { tier: highestTier(workerSessions) || 'opus', source: 'fallback-highest-tier' };
+}
+
 function scanFleet(fleetDir) {
   const logs = path.join(fleetDir, 'logs', 'govern');
   const files = walkJsonl(logs, []);
   const statuses = ticketStatuses(fleetDir);
   const tickets = new Map(); // key "run#ticket" -> ticket record
+  const orchestration = new Map(); // run -> sessions[]
   let excluded = 0;
 
   for (const f of files) {
@@ -505,6 +756,11 @@ function scanFleet(fleetDir) {
     excluded += ex;
     if (!sessions.length) continue;
     const { run, ticket } = locate(f, fleetDir);
+    if (roleOf(f, fleetDir) === 'orchestration') {
+      if (!orchestration.has(run)) orchestration.set(run, []);
+      orchestration.get(run).push(...sessions);
+      continue;
+    }
     const key = `${run}#${ticket}`;
     let rec = tickets.get(key);
     if (!rec) {
@@ -529,7 +785,26 @@ function scanFleet(fleetDir) {
     rec.mtime = Math.max(rec.mtime, st);
     rec.sessions.push(...sessions);
   }
-  return { tickets: [...tickets.values()], excluded, files: files.length };
+
+  // Work the loop recorded as done that left no transcript here at all (a direct-to-main
+  // completion, or a resolve written by hand). Out of the bench's scope by design, but the
+  // denominator gap has to be visible, so it is counted from files rather than left unsaid.
+  const withTranscript = new Set([...tickets.values()].map((t) => String(t.ticket)));
+  const resolvedNoTranscript = new Set();
+  for (const [k, v] of statuses) {
+    if (!k.startsWith('*#') || v.status !== 'resolved') continue;
+    const id = k.slice(2);
+    if (!withTranscript.has(id)) resolvedNoTranscript.add(id);
+  }
+
+  return {
+    tickets: [...tickets.values()],
+    orchestration,
+    excluded,
+    files: files.length,
+    abortedRuns: preflightAborts(fleetDir),
+    resolvedWithoutTranscript: resolvedNoTranscript.size,
+  };
 }
 
 // ── the model ────────────────────────────────────────────────────────────────
@@ -541,10 +816,15 @@ function scanFleet(fleetDir) {
 // Output is identical in both arms. It is the same work and the same code written, so it is a
 // shared fixed cost and it appears in both arms in full. That is also why the reduction has a
 // hard ceiling well under 100%.
-function replayRun(allTicketsInOrder, window, includePartial) {
+// Every component is emitted twice, once priced at the sessions' own tiers (`same-mix`) and once
+// at the run's driver tier (`driver-tier`). The two baselines are then a selection, not a second
+// pass, which is what keeps the legacy arithmetic byte-for-byte reproducible.
+function replayRun(allTicketsInOrder, window, includePartial, driverTier) {
   const ticketsInOrder = includePartial
     ? allTicketsInOrder
     : allTicketsInOrder.filter((t) => t.sessions.some((x) => !x.partial));
+  const driverRead = (RATES[driverTier].input * CACHE_READ_MULT) / 1e6;
+  const driverWrite = (RATES[driverTier].input * CACHE_WRITE_1H_MULT) / 1e6;
   let carry = 0;
   const rows = [];
   for (let k = 0; k < ticketsInOrder.length; k++) {
@@ -552,15 +832,16 @@ function replayRun(allTicketsInOrder, window, includePartial) {
     const sessions = includePartial ? t.sessions : t.sessions.filter((x) => !x.partial);
     let shipTokens = 0;
     const shipParts = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
-    let shipCost = 0;
+    const own = { shipCost: 0, overheadCost: 0, creditCost: 0, prefixCost: 0, shipQuota: 0, overheadQuota: 0, creditQuota: 0 };
+    const drv = { shipCost: 0, overheadCost: 0, creditCost: 0, prefixCost: 0, shipQuota: 0, overheadQuota: 0, creditQuota: 0 };
     let outputCost = 0;
     let overheadTokens = 0;
-    let overheadCost = 0;
     let creditTokens = 0;
-    let creditCost = 0;
+    let prefixTokens = 0;
     let ownCarry = 0;
     let reportedCost = 0;
     let reconcilable = 0;
+    let partials = 0;
 
     for (let s = 0; s < sessions.length; s++) {
       const sess = sessions[s];
@@ -570,17 +851,22 @@ function replayRun(allTicketsInOrder, window, includePartial) {
       shipParts.output += b.output;
       shipParts.cacheRead += b.cacheRead;
       shipParts.cacheCreation += b.cacheCreation;
+      if (sess.partial) partials++;
       const c = sessionCost(sess, null);
-      shipCost += c.usd;
+      own.shipCost += c.usd;
+      drv.shipCost += sessionCost(sess, null, driverTier).usd;
+      own.shipQuota += sessionQuota(sess, null);
+      drv.shipQuota += sessionQuota(sess, driverTier);
       outputCost += c.outputUsd;
       if (sess.reportedCostUsd != null) {
         reportedCost += sess.reportedCostUsd;
         reconcilable++;
       }
 
-      const tier = dominantTier(sess);
-      const readRate = (RATES[tier].input * CACHE_READ_MULT) / 1e6;
-      const writeRate = (RATES[tier].input * CACHE_WRITE_1H_MULT) / 1e6;
+      const rate = sessionInputRate(sess);
+      const readRate = (rate * CACHE_READ_MULT) / 1e6;
+      const writeRate = (rate * CACHE_WRITE_1H_MULT) / 1e6;
+      const qRate = sessionQuotaRate(sess);
 
       // What one accumulating session pays that N fresh ones do not: the carry, re-read
       // every turn, bounded by the context window.
@@ -588,7 +874,10 @@ function replayRun(allTicketsInOrder, window, includePartial) {
         const headroom = window === Infinity ? Infinity : Math.max(0, window - turn.ctx);
         const eff = Math.min(carry, headroom);
         overheadTokens += eff;
-        overheadCost += eff * readRate;
+        own.overheadCost += eff * readRate;
+        drv.overheadCost += eff * driverRead;
+        own.overheadQuota += eff * qRate;
+        drv.overheadQuota += eff * QUOTA_WEIGHTS[driverTier];
       }
 
       // What N fresh sessions pay that one accumulating session does not: re-priming the base
@@ -597,7 +886,23 @@ function replayRun(allTicketsInOrder, window, includePartial) {
       if (!(k === 0 && s === 0) && sess.turns.length) {
         const prime = sess.turns[0].cacheCreation;
         creditTokens += prime;
-        creditCost += prime * writeRate;
+        own.creditCost += prime * writeRate;
+        drv.creditCost += prime * driverWrite;
+        own.creditQuota += prime * qRate;
+        drv.creditQuota += prime * QUOTA_WEIGHTS[driverTier];
+      }
+
+      // Lever 11b, cross-worker cache-prefix preservation. Measured from data every transcript
+      // already carries: a spawn whose prefix survived byte-identical pays turn-1 cache READS
+      // where a spawn without it would have paid cache WRITES. Credit is the read/write spread on
+      // exactly those tokens. Token COUNT is unchanged by it, which is why this lever contributes
+      // nothing to the token metric. Only sessions after the run's very first one can reuse
+      // anything, so the first is excluded.
+      if (!(k === 0 && s === 0) && sess.turns.length) {
+        const reused = sess.turns[0].cacheRead;
+        prefixTokens += reused;
+        own.prefixCost += reused * (writeRate - readRate);
+        drv.prefixCost += reused * (driverWrite - driverRead);
       }
 
       if (sess.turns.length) {
@@ -607,8 +912,10 @@ function replayRun(allTicketsInOrder, window, includePartial) {
       }
     }
 
+    // The legacy pair, kept exactly as it was before the multi-lever build: same-mix pricing,
+    // carry only, no harness overhead, no event-derived levers. It is the regression anchor.
     const vanTokens = Math.max(0, shipTokens + overheadTokens - creditTokens);
-    const vanCost = Math.max(0, shipCost + overheadCost - creditCost);
+    const vanCost = Math.max(0, own.shipCost + own.overheadCost - own.creditCost);
     rows.push({
       position: k + 1,
       fleet: t.fleet,
@@ -617,12 +924,16 @@ function replayRun(allTicketsInOrder, window, includePartial) {
       status: t.status,
       counted: t.counted !== false,
       sessions: sessions.length,
+      partials,
       shipTokens,
       shipParts,
       outputCost,
       overheadTokens,
       creditTokens,
-      shipCost,
+      prefixTokens,
+      own,
+      drv,
+      shipCost: own.shipCost,
       vanTokens,
       vanCost,
       reportedCost,
@@ -632,6 +943,135 @@ function replayRun(allTicketsInOrder, window, includePartial) {
     carry += ownCarry;
   }
   return rows;
+}
+
+// ── event-derived levers (spec section 4b, contract bench/LEVER-EVENTS.md) ───
+// Credit is earned only by runs that actually carry `lever-events.jsonl`. A run without one is
+// UNINSTRUMENTED and is reported as such; it never contributes a zero that would drag an average
+// down and read as "this lever saves nothing".
+function leversFromEvents(events, window, driverTier) {
+  const zero = () => ({ tokens: 0, cost: 0, quota: 0, n: 0 });
+  const out = {
+    watchdog: zero(),
+    resume: zero(),
+    'skip-the-model': zero(),
+    'escalation-correction': zero(),
+  };
+  const unknownClasses = new Map();
+  const readRate = (tier) => (RATES[tier].input * CACHE_READ_MULT) / 1e6;
+
+  for (const ev of events) {
+    const tier = tierOf(ev.tier) || driverTier;
+    if (ev.event === 'watchdog-kill') {
+      // The floor, not the true counterfactual: at minimum the un-killed session would have taken
+      // one more turn re-reading the context it had reached, bounded by the arm's window. A
+      // session the watchdog stopped could have run away much further; this credits one turn.
+      const tk = Math.min(Number(ev.ctxTokens) || 0, window);
+      out.watchdog.tokens += tk;
+      out.watchdog.cost += tk * readRate(tier);
+      out.watchdog.quota += tk * QUOTA_WEIGHTS[tier];
+      out.watchdog.n++;
+    } else if (ev.event === 'resume') {
+      const tk = Math.max(0, (Number(ev.freshStartTokens) || 0) - (Number(ev.checkpointTokens) || 0));
+      out.resume.tokens += tk;
+      out.resume.cost += tk * readRate(tier);
+      out.resume.quota += tk * QUOTA_WEIGHTS[tier];
+      out.resume.n++;
+    } else if (ev.event === 'scripted-action') {
+      const est = SCRIPTED_ACTION_ESTIMATES[ev.class];
+      out['skip-the-model'].n++;
+      if (est == null) {
+        unknownClasses.set(String(ev.class), (unknownClasses.get(String(ev.class)) || 0) + 1);
+        continue;
+      }
+      out['skip-the-model'].tokens += est;
+      out['skip-the-model'].cost += est * readRate(tier);
+      out['skip-the-model'].quota += est * QUOTA_WEIGHTS[tier];
+    } else if (ev.event === 'escalation') {
+      // An escalation means a cheap-tier attempt was wasted. The routing credit claimed for those
+      // tokens is not real, so it is taken back. Negative by construction; zero when the failed
+      // attempt already ran at or above the driver's tier, and zero under same-mix (see below,
+      // where the whole term is dropped when there is no routing credit to correct).
+      const ft = tierOf(ev.failedTier) || driverTier;
+      const tk = Number(ev.failedTokens) || 0;
+      const spread = RATES[driverTier].input - RATES[ft].input;
+      const qSpread = QUOTA_WEIGHTS[driverTier] - QUOTA_WEIGHTS[ft];
+      out['escalation-correction'].cost -= (tk * Math.max(0, spread)) / 1e6;
+      out['escalation-correction'].quota -= tk * Math.max(0, qSpread);
+      out['escalation-correction'].n++;
+    }
+  }
+  return { levers: out, unknownClasses };
+}
+
+// ── the frozen regression corpus (--rows-file) ───────────────────────────────
+// Published rows are the recomputable evidence behind a published percentage, and re-deriving the
+// percentage from them is the one regression check that does not depend on private transcripts.
+// The arithmetic here is deliberately the same three lines the METHODOLOGY jq recipe runs, so a
+// reader can check the tool against their own jq rather than against another run of the tool.
+function aggregateRowsFile(file, asJson) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    console.error(`cannot read rows file: ${file}`);
+    process.exit(2);
+  }
+  const byArm = new Map();
+  let rows = 0;
+  let malformed = 0;
+  let unknownVersion = 0;
+  const versions = new Set();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      malformed++;
+      continue;
+    }
+    rows++;
+    if (r.version) versions.add(r.version);
+    else unknownVersion++;
+    const k = r.arm || 'unknown';
+    if (!byArm.has(k)) byArm.set(k, { arm: k, rows: 0, shipTokens: 0, vanillaTokens: 0, shipCostUsd: 0, vanillaCostUsd: 0 });
+    const a = byArm.get(k);
+    a.rows++;
+    a.shipTokens += r.shipTokens || 0;
+    a.vanillaTokens += r.vanillaTokens || 0;
+    a.shipCostUsd += r.shipCostUsd || 0;
+    a.vanillaCostUsd += r.vanillaCostUsd || 0;
+  }
+  const arms = {};
+  for (const a of byArm.values()) {
+    arms[a.arm] = {
+      ...a,
+      tokenReductionPct: pct(a.shipTokens, a.vanillaTokens),
+      costReductionPct: pct(a.shipCostUsd, a.vanillaCostUsd),
+    };
+  }
+  const out = {
+    kind: 'replay-rows',
+    file,
+    rows,
+    malformedRows: malformed,
+    rowsWithoutVersion: unknownVersion,
+    versions: [...versions].sort(),
+    arms,
+  };
+  if (asJson) {
+    console.log(JSON.stringify(out, null, 2));
+  } else {
+    const L = [`shiploop bench: published rows`, `  file: ${file}`,
+      `  rows: ${rows}   malformed: ${malformed}   without a version stamp: ${unknownVersion} (treated as unknown)`,
+      `  versions: ${out.versions.length ? out.versions.join(', ') : 'none stamped'}`, ''];
+    for (const a of Object.values(arms)) {
+      L.push(`  arm ${a.arm}   ${a.rows} rows   tokens ${fmtPct(a.tokenReductionPct)}   cost ${fmtPct(a.costReductionPct)}`);
+    }
+    console.log(L.join('\n'));
+  }
+  process.exit(rows ? 0 : 1);
 }
 
 function median(xs) {
@@ -659,18 +1099,31 @@ function main() {
     process.exit(0);
   }
 
+  if (opts.rowsFile) {
+    aggregateRowsFile(opts.rowsFile, opts.json);
+    return;
+  }
+
   const fleets = opts.fleets.length ? opts.fleets : discoverFleets(process.cwd());
   const armNames = opts.arm === 'all' ? Object.keys(ARMS) : [opts.arm];
+  const baselineNames = opts.baseline === 'all' ? Object.keys(BASELINES) : [opts.baseline];
+  const primaryBaseline = baselineNames[0];
 
   const allTickets = [];
   let excludedSessions = 0;
+  let abortedRuns = 0;
+  let resolvedWithoutTranscript = 0;
   const fleetNotes = [];
+  const orchByRun = new Map(); // "fleet#run" -> orchestration sessions
 
   for (const fleet of fleets) {
-    const { tickets, excluded, files } = scanFleet(fleet);
-    excludedSessions += excluded;
-    allTickets.push(...tickets);
-    fleetNotes.push({ fleet, tickets: tickets.length, transcripts: files });
+    const scan = scanFleet(fleet);
+    excludedSessions += scan.excluded;
+    abortedRuns += scan.abortedRuns;
+    resolvedWithoutTranscript += scan.resolvedWithoutTranscript;
+    allTickets.push(...scan.tickets);
+    for (const [run, sessions] of scan.orchestration) orchByRun.set(`${fleet}#${run}`, sessions);
+    fleetNotes.push({ fleet, tickets: scan.tickets.length, transcripts: scan.files });
   }
 
   // --since: the older, coarser date-cutoff proxy for "sessions on shiploop version X or later"
@@ -754,36 +1207,256 @@ function main() {
     arr.sort((a, b) => orderKey(a) - orderKey(b) || String(a.ticket).localeCompare(String(b.ticket)));
   }
 
+  // Per-run context the model needs beyond the transcripts themselves: which tier the run's
+  // orchestrator was on (the `driver-tier` counterfactual), and whether the run carries the
+  // instrumentation events at all.
+  const runCtx = new Map();
+  for (const [key, arr] of runs) {
+    const [fleet, run] = [arr[0].fleet, arr[0].run];
+    const workerSessions = arr.flatMap((t) => t.sessions);
+    const orch = orchByRun.get(key) || [];
+    const driver = resolveDriverTier(fleet, run, workerSessions, orch);
+    const lev = readLeverEvents(fleet, run);
+    runCtx.set(key, {
+      fleet,
+      run,
+      driverTier: driver.tier,
+      driverTierSource: driver.source,
+      orch,
+      levers: lev,
+      version: runVersion(fleet, run),
+      dateKey: runDateKey(run),
+    });
+  }
+
+  const driverTierAudit = {
+    runs: runCtx.size,
+    fromStamp: [...runCtx.values()].filter((c) => c.driverTierSource === 'stamp').length,
+    fromOrchestrationTranscript: [...runCtx.values()].filter((c) => c.driverTierSource === 'orchestration-transcript')
+      .length,
+    fromFallbackHighestTier: [...runCtx.values()].filter((c) => c.driverTierSource === 'fallback-highest-tier').length,
+    tiers: [...new Set([...runCtx.values()].map((c) => c.driverTier))].sort(),
+  };
+
+  // Section 4a: the harness's own overhead, charged into the SHIPLOOP arm. A run with no
+  // orchestration transcript is `overhead-uncovered`: its governor/scout spend happened and is
+  // simply not in the corpus, so it is counted rather than assumed to be zero.
+  const overhead = { runs: runCtx.size, covered: 0, uncovered: 0, tokens: 0, costUsd: 0, quota: 0, sessions: 0 };
+  for (const c of runCtx.values()) {
+    if (!c.orch.length) {
+      overhead.uncovered++;
+      continue;
+    }
+    overhead.covered++;
+    for (const sess of c.orch) {
+      overhead.sessions++;
+      overhead.tokens += sessionTokens(sess);
+      overhead.costUsd += sessionCost(sess, null).usd;
+      overhead.quota += sessionQuota(sess, null);
+    }
+  }
+
+  const instrumented = { runs: runCtx.size, withEvents: 0, malformedLines: 0, unknownEvents: 0 };
+  for (const c of runCtx.values()) {
+    if (c.levers.present) instrumented.withEvents++;
+    instrumented.malformedLines += c.levers.malformed;
+    instrumented.unknownEvents += c.levers.unknownEvents;
+  }
+
   // --rows evidence, keyed by arm. Populated once per real (non-sensitivity) computeArm call.
   const rowsByArm = {};
 
-  const computeArm = (arm, includePartial) => {
+  const computeArm = (arm, baseline, includePartial, keepRows) => {
     const window = ARMS[arm].window;
     const all = [];
-    for (const arr of runs.values()) all.push(...replayRun(arr, window, includePartial));
+    const perRun = new Map();
+    for (const [key, arr] of runs) {
+      const rr = replayRun(arr, window, includePartial, runCtx.get(key).driverTier);
+      perRun.set(key, rr);
+      all.push(...rr);
+    }
     const rows = all.filter((r) => r.counted);
-    if (opts.rows && !includePartial) rowsByArm[arm] = all;
+    if (keepRows) rowsByArm[arm] = all;
+    const pick = (r) => (baseline === 'driver-tier' ? r.drv : r.own);
+    const routing = baseline === 'driver-tier';
 
-    const shipTokens = rows.reduce((s, r) => s + r.shipTokens, 0);
-    const vanTokens = rows.reduce((s, r) => s + r.vanTokens, 0);
-    const shipCost = rows.reduce((s, r) => s + r.shipCost, 0);
-    const outputCost = rows.reduce((s, r) => s + r.outputCost, 0);
-    const part = (k) => rows.reduce((s, r) => s + r.shipParts[k], 0);
-    const shipBreakdown = {
-      input: part('input'),
-      output: part('output'),
-      cacheRead: part('cacheRead'),
-      cacheCreation: part('cacheCreation'),
+    // One aggregation, used for the arm total AND for each fleet's row in the spread table, so a
+    // per-fleet figure can never be computed by a different model than the headline it sits under.
+    const aggregate = (rs) => {
+      const sum = (f) => rs.reduce((s, r) => s + f(r), 0);
+      const runKeys = new Set(rs.map((r) => `${r.fleet}#${r.run}`));
+
+      // Section 4a: the harness's own overhead, charged into the SHIPLOOP arm. A run with no
+      // orchestration transcript is `overhead-uncovered`: its governor and scout spend happened
+      // and is simply not in the corpus, so it is counted rather than assumed to be zero.
+      const ov = { runs: runKeys.size, covered: 0, uncovered: 0, sessions: 0, tokens: 0, costUsd: 0, quota: 0 };
+      const orchParts = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+      for (const key of runKeys) {
+        const c = runCtx.get(key);
+        if (!c || !c.orch.length) {
+          ov.uncovered++;
+          continue;
+        }
+        ov.covered++;
+        for (const sess of c.orch) {
+          ov.sessions++;
+          ov.tokens += sessionTokens(sess);
+          ov.costUsd += sessionCost(sess, null).usd;
+          ov.quota += sessionQuota(sess, null);
+          orchParts.input += sess.billed.input;
+          orchParts.output += sess.billed.output;
+          orchParts.cacheRead += sess.billed.cacheRead;
+          orchParts.cacheCreation += sess.billed.cacheCreation;
+        }
+      }
+
+      // The measured side is never repriced: it is what was actually billed. The harness's own
+      // orchestration spend is added on top, which LOWERS this arm's reduction on purpose.
+      const shipTokens = sum((r) => r.shipTokens) + ov.tokens;
+      const shipCost = sum((r) => r.own.shipCost) + ov.costUsd;
+      const shipQuota = sum((r) => r.own.shipQuota) + ov.quota;
+      const outputCost = sum((r) => r.outputCost);
+
+      // Event-derived levers, credited only in runs that carry lever-events.jsonl.
+      const evLevers = {
+        watchdog: { tokens: 0, cost: 0, quota: 0, n: 0 },
+        resume: { tokens: 0, cost: 0, quota: 0, n: 0 },
+        'skip-the-model': { tokens: 0, cost: 0, quota: 0, n: 0 },
+        'escalation-correction': { tokens: 0, cost: 0, quota: 0, n: 0 },
+      };
+      const coverage = { watchdog: 0, resume: 0, 'skip-the-model': 0, 'escalation-correction': 0 };
+      const unknownClassCounts = new Map();
+      let instrumentedRuns = 0;
+      for (const key of runKeys) {
+        const c = runCtx.get(key);
+        if (!c || !c.levers.present) continue;
+        instrumentedRuns++;
+        const { levers: L, unknownClasses } = leversFromEvents(c.levers.events, window, c.driverTier);
+        for (const [name, v] of Object.entries(L)) {
+          if (name === 'escalation-correction' && !routing) continue; // no routing credit to correct
+          const key2 = name;
+          evLevers[key2].tokens += v.tokens;
+          evLevers[key2].cost += v.cost;
+          evLevers[key2].quota += v.quota;
+          evLevers[key2].n += v.n;
+          if (v.n) coverage[key2]++;
+        }
+        for (const [k, n] of unknownClasses) unknownClassCounts.set(k, (unknownClassCounts.get(k) || 0) + n);
+      }
+      const evStatus = instrumentedRuns ? 'measured' : 'uninstrumented';
+
+      const levers = {
+        carry: {
+          tokens: sum((r) => r.overheadTokens - r.creditTokens),
+          cost: sum((r) => pick(r).overheadCost - pick(r).creditCost),
+          quota: sum((r) => pick(r).overheadQuota - pick(r).creditQuota),
+          n: rs.length,
+          status: 'measured',
+          coverage: { credited: runKeys.size, of: runKeys.size },
+        },
+        routing: {
+          tokens: 0,
+          cost: routing ? sum((r) => r.drv.shipCost - r.own.shipCost) : 0,
+          quota: routing ? sum((r) => r.drv.shipQuota - r.own.shipQuota) : 0,
+          n: rs.length,
+          status: routing ? 'measured' : 'not-in-this-baseline',
+          coverage: { credited: routing ? runKeys.size : 0, of: runKeys.size },
+        },
+        'cache-prefix': {
+          tokens: 0,
+          cost: sum((r) => pick(r).prefixCost),
+          quota: 0,
+          n: sum((r) => (r.prefixTokens > 0 ? 1 : 0)),
+          status: 'measured',
+          coverage: { credited: runKeys.size, of: runKeys.size },
+        },
+        watchdog: { ...evLevers.watchdog, status: evStatus, coverage: { credited: coverage.watchdog, of: runKeys.size } },
+        'resume-not-restart': { ...evLevers.resume, status: evStatus, coverage: { credited: coverage.resume, of: runKeys.size } },
+        'skip-the-model': { ...evLevers['skip-the-model'], status: evStatus, coverage: { credited: coverage['skip-the-model'], of: runKeys.size } },
+        'escalation-correction': {
+          ...evLevers['escalation-correction'],
+          status: !routing ? 'not-in-this-baseline' : evStatus,
+          coverage: { credited: coverage['escalation-correction'], of: runKeys.size },
+        },
+        // Not in the wire contract at all: bench/LEVER-EVENTS.md defines four events and output
+        // suppression is not one of them. The withheld bytes are, by construction, absent from the
+        // transcript, so no reader can recover them. Named, never shown as a measured zero.
+        'output-suppression': {
+          tokens: 0,
+          cost: 0,
+          quota: 0,
+          n: 0,
+          status: 'no-event-in-log-format',
+          coverage: { credited: 0, of: runKeys.size },
+        },
+        'harness-overhead': {
+          tokens: -ov.tokens,
+          cost: -ov.costUsd,
+          quota: -ov.quota,
+          n: ov.sessions,
+          status: 'measured',
+          coverage: { credited: ov.covered, of: ov.runs },
+        },
+      };
+
+      const leverTotal = (metric) => Object.values(levers).reduce((s, l) => s + (l[metric] || 0), 0);
+      const vanTokens = shipTokens + leverTotal('tokens');
+      const vanCost = shipCost + leverTotal('cost');
+      const vanQuota = shipQuota + leverTotal('quota');
+
+      // The additivity the spec requires: the components must BE the saving, not merely accompany
+      // it. A mismatch is a modelling bug and is reported as one rather than rounded away.
+      const check = (a, b) => Math.abs(a - b) <= Math.max(1e-6, Math.abs(b) * 1e-9);
+      const leverSumCheck = {
+        tokens: check(leverTotal('tokens'), vanTokens - shipTokens),
+        cost: check(leverTotal('cost'), vanCost - shipCost),
+        quotaWeighted: check(leverTotal('quota'), vanQuota - shipQuota),
+      };
+
+      const part = (k) => sum((r) => r.shipParts[k]);
+      const shipBreakdown = {
+        input: part('input') + orchParts.input,
+        output: part('output') + orchParts.output,
+        cacheRead: part('cacheRead') + orchParts.cacheRead,
+        cacheCreation: part('cacheCreation') + orchParts.cacheCreation,
+      };
+      // The vanilla arm is the same work with three edits: the carry is re-read every turn (cache
+      // read), the per-session re-prime that only fresh sessions pay is refunded (cache write), and
+      // the token-bearing instrumented levers add the context a session without them would have
+      // re-read. The harness's own overhead sits on the shiploop side only, so it comes back out.
+      const leverReadTokens = evLevers.watchdog.tokens + evLevers.resume.tokens + evLevers['skip-the-model'].tokens;
+      const vanBreakdown = {
+        input: part('input'),
+        output: part('output'),
+        cacheRead: part('cacheRead') + sum((r) => r.overheadTokens) + leverReadTokens,
+        cacheCreation: part('cacheCreation') - sum((r) => r.creditTokens),
+      };
+
+      return {
+        shipTokens, shipCost, shipQuota, vanTokens, vanCost, vanQuota,
+        outputCost, levers, leverSumCheck, shipBreakdown, vanBreakdown,
+        overhead: ov, instrumentedRuns,
+        unknownClassCounts: Object.fromEntries(unknownClassCounts),
+      };
     };
-    // The vanilla arm is the same work with two edits: the carry is re-read every turn (cache
-    // read), and the per-session re-prime that only fresh sessions pay is refunded (cache write).
-    const vanBreakdown = {
-      input: shipBreakdown.input,
-      output: shipBreakdown.output,
-      cacheRead: shipBreakdown.cacheRead + rows.reduce((s, r) => s + r.overheadTokens, 0),
-      cacheCreation: shipBreakdown.cacheCreation - rows.reduce((s, r) => s + r.creditTokens, 0),
-    };
-    const vanCost = rows.reduce((s, r) => s + r.vanCost, 0);
+
+    const A = aggregate(rows);
+    const {
+      shipTokens, shipCost, shipQuota, vanTokens, vanCost, vanQuota,
+      outputCost, levers, leverSumCheck, shipBreakdown, vanBreakdown,
+    } = A;
+    const unknownClassCounts = A.unknownClassCounts;
+    // The legacy pair: same-mix, carry only, partials dropped, no harness overhead. Frozen on
+    // purpose so a refactor that moves the published 70.2/57.3/30.1/18.2 is caught as a defect.
+    const coreRows = (
+      baseline === 'same-mix' && !includePartial
+        ? all
+        : [].concat(...[...runs.entries()].map(([key, arr]) => replayRun(arr, window, false, runCtx.get(key).driverTier)))
+    ).filter((r) => r.counted);
+    const coreShipTokens = coreRows.reduce((s, r) => s + r.shipTokens, 0);
+    const coreShipCost = coreRows.reduce((s, r) => s + r.own.shipCost, 0);
+    const coreVanTokens = coreRows.reduce((s, r) => s + r.vanTokens, 0);
+    const coreVanCost = coreRows.reduce((s, r) => s + r.vanCost, 0);
 
     const curve = {};
     for (const p of CURVE_POSITIONS) {
@@ -791,10 +1464,30 @@ function main() {
       curve[p] = { n: at.length, medianTokenReductionPct: median(at) };
     }
 
+    // Per-fleet spread, auto-printed: any pooled figure is an average over this, and the spread
+    // is wider than the figure (METHODOLOGY.md).
+    const fleetSpread = [];
+    for (const f of new Set(rows.map((r) => r.fleet))) {
+      const fr = rows.filter((r) => r.fleet === f);
+      const a = aggregate(fr);
+      fleetSpread.push({
+        fleet: f,
+        tickets: fr.length,
+        runs: new Set(fr.map((r) => r.run)).size,
+        tokenReductionPct: pct(a.shipTokens, a.vanTokens),
+        costReductionPct: pct(a.shipCost, a.vanCost),
+        quotaReductionPct: pct(a.shipQuota, a.vanQuota),
+      });
+    }
+    fleetSpread.sort((a, b) => (b.tokenReductionPct || 0) - (a.tokenReductionPct || 0));
+
     return {
       arm,
+      baseline,
+      partials: includePartial ? 'price' : 'drop',
       contextWindow: window === Infinity ? null : window,
       label: ARMS[arm].label,
+      baselineLabel: BASELINES[baseline].label,
       runs: new Set(rows.map((r) => `${r.fleet}#${r.run}`)).size,
       tickets: rows.length,
       ticketsInModeledRuns: all.length,
@@ -812,56 +1505,90 @@ function main() {
       vanillaBreakdown: vanBreakdown,
       shiploopCostUsd: shipCost,
       vanillaCostUsd: vanCost,
+      shiploopQuotaWeighted: shipQuota,
+      vanillaQuotaWeighted: vanQuota,
       tokenReductionPct: pct(shipTokens, vanTokens),
       costReductionPct: pct(shipCost, vanCost),
+      quotaReductionPct: pct(shipQuota, vanQuota),
+      levers,
+      leverSumCheck,
+      overhead: A.overhead,
+      unknownScriptedActionClasses: unknownClassCounts,
+      coreModel: {
+        shiploopTokens: coreShipTokens,
+        vanillaTokens: coreVanTokens,
+        shiploopCostUsd: coreShipCost,
+        vanillaCostUsd: coreVanCost,
+        tokenReductionPct: pct(coreShipTokens, coreVanTokens),
+        costReductionPct: pct(coreShipCost, coreVanCost),
+      },
       // The ceiling. Output is the same in both arms and no architecture removes it: the work
       // still has to be written. An arm that spent NOTHING but output would land here, so any
       // reduction above this line is arithmetically impossible, not merely unachieved.
       sharedOutputCostUsd: outputCost,
-      ceilingTokenReductionPct: pct(shipBreakdown.output, vanTokens),
+      ceilingTokenReductionPct: pct(vanBreakdown.output, vanTokens),
       ceilingCostReductionPct: pct(outputCost, vanCost),
       positionCurve: curve,
+      fleetSpread,
     };
   };
 
-  const armResults = {};
-  for (const arm of armNames) {
-    armResults[arm] = computeArm(arm, false);
-    // Sensitivity, always computed and always printed. The measured arm drops every session that
-    // never emitted a result event, and those are OUR spend, so dropping them is the exclusion
-    // that flatters us. This is what the same arm reports when their exactly recoverable input
-    // side is added back (output stays 0, because output is not recoverable).
-    const withPartials = computeArm(arm, true);
-    armResults[arm].sensitivityWithRecoveredPartials = {
-      shiploopTokens: withPartials.shiploopTokens,
-      vanillaTokens: withPartials.vanillaTokens,
-      shiploopCostUsd: withPartials.shiploopCostUsd,
-      vanillaCostUsd: withPartials.vanillaCostUsd,
-      tokenReductionPct: withPartials.tokenReductionPct,
-      costReductionPct: withPartials.costReductionPct,
-      tokenReductionDeltaPts:
-        withPartials.tokenReductionPct == null || armResults[arm].tokenReductionPct == null
-          ? null
-          : withPartials.tokenReductionPct - armResults[arm].tokenReductionPct,
-      costReductionDeltaPts:
-        withPartials.costReductionPct == null || armResults[arm].costReductionPct == null
-          ? null
-          : withPartials.costReductionPct - armResults[arm].costReductionPct,
-    };
+  const baselineResults = {};
+  for (const baseline of baselineNames) {
+    const armResults = {};
+    for (const arm of armNames) {
+      const primary = computeArm(arm, baseline, opts.partials === 'price', opts.rows && baseline === primaryBaseline);
+      // Both partials totals, always. Which one is the headline is a flag; which one exists is
+      // not. `sensitivityWithRecoveredPartials` is always the PRICED variant, so a consumer
+      // reading that key gets the same thing it always got.
+      const priced = opts.partials === 'price' ? primary : computeArm(arm, baseline, true, false);
+      const dropped = opts.partials === 'drop' ? primary : computeArm(arm, baseline, false, false);
+      primary.sensitivityWithRecoveredPartials = {
+        shiploopTokens: priced.shiploopTokens,
+        vanillaTokens: priced.vanillaTokens,
+        shiploopCostUsd: priced.shiploopCostUsd,
+        vanillaCostUsd: priced.vanillaCostUsd,
+        tokenReductionPct: priced.tokenReductionPct,
+        costReductionPct: priced.costReductionPct,
+        tokenReductionDeltaPts:
+          priced.tokenReductionPct == null || dropped.tokenReductionPct == null
+            ? null
+            : priced.tokenReductionPct - dropped.tokenReductionPct,
+        costReductionDeltaPts:
+          priced.costReductionPct == null || dropped.costReductionPct == null
+            ? null
+            : priced.costReductionPct - dropped.costReductionPct,
+      };
+      primary.partialsTotals = {
+        price: { tokenReductionPct: priced.tokenReductionPct, costReductionPct: priced.costReductionPct },
+        drop: { tokenReductionPct: dropped.tokenReductionPct, costReductionPct: dropped.costReductionPct },
+      };
+      armResults[arm] = primary;
+    }
+    baselineResults[baseline] = armResults;
   }
+  const armResults = baselineResults[primaryBaseline];
 
   if (opts.rows) {
     // Anonymized, recomputable evidence: one line per (run, ticket position), fleet/run/ticket
     // replaced with a hash so a workspace name or internal ticket number never leaves the machine.
     // Same numbers the aggregate above was built from — sum shipTokens/shipCost per run and you
     // reproduce the corresponding arm's shiploopTokens/shiploopCostUsd exactly.
+    // Section 5: every row also carries the shiploop version the run was dispatched under and the
+    // run's timestamp, so a version-scoped corpus is a filter over published rows rather than
+    // date archaeology against raw logs. Rows published before the stamp existed carry no
+    // version; a reader treats a missing one as "unknown" and the report counts them.
     for (const arm of armNames) {
       for (const r of rowsByArm[arm] || []) {
         const runHash = crypto.createHash('sha256').update(`${r.fleet}#${r.run}`).digest('hex').slice(0, 16);
+        const c = runCtx.get(`${r.fleet}#${r.run}`);
         console.log(
           JSON.stringify({
             arm,
+            baseline: primaryBaseline,
             run: runHash,
+            version: (c && c.version) || 'unknown',
+            ts: (c && c.dateKey) || null,
             position: r.position,
             counted: r.counted,
             sessions: r.sessions,
@@ -935,13 +1662,25 @@ function main() {
       'MODELED COUNTERFACTUAL. The shiploop arm is measured billed usage from result events. ' +
       'The vanilla arm is a model of one accumulating session over the same tickets. No vanilla session was run.',
     scope: opts.scope,
+    baseline: primaryBaseline,
+    partials: opts.partials,
+    quotaWeights: QUOTA_WEIGHTS,
+    scriptedActionEstimates: SCRIPTED_ACTION_ESTIMATES,
     meta,
     fleets: fleetNotes,
     sessionsExcludedNoResultEvent: excludedSessions,
+    abortedRuns,
+    resolvedWithoutTranscript,
+    driverTierAudit,
+    harnessOverhead: overhead,
+    instrumentation: instrumented,
+    unmeasuredLevers: UNMEASURED_LEVERS,
+    absorbedLevers: ABSORBED_LEVERS,
     partialRecovery,
     tierFallback,
     reconciliation: recon,
     arms: armResults,
+    baselines: baselineResults,
   };
 
   if (opts.json) {
@@ -1000,7 +1739,16 @@ function render(out) {
   const names = Object.keys(out.arms);
   L.push(`  ${names.map((n) => ARMS[n].label).join(' / ')}. No vanilla session was ever run.`);
   L.push('');
-  L.push(`  scope: ${out.scope}   fleets: ${out.fleets.length}`);
+  L.push(
+    `  baseline: ${out.baseline} (${BASELINES[out.baseline].label}).` +
+      `   partials: ${out.partials}.   scope: ${out.scope}   fleets: ${out.fleets.length}`,
+  );
+  L.push(
+    `  quota weights (input-rate ratios, never added to raw tokens): ` +
+      Object.entries(out.quotaWeights)
+        .map(([t, w]) => `${t} ${w}x`)
+        .join(', '),
+  );
   for (const f of out.fleets) {
     L.push(`    ${f.fleet}  (${f.transcripts} transcripts, ${f.tickets} tickets)`);
   }
@@ -1014,19 +1762,90 @@ function render(out) {
     return;
   }
 
+  // 1. The headline: the arm a real user reproduces. Ceilings are never the headline.
+  const headName = names.includes('200k') ? '200k' : names[0];
+  const head = out.arms[headName];
+  L.push(`  HEADLINE  baseline ${out.baseline} x arm ${headName}  (vs ${head.label})`);
+  L.push(`    tokens          shiploop ${fmtTok(head.shiploopTokens)}  vanilla ${fmtTok(head.vanillaTokens)}   reduction ${fmtPct(head.tokenReductionPct)}`);
+  L.push(`    cost            shiploop ${fmtUsd(head.shiploopCostUsd)}  vanilla ${fmtUsd(head.vanillaCostUsd)}   reduction ${fmtPct(head.costReductionPct)}`);
+  L.push(`    quota-weighted  shiploop ${fmtTok(head.shiploopQuotaWeighted)}  vanilla ${fmtTok(head.vanillaQuotaWeighted)}   reduction ${fmtPct(head.quotaReductionPct)}`);
+  L.push('    Tokens are model-independent: routing work to a cheaper tier cannot change that column.');
+  L.push('');
+
+  // 2. The per-lever table for the headline arm. Every lever, including the ones worth nothing
+  // here, including the one that is negative.
+  L.push(`  levers (arm ${headName}, baseline ${out.baseline}) -- components sum to the arm's saving`);
+  L.push('    lever                    tokens         cost   quota-weighted   coverage');
+  for (const [name, v] of Object.entries(head.levers)) {
+    const blank = v.status === 'uninstrumented' || v.status === 'no-event-in-log-format';
+    const cov =
+      v.status === 'uninstrumented'
+        ? `uninstrumented (${v.coverage.of - v.coverage.credited} of ${v.coverage.of} runs carry no lever-events.jsonl)`
+        : v.status === 'no-event-in-log-format'
+          ? 'uninstrumented (no such event in the log format; the withheld bytes are absent from every transcript)'
+          : v.status === 'not-in-this-baseline'
+            ? 'n/a for this baseline'
+            : `credited in ${v.coverage.credited} of ${v.coverage.of} runs`;
+    const tok = blank ? '   uninstr.' : fmtTok(v.tokens).padStart(9);
+    const usd = blank ? '   uninstr.' : fmtUsd(v.cost).padStart(11);
+    const q = blank ? '   uninstr.' : fmtTok(v.quota).padStart(14);
+    L.push(`    ${name.padEnd(22)}${tok}  ${usd}   ${q}   ${cov}`);
+  }
+  L.push(
+    `    sum check: tokens ${head.leverSumCheck.tokens ? 'ok' : 'MISMATCH'}, ` +
+      `cost ${head.leverSumCheck.cost ? 'ok' : 'MISMATCH'}, ` +
+      `quota-weighted ${head.leverSumCheck.quotaWeighted ? 'ok' : 'MISMATCH'}`,
+  );
+  L.push(
+    `    skip-the-model per-class estimates (tokens): ` +
+      Object.entries(out.scriptedActionEstimates)
+        .map(([k, v]) => `${k} ${v.toLocaleString('en-US')}`)
+        .join(', '),
+  );
+  if (Object.keys(head.unknownScriptedActionClasses || {}).length) {
+    L.push(
+      `    scripted-action classes with no estimate (counted, credited zero): ` +
+        Object.entries(head.unknownScriptedActionClasses)
+          .map(([k, n]) => `${k} x${n}`)
+          .join(', '),
+    );
+  }
+  L.push('');
+
+  // 3. The per-fleet spread. Any pooled figure is an average over this, and the spread is wider
+  // than the figure.
+  L.push(`  per-fleet spread (arm ${headName}, token / cost reduction)`);
+  for (const f of head.fleetSpread) {
+    L.push(
+      `    ${path.basename(f.fleet).padEnd(24)} ${String(f.tickets).padStart(4)} tickets, ` +
+        `${String(f.runs).padStart(3)} runs   ${fmtPct(f.tokenReductionPct)} / ${fmtPct(f.costReductionPct)}`,
+    );
+  }
+  L.push('');
+
   for (const name of names) {
     const a = out.arms[name];
     L.push(`  arm ${name}  (vs ${a.label})`);
     L.push(`    tokens    shiploop ${fmtTok(a.shiploopTokens)}  vanilla ${fmtTok(a.vanillaTokens)}   reduction ${fmtPct(a.tokenReductionPct)}`);
     L.push(`    cost      shiploop ${fmtUsd(a.shiploopCostUsd)}  vanilla ${fmtUsd(a.vanillaCostUsd)}   reduction ${fmtPct(a.costReductionPct)}`);
+    L.push(`    quota     shiploop ${fmtTok(a.shiploopQuotaWeighted)}  vanilla ${fmtTok(a.vanillaQuotaWeighted)}   reduction ${fmtPct(a.quotaReductionPct)}`);
     L.push(`    corpus    ${a.runs} runs, ${a.tickets} tickets, median run clears ${a.medianTicketsPerRun} ${a.medianTicketsPerRun === 1 ? 'ticket' : 'tickets'}, ${out.sessionsExcludedNoResultEvent} sessions excluded, ${out.partialRecovery.sessions} of them recoverable`);
     const curve = CURVE_POSITIONS.map((p) => {
       const c = a.positionCurve[p];
       return `#${p} ${c.n ? fmtPct(c.medianTokenReductionPct) : 'n/a'}`;
     }).join('  ');
     L.push(`    by ticket position (median token reduction): ${curve}`);
-    L.push(`    ceiling    ${fmtPct(a.ceilingTokenReductionPct)} tokens / ${fmtPct(a.ceilingCostReductionPct)} cost, the most any architecture could save here`);
+    L.push(`    ceiling    ${fmtPct(a.ceilingTokenReductionPct)} tokens / ${fmtPct(a.ceilingCostReductionPct)} cost, the most any architecture could save here (a CEILING, never a headline)`);
+    L.push(
+      `    carry-only legacy model (same-mix, partials dropped, no harness overhead): ` +
+        `${fmtPct(a.coreModel.tokenReductionPct)} tokens / ${fmtPct(a.coreModel.costReductionPct)} cost`,
+    );
     const sv = a.sensitivityWithRecoveredPartials;
+    L.push(
+      `    partials: priced ${fmtPct(a.partialsTotals.price.tokenReductionPct)} tokens / ` +
+        `${fmtPct(a.partialsTotals.price.costReductionPct)} cost   vs dropped ` +
+        `${fmtPct(a.partialsTotals.drop.tokenReductionPct)} tokens / ${fmtPct(a.partialsTotals.drop.costReductionPct)} cost`,
+    );
     if (out.partialRecovery.sessions) {
       L.push(
         `    if the ${out.partialRecovery.sessions} killed sessions' recoverable input side is added back to OUR arm: ` +
@@ -1035,6 +1854,42 @@ function render(out) {
     }
     L.push('');
   }
+
+  // 5/6. Exclusions and coverage: everything the corpus did not contain, counted.
+  const ov = out.harnessOverhead;
+  L.push(
+    `  harness overhead (charged INTO the shiploop arm): ${ov.sessions} orchestration session(s), ` +
+      `${fmtTok(ov.tokens)} tokens, ${fmtUsd(ov.costUsd)}; covered in ${ov.covered} of ${ov.runs} runs, ` +
+      `${ov.uncovered} overhead-uncovered.`,
+  );
+  if (ov.uncovered) {
+    L.push(
+      `                   An overhead-uncovered run spent governor/scout tokens that are not in the corpus, ` +
+        `so this arm's cost is a LOWER bound on what the harness really cost.`,
+    );
+  }
+  L.push(
+    `  driver tier: ${out.driverTierAudit.tiers.join(', ') || 'none'} over ${out.driverTierAudit.runs} runs ` +
+      `(${out.driverTierAudit.fromStamp} from a driver-model stamp, ` +
+      `${out.driverTierAudit.fromOrchestrationTranscript} from an orchestration transcript, ` +
+      `${out.driverTierAudit.fromFallbackHighestTier} from the highest-tier FALLBACK).`,
+  );
+  L.push(
+    `  instrumentation: ${out.instrumentation.withEvents} of ${out.instrumentation.runs} runs carry ` +
+      `lever-events.jsonl (${out.instrumentation.malformedLines} malformed line(s), ` +
+      `${out.instrumentation.unknownEvents} unrecognised event(s) skipped).`,
+  );
+  L.push(`  ${out.abortedRuns} run(s) aborted before dispatch (0-byte state.jsonl): excluded from the bench, counted here.`);
+  L.push(
+    `  ${out.resolvedWithoutTranscript} ticket(s) recorded resolved with no transcript in this corpus ` +
+      `(direct-to-main or hand-resolved work the bench cannot see).`,
+  );
+  L.push('');
+  L.push('  levers this bench does NOT measure, and what each would need:');
+  for (const u of out.unmeasuredLevers) L.push(`    ${u.lever}: ${u.why}`);
+  L.push('  levers absorbed (uncredited, conservative) because both arms already have them:');
+  for (const u of out.absorbedLevers) L.push(`    ${u.lever}: ${u.why}`);
+  L.push('');
 
   const tokensAll = names.length ? out.arms[names[0]].shiploopTokens : 0;
   L.push(`  rates reconciliation: median computed/reported = ${out.reconciliation.medianComputedOverReported == null ? 'n/a' : out.reconciliation.medianComputedOverReported.toFixed(3)} over ${out.reconciliation.n} sessions`);
