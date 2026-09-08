@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Driver-model run-dir stamp: logs/govern/<run>/driver-model, one line, the orchestrating (driver)
+# session's own bare tier (haiku/sonnet/opus). Sibling of govern::stamp_run_version's
+# logs/govern/<run>/shiploop-version, same file, same never-abort-a-dispatch contract, called from
+# the SAME spot in run-loop.sh. NOT a bench/LEVER-EVENTS.md event: this exists so bench/replay.mjs's
+# driver-tier baseline can price the counterfactual at the tier that actually dispatched a run
+# instead of guessing the highest tier observed anywhere in it (which is biased toward the most
+# expensive tier, and so toward shiploop's own credit: the exact class of bias spec section 4a
+# exists to eliminate). Unconditional: it must work on corpora where GOVERN_LEVER_EVENTS stays off.
+#
+# Covered:
+#   1. govern::model_family: bare alias, full id, a [1m] context-window suffix, a dated build id,
+#      an unknown model, and empty input.
+#   2. govern::stamp_driver_model PRESENT: a detectable session model writes the bare family name.
+#   3. govern::stamp_driver_model ABSENT: a genuinely undetectable session (every resolution source
+#      unset at once, matching test-model-ceiling.sh's own idiom) writes nothing, and the function
+#      still returns 0.
+#   4. an unwritable run dir does not abort the caller (return 0, no file), the same property
+#      test-lever-events.sh asserts for the lever-events emitter.
+#   5. integration: a real run-loop.sh dispatch actually produces the stamp at the real call site,
+#      not just in isolation.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/assert.sh"
+COMMON="$DIR/../lib/common.sh"
+RL="$DIR/../run-loop.sh"
+
+command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
+
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+mk_ws_stub "$T"
+
+# ── 1. govern::model_family ─────────────────────────────────────────────────────────────────────
+fam() { ( source "$COMMON"; govern::model_family "$1" ); }
+assert_eq "$(fam opus)"                              "opus"   "1. bare alias 'opus'"
+assert_eq "$(fam claude-sonnet-5)"                    "sonnet" "1. full id 'claude-sonnet-5'"
+assert_eq "$(fam 'claude-opus-5[1m]')"                 "opus"   "1. a [1m] context-window suffix does not change the family"
+assert_eq "$(fam claude-haiku-4-5-20251001)"          "haiku"  "1. a dated build id still resolves to its family"
+assert_eq "$(fam gpt-nano)"                           ""       "1. an unknown model → empty (no family)"
+assert_eq "$(fam '')"                                 ""       "1. empty input → empty"
+
+# ── 2. PRESENT ───────────────────────────────────────────────────────────────────────────────────
+mkdir -p "$T/run-present"
+GOVERN_WS_ROOT="$T" GOVERN_SESSION_MODEL="claude-sonnet-5" bash -c '
+  set -euo pipefail
+  source "$1"
+  govern::stamp_driver_model "$2"
+' _ "$COMMON" "$T/run-present"
+assert_eq "$(cat "$T/run-present/driver-model" 2>/dev/null || echo MISSING)" "sonnet" \
+  "2. a detectable session model → driver-model carries the bare family name"
+
+# ── 3. ABSENT (genuinely undetectable) ──────────────────────────────────────────────────────────
+# env -u, not unset: the ambient session driving THIS suite really does have a transcript on disk
+# (test-model-ceiling.sh's own reasoning for the same idiom), so this must be `env -u`, never a bare
+# `unset` inside the sourcing shell.
+mkdir -p "$T/run-absent"
+out3="$(env -u GOVERN_SESSION_MODEL -u ANTHROPIC_MODEL -u CLAUDE_CODE_SESSION_ID \
+  GOVERN_WS_ROOT="$T" bash -c '
+    set -euo pipefail
+    source "$1"
+    govern::stamp_driver_model "$2"
+    echo "rc=$?"
+  ' _ "$COMMON" "$T/run-absent")"
+assert_contains "$out3" "rc=0" "3. an undetectable session still returns 0 (never a caller-visible failure)"
+[[ -f "$T/run-absent/driver-model" ]] && present3=yes || present3=no
+assert_eq "$present3" "no" "3. an undetectable session model writes NOTHING, not a guess"
+
+# ── 4. unwritable run dir does not abort the caller ─────────────────────────────────────────────
+RO="$T/readonly"; mkdir -p "$RO"; chmod 0555 "$RO"
+if ( : > "$RO/sub/probe" ) 2>/dev/null; then
+  echo "SKIP: sandbox permits writes under a chmod 0555 dir (likely running as root): case 4 not exercisable" >&2
+else
+  out4="$(GOVERN_WS_ROOT="$T" GOVERN_SESSION_MODEL=opus bash -c '
+    set -euo pipefail
+    source "$1"
+    govern::stamp_driver_model "$2"
+    echo "SURVIVED rc=$?"
+  ' _ "$COMMON" "$RO/sub" 2>/dev/null)"
+  assert_contains "$out4" "SURVIVED rc=0" \
+    "4. an unwritable run dir (mkdir -p fails, the write fails) still returns 0 under set -e"
+  [[ -f "$RO/sub/driver-model" ]] && wrote4=yes || wrote4=no
+  assert_eq "$wrote4" "no" "4. nothing is written when the target directory could not be created"
+fi
+chmod 0755 "$RO"
+
+# ── 5. integration: the real run-loop.sh call site ──────────────────────────────────────────────
+# Minimal single-ticket dispatch, same scaffold shape as test-run-loop.sh. assert.sh pins
+# GOVERN_SESSION_MODEL=opus for the whole suite (the hermetic-ceiling seam), so the real call site
+# in run-loop.sh (right beside govern::stamp_run_version) must produce a stamp reading "opus".
+mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+cat > "$T/tickets.md" <<'EOF'
+# Tickets
+---
+## #1: sample ticket
+**Severity:** Medium: test.
+body
+---
+EOF
+printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
+cat > "$T/wt.sh" <<EOF
+#!/usr/bin/env bash
+mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
+EOF
+chmod +x "$T/wt.sh"
+cat > "$T/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr list"*)  echo '[]';;
+  *)            echo '[{"bucket":"pass"}]';;
+esac
+EOF
+chmod +x "$T/bin/gh"
+cat > "$T/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/1"},"lessonPatch":null,"newTickets":[],"crossRefs":{"overlaps":[],"dependsOn":[]},"migration":null,"escalation":null}'
+[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
+printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
+EOF
+chmod +x "$T/bin/claude"
+
+PATH="$T/bin:$PATH" \
+  GOVERN_TICKETS_FILE="$T/tickets.md" \
+  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
+  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
+  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
+  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
+  GOVERN_LOG_ROOT="$T/logs" \
+  GOVERN_TICKET_SEQ_FILE="$T/.ticket-seq" \
+  GOVERN_LOCK="$T/lock" \
+  GOVERN_WORKTREE_CMD="$T/wt.sh" \
+  GOVERN_CLAUDE_BIN="$T/bin/claude" \
+  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
+  bash "$RL" --serial 1 >/dev/null 2>&1
+
+rundir="$(ls -d "$T"/logs/run-* 2>/dev/null | head -1)"
+[[ -n "$rundir" && -f "$rundir/driver-model" ]] && present5=yes || present5=no
+assert_eq "$present5" "yes" "5. a real run-loop.sh dispatch stamps driver-model at the real call site"
+assert_eq "$(cat "$rundir/driver-model" 2>/dev/null || echo MISSING)" "opus" \
+  "5. content matches the suite's pinned GOVERN_SESSION_MODEL=opus"
+
+assert_done

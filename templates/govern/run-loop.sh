@@ -204,6 +204,12 @@ RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"; mkdir -p "$RUNDIR"
 # corpus to the current harness version instead of blending every version ever run — see
 # govern::stamp_run_version (lib/common.sh).
 govern::stamp_run_version "$RUNDIR"
+# Best-effort driver-model stamp (never aborts a dispatch), same shape as the version stamp above:
+# so bench/replay.mjs's driver-tier baseline can price the counterfactual at the tier that actually
+# dispatched this run, instead of guessing the highest tier observed anywhere in it. See
+# govern::stamp_driver_model (lib/common.sh). Unconditional, like the version stamp: it must work
+# on corpora where GOVERN_LEVER_EVENTS stays off.
+govern::stamp_driver_model "$RUNDIR"
 # #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
 # (a child process) inherits it. #183: defined BEFORE the lock so the holder file can record this run id.
