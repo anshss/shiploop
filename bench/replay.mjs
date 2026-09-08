@@ -1053,7 +1053,10 @@ function aggregateRowsFile(file, asJson) {
       continue;
     }
     rows++;
-    if (r.version) versions.add(r.version);
+    // Absent and the literal string `unknown` are the same state: a row whose run carried no
+    // version stamp. `--rows` writes the string, older rows have no field at all, and neither is
+    // a version anyone can scope by, so both are counted here and neither is listed as a version.
+    if (r.version && r.version !== 'unknown') versions.add(r.version);
     else unknownVersion++;
     const k = r.arm || 'unknown';
     if (!byArm.has(k)) byArm.set(k, { arm: k, rows: 0, shipTokens: 0, vanillaTokens: 0, shipCostUsd: 0, vanillaCostUsd: 0 });
@@ -1468,7 +1471,8 @@ function main() {
     } = A;
     const unknownClassCounts = A.unknownClassCounts;
     // The legacy pair: same-mix, carry only, partials dropped, no harness overhead. Frozen on
-    // purpose so a refactor that moves the published 70.2/57.3/30.1/18.2 is caught as a defect.
+    // purpose, so a refactor that silently moves the pre-#108 model is caught as a defect rather
+    // than absorbed into a new default. Locked on the synthetic fixture by test-bench-regression.sh.
     const coreRows = (
       baseline === 'same-mix' && !includePartial
         ? all

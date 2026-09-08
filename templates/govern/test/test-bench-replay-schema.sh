@@ -196,11 +196,15 @@ assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(has("version") and has("ts") an
 assert_eq "$(printf '%s\n' "$rows" | jq -r '.version' | sort -u | tr "\n" ",")" "unknown," \
   "an unstamped run publishes version unknown rather than omitting the field"
 
-# --rows-file: re-derive a published percentage from committed rows alone. This is the frozen
-# regression path, and it must never need a fleet workspace.
-rf="$(node "$HUB/bench/replay.mjs" --rows-file "$HUB/bench/published-rows/replay-2026-09-05.jsonl" --json 2>&1)"
-assert_eq "$?" "0" "--rows-file aggregates a published rows file"
+# --rows-file: re-derive a percentage from rows alone, with no fleet workspace involved. Fed here
+# by the rows just emitted, because no rows file is committed to this repository
+# (bench/published-rows/SCHEMA.md). Round-trip coverage lives in test-bench-regression.sh.
+RF="$(mktemp -d)"; trap 'rm -rf "$RF"' EXIT
+printf '%s\n' "$rows" > "$RF/rows.jsonl"
+rf="$(node "$HUB/bench/replay.mjs" --rows-file "$RF/rows.jsonl" --json 2>&1)"
+assert_eq "$?" "0" "--rows-file aggregates a rows file"
 assert_eq "$(printf '%s' "$rf" | jq -r '.kind')" "replay-rows" "and names itself as a rows aggregation"
-assert_eq "$(printf '%s' "$rf" | jq -r '.rows')" "1821" "over every committed row"
+assert_eq "$(printf '%s' "$rf" | jq -r '.rows')" "4" "over every row it was given"
+assert_eq "$(printf '%s' "$rf" | jq -r '.arms | keys | join(",")')" "1m" "grouped by the arm each row names"
 
 assert_done

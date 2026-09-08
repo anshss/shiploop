@@ -35,38 +35,42 @@ The shiploop GitHub repo description and the project website both carry this sen
 > faster by cutting wasted model work and getting more from its warm prompt cache with lean,
 > context-aware, resilient workers.
 
-This section maps every element of that sentence to what backs it, or states plainly that nothing
-does. Read this before repeating the sentence anywhere else.
+**Nothing in this directory currently backs any number in that sentence.** The claim-audit table
+that used to live here mapped each element of it to a measured or modeled figure. Those figures came
+off a corpus that cannot support them, so they have been removed rather than restated with caveats:
 
-> **Pending re-derivation (2026-09-08, #108).** Every figure in the table below was computed on the
-> `same-mix` baseline with partials dropped and the harness's own overhead uncharged, which is no
-> longer the tool's default arm. They remain exactly reproducible (`--baseline same-mix --partials
-> drop`, and `--rows-file bench/published-rows/replay-2026-09-05.jsonl` re-derives them from the
-> frozen rows), so nothing here is stale arithmetic. They are, however, a DIFFERENT arm from the one
-> `node bench/replay.mjs` now prints by default. Re-deriving this table against the new default arm
-> requires re-running the corpus across all seven fleets, which is tracked separately; until that
-> lands, quote these figures only with the arm named.
+- Nothing in the corpus is instrumented. Four of the levers the bench attributes savings to are read
+  from `lever-events.jsonl`, the emitter ships default OFF, and no run anywhere carries it.
+- No run recorded which model dispatched it, so the counterfactual's model tier is a fallback guess
+  in the direction that flatters the harness.
+- Almost no run wrote an orchestration transcript, so the harness's own overhead is uncharged and
+  the shiploop side of any comparison is a lower bound rather than a measurement.
 
-| Element of the sentence | Backing |
-|---|---|
-| "up to 70%" | **Backed.** 70.2% token reduction, `1m` arm (1M-context vanilla), shiploop side measured / vanilla side modeled (`## The best-case number` below). "Up to" is load-bearing: reproduce this against the CLI's own default 200k-context session, the arm most readers will actually run, and the same corpus gives **30.1%**, not 70%. |
-| "more efficient" | Ambiguous between tokens and cost, and the two are not the same number. On the same `1m` arm, token reduction is 70.2% but cost reduction is only 57.3% (see "Tokens vs. cost" below). If "efficient" is read as cost, the honest same-arm figure is 57.3%, not 70%. |
-| "and faster" | **NOT BACKED.** This benchmark measures tokens and cost only. No wall-clock timing was ever collected anywhere in this repository (`bench/METHODOLOGY.md`, "What is not measured at all"). Running N fresh worker sessions sequentially may well be SLOWER in wall-clock time than one continuous session: nothing here supports the speed half of the sentence in either direction. The word should not appear next to a number this benchmark produced. |
-| "by cutting wasted model work" | Descriptive mechanism claim, not an independently measured quantity. It is consistent with the token result (fresh workers avoid re-reading carried context that one accumulating session would re-read) but "wasted model work" is not itself a metric this repo computes. |
-| "getting more from its warm prompt cache" | Same treatment: describes *why* the modeled effect exists (the vanilla arm's cost model charges carried context at the cache-read rate every turn), not a separate figure. |
-| "lean, context-aware, resilient workers" | Product description, carries no number, not something this benchmark tests. |
+What can be said without a number, and what this repository does say elsewhere in full:
+
+- **"and faster" is not backed and cannot become backed by this benchmark.** No wall-clock timing is
+  collected anywhere in this repository (`bench/METHODOLOGY.md`, "What is not measured at all").
+  Running N fresh worker sessions sequentially may well be slower than one continuous session.
+- **"more efficient" is ambiguous between tokens and cost, and they are not the same number.** The
+  token figure is model-independent by construction; the cost figure depends on the rate table and
+  on the corpus's model mix. A cost reduction never carries the same confidence as a token
+  reduction, whatever the two turn out to be.
+- **"cutting wasted model work" and "warm prompt cache" are mechanism descriptions, not metrics.**
+  They describe why a modeled effect exists. Neither is a quantity this repository computes.
+
+`bench/published-rows/SCHEMA.md` states what has to happen before any of this can carry a figure
+again: instrumentation merged and switched on, runs accumulated on a stamping version, then a run.
 
 ### Tokens vs. cost: not the same robustness
 
-The token reduction is **model-independent by construction**: `vanillaTokens = shipTokens +
-overheadTokens - creditTokens` (`bench/replay.mjs`, `replayRun`) involves no dollar rate at any
-step, so 70.2% would be the same number on a corpus billed at any prices. The cost reduction is
-**not**: it is computed by applying the published per-tier rate table to both arms, so 57.3% is a
-function of this specific corpus's mix of haiku/sonnet/opus sessions and moves if that mix changes,
-even if the underlying token behavior is identical. Do not treat 57.3% as carrying the same
-confidence as 70.2% anywhere it is quoted. See also the mixed-model pricing note in
-`bench/METHODOLOGY.md` ("Flatters shiploop") and `bench/KNOWN-LIMITS.md`, which biases the cost
-figure specifically, not the token one.
+The token reduction is **model-independent by construction**: the token path involves no dollar
+rate at any step (`bench/replay.mjs`, `replayRun`), so a token figure would be the same on a corpus
+billed at any prices. The cost reduction is **not**: it applies the published per-tier rate table to
+both arms, so it is a function of that corpus's particular mix of haiku/sonnet/opus sessions and
+moves if the mix moves, even when the underlying token behaviour is identical. Whenever these
+numbers exist again, a cost reduction must never be quoted with the same confidence as a token
+reduction. See also the mixed-model pricing note in `bench/METHODOLOGY.md` ("Flatters shiploop") and
+`bench/KNOWN-LIMITS.md`, which biases the cost figure specifically, not the token one.
 
 ## Where the number is worst
 
@@ -74,14 +78,14 @@ Publishing a bad row is the category's cheapest credibility, and it costs nothin
 Three, each with its source, none softened:
 
 - **Ticket position 1 saves exactly 0%.** A fresh session against a fresh session is the same
-  session: nothing has been carried into the first ticket of any run, in every arm, at every fleet,
-  so a per-task claim is indefensible and the claim only exists at the run/backlog level. Measured
-  2026-09-05, n=251 position-1 rows across the corpus (`bench/published-rows/replay-2026-09-05.jsonl`,
-  `bench/results/proof-table.txt`).
-- **The arm most readers will actually run is 30.1%, not 70%.** The published "up to 70%" is the
-  `1m` (1M-context) arm. Against the CLI's own 200k-context default with compaction, the identical
-  corpus gives 30.1% tokens and 18.2% cost (see "The best-case number" below, and
-  `bench/results/proof-table.txt`).
+  session: nothing has been carried into the first ticket of any run, in any arm, at any fleet, so a
+  per-task claim is indefensible and the claim can only ever exist at the run level. This is
+  structural, not a property of any particular corpus, and `templates/govern/test/test-bench-replay.sh`
+  asserts it on the fixture.
+- **The arm most readers will actually run is the weakest one.** Any "up to" figure will be the `1m`
+  (1M-context) arm. Against the CLI's own 200k default with compaction the same corpus always gives
+  a substantially smaller number, because a 200k window cannot hold much carry in the first place.
+  Quote the arm or quote nothing.
 - **The one live, both-arms-measured run cleared 0 of 2 tickets on either side, and produced no
   usable savings figure.** `bench/pilot-backlogs/shiploop-mini`, measured 2026-09-05: the shiploop
   arm spent 17.4M tokens against vanilla's 6.1M, more tokens, not fewer, while costing $4.53 against
@@ -144,93 +148,41 @@ excluded for having no result event, the ceiling no architecture could beat, the
 reconciliation ratio, and the **per-ticket-position curve**. Ticket 1 saves exactly 0%, because
 nothing has been carried into it yet. That is the most useful line in the output.
 
-## The best-case number, on the author's corpus
+## There is no published number yet, and this section says why
 
-**Measured 2026-09-05.** Every shiploop fleet workspace on the author's machine, unfiltered:
-251 runs, 607 tickets, 7 workspaces. Reproduce with:
+This is where a measured corpus figure used to sit. It is gone, deliberately, and nothing has
+replaced it.
+
+The mechanism in this directory is complete: `bench/replay.mjs` runs, models both baselines and all
+three arms, prices three metrics, attributes per lever, and prints its own coverage. What it does
+not have is a corpus worth reporting on:
+
+| What the model needs | What the corpus has |
+|---|---|
+| `lever-events.jsonl` per run, for four of the levers | nothing. The emitter ships default OFF and has never run |
+| the dispatching session's model, for the `driver-tier` baseline | nothing. Every run falls back to "highest tier seen", a guess that flatters the harness |
+| an orchestration transcript per run, to charge the harness its own overhead | almost nothing. Nearly every run is `overhead-uncovered`, so the shiploop side is a lower bound |
+| a version stamp per run, to scope a figure to one harness version | nothing on any historical run |
+
+A percentage computed against that is a measurement of the instrumentation gap, not of the product,
+so none is published, quoted, or committed anywhere in this repository.
+
+**Anyone can still compute their own**, and the tool will tell them exactly how much of what it
+models their corpus could actually support:
 
 ```bash
-node bench/replay.mjs --fleet /path/to/aquanode --fleet /path/to/claude-keepalive \
-  --fleet /path/to/splito --fleet /path/to/tokenjam --fleet /path/to/vibelab \
-  --fleet /path/to/vibetrading --fleet /path/to/shiploop --arm all --json
+node bench/replay.mjs --fleet /path/to/your-workspace --arm all
 ```
 
-| vs a session with (modeled vanilla arm) | tokens saved (shiploop measured vs. vanilla modeled) | cost saved (shiploop measured vs. vanilla modeled) |
-|---|---|---|
-| 1M context | **70.2%** | 57.3% |
-| 200k context + compaction | 30.1% | 18.2% |
+The report prints the coverage counts next to every lever, the count of runs whose driver tier was
+guessed, the count of `overhead-uncovered` runs, and a paragraph saying that an uninstrumented
+corpus understates the harness rather than measuring it at zero. Read those before reading the
+percentage.
 
-The shiploop side of every cell above is measured billed usage from real transcripts. The vanilla
-side is a model: no vanilla session was run to produce these numbers (`bench/METHODOLOGY.md`).
-
-**Recompute these three numbers yourself, from the committed rows, with no access to the author's
-machine** (needs only `jq`, and the file already in this repo):
-
-```bash
-jq -s '
-  group_by(.arm)[] |
-  {
-    arm: .[0].arm,
-    tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
-    costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
-  }
-' bench/published-rows/replay-2026-09-05.jsonl
-```
-
-That reproduces 70.2%/57.3% (1M), 30.1%/18.2% (200k) and 85.5%/77.4% (uncapped) to one decimal
-place directly from the 1,821 committed rows: sum `shipTokens`/`vanillaTokens` (or the `*CostUsd`
-columns) per arm and the percentage falls out; no transcript, fleet, or `replay.mjs` re-run needed.
-
-The same recompute, formatted as a human-readable table with all three arms side by side, tokens
-and cost per arm, and the per-ticket-position curve, is committed at `bench/results/proof-table.txt`
-(the one path carved out of the otherwise-gitignored `bench/results/`). `node
-bench/gen-proof-table.mjs` regenerates it deterministically from the committed rows alone, no fleet
-or network involved, and `templates/govern/test/test-bench-proof-table.sh` fails CI if the committed
-table ever drifts from what the generator produces, so the published table and the published data
-cannot silently disagree the way two of the category's three benchmarks currently allow (neither
-caveman nor RTK commits a results file a reader can diff against; headroom does, and this follows
-its shape).
-
-**This spans many CLI releases and models, not one "current shiploop version" run.** The rows
-published above predate `bench/replay.mjs`'s per-run version stamp (`bench/KNOWN-LIMITS.md`): no
-run directory in this corpus carries a `shiploop-version` file, so the recompute command above used
-the full, unscoped sweep and still does. CLI versions seen: `2.1.126` through `2.1.246`. Models
-seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`.
-Date range: 2026-06-12 to 2026-09-04.
-
-As of the version stamp, `bench/replay.mjs` on a workspace running the CURRENT harness defaults to
-sessions stamped with the newest shiploop version present, rather than blending every version a
-workspace has ever run; `--all` (`/shiploop:bench all`) restores this same full-history sweep on
-demand. That default cannot be applied retroactively to the rows published here, since none of them
-were stamped in the first place — see `## Path 2` below for a current-version data point measured a
-different way, and `bench/KNOWN-LIMITS.md` for the full disclosure.
-
-**The saving is a property of backlog depth, not of the harness.** Ticket 1 saves 0% at the
-median: a fresh session against a fresh session is the same session (3 of 753 position-1 rows are
-the one documented exception, from a same-ticket retry: `bench/METHODOLOGY.md`). Per-position
-median token reduction (1M arm, pooled): ticket 1 (n=248) 0%, ticket 2 (n=71) 38.7%, ticket 3
-(n=54) 63.2%, ticket 5 (n=32) 74.4%, ticket 8 (n=15) 87.2%. Per-fleet breakdown, same measurement
-date, 1M arm:
-
-| Fleet | tickets | runs | median depth | tokens | cost |
-|---|---|---|---|---|---|
-| aquanode | 338 | 80 | 2 | 77.1% | 63.1% |
-| claude-keepalive | 31 | 4 | 8 | 72.7% | 57.7% |
-| tokenjam | 83 | 26 | 2.5 | 69.0% | 59.2% |
-| vibelab | 5 | 1 | 5 | 50.9% | 34.8% |
-| vibetrading | 105 | 98 | 1 | 4.4% | 1.8% |
-| shiploop (the hub's own workspace) | 43 | 40 | 1 | 5.6% | 4.3% |
-| splito | 2 | 2 | 1 | 0% | 0% |
-
-The three fleets at the bottom are not worse-run fleets: they dispatch close to one ticket per run,
-so by this model almost nothing is ever carried. Any single figure quoted from the pooled corpus is
-an average over that spread, and the spread is wider than the figure. Quote the arm alongside the
-number — against the 200k default the same corpus gives 30.1% tokens, and someone reproducing this
-will run the default.
-
-Raw per-(run, ticket-position) rows behind these numbers, fleet/run/ticket identifiers replaced
-with an opaque hash (`replay.mjs --rows`, `bench/KNOWN-LIMITS.md` for what "recomputable" does and
-does not mean here): `bench/published-rows/replay-2026-09-05.jsonl`.
+**The order of operations before a number ships here** (`bench/published-rows/SCHEMA.md`):
+instrumentation merges and is switched on, runs accumulate on a version that stamps both the
+harness version and the driver model, and only then does anyone run the bench for a figure and
+publish the rows behind it.
 
 ## Path 2: the live A/B harness, and the honest number it produced
 
@@ -266,11 +218,11 @@ measures both sides at once.
 ```
 bench/
   replay.mjs                      replay path: fleet transcripts -> measured vs modeled matrix
-  gen-proof-table.mjs             published-rows -> bench/results/proof-table.txt, deterministic
+  gen-proof-table.mjs             published-rows -> a human-readable proof table, deterministic
   METHODOLOGY.md                  what is measured, what is modeled, every assumption and its bias
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
-  published-rows/*.jsonl          anonymized per-(run,position) rows behind the published numbers
+  published-rows/SCHEMA.md        the row shape, and why nothing is published yet
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
   validate-backlog.sh             offline fail-to-pass gate; decides which backlogs are eligible
   arms.sh                         the three arm shapes
@@ -278,7 +230,7 @@ bench/
   rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
   fixtures/                       canned streams, the replay fixture fleet, golden results
   results/<run-id>/               results.jsonl + session logs, gitignored
-  results/proof-table.txt         the one committed exception: generated, human-readable, tested
+  results/README.md               why no result table is committed right now
 ```
 
 ## Arms
@@ -394,7 +346,9 @@ table in `fixtures/README.md`. They assert, among other things, that summing the
 `output_tokens` snapshots (which undercounts real output by a median of 33x) is not what produced
 the shiploop arm.
 
-`test-bench-proof-table.sh` regenerates `bench/results/proof-table.txt` with
-`bench/gen-proof-table.mjs` from the committed `bench/published-rows/*.jsonl` and fails if the
-result differs from the committed file by a single byte, from any working directory. This is the
-guard that makes the published table and the published rows unable to silently disagree.
+`test-bench-proof-table.sh` exercises `bench/gen-proof-table.mjs` against a rows file generated
+into a temp directory from the synthetic fixture fleet: it asserts the generator is deterministic,
+that its output does not depend on the caller's working directory, that an explicit path argument
+reproduces the default, and that the table tags its measured and modeled sides inline. It no longer
+diffs against a committed table, because no result table is committed: see `bench/results/README.md`
+and `bench/published-rows/SCHEMA.md`. That drift guard comes back with the first published corpus.

@@ -1,29 +1,25 @@
 #!/usr/bin/env node
-// bench/gen-proof-table.mjs: regenerate bench/results/proof-table.txt from the committed rows.
+// bench/gen-proof-table.mjs: render a published rows file as a human-readable proof table.
 //
-// Deterministic and fully offline: reads ONLY bench/published-rows/replay-*.jsonl (1,821 rows
-// committed to this repo), does no network, no `claude` process, no fleet transcripts. Same
-// inputs always produce the same bytes, which is the whole point: a drift test
-// (templates/govern/test/test-bench-proof-table.sh) runs this and diffs it against the committed
-// bench/results/proof-table.txt so the published table and the published data can never silently
-// diverge, the failure mode headroom (index_proof_table.txt) is built to prevent and caveman/RTK
-// do not (bench/README.md, "Ship proof, because the category does").
+// Deterministic and fully offline: reads ONLY a rows file (bench/published-rows/*.jsonl), does no
+// network, no `claude` process, no fleet transcripts. Same input always produces the same bytes.
 //
-// Two things this file prints CANNOT come from the rows themselves, by design: the rows are
-// privacy-stripped (bench/replay.mjs `--rows`, run/fleet identifiers hashed, no CLI version, no
-// model, no workspace name survive the strip). Rows emitted from #108 onward DO carry the run
-// directory's timestamp (`ts`) and the harness version (`version`), so version-scoping a published
-// corpus is a filter rather than a re-run; nothing else about the strip changed, and rows published
-// before then carry neither. The constants below still stand for pre-#108 rows. Those four facts
-// (workspace
-// count, CLI version span, model span, calendar date span) are carried here as constants sourced
-// from the same 2026-09-05 measurement documented in bench/README.md ("The best-case number, on
-// the author's corpus"). If the corpus is ever refreshed, update PROVENANCE below in the same
-// commit as the new published-rows file, or this table will (correctly) go stale-but-consistent
-// rather than silently wrong.
+// **Nothing is committed for it to read right now.** No rows file and no generated table ship in
+// this repository: see bench/published-rows/SCHEMA.md for why, and bench/results/README.md for the
+// empty output directory. The generator is kept working and tested (against a rows file generated
+// from the synthetic fixture fleet, templates/govern/test/test-bench-proof-table.sh) so that the
+// drift guard it exists for, regenerating the committed table from the committed rows and failing
+// on a one-byte difference, can be switched back on the day a corpus is published.
 //
-// Usage: node bench/gen-proof-table.mjs [path/to/replay-YYYY-MM-DD.jsonl]
-// Prints the table to stdout. `bench/results/proof-table.txt` is that output, committed verbatim.
+// Some of what a table needs CANNOT come from the rows: they are privacy-stripped (bench/replay.mjs
+// `--rows`, run and fleet identifiers hashed, no model, no workspace name survives). Rows do carry
+// the run's harness `version` and its `ts`, so version-scoping a published corpus is a filter
+// rather than a re-run. The rest (workspace count, CLI version span, model span, calendar date
+// span) is provenance that whoever publishes the rows supplies, via PROVENANCE below or the
+// PROOF_TABLE_PROVENANCE env override. Unset renders as "not supplied".
+//
+// Usage: node bench/gen-proof-table.mjs <path/to/rows.jsonl>
+// Prints the table to stdout. Committing that output means committing a performance claim.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,14 +29,30 @@ const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const DEFAULT_ROWS = path.join(HERE, 'published-rows', 'replay-2026-09-05.jsonl');
 const rowsPath = process.argv[2] || DEFAULT_ROWS;
 
-// Not recomputable from the anonymized rows (see header note): sourced from bench/README.md's
-// "The best-case number, on the author's corpus" section, same measurement date as DEFAULT_ROWS.
-const PROVENANCE = {
-  workspaces: 7,
-  cliVersionSpan: '2.1.126-2.1.246',
-  modelSpan: 'haiku-4.5, opus-4.7, opus-4.8, opus-5, sonnet-5',
-  dateSpan: '2026-06-12 to 2026-09-04',
+// Not recomputable from the anonymized rows (see header note): workspace count, CLI version span,
+// model span and calendar date span have to be supplied by whoever publishes the rows.
+//
+// These are EMPTY on purpose. They used to carry the 2026-09-05 corpus's facts, hard-coded beside a
+// committed rows file that no longer exists; leaving them in would have this generator assert the
+// provenance of a corpus this repository has disowned. Whoever publishes the next rows file fills
+// these in, in the same commit as the rows, or passes them via PROOF_TABLE_PROVENANCE as a JSON
+// object with the same four keys. Unset prints "not supplied" rather than a plausible-looking blank.
+const PROVENANCE_DEFAULT = {
+  workspaces: null,
+  cliVersionSpan: null,
+  modelSpan: null,
+  dateSpan: null,
 };
+let PROVENANCE = { ...PROVENANCE_DEFAULT };
+if (process.env.PROOF_TABLE_PROVENANCE) {
+  try {
+    PROVENANCE = { ...PROVENANCE, ...JSON.parse(process.env.PROOF_TABLE_PROVENANCE) };
+  } catch {
+    // A malformed override is not worth aborting a read-only table over: fall back to "not
+    // supplied", which is the honest rendering either way.
+  }
+}
+const prov = (v) => (v == null || v === '' ? 'not supplied' : v);
 
 const ARMS = ['200k', '1m', 'uncapped'];
 const MIN_POSITION_N = 10; // below this a median is one or two rows wide; not reported.
@@ -155,13 +167,13 @@ function main() {
   // drift test invokes this from an arbitrary working directory and the output must be byte-
   // identical regardless of where it was run from.
   lines.push(
-    `shiploop proof table, generated ${gen}, source: bench/published-rows/${path.basename(rowsPath)}`,
+    `shiploop proof table, generated ${gen}, source: ${path.basename(rowsPath)}`,
   );
   lines.push(
-    `corpus: ${runCount} runs, ${ticketCount} tickets, ${PROVENANCE.workspaces} workspaces (workspace count is provenance metadata, not derivable from the anonymized rows below)`,
+    `corpus: ${runCount} runs, ${ticketCount} tickets, ${prov(PROVENANCE.workspaces)} workspaces (workspace count is provenance metadata, not derivable from the anonymized rows below)`,
   );
   lines.push(
-    `cli ${PROVENANCE.cliVersionSpan} | models ${PROVENANCE.modelSpan} | dates ${PROVENANCE.dateSpan}`,
+    `cli ${prov(PROVENANCE.cliVersionSpan)} | models ${prov(PROVENANCE.modelSpan)} | dates ${prov(PROVENANCE.dateSpan)}`,
   );
   lines.push('');
   lines.push(
@@ -213,9 +225,9 @@ function main() {
   lines.push('');
   lines.push(`TOTAL rows in source file: ${rows.length} (${ticketCount} tickets x ${ARMS.length} arms)`);
   lines.push('');
-  lines.push('Recompute this table yourself: node bench/gen-proof-table.mjs');
+  lines.push('Recompute this table yourself: node bench/gen-proof-table.mjs <rows file>');
   lines.push(
-    'Recompute the three headline percentages with only jq: see the command in bench/README.md ("The best-case number").',
+    'Recompute the percentages with only jq: see the recipe in bench/METHODOLOGY.md ("Reproducing it").',
   );
 
   process.stdout.write(lines.join('\n') + '\n');

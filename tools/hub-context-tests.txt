@@ -40,6 +40,8 @@ test-bench-replay
 test-bench-replay-schema
 test-bench-proof-table
 test-bench-version-scope
+test-bench-levers
+test-bench-regression
 
 # QUARANTINED — test-wrap-in-place passes on macOS and fails on the Ubuntu runner with 31
 # assertion failures: the undo path exits 127 (a command the test shells out to is absent or
@@ -50,18 +52,3 @@ test-bench-version-scope
 # cross-check keeps seeing it; un-quarantine when the Linux failures are fixed.
 !test-wrap-in-place
 test-vocab-worker-pairing
-
-# bench/ ships in the hub only (scaffold.sh never installs it into a fleet workspace), so every
-# bench test resolves $HUB/bench/... and exits 77 in the scaffolded workspace. They run here.
-test-bench-arms
-test-bench-cap
-test-bench-levers
-test-bench-proof-table
-test-bench-regression
-test-bench-replay
-test-bench-replay-schema
-test-bench-rollup
-test-bench-schema
-test-bench-selection
-test-bench-validate
-test-bench-version-scope

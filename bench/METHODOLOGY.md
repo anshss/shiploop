@@ -141,9 +141,11 @@ what MODEL it ran on. They compose into a matrix, 3 arms x 2 baselines, selected
 | `same-mix` | the same sessions at the same tiers, glued into one session | no |
 | `driver-tier` | one session running entirely on the dispatching session's own tier | **yes** |
 
-`same-mix` is the pre-#108 model, unchanged and kept: it is the arm the published 70.2/57.3 and
-30.1/18.2 were computed on, and `bench/published-rows/replay-2026-09-05.jsonl` re-aggregates to
-those figures to one decimal as a regression guard (`test-bench-regression.sh`).
+`same-mix` is the pre-#108 model, unchanged and kept, because a model that silently changes what it
+computes cannot be checked. `coreModel` in the JSON freezes it on every arm regardless of which
+flags were passed, and `test-bench-regression.sh` asserts that it is invariant to `--baseline` and
+`--partials` on the synthetic fixture. That is a determinism guard over invented data, not a claim
+about any real corpus.
 
 `same-mix` has one structural blind spot, and it is the harness's most-used lever in practice:
 routing work to cheaper models. Under it, a sonnet worker's tokens are priced as sonnet on BOTH
@@ -290,21 +292,16 @@ The saving is carry, carry accumulates across a run, and ticket 1 saves exactly 
 a fleet shows is mostly a statement about **how many tickets its runs clear**, not about how good
 the harness is. The report prints the median tickets per run next to every arm for that reason.
 
-Across the author's seven fleets with transcripts (measured 2026-09-05), on the `1m` arm:
+No corpus figures are quoted here any more. The published per-fleet table that used to sit at this
+point was measured on a corpus that cannot support it (`bench/published-rows/SCHEMA.md`), and the
+finding it illustrated does not need it:
 
-| Fleet | tickets | runs | tokens | cost |
-|---|---|---|---|---|
-| aquanode | 338 | 80 | 77% | 63% |
-| claude-keepalive | 31 | 4 | 73% | 58% |
-| tokenjam | 83 | 26 | 69% | 59% |
-| vibelab | 5 | 1 | 51% | 35% |
-| vibetrading | 105 | 98 | 4% | 2% |
-| shiploop (the hub's own workspace) | 43 | 40 | 6% | 4% |
-| splito | 2 | 2 | 0% | 0% |
-
-The bottom three fleets are not worse-run fleets. They dispatched close to one ticket per run, so
-nothing was ever carried, so by this model they saved nothing. Any single figure quoted from the
-pooled corpus is an average over that spread, and the spread is wider than the figure.
+Fleets that dispatch close to one ticket per run carry almost nothing between tickets, so by this
+model they save almost nothing, and fleets that clear deep runs save a lot. That spread across
+fleets is wider than any single pooled figure drawn from it. **A pooled percentage is therefore an
+average over a distribution the reader cannot see**, which is why `replay.mjs` auto-prints the
+per-fleet spread table next to every arm rather than leaving it to a document. Read a fleet's own
+row, not the pooled number.
 
 ## The ceiling
 
@@ -312,19 +309,18 @@ Output is a cost no architecture removes. The work still has to be written, and 
 same code a single session would. So the maximum reduction any tool could report against a given
 arm is the point where everything except output has gone to zero.
 
-`replay.mjs` computes and prints this per arm. On the author's corpus (measured 2026-09-05, the
-same 7-fleet/251-run/607-ticket corpus as `README.md`'s best-case number):
+`replay.mjs` computes and prints this per arm, on whatever corpus it was given. No corpus ceiling is
+quoted here, for the same reason no saving is (`bench/published-rows/SCHEMA.md`), but the shape of
+the answer is fixed and worth stating without numbers:
 
-| Arm | Ceiling, tokens | Ceiling, cost |
-|---|---|---|
-| `200k` | 99.6% | 85.7% |
-| `1m` | 99.8% | 92.5% |
-| `uncapped` | 99.9% | 96.0% |
-
-The token ceiling is nearly 100% because output is a rounding error in token count (20.2M of
-3,464M). The cost ceiling is the meaningful one, because output is billed at 5x input and 50x cache
-read. **Anything claiming to beat roughly 93% on cost against a 1M session is claiming to have
-removed the writing.**
+- **The token ceiling sits near 100%**, because output is a rounding error in raw token count next
+  to the cache reads a long session accumulates. A token ceiling is therefore almost never the
+  binding constraint, and a token reduction close to it is not the achievement it looks like.
+- **The cost ceiling is the meaningful one**, because output is billed at 5x input and 50x cache
+  read, so it stays a large fraction of a session's cost no matter how the context is managed.
+- **A cost reduction that beats its own arm's ceiling is claiming to have removed the writing**,
+  which is arithmetically impossible rather than merely impressive. The report prints the ceiling
+  beside every arm and labels it a ceiling for exactly this reason.
 
 ## The live harness's per-session ceiling
 
@@ -424,14 +420,13 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
 7. **The re-prime refund is generous.** The whole first-turn cache write of every later session is
    refunded to the vanilla arm, as if a single session would need none of it. The refund fires on
    *any* session boundary after the run's very first session, including a same-ticket retry, not
-   only a boundary between two different tickets. That is why 3 of the 753 position-1 rows in
-   `bench/published-rows/replay-2026-09-05.jsonl` show `vanillaTokens` slightly *below*
-   `shipTokens` (all three are the same run, `sessions: 2` at position 1, replayed once per arm):
-   a retried ticket 1 still earns the refund on its second attempt even though nothing has been
-   carried across tickets yet. This is the correct application of the rule above, not a separate
-   bug, and it moves the reported reduction in vanilla's favor (smaller), the same direction as
-   every other item in this section. It does not move the median: `README.md`'s "ticket 1 (n=248)
-   0%" is the median across all 248 position-1 rows in the `1m`-arm pool, and a 0.3%-of-corpus
+   only a boundary between two different tickets. That is why a position-1 row can show
+   `vanillaTokens` slightly *below* `shipTokens`: a ticket that needed a same-ticket retry has two
+   sessions at position 1, and the second earns the refund even though nothing has been carried
+   across tickets yet. This is the correct application of the rule above, not a separate bug, and it
+   moves the reported reduction in vanilla's favor (smaller), the same direction as every other item
+   in this section. It does not move the median, because such rows are a small minority of any
+   position-1 pool, and a minority
    exception does not shift a median. Read "ticket 1 saves 0%" everywhere in this repository as
    the median / single-session case, not a per-row guarantee.
 8. **`200k` carry is bounded by observed context that came from 1M-window sessions.** Many worker
@@ -473,10 +468,13 @@ node bench/replay.mjs --arm all
 node bench/replay.mjs --arm 1m --json
 ```
 
-Those three commands need the author's own fleet transcripts, which are private workspaces and are
-not in this repository. **Recomputing the published headline needs neither the transcripts nor
-`replay.mjs`** -- only the anonymized rows already committed at
-`bench/published-rows/replay-2026-09-05.jsonl` and `jq`:
+Those commands need fleet transcripts, which live in private workspaces and are not in this
+repository. **There is no published headline to recompute right now**: no rows are committed, and
+`bench/published-rows/SCHEMA.md` states what has to happen before any are.
+
+The recomputation path exists and is what any future publication will be held to. A published rows
+file is anonymized per-(run, ticket position) evidence, and the percentage falls out of it with
+`jq` alone, without the transcripts and without trusting this tool's own aggregation:
 
 ```bash
 jq -s '
@@ -486,20 +484,18 @@ jq -s '
     tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
     costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
   }
-' bench/published-rows/replay-2026-09-05.jsonl
+' bench/published-rows/<file>.jsonl
 ```
 
-The tool will do the same aggregation over any published rows file without touching a workspace,
-which is what the regression test runs:
+The tool does the same aggregation over any rows file without touching a workspace:
 
 ```bash
-# the frozen corpus, through the tool: 70.2/57.3 (1m), 30.1/18.2 (200k), 85.5/77.4 (uncapped)
-node bench/replay.mjs --rows-file bench/published-rows/replay-2026-09-05.jsonl --json
+node bench/replay.mjs --rows-file bench/published-rows/<file>.jsonl --json
 ```
 
-Rows published from #108 onward also carry `baseline`, `version` and `ts`, so a version-scoped or
-baseline-scoped recomputation is a filter rather than a re-run. Rows published before that carry
-none of the three; a reader treats a missing `version` as `unknown`, and the tool counts them:
+Rows carry `baseline`, `version` and `ts`, so a version-scoped or baseline-scoped recomputation is a
+filter rather than a re-run. A row with no `version` reads `unknown` and the tool counts them
+separately rather than dropping them:
 
 ```bash
 # one arm, one baseline, one harness version, straight off published rows
@@ -513,11 +509,9 @@ jq -s '
 ' bench/published-rows/<file>.jsonl
 ```
 
-This sums the same `shipTokens`/`vanillaTokens` (and `*CostUsd`) columns `replay.mjs --json` summed
-to build the published aggregate, over every one of the 1,821 committed rows, and reproduces
-70.2%/57.3% (`1m`), 30.1%/18.2% (`200k`) and 85.5%/77.4% (`uncapped`) exactly. That is what
-"recomputable" means in this document: a reader never has to trust the author's run of the tool,
-only arithmetic over rows they can read themselves.
+That is what "recomputable" will mean here: a reader never has to trust the author's run of the
+tool, only arithmetic over rows they can read themselves. Until rows exist, the only numbers this
+repository stands behind are the synthetic fixture expectations the tests assert.
 
 The tests that lock the arithmetic are `templates/govern/test/test-bench-replay.sh` and
 `test-bench-replay-schema.sh`, running against `bench/fixtures/replay-fleet`, a synthetic fleet

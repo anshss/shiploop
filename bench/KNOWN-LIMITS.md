@@ -95,14 +95,13 @@ A session's later, heavier-context turns tend to carry the largest accumulated c
 which tends to pull `dominantTier` toward whichever model handled those later turns. When that is
 the pricier escalated tier, the entire session's modeled overhead is priced at the pricier rate,
 including turns that were actually run on a cheaper model earlier in the same session. That inflates
-the modeled vanilla cost, which biases the published COST reduction (57.3% on the `1m` arm) slightly
-in shiploop's favor.
+the modeled vanilla cost, which biased the COST reduction slightly in shiploop's favor.
 
-**This does not touch the TOKEN reduction (70.2%).** The token path (`vanTokens = shipTokens +
-overheadTokens - creditTokens`, `replay.mjs:511`) sums raw token counts and never multiplies by a
-rate, mixed-model or otherwise, so it is immune to this by construction. Full mechanism and the
-"Flatters shiploop" classification: `bench/METHODOLOGY.md`. Never quote 57.3% with the same
-confidence as 70.2%; `README.md`'s "Tokens vs. cost" section states why.
+**This did not touch the TOKEN reduction.** The token path (`vanTokens = shipTokens +
+overheadTokens - creditTokens`) sums raw token counts and never multiplies by a rate, mixed-model or
+otherwise, so it is immune to this by construction. Full mechanism and the "Flatters shiploop"
+classification: `bench/METHODOLOGY.md`. A cost reduction must never be quoted with the same
+confidence as a token reduction; `README.md`'s "Tokens vs. cost" section states why.
 
 **FIXED 2026-09-08 (#108).** `dominantTier()` is removed. The modeled side is now priced at the
 session's own input-side token mix blended across the tiers that actually ran it

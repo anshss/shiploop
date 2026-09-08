@@ -1,50 +1,79 @@
 #!/usr/bin/env bash
-# bench: the published numbers do not move.
+# bench: the model is deterministic and its published evidence round-trips.
 #
-# The multi-lever build (#108) changed what the DEFAULT arm reports. It must not change what the
-# published corpus reports. Two independent locks:
+# There is no published corpus and no committed rows file (bench/published-rows/SCHEMA.md), so this
+# asserts nothing about real performance. It asserts two things about the MECHANISM, both over
+# synthetic fixture data:
 #
-#   1. bench/published-rows/replay-2026-09-05.jsonl, the frozen anonymized evidence behind the
-#      published headline, re-aggregated by the tool itself. 70.2/57.3 (1m), 30.1/18.2 (200k),
-#      85.5/77.4 (uncapped). This needs no fleet workspace and no private transcript.
-#   2. bench/fixtures/replay-fleet, where the pre-#108 carry-only model's figures are pinned in
-#      `coreModel` regardless of which baseline or partials mode is selected. If a refactor moves
-#      those, it moved the legacy code path, which is a defect and not acceptable drift.
+#   1. Rows the tool emits aggregate back to the totals the run that emitted them reported, by the
+#      tool and independently by the jq recipe in METHODOLOGY.md. That is the recomputability claim
+#      any future publication will be held to, tested without needing a corpus to hold it against.
+#   2. `coreModel`, the pre-#108 carry-only same-mix model, is frozen on bench/fixtures/replay-fleet
+#      and invariant to --baseline and --partials. If a refactor moves it, it moved the legacy code
+#      path, which is a defect rather than acceptable drift.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 set +e
 
 HUB="$(cd "$DIR/../../.." && pwd)"
-[ -f "$HUB/bench/replay.mjs" ] && [ -f "$HUB/bench/published-rows/replay-2026-09-05.jsonl" ] || \
+[ -f "$HUB/bench/replay.mjs" ] && [ -d "$HUB/bench/fixtures/replay-fleet" ] || \
   { echo "SKIP: not running from a hub checkout ($HUB)" >&2; exit 77; }
 command -v node >/dev/null 2>&1 || { echo "SKIP: node not on PATH" >&2; exit 77; }
 
-ROWS="$HUB/bench/published-rows/replay-2026-09-05.jsonl"
+# ── 1. the rows round trip, on rows this test generates itself ──────────────
+# There is no committed rows file to check against (bench/published-rows/SCHEMA.md: nothing is
+# published until the harness is instrumented). What still has to hold is that a rows file the tool
+# EMITS aggregates back to the arm totals it was emitted from. That is the whole recomputability
+# claim, and it needs no real corpus to test: emit from the synthetic fixture, aggregate, compare.
+FLEET="$HUB/bench/fixtures/replay-fleet"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
-# ── 1. the frozen corpus, through the tool ───────────────────────────────────
-j="$(node "$HUB/bench/replay.mjs" --rows-file "$ROWS" --json 2>&1)"
-assert_eq "$?" "0" "--rows-file aggregates the frozen published rows"
-one() { printf '%s' "$j" | jq -r "(.arms[\"$1\"].$2 * 10 | round)"; }
+node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm all --baseline same-mix --partials drop \
+  --rows > "$T/rows.jsonl" 2>"$T/rows.err"
+assert_eq "$?" "0" "--rows emits a rows file from the fixture fleet"
+assert_eq "$(wc -l < "$T/rows.jsonl" | tr -d ' ')" "12" "one row per (arm, ticket position): 3 arms x 4 tickets"
 
-assert_eq "$(one 1m tokenReductionPct)" "702" "1m arm reproduces the published 70.2% token reduction"
-assert_eq "$(one 1m costReductionPct)" "573" "1m arm reproduces the published 57.3% cost reduction"
-assert_eq "$(one 200k tokenReductionPct)" "301" "200k arm reproduces the published 30.1% token reduction"
-assert_eq "$(one 200k costReductionPct)" "182" "200k arm reproduces the published 18.2% cost reduction"
-assert_eq "$(one uncapped tokenReductionPct)" "855" "uncapped arm reproduces the published 85.5%"
-assert_eq "$(one uncapped costReductionPct)" "774" "uncapped arm reproduces the published 77.4%"
-assert_eq "$(printf '%s' "$j" | jq -r '.rows')" "1821" "over all 1,821 committed rows"
-assert_eq "$(printf '%s' "$j" | jq -r '.malformedRows')" "0" "none of which is malformed"
-assert_eq "$(printf '%s' "$j" | jq -r '.rowsWithoutVersion')" "1821" \
-  "rows published before version stamping carry no version, and are COUNTED as unknown rather than dropped"
+j_rows="$(node "$HUB/bench/replay.mjs" --rows-file "$T/rows.jsonl" --json 2>&1)"
+assert_eq "$?" "0" "--rows-file aggregates a rows file with no workspace in sight"
+assert_eq "$(printf '%s' "$j_rows" | jq -r '.kind')" "replay-rows" "and names itself as a rows aggregation"
+assert_eq "$(printf '%s' "$j_rows" | jq -r '.arms | keys | join(",")')" "1m,200k,uncapped" "over every arm in the file"
+assert_eq "$(printf '%s' "$j_rows" | jq -r '.malformedRows')" "0" "with nothing unparseable"
 
-# The same arithmetic, independently, in jq: a reader must never have to trust the tool's own
-# aggregation to check the tool's own headline. This is the recipe printed in METHODOLOGY.md.
+# The round trip: aggregating the emitted rows must land on the same percentage the run that
+# emitted them reported. A drift here means the published evidence would not reproduce the
+# published number, which is the exact failure this guard exists to make impossible.
+j_run="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm all --baseline same-mix --partials drop --json 2>&1)"
+for arm in 200k 1m uncapped; do
+  from_rows="$(printf '%s' "$j_rows" | jq -r --arg a "$arm" '(.arms[$a].tokenReductionPct * 10000 | round)')"
+  from_run="$(printf '%s' "$j_run" | jq -r --arg a "$arm" '(.arms[$a].coreModel.tokenReductionPct * 10000 | round)')"
+  assert_eq "$from_rows" "$from_run" "rows for $arm re-aggregate to the token reduction the run reported"
+  c_rows="$(printf '%s' "$j_rows" | jq -r --arg a "$arm" '(.arms[$a].costReductionPct * 10000 | round)')"
+  c_run="$(printf '%s' "$j_run" | jq -r --arg a "$arm" '(.arms[$a].coreModel.costReductionPct * 10000 | round)')"
+  assert_eq "$c_rows" "$c_run" "and to the cost reduction for $arm"
+done
+
+# The same arithmetic in jq, so the tool's own aggregation is never the only witness to it. This is
+# the recipe printed in METHODOLOGY.md, run against the rows just emitted.
 jq_1m="$(jq -s '
   [.[] | select(.arm == "1m")] |
-  ((([.[] | .vanillaTokens] | add) - ([.[] | .shipTokens] | add)) / ([.[] | .vanillaTokens] | add) * 1000 | round)
-' "$ROWS")"
-assert_eq "$jq_1m" "702" "the METHODOLOGY jq recipe lands on the same 70.2% the tool prints"
+  ((([.[] | .vanillaTokens] | add) - ([.[] | .shipTokens] | add)) / ([.[] | .vanillaTokens] | add) * 100 * 10000 | round)
+' "$T/rows.jsonl")"
+assert_eq "$jq_1m" "$(printf '%s' "$j_rows" | jq -r '(.arms["1m"].tokenReductionPct * 10000 | round)')" \
+  "the METHODOLOGY jq recipe lands on exactly what the tool prints"
+
+# A row with no version stamp reads unknown and is COUNTED, never dropped. The fixture is unstamped,
+# which is the same shape as any row published before version stamping existed.
+assert_eq "$(printf '%s' "$j_rows" | jq -r '.rowsWithoutVersion')" "12" \
+  "unstamped rows are counted as unknown rather than silently dropped"
+assert_eq "$(printf '%s' "$j_rows" | jq -r '.versions | length')" "0" "and no version is invented for them"
+
+# An empty or absent rows file must fail loudly rather than report a percentage over nothing.
+: > "$T/empty.jsonl"
+node "$HUB/bench/replay.mjs" --rows-file "$T/empty.jsonl" --json >/dev/null 2>&1
+assert_eq "$?" "1" "an empty rows file exits non-zero rather than reporting a saving over no rows"
+node "$HUB/bench/replay.mjs" --rows-file "$T/no-such-file.jsonl" >/dev/null 2>&1
+assert_eq "$?" "2" "a missing rows file is a usage error, not a silent zero"
 
 # ── 2. the legacy code path, on the hand-derivable fixture ───────────────────
 # coreModel is the pre-#108 model: same-mix pricing, carry only, partials dropped, no harness
