@@ -72,8 +72,35 @@ elapsed=$(( SECONDS - start ))
 # awk END{print NR} counts a trailing partial line correctly, unlike `wc -l`.
 total_lines="$(awk 'END{print NR+0}' "$VF_TMP" 2>/dev/null || printf '0')"
 
+# bench lever: output-suppression (contract: bench/LEVER-EVENTS.md).
+# Recorded HERE because this is the only instant the withheld bytes exist: the EXIT trap deletes
+# $VF_TMP the moment this script returns, and by design those bytes never enter the transcript, so
+# nothing downstream can ever recover them.
+#
+# PASS ONLY, deliberately. A failing run is passed through (bounded at the tail by
+# GOVERN_VERIFY_FILTER_MAX_LINES), so its withheld remainder is a partial saving. That saving is
+# real but it is left UNCREDITED: the claim this lever measures is "successful output stays out of
+# the transcript", and under-counting is the standing rule for every lever in this build.
+#
+# Best-effort in every direction. A missing common.sh (this script sources it optionally), an unset
+# GOVERN_RUN_DIR, or an unwritable log must never change this script's stdout or its exit code:
+# callers branch on that code, and preserving it is this wrapper's one hard contract.
+vf::emit_suppression() { # <withheld_lines>
+  {
+    declare -F govern::emit_lever_event >/dev/null 2>&1 || return 0
+    local lines="${1:-0}" bytes=""
+    [[ "$lines" =~ ^[0-9]+$ ]] && [[ "$lines" -gt 0 ]] || return 0
+    bytes="$(wc -c <"$VF_TMP" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+    govern::emit_lever_event output-suppression "${GOVERN_TICKET:--}" worker "-" \
+      withheldBytes="$bytes" withheldLines="$lines" outcome=pass
+  } 2>/dev/null || true
+  return 0
+}
+
 if [[ "$rc" -eq 0 ]]; then
   printf 'PASS: %s — %s lines suppressed, %ss\n' "$CMD_LABEL" "$total_lines" "$elapsed"
+  vf::emit_suppression "$total_lines"
   exit 0
 fi
 
