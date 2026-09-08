@@ -2716,13 +2716,15 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
 # function rather than a behavior change on a shared one.
 #
 # bench/LEVER-EVENTS.md `resume`'s freshStartTokens: the failed attempt's context-reconstruction
-# spend only, input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens (and
-# cache_read_input_tokens, which is a re-read of a cache the SAME session already built, not
-# reconstruction). A retry has to redo the actual work either way; the only thing resuming avoids
-# is re-reading its way back into context, so crediting the failed attempt's output tokens (or its
-# cache reads) here would hand the resume lever savings that were never at stake, tilting a number
-# spec section 4a exists to keep unbiased. Deliberately narrower than the total: under-counted, not
-# over-counted, when in doubt.
+# spend only, input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens (a retry has
+# to redo the actual work either way, so the failed attempt's output is not a cost resuming avoids)
+# and EXCLUDING cache_read_input_tokens. cache_read is re-paid on EVERY turn for the SAME prefix, so
+# summing it across a session counts the same context once per turn, a turn-count artifact, not a
+# reconstruction cost. The scale is not marginal: a real ticket-history.jsonl row from this
+# workspace shows cacheRead 6.9M against cacheCreation 351K on one ticket, roughly 20x, so folding
+# cache_read in would inflate freshStartTokens by about that much and hand the resume lever an
+# enormous fake saving. Deliberately narrower than the total: under-counted, not over-counted, when
+# in doubt, which is the standard spec section 4a holds this whole build to.
 govern::cumulative_context_tokens() { # worker-jsonl -> integer input+cache_creation total (0 if none/unreadable)
   local jsonl="${1:-}" total
   [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
