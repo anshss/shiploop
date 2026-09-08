@@ -984,7 +984,7 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 #                        govern::cumulative_context_tokens in lib/common.sh, not
 #                        govern::cumulative_tokens. Read from $jsonl one last time before it is
 #                        rotated away further down, while it is still intact.
-if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
+if [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
       && ( -n "$notes_body" || -n "$handoff_block" ) ]]; then
   resume_ckpt_bytes=$(( $(printf '%s' "$notes_body" | wc -c | tr -d '[:space:]') \
     + $(printf '%s' "$handoff_block" | wc -c | tr -d '[:space:]') ))
@@ -1015,9 +1015,10 @@ if [[ "$ESCALATION_APPLIED" -eq 1 ]]; then
   # #19 per-attempt ledger row the PRIOR spawn-worker.sh invocation appended before this one started
   # (this invocation has not yet rotated $jsonl or written its own row; see the ledger block below).
   # Carries failedTier instead of tier (the contract's own wording), so tier is passed as "-" → null.
-  # Gated on GOVERN_LEVER_EVENTS itself, not just the emitter's own gate, so the ledger read never
-  # runs in the common opt-out case.
-  if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]]; then
+  # Gated on GOVERN_LEVER_EVENTS itself, not just the emitter's own gate, so the ledger read is
+  # skipped entirely when an operator has explicitly opted out (GOVERN_LEVER_EVENTS=0), rather than
+  # running and then being thrown away by the emitter's own no-op.
+  if [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" ]]; then
     esc_failed_tokens="$(tail -n1 "$logdir/attempts.jsonl" 2>/dev/null | jq -r '.tokens.total // 0' 2>/dev/null || echo 0)"
     [[ "$esc_failed_tokens" =~ ^[0-9]+$ ]] || esc_failed_tokens=0
     govern::emit_lever_event escalation "$N" worker "-" \
@@ -1407,9 +1408,11 @@ if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
 # / early-abort) just terminated this attempt. ctxTokens/turns are read from the now-frozen $jsonl
 # (the process is dead; nothing writes to it again until the rotation further down), so this is the
 # true state at the instant of the kill. Gated on GOVERN_LEVER_EVENTS itself (not just left to the
-# emitter's own gate) so the jq/awk scan never runs in the common opt-out case.
+# emitter's own gate) so the jq/awk scan is skipped entirely when an operator has explicitly opted
+# out (GOVERN_LEVER_EVENTS=0), rather than running and then being thrown away by the emitter's own
+# no-op.
 emit_watchdog_kill() { # <reason>
-  [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+  [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" ]] || return 0
   local ctx turns
   ctx="$(govern::cumulative_tokens "$jsonl")"
   turns="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } | wc -l | tr -d '[:space:]')"
