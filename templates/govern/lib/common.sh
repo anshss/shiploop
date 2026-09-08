@@ -71,6 +71,74 @@ if [[ -f "$GOVERN_LIB_DIR/events.sh" ]]; then source "$GOVERN_LIB_DIR/events.sh"
 # No-op stand-in so no call site needs its own `declare -F` probe. Only defined when the module is
 # genuinely absent — sourcing events.sh above already defined the real one.
 if ! declare -F govern::event >/dev/null 2>&1; then govern::event() { return 0; }; fi
+# Same fallback for the string escaper the lever-events emitter below borrows from events.sh: cheap
+# insurance against a workspace where events.sh is present but somehow didn't define it.
+if ! declare -F govern::_event_jesc >/dev/null 2>&1; then
+  govern::_event_jesc() { printf '%s' "${1-}"; return 0; }
+fi
+
+# ── lever-events emitter (bench multi-lever redesign, spec 4b) ─────────────────────────────────
+# Append-only sibling of $GOVERN_RUN_DIR/state.jsonl: one JSON object per line, one of the four
+# lever-event shapes the contract in bench/LEVER-EVENTS.md defines (watchdog-kill / resume /
+# scripted-action / escalation). Deliberately its OWN file, NOT state.jsonl: that file is a
+# per-ticket outcome log read raw into the govern-improve.sh review prompt and tailed by cursor in
+# govern-supervise.sh, so interleaving lever events there would pollute both and add rows those
+# consumers must learn to skip. bench/replay.mjs reads THIS file; a reader that doesn't recognise
+# `event` skips the line, and a line that fails to parse is counted and skipped, never fatal.
+#
+# OFF BY DEFAULT (root CLAUDE.md rule 12, a new mechanism). GOVERN_LEVER_EVENTS=1 opts in; the
+# whole-suite OFF export lives in test/assert.sh (test-lever-events.sh opts back in per case).
+#
+# HARD CONTRACT, identical to govern::event above: emission must NEVER abort a dispatch. The body
+# runs inside a `{ … } || true` group and ends with an explicit `return 0` (rule 11).
+GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-0}"
+
+# govern::emit_lever_event <event> <ticket|-> <session> <tier|-> [k=v ...]
+#
+# <ticket> is a bare integer, or "-"/"" for the orchestration-side null. <tier> is a bare model
+# alias, or "-"/"" for null: the `escalation` event passes "-" here and carries `failedTier`
+# instead, one of the trailing k=v extras, per the contract's "carries failedTier instead of tier".
+# Extra fields follow govern::event's own bare-scalar-vs-string rule: a value that is an integer or
+# one of true/false/null is emitted unquoted, everything else is a quoted string, so
+# `ctxTokens=184320` lands as a JSON number and `reason=context-cap` as a string, with no
+# caller-side quoting needed.
+govern::emit_lever_event() { # <event> <ticket> <session> <tier> [k=v ...]
+  {
+    [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+    local file event ticket session tier line kv k v
+    event="${1:-unknown}"; ticket="${2:--}"; session="${3:-}"; tier="${4:--}"
+    shift 4 2>/dev/null || true
+    file="${GOVERN_LEVER_EVENTS_FILE:-${GOVERN_RUN_DIR:-$LOG_ROOT}/lever-events.jsonl}"
+    line="{\"event\":\"$(govern::_event_jesc "$event")\",\"ts\":$(date +%s)"
+    if [[ "$ticket" == "-" || -z "$ticket" ]]; then
+      line+=",\"ticket\":null"
+    elif [[ "$ticket" =~ ^-?[0-9]+$ ]]; then
+      line+=",\"ticket\":$ticket"
+    else
+      line+=",\"ticket\":\"$(govern::_event_jesc "$ticket")\""
+    fi
+    line+=",\"session\":\"$(govern::_event_jesc "$session")\""
+    if [[ "$tier" == "-" || -z "$tier" ]]; then
+      line+=",\"tier\":null"
+    else
+      line+=",\"tier\":\"$(govern::_event_jesc "$tier")\""
+    fi
+    for kv in "$@"; do
+      [[ "$kv" == *=* ]] || continue
+      k="${kv%%=*}"; v="${kv#*=}"
+      [[ -n "$k" ]] || continue
+      if [[ "$v" == "true" || "$v" == "false" || "$v" == "null" || "$v" =~ ^-?[0-9]+$ ]]; then
+        line+=",\"$(govern::_event_jesc "$k")\":$v"
+      else
+        line+=",\"$(govern::_event_jesc "$k")\":\"$(govern::_event_jesc "$v")\""
+      fi
+    done
+    line+="}"
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    printf '%s\n' "$line" >> "$file" 2>/dev/null || true
+  } 2>/dev/null || true
+  return 0
+}
 
 # Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
 # it = $LOG_ROOT/run-<ts>), so a re-run of ticket N writes to a fresh run-<ts>/ticket-N/ and can
@@ -79,6 +147,55 @@ if ! declare -F govern::event >/dev/null 2>&1; then govern::event() { return 0; 
 govern::worker_logdir() { # ticket -> dir
   local n="$1"
   if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
+}
+
+# Stamps a run dir with the workspace's synced hub version (#107), so bench/replay.mjs can scope
+# its default corpus to the sessions that ran under the CURRENT harness instead of blending every
+# version a workspace has ever run: no transcript event carries the shiploop package version.
+# Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
+# against (same file doctor.sh / govern-health.sh already read for the update-channel check). Best-
+# effort ONLY: an absent stamp file, an unreadable one, or a workspace that never ran scaffold.sh
+# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Called
+# from run-loop.sh right after RUNDIR is created; a workspace-relative $RUN_DIR keeps this callable
+# from a test harness that overrides GOVERN_WS_ROOT.
+#
+# `|| true` on the write: a bare `[[ cond ]] && cmd` is NOT a no-op on failure under `set -e`, even
+# with a `return 0` two lines down, because the failing command is a plain statement outside any
+# if/while/&&-that-is-not-last context, so `-e` aborts the CALLER right there, before `return 0` is
+# ever reached (confirmed empirically against an unwritable run_dir). Without the guard this
+# function contradicts its own "failures here are silent" claim above.
+govern::stamp_run_version() { # <run_dir>
+  local run_dir="$1"
+  local stamp="$WS_ROOT/scripts/lib/.harness-version"
+  local v=""
+  v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp" 2>/dev/null || true)"
+  [[ -n "$v" ]] && { printf '%s\n' "$v" > "$run_dir/shiploop-version" 2>/dev/null || true; }
+  return 0
+}
+
+# Stamps a run dir with the orchestrating (driver) session's own model tier, so bench/replay.mjs's
+# driver-tier baseline can price the counterfactual at what actually dispatched the run instead of
+# falling back to the highest tier observed anywhere in it, which is a guess biased toward the most
+# expensive tier and so toward shiploop's own credit. Same shape and the same never-abort contract
+# as govern::stamp_run_version above (a sibling stamp, NOT a lever event: this is run-scoped context
+# that has to exist before GOVERN_LEVER_EVENTS ever comes into it, and bench/LEVER-EVENTS.md does not
+# define it). Source: govern::session_model, the SAME signal govern::model_ceiling already trusts to
+# clamp every worker's escalation tier on this exact dispatch path, normalised to a bare family name
+# (govern::model_family) because replay.mjs's baseline vocabulary is haiku/sonnet/opus, not a full
+# model id. Best-effort ONLY: an undetectable session model, or one outside the known family list,
+# writes nothing rather than a guess, exactly the standard govern::stamp_run_version already holds
+# to. Called from run-loop.sh right after RUNDIR is created, beside the version stamp.
+govern::stamp_driver_model() { # <run_dir>
+  local run_dir="$1"
+  local fam=""
+  fam="$(govern::model_family "$(govern::session_model)")"
+  # `|| true`: a bare `[[ c ]] && cmd` is NOT a no-op on failure under `set -e` even with a `return
+  # 0` further down the function, because the failing command is not the function's LAST statement
+  # but IS a plain command outside any if/while/&&-that-is-not-last context, so `-e` still aborts
+  # the CALLER right here (root CLAUDE.md rule 11's "returns the test's status" applies to more
+  # than just a literal last line). Confirmed by writing to a deliberately unwritable run_dir.
+  [[ -n "$fam" ]] && { printf '%s\n' "$fam" > "$run_dir/driver-model" 2>/dev/null || true; }
+  return 0
 }
 
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
@@ -1252,6 +1369,67 @@ govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
     fi
     mkdir -p "$(dirname "$_GOVERN_TOOLS_PROBE_CACHE")" 2>/dev/null || true
     printf '%s' "$cached" > "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
+# Capability probe: does $claude_bin support `--max-turns`? Same reasoning as the two probes above,
+# and the same run-scoped `--help` cache. Added for the bench harness (bench/arms.sh), which needs a
+# per-session turn ceiling on BOTH arms, but the flag is useful to any spawn: GOVERN_WORKER_MAX_TURNS
+# is a hard per-attempt turn cap alongside the existing wall-clock (GOVERN_WORKER_TIMEOUT) and token
+# (GOVERN_WORKER_MAX_TOKENS) ceilings. It is OFF by default (0 = no flag), so a fleet that never sets
+# it spawns exactly as it did before.
+# Test seam: pre-seed _GOVERN_MAXTURNS_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_MAXTURNS_PROBE_CACHE="${GOVERN_MAXTURNS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-turns-support}"
+govern::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_MAXTURNS_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_MAXTURNS_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_MAXTURNS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-turns'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-turns"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_MAXTURNS_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
+# Capability probe: does $claude_bin support `--max-budget-usd`? Same reasoning and cache pattern
+# as the probe above. Added when a CLI release dropped `--max-turns` entirely and shipped a
+# per-session dollar ceiling in its place: not turn-shaped, but the closest available substitute
+# for capping a spend-bearing session, so bench/arms.sh probes this SECOND, only once --max-turns
+# comes back unsupported. GOVERN_WORKER_MAX_BUDGET_USD is the matching per-worker knob in
+# spawn-worker.sh, OFF by default (0 = no flag), so a fleet that never sets it spawns exactly as it
+# did before.
+# Test seam: pre-seed _GOVERN_MAXBUDGETUSD_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_MAXBUDGETUSD_PROBE_CACHE="${GOVERN_MAXBUDGETUSD_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-budget-usd-support}"
+govern::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_MAXBUDGETUSD_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_MAXBUDGETUSD_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-budget-usd'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-budget-usd"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true
   fi
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
 }
@@ -2564,6 +2742,29 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
+# Sibling of govern::cumulative_tokens, NOT a mode flag on it: other callers (the #16 budget
+# watchdog, the timeout/park report synthesis) depend on the FULL total, so this is a separate
+# function rather than a behavior change on a shared one.
+#
+# bench/LEVER-EVENTS.md `resume`'s freshStartTokens: the failed attempt's context-reconstruction
+# spend only, input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens (a retry has
+# to redo the actual work either way, so the failed attempt's output is not a cost resuming avoids)
+# and EXCLUDING cache_read_input_tokens. cache_read is re-paid on EVERY turn for the SAME prefix,
+# so summing it across a session counts the same context once per turn: an artifact of turn count,
+# not a reconstruction cost at all. The scale is not marginal: a real governor/ticket-history.jsonl
+# row from this workspace shows cacheRead 6.9M against cacheCreation 351K on one ticket, roughly
+# 20x, so folding cache_read in would inflate freshStartTokens by about that much and hand the
+# resume lever an enormous fake saving. Deliberately narrower than the total: under-counted, not
+# over-counted, when in doubt, which is the standard spec section 4a holds this whole build to.
+govern::cumulative_context_tokens() { # worker-jsonl -> integer input+cache_creation total (0 if none/unreadable)
+  local jsonl="${1:-}" total
+  [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
+  total="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } \
+    | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')"
+  echo "${total:-0}"
+}
+
 # ── evidence-based retry escalation (retry-class) ───────────────────────────────────
 # Before this, EVERY retry escalated to GOVERN_WORKER_MODEL (default opus) and discarded the
 # ticket's `Model:`/`Effort:` fields, on the reasoning that "a cheap bet that didn't land shouldn't
@@ -2629,6 +2830,26 @@ govern::model_rank() { # model alias OR full model id -> total-ordered int (0 = 
   [[ "$major" -gt 99 ]] && major=0
   [[ "$minor" -gt 99 ]] && minor=0
   echo "$(( base * 10000 + major * 100 + minor ))"
+}
+
+# Same lowercase-and-strip-the-[…]-suffix pass govern::model_rank runs above, kept as its own
+# function (not a mode on model_rank, which is rank-only and has its own dedicated callers/tests)
+# because a stamp needs the bare FAMILY NAME, not a comparable integer. Duplicated, not shared, on
+# purpose: model_rank's case list is stable and documented as such ("the old ordering is preserved
+# exactly"), so copying it here is lower-risk than adding a second caller into that function's
+# internals.
+govern::model_family() { # model alias OR full model id -> haiku|sonnet|opus|fable|"" (unknown)
+  local m
+  m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  m="${m%%\[*}"                       # claude-opus-5[1m] -> claude-opus-5
+  case "$m" in
+    *haiku*)  echo haiku ;;
+    *sonnet*) echo sonnet ;;
+    *opus*)   echo opus ;;
+    *fable*)  echo fable ;;
+    *) echo "" ;;
+  esac
+  return 0
 }
 govern::model_max() { # a b -> the HIGHER-ranked of the two (b wins ties and unrankable a)
   local ra rb; ra="$(govern::model_rank "${1:-}")"; rb="$(govern::model_rank "${2:-}")"
