@@ -89,7 +89,7 @@ assert_eq "$(lv watchdog)" "200000 400 400000" \
 assert_eq "$(lv resume-not-restart)" "50000 50 50000" \
   "resume: 60,000 fresh-start tokens less the 10,000 the checkpoint actually loaded"
 assert_eq "$(lv skip-the-model)" "45000 225 225000" \
-  "skip-the-model: one version-bump at the published per-class floor (a worker's first-turn context)"
+  "skip-the-model: one version-bump at the declared per-class floor (a worker's first-turn context)"
 assert_eq "$(lv escalation-correction)" "0 -2000 -200000" \
   "escalation: a failed haiku attempt takes ITS routing credit back, so escalations cost us"
 assert_eq "$(lv harness-overhead)" "-25000 -2250 -125000" \
