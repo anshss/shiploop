@@ -9,13 +9,18 @@
 #
 # Covered:
 #   A. the emitter in isolation
-#     1. GOVERN_LEVER_EVENTS unset/0 → no-op, no file created (default-off, rule 12)
+#     1. GOVERN_LEVER_EVENTS=0 (explicit) → no-op, no file created (the kill switch)
+#     1b. GOVERN_LEVER_EVENTS genuinely UNSET (env -u, not a test override) → an event IS written:
+#         the runtime default is ON. test/assert.sh keeps the whole SUITE pinned to 0 regardless
+#         (fixtures must not accumulate event files), which is what case 1 above actually exercises.
 #     2/3/4/5. each of the four event shapes, called directly → well-formed JSON, correct field
 #        types (ticket int|null, ts int, session string, tier string|null, event-specific extras)
 #     6. string escaping (a reason containing a quote/backslash) round-trips through jq intact
 #     7. a write failure (unwritable target dir) never aborts the caller (`set -e` survives)
 #   B. the real call sites, through spawn-worker.sh and deterministic-apply.sh
 #     8.  watchdog-kill PRESENT: a hard wall-clock kill
+#     8b. the same real call site with GOVERN_LEVER_EVENTS genuinely unset: the runtime default
+#         reaches production dispatch, not just the isolated emitter in case 1b
 #     9.  watchdog-kill ABSENT: same ticket, resolved normally (no kill, no stray event)
 #     10. resume + escalation PRESENT together: a retry with real notes + a real prior attempt
 #     11. escalation ABSENT: a retry classified infra/ci re-bets the SAME tier (never escalates)
@@ -47,12 +52,33 @@ emit() {
     _ "$COMMON" "$@" )
 }
 
-# ── 1. default-off: no-op, no file ──────────────────────────────────────────────────────────────
+# emit_default <lever-events-file> <emit_lever_event args...> -> stdout+stderr, with
+# GOVERN_LEVER_EVENTS genuinely UNSET (env -u, not merely un-passed): assert.sh exports it as 0 for
+# the whole suite, so without the explicit -u this subshell would inherit that pin and prove
+# nothing about the actual runtime default. Same idiom test-model-ceiling.sh and
+# test-driver-model-stamp.sh already use for "genuinely undetectable".
+emit_default() {
+  local f="$1"; shift
+  ( env -u GOVERN_LEVER_EVENTS GOVERN_WS_ROOT="$U" GOVERN_LOG_ROOT="$U/logs" GOVERN_LEVER_EVENTS_FILE="$f" \
+    bash -c 'source "$1"; shift; govern::emit_lever_event "$@"; echo EMITTER-RETURNED-0' \
+    _ "$COMMON" "$@" )
+}
+
+# ── 1. explicit kill switch: GOVERN_LEVER_EVENTS=0 → no-op, no file ─────────────────────────────
 F1="$U/off.jsonl"
 out1="$(emit "$F1" 0 watchdog-kill 7 worker sonnet ctxTokens=100 turns=5 reason=x)"
 assert_contains "$out1" "EMITTER-RETURNED-0" "GOVERN_LEVER_EVENTS=0 → the emitter returns 0 (never aborts the caller)"
 [[ -f "$F1" ]] && created=yes || created=no
-assert_eq "$created" "no" "GOVERN_LEVER_EVENTS=0 (default) → no lever-events file is even created"
+assert_eq "$created" "no" "GOVERN_LEVER_EVENTS=0 (explicit) → no lever-events file is even created"
+
+# ── 1b. the RUNTIME default is ON: genuinely unset → an event IS written ────────────────────────
+F1b="$U/default-on.jsonl"
+out1b="$(emit_default "$F1b" watchdog-kill 7 worker sonnet ctxTokens=100 turns=5 reason=x)"
+assert_contains "$out1b" "EMITTER-RETURNED-0" "GOVERN_LEVER_EVENTS genuinely unset → the emitter still returns 0"
+[[ -f "$F1b" ]] && created1b=yes || created1b=no
+assert_eq "$created1b" "yes" "GOVERN_LEVER_EVENTS genuinely unset → the runtime default is ON, a file IS created"
+assert_eq "$(jq -r '.event' "$F1b" 2>/dev/null)" "watchdog-kill" \
+  "GOVERN_LEVER_EVENTS genuinely unset → the written line is a real, well-formed event"
 
 # ── 2. watchdog-kill: shape + types ─────────────────────────────────────────────────────────────
 F2="$U/wd.jsonl"
@@ -150,6 +176,21 @@ run_spawn() { # <logroot> <claude-bin> [extra env assignments...]
     "$SPAWN" 7 </dev/null
 }
 
+# Same as run_spawn, but GOVERN_LEVER_EVENTS genuinely UNSET (env -u) rather than pinned to 1: the
+# real call site, not just the emitter, must fire on the bare runtime default.
+run_spawn_default() { # <logroot> <claude-bin> [extra env assignments...]
+  local logroot="$1" bin="$2"; shift 2
+  env -u GOVERN_LEVER_EVENTS \
+    GOVERN_TICKETS_FILE="$T/tickets.md" \
+    GOVERN_PREFERENCES_FILE="$T/governor/preferences.md" \
+    GOVERN_WORKER_PROMPT_FILE="$T/governor/worker-prompt.md" \
+    GOVERN_LOG_ROOT="$logroot" \
+    GOVERN_WORKTREE_CMD="$T/fake-worktree.sh" \
+    GOVERN_CLAUDE_BIN="$bin" \
+    "$@" \
+    "$SPAWN" 7 </dev/null
+}
+
 # ── 8. watchdog-kill PRESENT: wall-clock timeout ────────────────────────────────────────────────
 cat > "$T/fake-claude-hang.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -167,6 +208,14 @@ assert_contains "$wd8" '"reason":"wall-clock-timeout"' "watchdog-kill PRESENT wi
 assert_eq "$(jq -r '.ticket' <<<"$wd8")" "7" "watchdog-kill: ticket=7"
 assert_eq "$(jq -r '.session' <<<"$wd8")" "worker" "watchdog-kill: session=worker"
 assert_eq "$([[ "$(jq -r '.ctxTokens' <<<"$wd8")" -ge 0 ]] && echo ok || echo bad)" "ok" "watchdog-kill: ctxTokens is a real number"
+
+# ── 8b. same real call site, GOVERN_LEVER_EVENTS genuinely UNSET: the default fires it too ──────
+out8b="$(run_spawn_default "$T/logs8b" "$T/fake-claude-hang.sh" GOVERN_WORKER_TIMEOUT=2)"
+assert_eq "$(jq -r '.status' <<<"$out8b")" "timeout" "sanity: this attempt was killed too"
+LE8b="$T/logs8b/lever-events.jsonl"
+[[ -f "$LE8b" ]] && present8b=yes || present8b=no
+assert_eq "$present8b" "yes" \
+  "watchdog-kill: with NOTHING set (not even the test's own GOVERN_LEVER_EVENTS=1), the real spawn-worker.sh call site still writes the event: the runtime default reaches production dispatch, not just the isolated emitter"
 
 # ── 9. watchdog-kill ABSENT: the SAME ticket resolved normally ─────────────────────────────────
 cat > "$T/fake-claude-ok.sh" <<'EOF'

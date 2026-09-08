@@ -29,7 +29,9 @@ Design and rationale: `.specs/2026-09-03-benchmark-design.md`. Where either numb
 
 ## The published claim
 
-The shiploop GitHub repo description and the project website both carry this sentence, verbatim:
+The project website carries this sentence. The GitHub repo description no longer does, and the
+website copy is being revised separately; it is reproduced here because it is what this directory
+would have to back:
 
 > Shiploop minimizes tokens per shipped work, making Claude Code up to 70% more efficient and
 > faster by cutting wasted model work and getting more from its warm prompt cache with lean,
@@ -39,8 +41,9 @@ The shiploop GitHub repo description and the project website both carry this sen
 that used to live here mapped each element of it to a measured or modeled figure. Those figures came
 off a corpus that cannot support them, so they have been removed rather than restated with caveats:
 
-- Nothing in the corpus is instrumented. Four of the levers the bench attributes savings to are read
-  from `lever-events.jsonl`, the emitter ships default OFF, and no run anywhere carries it.
+- Nothing in the corpus is instrumented yet. Five of the levers the bench attributes savings to are
+  read from `lever-events.jsonl`; the emitter now ships on by default at runtime
+  (`GOVERN_LEVER_EVENTS=0` is the kill switch), but no run collected so far carries it.
 - No run recorded which model dispatched it, so the counterfactual's model tier is a fallback guess
   in the direction that flatters the harness.
 - Almost no run wrote an orchestration transcript, so the harness's own overhead is uncharged and
@@ -158,7 +161,7 @@ not have is a corpus worth reporting on:
 
 | What the model needs | What the corpus has |
 |---|---|
-| `lever-events.jsonl` per run, for four of the levers | nothing. The emitter ships default OFF and has never run |
+| `lever-events.jsonl` per run, for five of the levers | nothing yet. The emitter now ships on by default at runtime, but has not been live for any run in the existing corpus |
 | the dispatching session's model, for the `driver-tier` baseline | nothing. Every run falls back to "highest tier seen", a guess that flatters the harness |
 | an orchestration transcript per run, to charge the harness its own overhead | almost nothing. Nearly every run is `overhead-uncovered`, so the shiploop side is a lower bound |
 | a version stamp per run, to scope a figure to one harness version | nothing on any historical run |
