@@ -29,7 +29,7 @@ opt in.
 | `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); enforced by `npm run govern:budgets` and checked by `doctor`. Past the ceiling the evidence-based trim proposes candidates, it never blind-evicts |
 | `GOVERN_TRIM_DEAD` | `1` (on) | Lane 1 of the CLAUDE.md trim: auto-move blocks whose every cited path/knob is provably absent from the workspace, plus exact duplicates, into `CLAUDE-APPENDIX.md`. `0` disables auto-moves, leaving proposals only |
 | `SHIPLOOP_LEARNINGS_TTL` | `0` (off) | Age out `learnings.md` entries older than `SHIPLOOP_LEARNINGS_TTL_DAYS` (default `14`) when `npm run govern:budgets` runs |
-| `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker, cutting the measured 51.7% of the request that tool JSON occupies down to 26.3% (−34.5% request bytes; see `PROOF.md` §5). Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
+| `GOVERN_WORKER_TOOLS` | `default` (on) | Tool-schema trim: passes `--tools <recommended list>` to every worker so a headless worker does not carry schemas for tools it structurally cannot call. Or give your own space/comma-separated list. Capability-probed, so an older CLI just skips it |
 | `WSP_LINT_FIX_CMD` | empty | Pre-commit lint/format fix across sub-repos |
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB: additive migrations merge instead of parking |
 | `GOVERN_MIGRATE_CMD` / `GOVERN_VERIFY_CMD` | empty | If a resolved ticket carries an additive prod migration, the governor runs MIGRATE then VERIFY after merge. Leave unset and a ticket like that escalates instead, asking you to apply the migration manually |
