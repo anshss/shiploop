@@ -34,11 +34,23 @@ assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "No vanilla session 
 
 # ── meta (ticket #104: version/model/date next to the headline, not buried in stdout) ─────────
 assert_eq "$(printf '%s' "$j" | jq -r '.meta | keys | join(",")')" \
-  "cliVersions,dateRange,models,runsSeenKept,runsSeenTotal,since" \
+  "cliVersions,dateRange,models,runsSeenKept,runsSeenTotal,since,versionScope" \
   "meta carries exactly the fields the headline prints"
 assert_eq "$(printf '%s' "$j" | jq -r '.meta.since')" "null" "no --since given -> since is null"
 assert_eq "$(printf '%s' "$j" | jq -r '.meta.runsSeenKept')" "$(printf '%s' "$j" | jq -r '.meta.runsSeenTotal')" \
   "no --since given -> nothing is filtered out"
+
+# ── meta.versionScope (#107): the fixture has no shiploop-version stamp anywhere, so this must
+# fall back to a full sweep rather than reporting a phantom zero-run corpus.
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope | keys | join(",")')" \
+  "fellBack,mode,runsExcludedOlder,runsExcludedUnstamped,runsKept,runsTotal,selected,sessionsExcludedOlder,sessionsExcludedUnstamped,sessionsKept,sessionsTotal" \
+  "versionScope carries a fixed shape"
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope.mode')" "all" \
+  "an unstamped fixture falls back to the full sweep"
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope.fellBack')" "true" \
+  "and the fallback is reported, not silent"
+assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope.runsKept')" "$(printf '%s' "$j" | jq -r '.meta.versionScope.runsTotal')" \
+  "a pure-legacy corpus excludes nothing"
 
 # ── arms ─────────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r '.arms | keys | join(",")')" "1m,200k,uncapped" \

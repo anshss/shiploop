@@ -43,7 +43,7 @@ function tierOf(model) {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const opts = { arm: 'all', json: false, scope: 'all', fleets: [] };
+  const opts = { arm: 'all', json: false, scope: 'all', fleets: [], all: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--arm') opts.arm = argv[++i];
@@ -51,6 +51,7 @@ function parseArgs(argv) {
     else if (a === '--scope') opts.scope = argv[++i];
     else if (a === '--fleet') opts.fleets.push(path.resolve(argv[++i]));
     else if (a === '--since') opts.since = argv[++i];
+    else if (a === '--all') opts.all = true;
     else if (a === '--rows') opts.rows = true;
     else if (a === '-h' || a === '--help') opts.help = true;
     else return { error: `unknown argument: ${a}` };
@@ -65,7 +66,7 @@ function parseArgs(argv) {
 }
 
 const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|uncapped|all]
-                            [--scope all|resolved] [--since YYYYMMDD[-HHMMSS]] [--json]
+                            [--scope all|resolved] [--since YYYYMMDD[-HHMMSS]] [--all] [--json]
 
   --fleet   a shiploop workspace to read (repeatable). Defaults to auto-discovery of the
             current workspace and its siblings. Read only, never written to.
@@ -74,9 +75,15 @@ const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|u
             ticket-history.jsonl marks resolved). Default all. Scope selects what is
             COUNTED, never what happened: a failed ticket keeps contributing carry.
   --since   keep only runs whose run-dir timestamp (run-YYYYMMDD-HHMMSS-<pid>, local time) is
-            >= this value. A transcript carries no shiploop package version, so this is the
-            disclosable proxy for "sessions on version X or later": pass X's release commit
-            timestamp. Prints the resulting date range and CLI/model versions next to the number.
+            >= this value. Composes with the version scope below (both must pass).
+  --all     use every stamped-or-not run in the corpus, spanning every shiploop version this
+            workspace has ever run. Without it, the default is the run's OWN shiploop version
+            (run-.../shiploop-version, written by run-loop.sh at dispatch): only runs stamped
+            with the NEWEST version present are kept, so an old workspace's numbers are not
+            diluted by every prior harness version it has run under. A run from before the stamp
+            shipped, or a workspace whose scaffold never wrote one, has no file and is reported
+            separately as unstamped-legacy. If NO run anywhere is stamped, this falls back to
+            --all automatically and says so, rather than reporting zero.
   --json    machine-readable output instead of the report.
   --rows    print one anonymized JSONL row per (run, ticket position) instead of the aggregate
             report — the recomputable evidence behind a published percentage. fleet/run/ticket
@@ -214,8 +221,10 @@ function parseTranscript(file) {
       // The init event names the session's model even when the result event omits modelUsage and
       // every assistant message is a synthetic notice. It is the authoritative fallback. It also
       // carries the Claude Code CLI version the session actually ran under (claude_code_version) —
-      // no event carries the shiploop PACKAGE version, so that is what --since's run-dir-timestamp
-      // filter is for instead.
+      // no event carries the shiploop PACKAGE version. That version instead comes from a sibling
+      // file next to the transcript (run-.../shiploop-version, see runVersion below), written by
+      // run-loop.sh at dispatch time; --since's run-dir-timestamp filter is the older, coarser
+      // proxy, kept for corpora with no stamp at all.
       initModel = ev.model;
       if (ev.claude_code_version) initVersion = ev.claude_code_version;
     } else if (ev.type === 'assistant' && ev.message) {
@@ -392,6 +401,96 @@ function locate(file, fleetDir) {
 function runDateKey(run) {
   const m = /^run-(\d{8}-\d{6})/.exec(run || '');
   return m ? m[1] : null;
+}
+
+// ── version scope (#107) ──────────────────────────────────────────────────────
+// run-loop.sh stamps a run directory with the workspace's synced shiploop version at dispatch
+// (best-effort: `govern::stamp_run_version`, never blocks a dispatch). One file per run, not per
+// transcript, since a run is one dispatch of one harness version. Memoized: a fleet with many
+// tickets in the same run would otherwise re-stat the same file once per ticket.
+const versionCache = new Map();
+function runVersion(fleetDir, run) {
+  const key = `${fleetDir} ${run}`;
+  if (versionCache.has(key)) return versionCache.get(key);
+  let v = null;
+  try {
+    v = fs.readFileSync(path.join(fleetDir, 'logs', 'govern', run, 'shiploop-version'), 'utf8').trim() || null;
+  } catch {
+    v = null;
+  }
+  versionCache.set(key, v);
+  return v;
+}
+
+// Numeric compare on dotted version strings (1.9.0 < 1.10.0). Falls back to a plain string
+// compare for anything that doesn't parse as N.N.N, so a stray non-semver stamp never throws.
+function compareVersions(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  if (pa.some(Number.isNaN) || pb.some(Number.isNaN)) return a < b ? -1 : a > b ? 1 : 0;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// Default = keep only the runs stamped with the NEWEST version present in the corpus (right after
+// an upgrade, that is the latest version that actually has data). `all` restores today's full
+// sweep. A run with no stamp file is "unstamped-legacy" and is never conflated with "an older
+// STAMPED version" — the two exclusion reasons are counted separately so the report can say which
+// one is eating the corpus. If nothing anywhere is stamped (a pure pre-#107 workspace), there is
+// no "newest" to select, so this falls back to the full sweep and says so.
+function applyVersionScope(tickets, all) {
+  const runVersionOf = new Map(); // "fleet#run" -> version|null, one lookup per run
+  for (const t of tickets) {
+    const key = `${t.fleet}#${t.run}`;
+    if (!runVersionOf.has(key)) runVersionOf.set(key, runVersion(t.fleet, t.run));
+  }
+  const sessionsTotal = tickets.reduce((s, t) => s + t.sessions.length, 0);
+  const base = { runsTotal: runVersionOf.size, sessionsTotal };
+
+  if (all) {
+    return { ...base, mode: 'all', selected: null, fellBack: false,
+      runsKept: runVersionOf.size, runsExcludedOlder: 0, runsExcludedUnstamped: 0,
+      sessionsKept: sessionsTotal, sessionsExcludedOlder: 0, sessionsExcludedUnstamped: 0,
+      kept: tickets };
+  }
+
+  let newest = null;
+  for (const v of runVersionOf.values()) {
+    if (v && (newest == null || compareVersions(v, newest) > 0)) newest = v;
+  }
+  if (newest == null) {
+    return { ...base, mode: 'all', selected: null, fellBack: true,
+      runsKept: runVersionOf.size, runsExcludedOlder: 0, runsExcludedUnstamped: runVersionOf.size,
+      sessionsKept: sessionsTotal, sessionsExcludedOlder: 0, sessionsExcludedUnstamped: sessionsTotal,
+      kept: tickets };
+  }
+
+  let runsKept = 0, runsExcludedOlder = 0, runsExcludedUnstamped = 0;
+  for (const v of runVersionOf.values()) {
+    if (v === newest) runsKept++;
+    else if (v) runsExcludedOlder++;
+    else runsExcludedUnstamped++;
+  }
+  const kept = [];
+  let sessionsKept = 0, sessionsExcludedOlder = 0, sessionsExcludedUnstamped = 0;
+  for (const t of tickets) {
+    const v = runVersionOf.get(`${t.fleet}#${t.run}`);
+    if (v === newest) {
+      kept.push(t);
+      sessionsKept += t.sessions.length;
+    } else if (v) {
+      sessionsExcludedOlder += t.sessions.length;
+    } else {
+      sessionsExcludedUnstamped += t.sessions.length;
+    }
+  }
+  return { ...base, mode: 'latest', selected: newest, fellBack: false,
+    runsKept, runsExcludedOlder, runsExcludedUnstamped,
+    sessionsKept, sessionsExcludedOlder, sessionsExcludedUnstamped,
+    kept };
 }
 
 function scanFleet(fleetDir) {
@@ -574,10 +673,11 @@ function main() {
     fleetNotes.push({ fleet, tickets: tickets.length, transcripts: files });
   }
 
-  // --since: the disclosable date-cutoff proxy for "sessions on shiploop version X or later" (no
-  // transcript carries the shiploop package version — see the USAGE text). Runs whose run-dir
-  // name doesn't parse as a timestamp (e.g. "adhoc") are dropped by a --since filter: an
-  // unparseable run can never be shown to be on-or-after the cutoff.
+  // --since: the older, coarser date-cutoff proxy for "sessions on shiploop version X or later"
+  // (pass X's release commit timestamp). Runs whose run-dir name doesn't parse as a timestamp
+  // (e.g. "adhoc") are dropped by a --since filter: an unparseable run can never be shown to be
+  // on-or-after the cutoff. Composes with the version scope below: since narrows first, then the
+  // version filter narrows what is left.
   const runsSeenTotal = new Set(allTickets.map((t) => `${t.fleet}#${t.run}`)).size;
   const keptByDate = opts.since
     ? allTickets.filter((t) => {
@@ -587,13 +687,20 @@ function main() {
     : allTickets;
   const runsSeenKept = new Set(keptByDate.map((t) => `${t.fleet}#${t.run}`)).size;
 
+  // Version scope (#107): default to the run's OWN shiploop-version stamp, keeping only the
+  // newest version present. `--all` (or a corpus with no stamp anywhere) restores the full sweep.
+  const versionScope = applyVersionScope(keptByDate, opts.all);
+  const allTicketsAfterVersion = versionScope.kept;
+
   // Corpus metadata for the headline: CLI version(s) and model(s) actually seen, and the date span
   // of the run dirs that made the cut — printed next to the number, not left for stdout to bury.
+  // Computed over the FINAL corpus (after --since and the version scope), so it describes exactly
+  // what fed the numbers below rather than a wider set that was then quietly narrowed further.
   const cliVersions = new Set();
   const models = new Set();
   let minDate = null;
   let maxDate = null;
-  for (const t of keptByDate) {
+  for (const t of allTicketsAfterVersion) {
     const dk = runDateKey(t.run);
     if (dk) {
       if (minDate == null || dk < minDate) minDate = dk;
@@ -612,15 +719,26 @@ function main() {
     dateRange: minDate ? { from: minDate, to: maxDate } : null,
     cliVersions: [...cliVersions].sort(),
     models: [...models].sort(),
+    versionScope: {
+      mode: versionScope.mode,
+      selected: versionScope.selected,
+      fellBack: versionScope.fellBack,
+      runsTotal: versionScope.runsTotal,
+      runsKept: versionScope.runsKept,
+      runsExcludedOlder: versionScope.runsExcludedOlder,
+      runsExcludedUnstamped: versionScope.runsExcludedUnstamped,
+      sessionsTotal: versionScope.sessionsTotal,
+      sessionsKept: versionScope.sessionsKept,
+      sessionsExcludedOlder: versionScope.sessionsExcludedOlder,
+      sessionsExcludedUnstamped: versionScope.sessionsExcludedUnstamped,
+    },
   };
-
-  const allTicketsAfterSince = keptByDate;
 
   // Scope selects which tickets are COUNTED, never which ones happened. A ticket the loop failed
   // still consumed the loop's tokens and still would have grown a single session's context, so it
   // keeps contributing carry to the tickets after it under either scope. Dropping it from the run
   // outright would shorten the modeled session and mechanically flatter whichever arm.
-  const kept = allTicketsAfterSince.filter((t) => t.sessions.length > 0);
+  const kept = allTicketsAfterVersion.filter((t) => t.sessions.length > 0);
   for (const t of kept) t.counted = opts.scope === 'all' ? true : t.status === 'resolved';
 
   // Group into runs and order tickets within a run by completion time. That ordering is what a
@@ -859,6 +977,24 @@ function render(out) {
       `   dates ${m.dateRange ? `${m.dateRange.from} .. ${m.dateRange.to}` : 'n/a'}` +
       `   runs ${m.runsSeenKept}/${m.runsSeenTotal}${m.since ? ` (--since ${m.since})` : ''}`,
   );
+  // Version scope (#107): which shiploop version the default corpus was narrowed to, and how much
+  // that narrowing excluded, split into older-stamped vs unstamped-legacy so a reader can tell the
+  // two apart. `--all` restores the pre-#107 full sweep.
+  const vs = m.versionScope;
+  if (vs.mode === 'all' && vs.fellBack) {
+    L.push(
+      `  shiploop version: no run in this corpus is stamped (pre-#107 workspace) — falling back ` +
+        `to the full sweep, ${vs.runsTotal} runs / ${vs.sessionsTotal} sessions.`,
+    );
+  } else if (vs.mode === 'all') {
+    L.push(`  shiploop version: --all — ${vs.runsTotal} runs / ${vs.sessionsTotal} sessions, every version.`);
+  } else {
+    L.push(
+      `  shiploop version: ${vs.selected} (newest stamped) — kept ${vs.runsKept}/${vs.runsTotal} runs, ` +
+        `${vs.sessionsKept}/${vs.sessionsTotal} sessions; excluded ${vs.runsExcludedOlder} older-stamped, ` +
+        `${vs.runsExcludedUnstamped} unstamped-legacy run(s). Pass --all for the full history.`,
+    );
+  }
   L.push('');
   L.push(`  MODELED COUNTERFACTUAL: shiploop arm measured from result events, vanilla arm modeled as`);
   const names = Object.keys(out.arms);

@@ -144,6 +144,20 @@ session and mechanically move the number, which is a measurement artifact rather
 On the author's corpus `--scope resolved` is the **harsher** cut, not `--scope all`: resolved
 tickets skew toward earlier positions in a run, where less has been carried.
 
+### Version scope
+
+No transcript event names the shiploop *package* version, so by default the tool would blend every
+harness version a workspace has ever run into one number — an old workspace's figure diluted by
+whatever the harness did three versions ago. `run-loop.sh` now stamps each run directory it creates
+with `run-.../shiploop-version` at dispatch (best-effort: an unreadable version marker never blocks
+a dispatch, the run is simply left unstamped). By default `bench/replay.mjs` keeps only the runs
+stamped with the newest version present in the corpus and reports the rest as excluded, split into
+older-stamped and unstamped-legacy so the two are never conflated. `--all` restores the full,
+unscoped sweep. If nothing in the corpus is stamped at all, there is no "newest" to select, so the
+default falls back to the full sweep and says so rather than reporting a phantom zero-run corpus.
+`--since` (the older, coarser run-directory-timestamp proxy) still works and composes with either
+mode. Full mechanism and disclosure: `bench/KNOWN-LIMITS.md`.
+
 ## The number is a function of backlog length, not of the harness
 
 This is the finding most likely to be misread, so it is stated before the ceiling.

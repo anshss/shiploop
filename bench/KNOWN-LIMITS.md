@@ -106,13 +106,28 @@ confidence as 70.2%; `README.md`'s "Tokens vs. cost" section states why.
 
 ## The replay ("best-case") number's corpus is thin for the current version
 
-No transcript carries the shiploop *package* version — only the Claude Code CLI version
-(`claude_code_version` on the session's `init` event) and the model. `bench/replay.mjs --since` is
-a disclosed proxy: it filters by each run directory's own timestamp (`run-YYYYMMDD-HHMMSS-<pid>`,
-local time) against a cutoff the caller supplies — in practice, the release commit timestamp of the
-shiploop version being claimed. See `README.md` for the exact cutoff, session count, and date range
-used for the published figure, and for how thin the current-version-only slice is compared to the
-full corpus.
+No transcript event carries the shiploop *package* version — only the Claude Code CLI version
+(`claude_code_version` on the session's `init` event) and the model. The package version instead
+comes from a sibling file next to the transcript: `run-loop.sh` stamps every run directory it
+creates with `run-.../shiploop-version`, the workspace's synced hub version, at dispatch time
+(`govern::stamp_run_version`, `templates/govern/lib/common.sh`). The write is best-effort — an
+unreadable or absent version marker never blocks a dispatch, it just leaves that run unstamped.
+
+`bench/replay.mjs` uses the stamp to scope its default corpus: it keeps only the runs stamped with
+the newest version present, reports how many runs and sessions that kept versus excluded (split
+into older-stamped and unstamped-legacy, since those are different situations), and prints which
+version it selected. `--all` restores the full, unscoped sweep across every version a workspace has
+ever run; `--since` is the older, coarser proxy this replaces for a version-scoped read (filtering
+by each run directory's own `run-YYYYMMDD-HHMMSS-<pid>` timestamp against a caller-supplied cutoff,
+in practice a release commit timestamp) and still composes with either mode.
+
+This does not retroactively version-tag history: a run from before the stamp shipped, or a
+workspace whose `scaffold.sh` never wrote a version marker, has no `shiploop-version` file and is
+counted as unstamped-legacy, reachable only via `--all`. If NOTHING in a corpus is stamped (a pure
+pre-stamp workspace), there is no "newest version" to select, so the default falls back to the full
+sweep automatically and says so, rather than reporting a phantom zero-run corpus. See `README.md`
+for the exact cutoff, session count, and date range behind the published figure, itself entirely
+unstamped history predating this mechanism.
 
 ## Golden-test-patch quality is bounded by whoever mines the backlog
 

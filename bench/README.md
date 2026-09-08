@@ -164,14 +164,19 @@ cannot silently disagree the way two of the category's three benchmarks currentl
 caveman nor RTK commits a results file a reader can diff against; headroom does, and this follows
 its shape).
 
-**This spans many CLI releases and models, not one "current shiploop version" run** — no transcript
-carries the shiploop package version (`bench/KNOWN-LIMITS.md`). CLI versions seen: `2.1.126` through
-`2.1.246`. Models seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`,
-`claude-sonnet-5`. Date range: 2026-06-12 to 2026-09-04. Restricting to sessions on the CURRENT
-release (1.18.3, released 2026-09-04) leaves **4 run directories and 0 usable tickets** — every
-session from that day was interrupted before finishing — so a current-version-only percentage
-cannot be reported yet from replay; see `## Path 2` below for the current-version data point that
-exists instead, and `bench/KNOWN-LIMITS.md` for the full disclosure.
+**This spans many CLI releases and models, not one "current shiploop version" run.** The rows
+published above predate `bench/replay.mjs`'s per-run version stamp (`bench/KNOWN-LIMITS.md`): no
+run directory in this corpus carries a `shiploop-version` file, so the recompute command above used
+the full, unscoped sweep and still does. CLI versions seen: `2.1.126` through `2.1.246`. Models
+seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`.
+Date range: 2026-06-12 to 2026-09-04.
+
+As of the version stamp, `bench/replay.mjs` on a workspace running the CURRENT harness defaults to
+sessions stamped with the newest shiploop version present, rather than blending every version a
+workspace has ever run; `--all` (`/shiploop:bench all`) restores this same full-history sweep on
+demand. That default cannot be applied retroactively to the rows published here, since none of them
+were stamped in the first place — see `## Path 2` below for a current-version data point measured a
+different way, and `bench/KNOWN-LIMITS.md` for the full disclosure.
 
 **The saving is a property of backlog depth, not of the harness.** Ticket 1 saves 0% at the
 median: a fresh session against a fresh session is the same session (3 of 753 position-1 rows are
