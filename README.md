@@ -9,12 +9,6 @@ Shiploop changes how each session runs: which model handles the work, what conte
 so the same work ships on fewer tokens.
 </p>
 
-<h3 align="center">70%</h3>
-
-<p align="center">
-<b>fewer tokens for the same shipped work</b><br>
-</p>
-
 ## Get Started
 
 Install the plugin once, globally. `/shiploop:setup`, `/shiploop:flows` and the rest then appear in every session:
