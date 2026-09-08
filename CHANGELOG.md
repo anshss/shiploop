@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+**Three separate mechanisms silently rewrote an operator's `CLAUDE.md`, and one of them "proved"
+death using a check narrow enough to be wrong.** `govern-bookkeep.sh --enforce-budgets` demoted any
+section over `GOVERN_LESSON_MAX_CHARS` regardless of whether the file was even over its total
+budget (evicted a whole section from a file that was 87% empty), and `claudemd-trim.sh`'s lane 1
+auto-moved "dead citation" blocks before the budget check, on any size file. On 2026-09-08 that lane
+moved 81 lines out of a 7,109-byte `CLAUDE.md`, including all 17 load-bearing anti-patterns: one
+verified example cited `test/assert.sh`, correct and live at `templates/govern/test/assert.sh` in
+the hub, but read as dead because the govern test suite is hub-only by design and a scaffolded
+workspace legitimately has no local copy. The citation was right; the checker was wrong.
+
+Nothing automatic edits `CLAUDE.md` any more, in either mechanism, called by hand or by the
+governor. The only writers left are explicit, single-block operator actions: `claudemd-trim.sh
+--apply <hash>` and the new `/shiploop:compress` playbook.
+
+- **`claudemd-trim.sh` is detect-classify-report only.** Over budget, every block is classified into
+  `dead-citation`, `duplicate`, `jit-candidate` (cites a path that exists, so the rule has a
+  mechanically detectable trigger and can be delivered just-in-time instead) or `judgment` (no
+  detectable trigger — never a candidate, never proposed). Mechanical classes rank above
+  jit-candidate; largest first inside a class. Exit 3 now means "candidates exist" (written to
+  `governor/claudemd-trim-proposals.md`), not "still over budget after an auto-move lane" — the
+  script itself never changes the file outside `--apply`/`--still-true`.
+- **Dead-citation check ported from a live fleet's own fix to this exact false-positive class**
+  (their commit, not this repo's): a citation resolves LIVE via a suffix-fallback path index across
+  the whole workspace (catches a bare basename or a partial path, not only a root-relative one), and
+  a `<placeholder>` segment or a git refspec (`origin/main`, `HEAD~3`) is unprovable rather than
+  dead. Indexing every sub-repo root (not just the workspace root) additionally makes any path under
+  a `templates/` tree read LIVE as a side effect of the same suffix match — `test/assert.sh` now
+  resolves against `.../templates/govern/test/assert.sh` — which is the exact case that regressed.
+- **Load-bearing guard.** A block under a heading matching `anti-pattern` / `load-bearing` /
+  `hard rule` (case-insensitive), or whose own text says `load-bearing`, is classified `judgment`
+  and excluded from proposals outright. Each run logs how many blocks it protected.
+- **`govern-bookkeep.sh --enforce-budgets` no longer demotes CLAUDE.md sections at all**, by hand or
+  from the run-end flush — a per-entry cap is no less an automatic editor for being manually
+  invoked. An oversized section is now only logged informationally, pointing at `/shiploop:compress`.
+  `learnings.md`'s own opt-in TTL archive lane (`SHIPLOOP_LEARNINGS_TTL=1`) is unaffected: it is not
+  `CLAUDE.md` and was never part of this incident.
+- `run-loop.sh`'s run-end flush logs the outcome as a SUGGESTION naming `/shiploop:compress`, never
+  as an enforcement, and `doctor.sh` points at the same command. `GOVERN_AUTO_BUDGETS=0` still skips
+  the check entirely.
+- **`/shiploop:compress`**, a new operator command encoding the method that took a live fleet's
+  `CLAUDE.md` from 26,511 to 18,830 chars (-29%) with zero rules deleted: measure composition per
+  section first, classify every block (automatic-already / mechanically-detectable-trigger /
+  pure-judgment), sort by DETECTABILITY never frequency, audit the safety net before cutting
+  anything, move text verbatim, keep a one-line pack index in `CLAUDE.md`, run a coverage audit that
+  must end `ALL COVERED`, and get an explicit operator go/no-go on the diff.
+- **`templates/hooks/rules-on-touch.sh`**, ported and generalized from a live fleet's own hook
+  (PreToolUse, matcher `Write|Edit|Bash`; that source, like the citation fix, lives outside this
+  repo). Delivers a rule pack just-in-time when its surface is touched instead of keeping it resident
+  in `CLAUDE.md` for every session: `shell`, `worklist`, `git`, `pr`, `release`, `govern`. Advisory
+  only, at most `GOVERN_RULES_MAX_PACKS` (default 2) packs per call with a capped pack left
+  unstamped so it fires later, kill switch `GOVERN_RULES_ON_TOUCH=0`. Keeps the three
+  real-traffic-found guards from the source: the per-call cap, a pure search/read command never
+  triggering an action pack (`grep -r` excepted — a recursive sweep is itself a governed action), and
+  the command probe truncated at the first `<<` because a heredoc body is data, not command text. Not
+  driver-only: a delegate editing a sub-repo never loads the root `CLAUDE.md`, so JIT delivery is
+  worth more in a worker than in the driver. A workspace adds its own packs via
+  `scripts/rules-on-touch.local.sh` without editing the template. Wired into `.claude/settings.json`
+  (fresh installs and the idempotent merge path) and the hub/workspace sync manifest.
+- Seed `CLAUDE.md` diet (5,164 -> 4,855 chars, zero rules deleted) demonstrates the method end to
+  end: four git anti-patterns and the consolidate-by-default bullet moved into packs, long forms in
+  the seed `CLAUDE-APPENDIX.md`, a one-line pack index left behind.
+- **`GOVERN_TRIM_DEAD` is retired.** Nothing auto-moves any more, so the kill switch had nothing left
+  to switch off. `GOVERN_CLAUDEMD_SUGGEST=0` replaces it where a switch is wanted (silences the
+  one-line suggestion; the candidates file is still written).
+- `test-claudemd-size-trigger.sh` is hermetic again: it was inheriting a live session's exported
+  `SHIPLOOP_CLAUDEMD_MAX_CHARS`, so its default-budget cases failed inside any governor run.
+
 ## 1.18.4 — 2026-09-05
 
 ### Fixed

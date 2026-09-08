@@ -136,14 +136,15 @@ The runner is a pure-Bash driver (`scripts/govern/run-loop.sh <N> ...`): you nam
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
 | *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the bash-driven ticket loop (`scripts/govern/run-loop.sh <N> ...`), end to end |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
+| `/shiploop:compress` | Compress this workspace's `CLAUDE.md` by moving mechanically-triggered rules into just-in-time rule packs, deleting none of them (operator-triggered, never automatic) |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |
 | `npm run govern:audit` | Manual audit: review a run's state on demand, zero model spend unless invoked |
-| `npm run govern:budgets` | Enforce context budgets (lesson char cap, learnings TTL) and run the evidence-based CLAUDE.md trim, all outside a dispatch; `--dry` to preview |
-| `npm run govern:trim` | Evidence-based CLAUDE.md trim on its own: auto-move provably dead or duplicate blocks to the appendix, propose the rest (`--apply <hash>`, `--still-true <hash>`, `--dry-run`) |
+| `npm run govern:budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` — `--dry` to preview |
+| `npm run govern:trim` | Evidence-based CLAUDE.md compression detector on its own: classifies every over-budget block and writes ranked candidates, never edits the file (`--apply <hash>`, `--still-true <hash>`, `--dry-run`) |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (opt-in, off until `GOVERN_EXTERNALIZE_REPO` is set) |
 
-`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases, and **fails** when root `CLAUDE.md` exceeds its context budget (`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000), since an over-budget file is a tax on every turn of every session. `npm run govern:budgets` then trims on evidence, never on size: blocks whose every cited path or knob is provably gone (and exact duplicates) auto-move to `CLAUDE-APPENDIX.md`, everything else becomes a ranked proposal in `governor/claudemd-trim-proposals.md` for you to `--apply` or stamp `--still-true`. Doctor also reports how many proposals are pending.
+`bash scripts/doctor.sh` warns when your workspace lags the hub by N releases, and **fails** when root `CLAUDE.md` exceeds its context budget (`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000), since an over-budget file is a tax on every turn of every session. Nothing automatic ever edits that file. Every governor run-end classifies it on evidence, never on size (`dead-citation`, `duplicate`, `jit-candidate`, and `judgment` blocks, which are never proposed at all) and writes ranked candidates to `governor/claudemd-trim-proposals.md`; rules under an anti-pattern / load-bearing / hard-rule heading are protected outright. `/shiploop:compress` is the operator path through them, or `claudemd-trim.sh --apply <hash>` / `--still-true <hash>` one at a time. Doctor reports the size and how many candidates are pending.
 
 ### Fleet visibility
 

@@ -217,6 +217,116 @@ Three things worth knowing before you go looking for a bug in it:
 
 ---
 
+## Rules that live in a just-in-time pack instead of CLAUDE.md
+
+`CLAUDE.md` is re-sent to the model in full on every turn, so a rule that only matters while editing a
+shell script is charged to every session that never opens one. The rules below moved out of the
+always-on file into `scripts/rules-on-touch.sh`, a PreToolUse hook that delivers them at the moment
+the surface they govern is touched. This is a DELIVERY change, not a deletion: the imperative is in
+the pack, the reasoning is here, and nothing was dropped.
+
+**What can move, and what cannot.** A rule moves only if its trigger is mechanically detectable from
+the tool call itself: a `*.sh` path, a `git` command, `gh pr`. Rules whose trigger is a judgment call
+("is this a proxy or an outcome?") cannot move and stay resident in `CLAUDE.md`. **Detectability is
+the sort key, never frequency** — a rule that fires rarely but prevents a destroyed box is high value
+precisely because nobody recalls it, which is exactly the case for just-in-time delivery rather than
+against it.
+
+**It is worth more in a delegate than in the driver.** A subagent editing a sub-repo never loads the
+root `CLAUDE.md` at all, so the hook is the only channel that reaches it. Unlike
+`router-posture-guard.sh`, this hook deliberately does not skip sub-agent or governor-worker calls.
+
+Advisory only, never blocking. At most 2 packs per call (five firing at once buried the one that
+mattered), each pack once per session, and a pack the cap skips is not stamped, so it still fires on a
+later call. Knobs: `GOVERN_RULES_ON_TOUCH=0` (off), `GOVERN_RULES_MAX_PACKS` (per-call cap, default 2),
+`GOVERN_RULES_ON_TOUCH_PACKS` (comma-list to restrict, for debugging), `GOVERN_RULES_STATE_DIR` (stamp
+dir, for tests), `GOVERN_RULES_LOCAL` (path to this workspace's own packs).
+
+**Adding this workspace's own packs without editing the template.** Drop a file at
+`scripts/rules-on-touch.local.sh` defining `rules_local_triggers` (called with `$tool_name`, `$probe`,
+`$search_only` and `$search_is_action` in scope; call `add_pack <name>` for each match) and
+`rules_local_pack_text <name>` (print that pack's text). Nothing in the hub ships that path, so
+`/shiploop:update` never overwrites it, and a broken local file cannot take the built-in packs down.
+Local packs share the same cap, stamping and kill switches. Add each new pack to the index line in
+`CLAUDE.md`.
+
+**Two guards worth not simplifying away**, both found by running the hook against real traffic in the
+fleet it was ported from. A pure search or read command (`grep`, `cat`, `sed`, `awk`, `head`, `ls`,
+`jq`, and friends, after leading `VAR=x` assignments are stripped) never fires an action pack: it only
+MENTIONS the action. `grep -r` is exempt from that exemption, because a recursive sweep is itself a
+governed action, but the exemption feeds only packs keyed on searching, never the action packs (a
+sweep whose pattern is `gh pr` must not fire the pr pack). And the command probe is cut at the first
+`<<`, because a heredoc body is data: the hook once misfired on the very edit that removed the prose
+it was replacing.
+
+### `shell` — writing or editing a `*.sh` file
+
+Both traps are silent: the script keeps running and produces wrong state rather than an error.
+
+- Under `set -euo pipefail`, a function whose LAST statement is a bare `[[ cond ]] && cmd` returns the
+  TEST's status. A false condition therefore returns 1 from the function, and under `-e` that aborts
+  the CALLER, not just the branch. End such a function with an explicit `return 0`.
+- `local a=x b="$a"` is unbound: `local` evaluates its assignments left to right in a single pass, so
+  `$a` is not yet set when `b` is assigned. Under `-u` this aborts; without `-u` it silently assigns
+  empty. Split dependent locals onto separate `local` lines.
+- Under `pipefail`, a consumer that stops early (`grep -q`) SIGPIPEs a live producer and kills the
+  script silently at exit 141: no output, no side effect, and a pipeline that matched still reports
+  failure. Feed consumers from a file or a herestring (`<<< "$var"`), never a live `printf "$var" |`.
+
+### `worklist` — editing `queue/tickets.md`
+
+Work items only, one `## #N` each, scoped to this workspace's sub-repos and the harness. When editing
+ONE ticket, bound its region by the `## #N` heading FIRST: anchors like `**Done when:**` repeat across
+tickets, so a bare index-of can slice backwards and a scripted replace then rewrites the whole file
+(in the fleet this pack came from, that turned 1.9k lines into a 305MB blob GitHub refused). Verify
+the line count after any scripted edit, before committing. Consolidate by default: a worker picks up one ticket and opens one PR, so two tickets that would resolve in a
+single PR cost a full extra dispatch (a fresh context, a fresh branch, a fresh CI run) to produce the
+same diff. See "Why filing happens at a checkpoint, not mid-discussion" above.
+
+### `git` — running git in a meta-repo
+
+These were `CLAUDE.md` anti-patterns 1 to 4. Each fails silently in a nested-repo layout, which is why
+they were always-on until the hook could deliver them on the exact call.
+
+- `cd` into the sub-repo before committing: `git add` from root will not stage sub-repo files, and
+  `git status` at the root proves nothing about sub-repo state.
+- Never assume sub-repos share a branch. They drift, so check each sub-repo's `git status` first.
+- Verify which sub-repo you are in before destructive git (`reset --hard`, `clean -fd`, `branch -D`).
+- Never `git stash` to A/B a baseline: the edits usually live in a nested sub-repo, so a root-level
+  stash silently no-ops and the "baseline" run measures the same tree twice. Use a throwaway
+  `git archive HEAD | tar -x -C "$(mktemp -d)"` export instead.
+
+### `pr` — a command containing `gh pr`
+
+Never mutate an OPEN PR with `gh pr edit`. Two separate failures, one loud and one silent:
+
+- `gh pr edit` issues a GraphQL query that pulls `projectCards`, which hard-fails on repos where that
+  field is unavailable. The edit does not happen and the command errors out.
+- `gh pr edit --base` is the dangerous one: it reports success while changing nothing. A rare but
+  irreversible-looking rule like this is exactly the frequency x severity case that earns a slot.
+
+Use the REST API instead, which has no `projectCards` query and fails loudly:
+`gh api -X PATCH repos/<org>/<repo>/pulls/<N> -F body=@body.md` (add `-F base=<branch>` for the base).
+
+### `release` — a command touching `VERSION`, `npm version`, or `git tag`
+
+Cut a PATCH release yourself. Ask the operator before a MINOR or a MAJOR, and never publish an x.0.0
+release without them: the version number is a public promise to everyone who has already installed,
+and only the operator makes that promise.
+
+### `govern` — editing anything under `scripts/govern/` or `templates/govern/`
+
+- Never add a new `claude` flag to the dispatch path unguarded. Gate it on a CACHED `--help` probe,
+  never on a version compare: a version string reports what shipped, not what this binary supports,
+  and the probe reports the thing you actually need. Give the gate an env kill switch, and expose a
+  `_GOVERN_<X>_SUPPORTED` pre-seed seam so the test suite can skip the probe (an unbounded probe on
+  the dispatch path is also a hang risk, so bound it).
+- Diff the workspace copy against the hub template before fixing a govern-script defect
+  (`bash scripts/govern/sync-templates.sh --check`). The bug is often already fixed upstream, and a
+  local-only fix silently forks the fleet from the hub.
+
+---
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_

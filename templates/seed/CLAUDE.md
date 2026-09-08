@@ -36,7 +36,6 @@
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
-   **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
 
 ## Where knowledge goes
 
@@ -69,19 +68,17 @@ removing a sub-repo is a one-file edit there.
 
 ## Anti-patterns (load-bearing)
 
-1. **`cd` into the sub-repo before committing.** `git add` from root won't stage sub-repo files, and
-   `git status` at the root proves nothing about sub-repo state.
-2. **Never assume sub-repos share a branch.** They drift — check each sub-repo's `git status` first.
-3. **Verify which sub-repo you're in before destructive git** (`reset --hard`, `clean -fd`, `branch -D`).
-4. **Never `git stash` to A/B a baseline** — the edits usually live in a nested sub-repo, so a
-   root-level stash silently no-ops and the "baseline" run is worthless. Use a throwaway
-   `git archive HEAD | tar -x -C "$(mktemp -d)"` export.
-5. **PRs aren't transactional across sub-repos — merge backend-first**, and state the order in each
+1. **PRs aren't transactional across sub-repos — merge backend-first**, and state the order in each
    sibling PR.
-6. **`.env.example` is the contract.** Never commit `.env` — nothing enforces this mechanically.
-7. **Coordination files commit directly to `main` in the main checkout** (`CLAUDE.md`, `queue/`,
+2. **`.env.example` is the contract.** Never commit `.env` — nothing enforces this mechanically.
+3. **Coordination files commit directly to `main` in the main checkout** (`CLAUDE.md`, `queue/`,
    `learnings.md`, `scripts/`) — never branched or PR'd. Branch work belongs in worktrees.
-8. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
+4. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
+
+**Six rule packs are delivered JUST-IN-TIME by `scripts/rules-on-touch.sh` (PreToolUse), not resident
+here**: `shell` · `worklist` · `git` · `pr` · `release` · `govern`. They fire when you touch that surface,
+in workers too (a delegate never loads this file). Assume they exist; read the script if you need one
+early. Long forms: `CLAUDE-APPENDIX.md`. Compress more of this file with `/shiploop:compress`.
 
 > Replace the `<…>` placeholders and the Sub-repos table with your specifics, then append your own hard
 > rules here and reference material to `CLAUDE-APPENDIX.md`. Also in the appendix: MCP servers always
