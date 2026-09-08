@@ -184,6 +184,37 @@ jobs:
           done < tools/hub-context-tests.txt
           exit "$rc_all"
 
+  hook-tests:
+    name: Hook tests (templates/hooks/test-*.sh, run from the hub checkout)
+    runs-on: ubuntu-latest
+    # The govern suite only globs templates/govern/test/test-*.sh, so a test that
+    # ships beside the hook it covers would never run. These are self-contained
+    # (no assert.sh, no scaffolded workspace) and exit 77 to SKIP.
+    steps:
+      - uses: actions/checkout@v4
+      - name: run hook tests
+        run: |
+          set -uo pipefail
+          rc_all=0; n=0
+          for t in templates/hooks/test-*.sh; do
+            [ -f "$t" ] || continue
+            n=$((n+1))
+            if bash "$t" >/tmp/hookout.log 2>&1; then
+              echo "ok   - $(basename "$t")"
+            else
+              rc=$?
+              if [ "$rc" -eq 77 ]; then
+                echo "skip - $(basename "$t") (exit 77)"
+              else
+                echo "::error::$(basename "$t") FAILED (exit $rc)"
+                sed 's/^/    /' /tmp/hookout.log
+                rc_all=1
+              fi
+            fi
+          done
+          echo "ran $n hook test file(s)"
+          exit "$rc_all"
+
   scaffold-and-test:
     name: Govern suite (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest

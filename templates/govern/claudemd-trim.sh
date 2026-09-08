@@ -1,48 +1,64 @@
 #!/usr/bin/env bash
-# claudemd-trim.sh: evidence-based, reversible, two-lane trimming for the workspace root CLAUDE.md.
-# Pure bash + awk/sed/jq, ZERO model calls. Replaces the blind largest-first eviction that used to
-# live inside `govern-bookkeep.sh --enforce-budgets` (which now calls this script instead).
+# claudemd-trim.sh: evidence-based, reversible SUGGESTION engine for the workspace root CLAUDE.md.
+# Pure bash + awk/sed/jq, ZERO model calls.
 #
-# Principles (locked; adapted from cleanmyclaude's rule_trim / rule_drift / rule_verdicts):
+# Principles (locked):
 #   1. The unit of removal is a markdown BLOCK: a heading line, a bullet plus its indented
 #      continuation lines, a paragraph, or a whole fenced code block. That is the smallest unit
 #      whose removal cannot produce invalid markdown. Never a char truncation, never a raw line.
 #   2. Trim candidates come from EVIDENCE, not from size or age.
 #   3. Every removal is a reversible MOVE into CLAUDE-APPENDIX.md, never a delete.
-#   4. Suspicion requires a human; only mechanical proof may auto-apply. Operator verdicts live
-#      OUTSIDE the file (governor/claudemd-verdicts.json), keyed by the block's content hash, so a
-#      verdict dies exactly when the text it covered changes. No tool bookkeeping in CLAUDE.md.
+#   4. NOTHING AUTOMATIC EVER EDITS CLAUDE.md. The only writers are explicit operator actions:
+#      `--apply <hash>` here, and the /shiploop:compress playbook. This script used to auto-move
+#      blocks it judged mechanically dead; on 2026-09-08 that quietly demoted 81 lines out of a
+#      7,109-byte CLAUDE.md, every load-bearing anti-pattern included, because those rules cite
+#      hub-only paths that a scaffolded workspace legitimately does not have. Detection is cheap
+#      and often wrong; the edit is expensive and irreversible in practice. So: detect, classify,
+#      report. A human decides.
+#   5. Operator verdicts live OUTSIDE the file (governor/claudemd-verdicts.json), keyed by the
+#      block's content hash, so a verdict dies exactly when the text it covered changes. No tool
+#      bookkeeping in CLAUDE.md.
 #
-# Lane 1 (auto, mechanical proof only; kill switch GOVERN_TRIM_DEAD=0):
-#   * dead-citation blocks: the block cites at least one backticked repo path or
-#     GOVERN_*/SHIPLOOP_*/WSP_* knob, every cited path is absent from the workspace root AND from
-#     every sub-repo listed in scripts/lib/workspace.sh, and every cited knob appears nowhere under
-#     scripts/ or templates/. One live or uncheckable citation disqualifies the block; a block with
-#     no citations never qualifies.
-#   * exact duplicates: a content hash seen earlier in the file keeps its FIRST copy; later copies
-#     move to the appendix.
-#   * a heading block and the file's FIRST block are never auto-moved.
-# Lane 2 (propose, everything else): when the file still exceeds the budget after lane 1, ranked
-#   candidates (largest first, each with content hash, byte size and an evidence line) are written
-#   to governor/claudemd-trim-proposals.md. This lane NEVER modifies CLAUDE.md.
+# The automatic run detects and reports only. Over budget, every non-protected block is classified
+# into exactly one class and the candidates are written to governor/claudemd-trim-proposals.md:
+#   * dead-citation  the block cites at least one backticked repo path or GOVERN_*/SHIPLOOP_*/WSP_*
+#                    knob and EVERY citation is dead: the path is absent from the workspace root,
+#                    from every sub-repo listed in scripts/lib/workspace.sh, AND from every
+#                    templates/ tree in the workspace (a hub-only-by-design path such as
+#                    `test/assert.sh` resolves LIVE there); the knob appears nowhere under
+#                    scripts/ or templates/.
+#   * duplicate      an exact content hash seen earlier in the file; the FIRST copy is never a
+#                    candidate.
+#   * jit-candidate  the block cites a path that EXISTS. The citation is a mechanically detectable
+#                    trigger, so the rule can be loaded just in time instead of every turn.
+#   * judgment       no mechanically detectable trigger: no citations at all, or only citations
+#                    that cannot be checked (absolute/home paths, globs). NEVER a candidate and
+#                    never written as a proposal.
+# Never a candidate at all: the file's first block, every heading, a block stamped --still-true,
+# and anything the LOAD-BEARING GUARD protects (a block under a heading matching
+# anti-pattern|load-bearing|hard rule, or whose own text says load-bearing). Those are judgment.
+# dead-citation and duplicate rank above jit-candidate; within a class, largest first.
 #
 # Usage:
-#   claudemd-trim.sh                      lane 1, then lane 2 when still over budget
-#   claudemd-trim.sh --dry-run            print what each lane would do; change nothing on disk
-#   claudemd-trim.sh --apply <hash>       move the ONE block with that content hash (full hash or a
-#                                         unique prefix of 8+ hex chars) to the appendix; refused
-#                                         when it matches zero or several current blocks
+#   claudemd-trim.sh                      detect + report; writes proposals, never CLAUDE.md
+#   claudemd-trim.sh --dry-run            print what it would report; change nothing on disk
+#   claudemd-trim.sh --apply <hash>       OPERATOR ACTION: move the ONE block with that content
+#                                         hash (full hash or a unique prefix of 8+ hex chars) to
+#                                         the appendix; refused when it matches zero or several
+#                                         current blocks
 #   claudemd-trim.sh --still-true <hash>  record an operator verdict in claudemd-verdicts.json
-#                                         (schema: hash -> {verdict: "still-true", ts}); lane 2
-#                                         stops proposing that block until its text, and therefore
-#                                         its hash, changes. Any failure reading the verdicts file
+#                                         (schema: hash -> {verdict: "still-true", ts}); that block
+#                                         stops being proposed until its text, and therefore its
+#                                         hash, changes. Any failure reading the verdicts file
 #                                         (missing, corrupt, partial) reads as NOT stamped.
 # Env:
 #   SHIPLOOP_CLAUDEMD_MAX_CHARS   total CLAUDE.md budget (default 14000). GOVERN_LESSON_BUDGET_CHARS
 #                                 wins when set, the same precedence bookkeep and doctor use.
-#   GOVERN_TRIM_DEAD=0            disable lane 1 (auto moves); proposals only.
-# Exit: 0 = under budget, or nothing to do, or --dry-run / operator command succeeded;
-#       3 = still over budget after lane 1 (proposals written); 1 = usage error or refusal.
+#   GOVERN_CLAUDEMD_SUGGEST=0     silence the one-line "run /shiploop:compress" suggestion; the
+#                                 proposals file is still written.
+# Exit: 0 = under budget, nothing to do, --dry-run, or an operator command that succeeded;
+#       3 = compression candidates exist (proposals written). Never an error, and callers must not
+#           let it change a governor run's exit status; 1 = usage error or refusal.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
@@ -118,10 +134,14 @@ ct::load() { # <file>
   local file="$1" idx kind s e bf
   rm -rf "$CT_WORK/blocks"
   ct::parse "$file" "$CT_WORK/blocks"
-  CT_N=0; CT_KIND=(); CT_START=(); CT_END=(); CT_BYTES=(); CT_HASH=(); CT_FILE=()
+  CT_N=0; CT_KIND=(); CT_START=(); CT_END=(); CT_BYTES=(); CT_HASH=(); CT_FILE=(); CT_HEAD=()
+  local head=""
   while IFS=$'\t' read -r idx kind s e; do
     bf="$(printf '%s/blocks/%04d.block' "$CT_WORK" "$idx")"
     [[ -f "$bf" ]] || continue
+    # Nearest preceding heading, so the load-bearing guard can read a block's section context.
+    if [[ "$kind" == "heading" ]]; then head="$(head -n 1 "$bf")"; fi
+    CT_HEAD[$CT_N]="$head"
     CT_KIND[$CT_N]="$kind"
     CT_START[$CT_N]="$s"
     CT_END[$CT_N]="$e"
@@ -133,15 +153,58 @@ ct::load() { # <file>
   return 0
 }
 
-# Does <workspace-relative path> exist at the workspace root or inside any sub-repo listed in
-# scripts/lib/workspace.sh? (REPOS and wsp_repo_localdir come from sourcing common.sh.)
-ct::path_exists() { # <relpath>
-  local p="$1" r d
-  if [[ -e "$WS_ROOT/$p" ]]; then return 0; fi
+# Every root a citation may resolve against: the workspace root plus each sub-repo listed in
+# scripts/lib/workspace.sh. (REPOS and wsp_repo_localdir come from sourcing common.sh.)
+ct::roots() {
+  local r d
+  printf '%s\n' "$WS_ROOT"
   for r in ${REPOS[@]+"${REPOS[@]}"}; do
     d="$(wsp_repo_localdir "$r" 2>/dev/null || true)"
-    if [[ -n "$d" && -e "$d/$p" ]]; then return 0; fi
+    if [[ -n "$d" ]]; then printf '%s\n' "$d"; fi
   done
+  return 0
+}
+
+# SUFFIX FALLBACK, ported from a live fleet's fix to this exact function (aquanode, commit 15bf864;
+# read-only reference, not this repo). The direct per-root checks below only resolve a citation
+# written relative to the workspace root or to a sub-repo ROOT. Most citations in CLAUDE.md are
+# neither: they name a script by its bare basename (`check-indexed-urls-live.sh` is really
+# website/scripts/check-indexed-urls-live.sh there) or by a partial path (`tickets.md` is really
+# queue/tickets.md). Without this, 9 live rules were queued for eviction as "dead citations" on that
+# fleet's own workspace — the same failure the budget sweep in THIS repo had already committed
+# twice: an auto-remover proving death from its own narrow lookup. An auto-remover must fail toward
+# KEEPING, so a match anywhere under any of this workspace's roots counts as live. Built once per
+# run and cached in CT_PATH_INDEX.
+#
+# Indexing every root from ct::roots() (not just WS_ROOT, which is all the ported fix needed on a
+# single-repo workspace) is the "add on top" this port needs for a hub/sub-repo layout: a path
+# resolving under any sub-repo's templates/ tree reads LIVE as a plain side effect of the same
+# suffix match, no separate templates-specific lookup required. `test/assert.sh` matches the
+# `…/shiploop/templates/govern/test/assert.sh` index line by the `/test/assert.sh` suffix test below
+# — which is exactly the hub-only-by-design false positive #110 exists to fix (govern's test suite
+# ships only inside the hub's templates/, never copied into a scaffolded workspace).
+ct::path_index() {
+  [[ -z "${CT_PATH_INDEX:-}" ]] || return 0
+  CT_PATH_INDEX="$CT_WORK/pathindex.txt"
+  : > "$CT_PATH_INDEX"
+  while IFS= read -r d; do
+    find "$d" \( -name node_modules -o -name .git -o -name .next -o -name dist \) -prune \
+      -o -print 2>/dev/null | sed -e "s|^$d/||" >> "$CT_PATH_INDEX" || :
+  done < <(ct::roots)
+  return 0
+}
+
+# Does <workspace-relative path> exist at the workspace root, inside any sub-repo, or (via the
+# suffix fallback) as a basename or partial path anywhere under any of them? One hit anywhere makes
+# the citation LIVE.
+ct::path_exists() { # <relpath>
+  local p="$1" d
+  while IFS= read -r d; do
+    if [[ -e "$d/$p" ]]; then return 0; fi
+  done < <(ct::roots)
+  ct::path_index
+  grep -qxF -- "$p" "$CT_PATH_INDEX" 2>/dev/null && return 0
+  grep -qF -- "/$p" "$CT_PATH_INDEX" 2>/dev/null && return 0
   return 1
 }
 
@@ -149,11 +212,13 @@ ct::path_exists() { # <relpath>
 # comments included). Deliberately wider than "assigned somewhere": the conservative direction for
 # an auto-remover is fewer proofs of death, never a wrong one.
 ct::var_live() { # <NAME>
-  local d
-  for d in "$WS_ROOT/scripts" "$WS_ROOT/templates"; do
-    [[ -d "$d" ]] || continue
-    if grep -rqF -- "$1" "$d" 2>/dev/null; then return 0; fi
-  done
+  local r d
+  while IFS= read -r r; do
+    for d in "$r/scripts" "$r/templates"; do
+      [[ -d "$d" ]] || continue
+      if grep -rqF -- "$1" "$d" 2>/dev/null; then return 0; fi
+    done
+  done < <(ct::roots)
   return 1
 }
 
@@ -161,7 +226,8 @@ ct::var_live() { # <NAME>
 # unproven. Backticked tokens only. A token is a citation when it is a GOVERN_*/SHIPLOOP_*/WSP_*
 # knob name, or looks like a repo path (contains "/" or ends in .sh/.md/.js/.ts/.json). URLs are
 # not repo paths; absolute or home paths and glob/expansion characters make a path unprovable, and
-# an unproven citation disqualifies the block from lane 1.
+# an unproven citation keeps the block out of the dead-citation class (it becomes jit-candidate if
+# something else on it is live, otherwise judgment).
 ct::citations() { # <blockfile>
   local bf="$1" tok w
   { grep -oE '`[^`]{1,200}`' "$bf" 2>/dev/null || true; } | sed -e 's/^`//' -e 's/`$//' | sort -u | \
@@ -180,6 +246,11 @@ ct::citations() { # <blockfile>
     case "$w" in
       /*|~*) printf 'unproven\t%s\n' "$w"; continue ;;
       *[\*\?\[\$\{]*) printf 'unproven\t%s\n' "$w"; continue ;;
+      # A `<placeholder>` segment names a shape, not a file, and a git refspec is not a path at all.
+      # Both used to resolve as dead and evict a live rule on the fleet this fix was ported from
+      # (a `logs/investigations/<bug>/` citation, an `origin/main` mention) — ported verbatim.
+      *\<*\>*) printf 'unproven\t%s\n' "$w"; continue ;;
+      origin/*|upstream/*|HEAD|HEAD~*) printf 'unproven\t%s\n' "$w"; continue ;;
     esac
     if ct::path_exists "$w"; then printf 'live\t%s\n' "$w"; else printf 'dead\t%s\n' "$w"; fi
   done
@@ -209,20 +280,20 @@ ct::evaluate() { # <blockfile>
   return 0
 }
 
-# One human-readable evidence line for a lane-2 candidate, from the CT_EV_* globals.
-ct::evidence_line() {
-  if [[ "$CT_EV_LIVE" -gt 0 ]]; then
-    printf 'cites %s, still present in the workspace: cannot auto-prove dead' "$CT_EV_LIVELIST"
-  elif [[ "$CT_EV_UNPROVEN" -gt 0 ]]; then
-    printf 'cites %s, not mechanically checkable: cannot auto-prove dead' "$CT_EV_UNPROVENLIST"
-  elif [[ "$CT_EV_DEAD" -gt 0 ]]; then
-    printf 'every citation dead (%s) but lane 1 did not run (GOVERN_TRIM_DEAD=0 or no appendix)' "$CT_EV_DEADLIST"
-  else
-    printf 'no citations: judgment call'
-  fi
-  return 0
+# LOAD-BEARING GUARD. A block is protected, and therefore classified `judgment` and never proposed,
+# when its section heading names it as one of the rules the workspace cannot lose, or when the block
+# itself says so. This is the direct fix for the 2026-09-08 regression: every one of 17 anti-patterns
+# was demoted out of the always-loaded file because they cite hub-only paths. A rule that had to be
+# written down because something broke is exactly the rule a size heuristic should never touch.
+CT_LOADBEARING_RE='anti-pattern|load-bearing|hard rule'
+ct::load_bearing() { # <idx> -> 0 when protected
+  local i="$1"
+  if [[ -n "${CT_HEAD[$i]}" ]] && grep -qiE -- "$CT_LOADBEARING_RE" <<<"${CT_HEAD[$i]}"; then return 0; fi
+  if grep -qiF -- 'load-bearing' "${CT_FILE[$i]}"; then return 0; fi
+  return 1
 }
 
+# OPERATOR PATH ONLY (--apply is the only caller): nothing automatic may reach this function.
 # Remove the given "start-end" line ranges from <file>, swallowing the blank run that directly
 # follows each removed range (the block separator) so exactly one blank keeps separating the
 # neighbours, and trimming trailing blanks only when the file's tail block was removed. Everything
@@ -253,7 +324,8 @@ ct::remove_ranges() { # <file> <s-e> [<s-e> ...]
 }
 
 # Append one block to the appendix under a dated per-label heading (opened once per run per label),
-# preceded by a one-line provenance note naming the source file.
+# preceded by a one-line provenance note naming the source file. OPERATOR PATH ONLY: the only caller
+# is --apply. Nothing on the automatic path may reach this function.
 CT_LAST_SECTION=""
 ct::append_block() { # <label> <provenance> <blockfile>
   local label="$1" prov="$2" bf="$3"
@@ -348,86 +420,14 @@ if [[ "$CT_MODE" == "still-true" ]]; then
   printf '%s' "$ct_base" | jq --arg h "$ct_hash" --arg ts "$CT_UTC_TS" \
     '. + {($h): {verdict: "still-true", ts: $ts}}' > "$CT_VERDICTS.tmp"
   mv "$CT_VERDICTS.tmp" "$CT_VERDICTS"
-  govern::log "trim: recorded still-true verdict for ${ct_hash:0:12}; lane 2 stops proposing this block until its text changes"
+  govern::log "trim: recorded still-true verdict for ${ct_hash:0:12}; this block is no longer proposed until its text changes"
   exit 0
 fi
 
-# ── lane 1: auto-move only what is mechanically proven ──────────────────────
+# ── detect, classify, report: this path NEVER edits CLAUDE.md ───────────────
 ct::load "$CT_CLAUDE"
-ct_trim_dead="${GOVERN_TRIM_DEAD:-1}"
-ct_seen=" "
-ct_dead_idx=""; ct_dup_idx=""; ct_lane1_hashes=" "
-if [[ "$ct_trim_dead" == "0" ]]; then
-  govern::log "trim: lane 1 (auto) disabled by GOVERN_TRIM_DEAD=0; proposals only"
-else
-  i=0
-  while [[ "$i" -lt "$CT_N" ]]; do
-    h="${CT_HASH[$i]}"
-    prot=0
-    if [[ "$i" -eq 0 || "${CT_KIND[$i]}" == "heading" ]]; then prot=1; fi
-    case "$ct_seen" in
-      *" $h "*) isdup=1 ;;
-      *) isdup=0 ;;
-    esac
-    ct_seen="$ct_seen$h "
-    if [[ "$prot" -eq 0 ]]; then
-      if [[ "$isdup" -eq 1 ]]; then
-        ct_dup_idx="$ct_dup_idx $i"
-        ct_lane1_hashes="$ct_lane1_hashes$h "
-      else
-        ct::evaluate "${CT_FILE[$i]}"
-        if [[ $((CT_EV_DEAD + CT_EV_LIVE + CT_EV_UNPROVEN)) -gt 0 && "$CT_EV_LIVE" -eq 0 && "$CT_EV_UNPROVEN" -eq 0 ]]; then
-          ct_dead_idx="$ct_dead_idx $i"
-          ct_lane1_hashes="$ct_lane1_hashes$h "
-        fi
-      fi
-    fi
-    i=$((i+1))
-  done
-  if [[ -n "$ct_dead_idx$ct_dup_idx" && ! -f "$CT_APPENDIX" ]]; then
-    govern::log "trim: block(s) qualify for auto-move but CLAUDE-APPENDIX.md is absent: nowhere to move to, skipping lane 1 (create it, then re-run)"
-    ct_dead_idx=""; ct_dup_idx=""; ct_lane1_hashes=" "
-  fi
-fi
-
-ct_removed_ranges=""
-ct_removed_bytes=0
-for i in $ct_dead_idx; do
-  ct::evaluate "${CT_FILE[$i]}"
-  if [[ "$CT_DRY" -eq 1 ]]; then
-    govern::log "trim: would move dead-citation block ${CT_HASH[$i]:0:12} (${CT_BYTES[$i]} bytes, ${CT_KIND[$i]}, line ${CT_START[$i]}) to CLAUDE-APPENDIX.md (dead: $CT_EV_DEADLIST)"
-  else
-    ct::append_block "dead citations" \
-      "moved from CLAUDE.md by claudemd-trim.sh on $CT_UTC_TS; every citation is dead: $CT_EV_DEADLIST" \
-      "${CT_FILE[$i]}"
-    govern::log "trim: moved dead-citation block ${CT_HASH[$i]:0:12} (${CT_BYTES[$i]} bytes, ${CT_KIND[$i]}, line ${CT_START[$i]}) to CLAUDE-APPENDIX.md (dead: $CT_EV_DEADLIST)"
-  fi
-  ct_removed_ranges="$ct_removed_ranges ${CT_START[$i]}-${CT_END[$i]}"
-  ct_removed_bytes=$((ct_removed_bytes + CT_BYTES[i] + 1))
-done
-for i in $ct_dup_idx; do
-  if [[ "$CT_DRY" -eq 1 ]]; then
-    govern::log "trim: would move duplicate block ${CT_HASH[$i]:0:12} (${CT_BYTES[$i]} bytes, ${CT_KIND[$i]}, line ${CT_START[$i]}) to CLAUDE-APPENDIX.md (first copy kept)"
-  else
-    ct::append_block "duplicate" \
-      "moved from CLAUDE.md by claudemd-trim.sh on $CT_UTC_TS; exact duplicate (hash ${CT_HASH[$i]:0:12}), first copy kept in place" \
-      "${CT_FILE[$i]}"
-    govern::log "trim: moved duplicate block ${CT_HASH[$i]:0:12} (${CT_BYTES[$i]} bytes, ${CT_KIND[$i]}, line ${CT_START[$i]}) to CLAUDE-APPENDIX.md (first copy kept)"
-  fi
-  ct_removed_ranges="$ct_removed_ranges ${CT_START[$i]}-${CT_END[$i]}"
-  ct_removed_bytes=$((ct_removed_bytes + CT_BYTES[i] + 1))
-done
-if [[ -n "$ct_removed_ranges" && "$CT_DRY" -eq 0 ]]; then
-  # shellcheck disable=SC2086
-  ct::remove_ranges "$CT_CLAUDE" $ct_removed_ranges
-fi
-
-# ── budget check, then lane 2: propose, never edit ──────────────────────────
 ct_size="$(wc -c < "$CT_CLAUDE" | tr -d '[:space:]')"
-if [[ "$CT_DRY" -eq 1 ]]; then
-  # A dry pass cannot shrink the file; estimate the post-lane-1 size instead.
-  ct_size=$((ct_size - ct_removed_bytes))
-fi
+
 if [[ "$ct_size" -le "$CT_BUDGET" ]]; then
   if [[ "$CT_DRY" -eq 0 && -f "$CT_PROPOSALS" ]]; then
     rm -f "$CT_PROPOSALS"
@@ -437,62 +437,105 @@ if [[ "$ct_size" -le "$CT_BUDGET" ]]; then
   exit 0
 fi
 
-ct::load "$CT_CLAUDE"
+# Candidate rows: "<classrank>\t<bytes>\t<hash>\t<class>\t<kind>\t<startline>\t<evidence>\t<snippet>".
+# classrank 0 = mechanical (dead-citation, duplicate), 1 = jit-candidate; sorted rank ascending then
+# bytes descending, so the mechanically-evidenced blocks always read first.
 ct_cand="$CT_WORK/candidates.tsv"
 : > "$ct_cand"
-ct_stamped=0
+ct_stamped=0; ct_guarded=0; ct_judgment=0
+ct_seen=" "
 i=0
 while [[ "$i" -lt "$CT_N" ]]; do
   h="${CT_HASH[$i]}"
-  keep=0
-  if [[ "$i" -eq 0 || "${CT_KIND[$i]}" == "heading" ]]; then keep=1; fi
-  case "$ct_lane1_hashes" in
-    *" $h "*) keep=1 ;;   # dry run only: lane 1 would already move it
+  case "$ct_seen" in
+    *" $h "*) isdup=1 ;;
+    *) isdup=0 ;;
   esac
-  if [[ "$keep" -eq 0 ]] && ct::verdict_live "$h"; then
-    keep=1
-    ct_stamped=$((ct_stamped+1))
+  ct_seen="$ct_seen$h "
+
+  if [[ "$i" -eq 0 || "${CT_KIND[$i]}" == "heading" ]]; then i=$((i+1)); continue; fi
+  if ct::load_bearing "$i"; then
+    ct_guarded=$((ct_guarded+1)); i=$((i+1)); continue
   fi
-  if [[ "$keep" -eq 0 ]]; then
+  if ct::verdict_live "$h"; then
+    ct_stamped=$((ct_stamped+1)); i=$((i+1)); continue
+  fi
+
+  ct_class=""; ct_rank=1; ct_ev=""
+  if [[ "$isdup" -eq 1 ]]; then
+    ct_class="duplicate"; ct_rank=0
+    ct_ev="exact duplicate of an earlier block; the first copy stays in place"
+  else
     ct::evaluate "${CT_FILE[$i]}"
-    ct_ev="$(ct::evidence_line | tr '\t' ' ')"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${CT_BYTES[$i]}" "$h" "${CT_KIND[$i]}" "${CT_START[$i]}" "$ct_ev" "$(ct::first_line "${CT_FILE[$i]}")" \
-      >> "$ct_cand"
+    if [[ $((CT_EV_DEAD + CT_EV_LIVE + CT_EV_UNPROVEN)) -eq 0 ]]; then
+      ct_judgment=$((ct_judgment+1)); i=$((i+1)); continue           # no citations: judgment
+    elif [[ "$CT_EV_LIVE" -gt 0 ]]; then
+      ct_class="jit-candidate"; ct_rank=1
+      ct_ev="cites $CT_EV_LIVELIST, still present: a mechanically detectable trigger, so this rule can be loaded just in time instead of every turn"
+    elif [[ "$CT_EV_UNPROVEN" -gt 0 ]]; then
+      ct_judgment=$((ct_judgment+1)); i=$((i+1)); continue           # uncheckable citation: judgment
+    else
+      ct_class="dead-citation"; ct_rank=0
+      ct_ev="every citation is dead: $CT_EV_DEADLIST (absent from the workspace root, every sub-repo, and every templates/ tree)"
+    fi
   fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$ct_rank" "${CT_BYTES[$i]}" "$h" "$ct_class" "${CT_KIND[$i]}" "${CT_START[$i]}" \
+    "$(printf '%s' "$ct_ev" | tr '\t' ' ')" "$(ct::first_line "${CT_FILE[$i]}")" >> "$ct_cand"
   i=$((i+1))
 done
-sort -t "$(printf '\t')" -k1,1nr -o "$ct_cand" "$ct_cand"
+sort -t "$(printf '\t')" -k1,1n -k2,2nr -o "$ct_cand" "$ct_cand"
 ct_nprops="$(grep -c . "$ct_cand" 2>/dev/null || true)"
 ct_nprops="${ct_nprops:-0}"
 
+if [[ "$ct_guarded" -gt 0 ]]; then
+  govern::log "trim: load-bearing guard protected $ct_guarded block(s) from being proposed (heading matches anti-pattern/load-bearing/hard rule, or the block says load-bearing)"
+fi
+
 if [[ "$CT_DRY" -eq 1 ]]; then
-  while IFS=$'\t' read -r bytes h kind start ev snip; do
-    govern::log "trim: would propose ${h:0:12} ($bytes bytes, $kind, line $start): $ev"
+  while IFS=$'\t' read -r rank bytes h class kind start ev snip; do
+    govern::log "trim: would propose ${h:0:12} [$class] ($bytes bytes, $kind, line $start): $ev"
   done < "$ct_cand"
-  govern::log "trim: CLAUDE.md ~$ct_size/$CT_BUDGET chars after lane 1, still over budget: would write $ct_nprops proposal(s) to $CT_PROPOSALS"
+  govern::log "trim: CLAUDE.md $ct_size/$CT_BUDGET chars, would write $ct_nprops compression candidate(s) to $CT_PROPOSALS"
+  exit 0
+fi
+
+if [[ "$ct_nprops" -eq 0 ]]; then
+  if [[ -f "$CT_PROPOSALS" ]]; then rm -f "$CT_PROPOSALS"; fi
+  govern::log "trim: CLAUDE.md $ct_size/$CT_BUDGET chars, over budget with no compression candidate(s): every remaining block is a heading, load-bearing, stamped still-true, or judgment. This one has to be cut by hand."
   exit 0
 fi
 
 mkdir -p "$GOVERNOR_DIR"
 {
-  printf '# CLAUDE.md trim proposals\n\n'
+  printf '# CLAUDE.md compression candidates\n\n'
   printf 'Generated by claudemd-trim.sh on %s. CLAUDE.md is %s chars against a %s char budget.\n' "$CT_UTC_TS" "$ct_size" "$CT_BUDGET"
-  printf 'Nothing below was changed automatically. For each candidate, either:\n\n'
+  printf 'NOTHING here was changed automatically, and nothing automatic ever edits CLAUDE.md.\n'
+  printf 'Run `/shiploop:compress` to work through these, or act on one directly:\n\n'
   printf '    bash scripts/govern/claudemd-trim.sh --apply <hash>       move it to CLAUDE-APPENDIX.md\n'
   printf '    bash scripts/govern/claudemd-trim.sh --still-true <hash>  keep it; not re-proposed until its text changes\n\n'
+  printf 'Classes: dead-citation (every citation is gone), duplicate (an earlier copy exists),\n'
+  printf 'jit-candidate (cites a live path, so it can load just in time). A judgment block, one with\n'
+  printf 'no mechanically detectable trigger, is never proposed and never appears below.\n'
   printf 'This file is regenerated on every run; do not edit it by hand.\n'
   if [[ "$ct_stamped" -gt 0 ]]; then
     printf '(%s block(s) stamped still-true were skipped.)\n' "$ct_stamped"
   fi
-  printf '\n## Candidates (largest first)\n'
-  if [[ "$ct_nprops" -eq 0 ]]; then
-    printf '\nNo candidates: every remaining block is a heading, the first block, or stamped still-true.\n'
-    printf 'The remaining weight has to be cut by hand.\n'
+  if [[ "$ct_guarded" -gt 0 ]]; then
+    printf '(%s block(s) protected by the load-bearing guard were skipped.)\n' "$ct_guarded"
   fi
-  while IFS=$'\t' read -r bytes h kind start ev snip; do
-    printf -- '\n- `%s`\n  %s bytes, %s, line %s: %s\n  > %s\n' "$h" "$bytes" "$kind" "$start" "$ev" "$snip"
+  if [[ "$ct_judgment" -gt 0 ]]; then
+    printf '(%s judgment block(s) were skipped: no mechanically detectable trigger.)\n' "$ct_judgment"
+  fi
+  printf '\n## Candidates (mechanical first, then largest first)\n'
+  while IFS=$'\t' read -r _rank bytes h class kind start ev snip; do
+    printf -- '\n- `%s`\n  Class: %s\n  %s bytes, %s, line %s: %s\n  > %s\n' "$h" "$class" "$bytes" "$kind" "$start" "$ev" "$snip"
   done < "$ct_cand"
 } > "$CT_PROPOSALS"
-govern::log "trim: CLAUDE.md $ct_size/$CT_BUDGET chars, still over budget: $ct_nprops proposal(s) in $CT_PROPOSALS (review, then --apply the blocks you approve, or stamp keepers --still-true)"
+
+if [[ "${GOVERN_CLAUDEMD_SUGGEST:-1}" != "0" ]]; then
+  govern::log "trim: CLAUDE.md $ct_size/$CT_BUDGET chars, $ct_nprops compression candidate(s) - run /shiploop:compress"
+fi
+govern::log "trim: candidates written to $CT_PROPOSALS; CLAUDE.md was not modified"
 exit 3
