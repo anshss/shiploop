@@ -974,12 +974,16 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 #                        govern-bookkeep.sh's lesson-entry sizing note for the same constant).
 #   freshStartTokens  = the PRIOR (failed) attempt's context-reconstruction spend ONLY: its
 #                        input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens
-#                        (govern::cumulative_context_tokens, not govern::cumulative_tokens). A
-#                        retry has to redo the actual work either way; the only thing resuming
-#                        avoids is re-reading its way back into context, so crediting the failed
-#                        attempt's OUTPUT here would hand the resume lever savings that were never
-#                        at stake. Read from its still-intact $jsonl one last time before it is
-#                        rotated away further down.
+#                        (a retry redoes the actual work either way, so the failed attempt's
+#                        output is not a cost resuming avoids) and EXCLUDING
+#                        cache_read_input_tokens (re-paid on EVERY turn for the SAME prefix, so
+#                        summing it across a session counts the same context once per turn, a
+#                        turn-count artifact, not a reconstruction cost, and at real-workspace
+#                        scale, ~20x cacheCreation on a typical ticket, folding it in would hand
+#                        the resume lever an enormous fake saving). See
+#                        govern::cumulative_context_tokens in lib/common.sh, not
+#                        govern::cumulative_tokens. Read from $jsonl one last time before it is
+#                        rotated away further down, while it is still intact.
 if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
       && ( -n "$notes_body" || -n "$handoff_block" ) ]]; then
   resume_ckpt_bytes=$(( $(printf '%s' "$notes_body" | wc -c | tr -d '[:space:]') \
