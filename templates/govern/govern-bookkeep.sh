@@ -14,12 +14,21 @@ govern::require jq
 # because no bookkeep had run since August. Budgets are a property of the FILES, not of the run.
 #
 # Usage:  govern-bookkeep.sh --enforce-budgets [--dry]
-# Exit:   0 = under budget after the pass · 3 = still over (doctor gates on this) · 1 = usage error
+# Exit:   0 = under budget after the pass, 3 = still over (doctor gates on this), 1 = usage error
 #
-# NOTHING IS EVER DELETED. Every demotion moves the full text into CLAUDE-APPENDIX.md, which is a
-# real file a human reviews, not a bin. Content above the first flush-left `## ` heading (the
-# preamble: the file's own framing rules) is never touched. Edits are left UNCOMMITTED on purpose:
-# what a session is charged every turn is the operator's call to land, not a script's.
+# CLAUDE.md is REPORT ONLY, always, whether this runs by hand (`npm run govern:budgets`) or from
+# run-loop.sh's run-end flush: this call never demotes a section and the trim it calls (below) never
+# edits CLAUDE.md either. An earlier version demoted any section over GOVERN_LESSON_MAX_CHARS
+# whenever a human ran this directly, which is exactly the "auto-editor confidently wrong about one
+# block silently costs a rule the workspace needed" failure #110 exists to close: a per-entry cap is
+# no less an automatic editor for being manually invoked. The only writers left for CLAUDE.md are
+# `claudemd-trim.sh --apply <hash>` and the `/shiploop:compress` playbook, both explicit per-block
+# operator actions. learnings.md keeps its own separate, opt-in TTL archive lane (item 3 below): it
+# is not CLAUDE.md and was never part of this incident.
+#
+# NOTHING IS EVER DELETED. A demotion (learnings.md TTL only, see below) moves the full text into
+# CLAUDE-APPENDIX.md, which is a real file a human reviews, not a bin. Edits are left UNCOMMITTED on
+# purpose: what a session is charged every turn is the operator's call to land, not a script's.
 if [[ "${1:-}" == "--enforce-budgets" ]]; then
   shift
   EB_DRY=0
@@ -37,8 +46,9 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
   eb_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
   eb_cap="${GOVERN_LESSON_MAX_CHARS:-600}"
   eb_moved=0
-  if [[ "$EB_DRY" -eq 1 ]]; then eb_verb="would demote"; eb_verb2="would archive"; eb_verb3="would move"
-  else eb_verb="demoted"; eb_verb2="archived"; eb_verb3="moved"; fi
+  if [[ "$EB_DRY" -eq 1 ]]; then eb_verb2="would archive"
+  else eb_verb2="archived"
+  fi
 
   eb_size() { local n; n="$(wc -c < "$1" 2>/dev/null | tr -d '[:space:]')"; printf '%s' "${n:-0}"; }
   # Print the byte size of every flush-left `## ` section in $1, as "<size>\t<heading text>".
@@ -66,30 +76,27 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
     govern::log "budgets: no $eb_claude — nothing to enforce"
     exit 0
   fi
-  if [[ ! -f "$eb_appendix" ]]; then
-    govern::log "budgets: $eb_claude is $(eb_size "$eb_claude") chars against a $eb_budget budget, but CLAUDE-APPENDIX.md is absent — there is nowhere to demote to. Create it, then re-run."
-    [[ "$(eb_size "$eb_claude")" -gt "$eb_budget" ]] && exit 3
-    exit 0
-  fi
-
-  # 1. LESSON CHAR CAP. A single section past the cap is a permanent per-turn tax paid by every
-  #    session. Demote it whole; the appendix keeps every word.
+  # 1. LESSON CHAR CAP. REPORT ONLY. A single section past the cap is a permanent per-turn tax paid
+  #    by every session, worth flagging, but this function never edits CLAUDE.md to fix it: that is
+  #    the exact auto-editor this ticket retires. Route it through claudemd-trim.sh's own candidate
+  #    list (a big block already ranks near the top there) rather than a second, uncoordinated write
+  #    path into the same file.
+  eb_oversized=0
   while IFS=$'\t' read -r sz head; do
     [[ "$sz" =~ ^[0-9]+$ ]] || continue
     [[ "$sz" -gt "$eb_cap" ]] || continue
-    if eb_demote "$eb_claude" "$head"; then
-      eb_moved=$((eb_moved+1))
-      govern::log "budgets: $eb_verb \"$head\" ($sz chars > GOVERN_LESSON_MAX_CHARS=$eb_cap) → CLAUDE-APPENDIX.md"
-    fi
+    eb_oversized=$((eb_oversized+1))
   done < <(eb_sections "$eb_claude" | sort -k1,1nr)
+  if [[ "$eb_oversized" -gt 0 ]]; then
+    govern::log "budgets: $eb_oversized section(s) exceed GOVERN_LESSON_MAX_CHARS=$eb_cap chars (informational only, nothing moved): run /shiploop:compress"
+  fi
 
-  # 2. TOTAL BUDGET. The blind largest-first eviction is gone: claudemd-trim.sh replaces it with
-  #    evidence-based, reversible, two-lane trimming. Lane 1 auto-moves ONLY blocks proven dead
-  #    (every cited path/knob absent from the whole workspace) plus exact duplicates, always into
-  #    CLAUDE-APPENDIX.md; lane 2 never edits CLAUDE.md, it writes ranked candidates to
-  #    governor/claudemd-trim-proposals.md for the operator to --apply or stamp --still-true.
-  #    GOVERN_TRIM_DEAD=0 turns lane 1 off. The size check below stays as the alarm (exit 3,
-  #    doctor gates on it).
+  # 2. TOTAL BUDGET. claudemd-trim.sh detects and reports; it never edits CLAUDE.md. It classifies
+  #    every block (dead-citation / duplicate / jit-candidate / judgment), protects load-bearing
+  #    rules outright, and writes ranked candidates to governor/claudemd-trim-proposals.md for
+  #    /shiploop:compress (or `claudemd-trim.sh --apply <hash>`) to act on. Its exit 3 means
+  #    "candidates exist", not an error, and must never gate a run. The size check below stays as
+  #    the alarm (exit 3, doctor gates on it).
   if [[ -f "$DIR/claudemd-trim.sh" ]]; then
     eb_trim_rc=0
     if [[ "$EB_DRY" -eq 1 ]]; then bash "$DIR/claudemd-trim.sh" --dry-run || eb_trim_rc=$?
@@ -124,12 +131,17 @@ if [[ "${1:-}" == "--enforce-budgets" ]]; then
   fi
 
   eb_final="$(eb_size "$eb_claude")"
-  govern::log "budgets: CLAUDE.md $eb_final/$eb_budget chars · $eb_moved entr(ies) $eb_verb3 to CLAUDE-APPENDIX.md"
+  govern::log "budgets: CLAUDE.md $eb_final/$eb_budget chars (report only: nothing automatic ever edits CLAUDE.md)"
+  if [[ "$eb_moved" -gt 0 ]]; then
+    govern::log "budgets: $eb_moved learnings.md entr(ies) $eb_verb2 to CLAUDE-APPENDIX.md"
+  fi
   if [[ "$eb_final" -gt "$eb_budget" ]]; then
-    govern::log "budgets: STILL OVER by $(( eb_final - eb_budget )) chars. Nothing provably dead was left to move automatically: review governor/claudemd-trim-proposals.md, then claudemd-trim.sh --apply <hash> the blocks you approve, or stamp keepers with --still-true <hash>."
+    govern::log "budgets: STILL OVER by $(( eb_final - eb_budget )) chars. Nothing was moved automatically and nothing ever is: run /shiploop:compress, or review governor/claudemd-trim-proposals.md and claudemd-trim.sh --apply <hash> the blocks you approve, or stamp keepers with --still-true <hash>."
     exit 3
   fi
-  [[ "$EB_DRY" -eq 1 ]] || govern::log "budgets: edits left UNCOMMITTED in $eb_root — review and commit them yourself"
+  if [[ "$EB_DRY" -eq 0 && "$eb_moved" -gt 0 ]]; then
+    govern::log "budgets: edits left UNCOMMITTED in $eb_root: review and commit them yourself"
+  fi
   exit 0
 fi
 N="${1:?ticket number required}"

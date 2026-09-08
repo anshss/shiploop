@@ -9,6 +9,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 
+# Hermetic budget: this suite is routinely run BY a session inside a live workspace that EXPORTS its
+# own SHIPLOOP_CLAUDEMD_MAX_CHARS (a fleet running at 30000 makes the 21000-byte fixture below read
+# as under budget, and the default-budget assertions fail for reasons that have nothing to do with
+# the hook). The cases that need a specific budget set it explicitly per call.
+unset SHIPLOOP_CLAUDEMD_MAX_CHARS GOVERN_LESSON_BUDGET_CHARS
+
 # Runs in BOTH layouts, same resolution as test-learnings-digest.sh.
 HUB="$(cd "$DIR/../../.." && pwd)"
 DIGEST=""

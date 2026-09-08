@@ -2030,26 +2030,31 @@ govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout
   "rundir=$RUNDIR"
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 
-# ── auto budget enforcement (#95) ────────────────────────────────────────────────────────────────
-# govern-bookkeep.sh --enforce-budgets used to be invoked ONLY by a human (`npm run govern:budgets`)
-# or by a human heeding doctor.sh's failing check, so a fleet that never runs either never enforces
-# its own context budgets. Flush it here instead: ONCE per dispatch, at run-end, AFTER every worker
+# ── auto budget CHECK at run-end (#95) ────────────────────────────────────────────────────────────
+# The context-budget check used to run ONLY when a human ran it (`npm run govern:budgets`) or heeded
+# doctor.sh's failing check, so a fleet that never runs either never measures its own context
+# budgets. Flush the CHECK here instead: ONCE per dispatch, at run-end, AFTER every worker
 # is reaped (RUN_END is 1 only in the orchestrator / the sequential driver that IS the orchestrator,
 # see the RUN-END BLOCKS comment above). Deliberately NOT per-ticket: a per-driver cadence divided
 # across an N-way fan-out overfires ~N× (workspace CLAUDE.md rule 15); a single end-of-run flush
 # keeps the check rate constant regardless of --parallel width.
 #
-# --enforce-budgets can legitimately exit 3 as a deliberate "still over budget" alarm (doctor gates
-# on that). That alarm must NEVER abort this run or change its exit status: capture the status
-# explicitly rather than letting `set -euo pipefail` see a bare non-zero command. GOVERN_AUTO_BUDGETS=0
-# disables this entirely (default on; mirrors how GOVERN_OVERLAP_NUDGE (#139) is structured).
+# CLAUDE.md is REPORT ONLY on every call, automatic or manual (govern-bookkeep.sh's own header): it
+# never demotes a section, and the trim it calls never edits CLAUDE.md either. It measures the file,
+# classifies compression candidates and points at /shiploop:compress. An automatic editor that is
+# confidently wrong about one block silently costs the workspace a rule it needed, and on 2026-09-08
+# exactly that happened. --enforce-budgets can legitimately exit 3 as a deliberate "still over budget"
+# alarm (doctor gates on that). That alarm must NEVER abort this run or change its exit status:
+# capture the status explicitly rather than letting `set -euo pipefail` see a bare non-zero command.
+# GOVERN_AUTO_BUDGETS=0 disables this entirely (default on; mirrors how GOVERN_OVERLAP_NUDGE (#139)
+# is structured).
 if [[ "$RUN_END" -eq 1 && "$MODE" == "live" && "${GOVERN_AUTO_BUDGETS:-1}" == "1" ]]; then
   eb_out="$("$DIR/govern-bookkeep.sh" --enforce-budgets 2>&1)" && eb_rc=0 || eb_rc=$?
   [[ -n "${eb_out:-}" ]] && printf '%s\n' "$eb_out" | while IFS= read -r _bl; do govern::log "budgets | $_bl"; done
   case "$eb_rc" in
-    0) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): OK, under budget after the pass" ;;
-    3) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): ALARM, still over budget after the pass (exit 3); does not affect this run's exit status. Review governor/claudemd-trim-proposals.md." ;;
-    *) govern::log "budgets: auto-enforced at run-end (GOVERN_AUTO_BUDGETS=1): --enforce-budgets exited $eb_rc (unexpected); does not affect this run's exit status." ;;
+    0) govern::log "budgets: checked at run-end (GOVERN_AUTO_BUDGETS=1): OK, CLAUDE.md is under budget. Nothing was edited." ;;
+    3) govern::log "budgets: checked at run-end (GOVERN_AUTO_BUDGETS=1): CLAUDE.md is over budget, so a compression is SUGGESTED, not performed - run /shiploop:compress. Nothing was edited and this does not affect this run's exit status." ;;
+    *) govern::log "budgets: checked at run-end (GOVERN_AUTO_BUDGETS=1): --enforce-budgets exited $eb_rc (unexpected); nothing was edited and this does not affect this run's exit status." ;;
   esac
 fi
 
