@@ -55,18 +55,27 @@ const DEFAULT_BASELINE = 'driver-tier';
 const QUOTA_WEIGHTS = { opus: 5, sonnet: 2, haiku: 1 };
 const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3 };
 
-// Conservative per-class estimate of the model turn a `scripted-action` event replaced, in tokens.
-// Deliberately low: a wrong-high estimate would manufacture savings, a wrong-low one only
-// understates. Printed in the report wherever the lever is credited. An unrecognised class is
-// counted, credited zero, and named.
+// Per-class estimate of the model work a `scripted-action` event replaced, in tokens. The keys are
+// the scout's `DET_KIND` values, which is what `deterministic-apply.sh` puts on the wire, and the
+// scout CLAMPS that field to exactly this set (`SCOUT_DET_KINDS` in scout-ticket.sh). An
+// unrecognised class is counted, credited zero, and named in the report.
+//
+// The figure is a FLOOR, not an estimate of the work: a deterministic apply resolves the ticket
+// with zero model turns, so what it avoided is a whole worker session, and this credits only the
+// context that session would have paid to reach its FIRST turn. Sourced, not guessed: the 25th
+// percentile of observed worker first-turn contexts is 47,024 tokens (n=502 sessions across the
+// shiploop and aquanode corpora, measured 2026-09-08), rounded down to 45,000.
+//
+// The classes are not differentiated from each other because nothing measured supports
+// differentiating them. Inventing a spread per class would be precision this bench has not earned;
+// one honest floor applied uniformly is the conservative choice, and it is stated as such.
+const SCRIPTED_ACTION_FLOOR = 45_000;
 const SCRIPTED_ACTION_ESTIMATES = {
-  'version-bump': 12_000,
-  'release-notes': 20_000,
-  'queue-edit': 8_000,
-  'lint-fix': 15_000,
-  'doc-sync': 10_000,
-  'merge-pr': 8_000,
-  'status-check': 6_000,
+  'config-default': SCRIPTED_ACTION_FLOOR,
+  'version-bump': SCRIPTED_ACTION_FLOOR,
+  'dead-line-delete': SCRIPTED_ACTION_FLOOR,
+  'known-rename': SCRIPTED_ACTION_FLOOR,
+  'add-key': SCRIPTED_ACTION_FLOOR,
 };
 
 // A transcript that is orchestration rather than ticket work: the governor's own model calls, the
@@ -972,6 +981,12 @@ function leversFromEvents(events, window, driverTier) {
       out.watchdog.quota += tk * QUOTA_WEIGHTS[tier];
       out.watchdog.n++;
     } else if (ev.event === 'resume') {
+      // `freshStartTokens` is the failed attempt's CONTEXT-RECONSTRUCTION spend only (input plus
+      // cache creation, output excluded), per the wire contract. A retry redoes the actual work
+      // either way; the only thing resuming avoids is reading its way back into context. Crediting
+      // the failed attempt's total spend would hand this lever attempt 1's output tokens, which
+      // would be a lever biased toward shiploop. This number is under-counted by construction and
+      // the report says so where it prints it.
       const tk = Math.max(0, (Number(ev.freshStartTokens) || 0) - (Number(ev.checkpointTokens) || 0));
       out.resume.tokens += tk;
       out.resume.cost += tk * readRate(tier);
@@ -992,6 +1007,12 @@ function leversFromEvents(events, window, driverTier) {
       // tokens is not real, so it is taken back. Negative by construction; zero when the failed
       // attempt already ran at or above the driver's tier, and zero under same-mix (see below,
       // where the whole term is dropped when there is no routing credit to correct).
+      //
+      // Not every retry carries one of these. The emitter fires it only for the retry classes that
+      // actually change tier (budget / judgment / unknown) and deliberately not for infra or CI
+      // retries, which re-run at the same tier and buy no escalation. So this correction is a
+      // partial one by design: a retry with no event is not evidence that no tokens were wasted,
+      // only that no TIER CHANGE was bought. Nothing here assumes one event per retry.
       const ft = tierOf(ev.failedTier) || driverTier;
       const tk = Number(ev.failedTokens) || 0;
       const spread = RATES[driverTier].input - RATES[ft].input;
@@ -1797,11 +1818,31 @@ function render(out) {
       `quota-weighted ${head.leverSumCheck.quotaWeighted ? 'ok' : 'MISMATCH'}`,
   );
   L.push(
-    `    skip-the-model per-class estimates (tokens): ` +
+    `    skip-the-model per-class floor (tokens), keyed on the scout's deterministic kinds: ` +
       Object.entries(out.scriptedActionEstimates)
         .map(([k, v]) => `${k} ${v.toLocaleString('en-US')}`)
         .join(', '),
   );
+  L.push(
+    `    Two levers are UNDER-counted on purpose. skip-the-model credits only the context a worker`,
+  );
+  L.push(
+    `    would have paid to reach its first turn, not the whole session the deterministic apply`,
+  );
+  L.push(
+    `    replaced. resume credits only context reconstruction (input + cache creation, output`,
+  );
+  L.push(
+    `    excluded): a retry redoes the work either way, so only the re-reading is avoided.`,
+  );
+  if (head.levers['escalation-correction'].status === 'measured') {
+    L.push(
+      `    The escalation correction is partial by design: it fires only where a retry actually`,
+    );
+    L.push(
+      `    changed tier, not on infra or CI retries that re-run at the same tier.`,
+    );
+  }
   if (Object.keys(head.unknownScriptedActionClasses || {}).length) {
     L.push(
       `    scripted-action classes with no estimate (counted, credited zero): ` +
@@ -1879,6 +1920,20 @@ function render(out) {
       `lever-events.jsonl (${out.instrumentation.malformedLines} malformed line(s), ` +
       `${out.instrumentation.unknownEvents} unrecognised event(s) skipped).`,
   );
+  if (out.instrumentation.withEvents < out.instrumentation.runs) {
+    L.push(
+      `                   The emitter ships DEFAULT OFF (GOVERN_LEVER_EVENTS=0), so an uninstrumented`,
+    );
+    L.push(
+      `                   corpus is the expected state, not a fault. The four event-derived levers`,
+    );
+    L.push(
+      `                   above are therefore UNCREDITED here, which understates the harness. They are`,
+    );
+    L.push(
+      `                   not measured zeros and must never be quoted as "this lever saves nothing".`,
+    );
+  }
   L.push(`  ${out.abortedRuns} run(s) aborted before dispatch (0-byte state.jsonl): excluded from the bench, counted here.`);
   L.push(
     `  ${out.resolvedWithoutTranscript} ticket(s) recorded resolved with no transcript in this corpus ` +

@@ -123,7 +123,7 @@ line that is not JSON.
 |---|---|---|
 | `watchdog-kill` | sonnet, `ctxTokens` 300,000 | 200,000 tokens on the `200k` arm (the window caps it), 300,000 on the others |
 | `resume` | haiku, checkpoint 10,000 vs fresh 60,000 | 50,000 tokens |
-| `scripted-action` | class `version-bump` | 12,000 tokens, the published per-class estimate |
+| `scripted-action` | class `version-bump` (a real scout `DET_KIND`) | 45,000 tokens, the published per-class floor |
 | `scripted-action` | class `not-a-known-class` | zero, counted, and named in the report |
 | `escalation` | failed tier haiku, 50,000 tokens | -$0.20 against the routing credit (the opus/haiku input spread) |
 
@@ -137,14 +137,14 @@ any of them. The only re-prime refund is 203's 10,000 first-turn write (202's is
 |---|---|---|
 | shiploop tokens (incl. 25,000 orchestration) | 545,000 | 595,000 |
 | carry tokens (re-read less refund) | 200,000 | 290,000 |
-| vanilla tokens, `200k` | 982,000 | 1,122,000 |
-| vanilla tokens, `1m` / `uncapped` | 1,082,000 | 1,222,000 |
+| vanilla tokens, `200k` | 1,015,000 | 1,155,000 |
+| vanilla tokens, `1m` / `uncapped` | 1,115,000 | 1,255,000 |
 
 Cost, on the headline cell (`driver-tier` x `200k` x `price`): shiploop $0.624 (work $0.399 plus
-$0.225 of orchestration), vanilla $2.236, which is a 72.1% reduction. Component by component:
+$0.225 of orchestration), vanilla $2.2525, which is a 72.3% reduction. Component by component:
 carry $0.05, routing $0.796, cache-prefix $1.140, watchdog $0.04, resume $0.005, skip-the-model
-$0.006, escalation -$0.20, harness overhead -$0.225. Those eight sum to $1.612, and $0.624 plus
-$1.612 is $2.236: the additivity the report asserts on every run.
+$0.0225, escalation -$0.20, harness overhead -$0.225. Those eight sum to $1.6285, and $0.624 plus
+$1.6285 is $2.2525: the additivity the report asserts on every run.
 
 Two properties this fixture exists to lock, beyond the arithmetic:
 

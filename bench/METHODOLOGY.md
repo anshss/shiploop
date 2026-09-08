@@ -181,18 +181,46 @@ sum to it (`leverSumCheck` in the JSON, `sum check:` in the report). A component
 | routing | the measured work repriced at the driver tier (zero under `same-mix`) |
 | cache-prefix | turn-1 cache READS that would have been cache WRITES without cross-worker prefix preservation, at the 1.9x spread. Worth zero tokens: read and write are the same token count |
 | watchdog | from `watchdog-kill` events: one further turn at the context reached, capped by the arm's window. A floor, not the true counterfactual |
-| resume-not-restart | from `resume` events: fresh-start tokens minus what the checkpoint actually loaded |
-| skip-the-model | from `scripted-action` events: a conservative per-class token estimate, table printed in the report. An unknown class is counted and credited zero |
-| escalation-correction | from `escalation` events: the routing credit claimed for a failed cheap-tier attempt is taken back. Negative by construction |
+| resume-not-restart | from `resume` events: fresh-start tokens minus what the checkpoint actually loaded. **Under-counted on purpose**, see below |
+| skip-the-model | from `scripted-action` events: a per-class token FLOOR, table printed in the report. Keyed on the scout's deterministic kinds. An unknown class is counted and credited zero |
+| escalation-correction | from `escalation` events: the routing credit claimed for a failed cheap-tier attempt is taken back. Negative by construction, and **partial by design**, see below |
 | harness-overhead | the orchestration-side transcripts, charged into the shiploop arm. **Negative by construction** |
 | output-suppression | **uninstrumented.** The withheld bytes are, by definition, absent from every transcript, and the wire contract (`bench/LEVER-EVENTS.md`) carries no event for them |
 | shared-exploration, memory-budget, blocked-work-early-catch | **unmeasured.** Each is printed with the counterfactual it would need |
 | lean-worker-session, scripted-codebase-map | **absorbed (uncredited, conservative).** See below |
 
+**Two of these are under-counted on purpose, and the report says so where it prints them.**
+
+- **`resume-not-restart`** credits `freshStartTokens - checkpointTokens`, where the wire contract
+  defines `freshStartTokens` as the failed attempt's context-RECONSTRUCTION spend only: its input
+  plus cache creation, output excluded. A retry redoes the actual work either way, so the only
+  thing resuming avoids is reading its way back into context. Crediting the failed attempt's total
+  spend would hand this lever attempt 1's output tokens as savings, which would be exactly the kind
+  of entry section 4a exists to keep out of the bias ledger.
+- **`skip-the-model`** credits a floor, not the work avoided. A deterministic apply resolves a
+  ticket with zero model turns, so what it replaced is a whole worker session; the table credits
+  only the context that session would have paid to reach its FIRST turn. The figure is the 25th
+  percentile of observed worker first-turn contexts (47,024 tokens over n=502 sessions across the
+  shiploop and aquanode corpora, measured 2026-09-08), rounded down to 45,000. The five classes are
+  not differentiated from each other, because nothing measured supports differentiating them, and
+  inventing a per-class spread would be precision this bench has not earned.
+
+**`escalation-correction` is a partial correction.** The emitter fires it only for the retry classes
+that actually change tier (budget, judgment, unknown) and deliberately not for infra or CI retries,
+which re-run at the same tier and buy no escalation. A retry with no event is therefore not evidence
+that nothing was wasted, only that no tier change was bought. Nothing in the model assumes one
+event per retry.
+
 The four event-derived levers are credited ONLY in runs that carry `logs/govern/<run>/lever-events.jsonl`.
 A run without one is **uninstrumented**, which is not the same as zero-saving and is never reported
 as one: the table prints the word `uninstr.` and the coverage count ("credited in N of M runs")
 rather than a zero row that an average would then drag down.
+
+**Expect uninstrumented to be the normal case for a while.** The emitter ships default OFF
+(`GOVERN_LEVER_EVENTS=0`), so essentially every run in every existing corpus carries no events, and
+all four levers are uncredited on them. That understates the harness by an unknown amount and the
+report prints a paragraph saying so next to the coverage count. It is not a fault and it is not a
+measurement that those levers save nothing.
 
 **Absorbed levers.** The vanilla arm is constructed FROM shiploop's own transcripts, so a saving
 already baked into those transcripts (trimmed tool lists, stripped worker context, the scripted

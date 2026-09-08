@@ -131,8 +131,8 @@ figure, that is the one, and it is always lower.
 
 `watchdog`, `resume-not-restart`, `skip-the-model` and `escalation-correction` are read from
 `logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). Runs dispatched before
-that file existed carry none, so on a historical corpus those four levers report `uninstrumented`
-and contribute nothing. That is an understatement of the harness, not a measurement that it saves
+that file existed carry none, and the emitter ships **default OFF** (`GOVERN_LEVER_EVENTS=0`), so
+on any corpus in existence today those four levers report `uninstrumented` and contribute nothing. That is an understatement of the harness, not a measurement that it saves
 nothing there, and the report prints the coverage count next to every one of them. A corpus mixing
 instrumented and uninstrumented runs reports a number weighted toward the uninstrumented ones,
 because the levers can only be credited where the events exist.
@@ -140,6 +140,19 @@ because the levers can only be credited where the events exist.
 `output-suppression` is weaker still: it has no event in the wire contract at all, and the bytes it
 withholds are by construction absent from every transcript. It is listed in the lever table with a
 zero and the reason, so it can never be mistaken for a measured zero.
+
+## Two instrumented levers are under-counted on purpose, and one is partial
+
+`resume-not-restart` credits only context reconstruction (the failed attempt's input plus cache
+creation, output excluded), because a retry redoes the work either way and only the re-reading is
+avoided. `skip-the-model` credits only a worker's first-turn context (45,000 tokens, the rounded-
+down 25th percentile of 502 observed first turns), not the whole session a deterministic apply
+actually replaced. Both understate. `escalation-correction` fires only where a retry changed tier,
+not on infra or CI retries at the same tier, so it corrects some wasted cheap-tier spend and not
+all of it. None of the three is a measurement of the lever's true size; each is a bound in the
+direction that does not flatter shiploop, except the escalation one, which is a correction that
+does not go far enough and therefore leaves a little credit in place that a fuller model would
+remove.
 
 ## The harness-overhead charge is bounded by what the corpus recorded
 

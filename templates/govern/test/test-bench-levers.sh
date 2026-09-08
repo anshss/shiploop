@@ -32,19 +32,19 @@ cell() { # baseline arm partials -> "shipTok vanTok shipCost*1e4 vanCost*1e4 shi
       "\(.shiploopTokens) \(.vanillaTokens) \((.shiploopCostUsd * 10000 | round)) \((.vanillaCostUsd * 10000 | round)) \(.shiploopQuotaWeighted) \(.vanillaQuotaWeighted)"'
 }
 
-assert_eq "$(cell same-mix 200k drop)"      "545000 982000 5580 5750 955000 1540000"    "same-mix x 200k x drop"
-assert_eq "$(cell same-mix 1m drop)"        "545000 1082000 5580 5950 955000 1740000"   "same-mix x 1m x drop"
-assert_eq "$(cell same-mix uncapped drop)"  "545000 1082000 5580 5950 955000 1740000"   "same-mix x uncapped x drop"
-assert_eq "$(cell same-mix 200k price)"     "595000 1122000 6240 7350 1055000 1820000"  "same-mix x 200k x price"
-assert_eq "$(cell same-mix 1m price)"       "595000 1222000 6240 7550 1055000 2020000"  "same-mix x 1m x price"
-assert_eq "$(cell same-mix uncapped price)" "595000 1222000 6240 7550 1055000 2020000"  "same-mix x uncapped x price"
+assert_eq "$(cell same-mix 200k drop)" "545000 1015000 5580 5915 955000 1705000"    "same-mix x 200k x drop"
+assert_eq "$(cell same-mix 1m drop)" "545000 1115000 5580 6115 955000 1905000"   "same-mix x 1m x drop"
+assert_eq "$(cell same-mix uncapped drop)" "545000 1115000 5580 6115 955000 1905000"   "same-mix x uncapped x drop"
+assert_eq "$(cell same-mix 200k price)" "595000 1155000 6240 7515 1055000 1985000"  "same-mix x 200k x price"
+assert_eq "$(cell same-mix 1m price)" "595000 1255000 6240 7715 1055000 2185000"  "same-mix x 1m x price"
+assert_eq "$(cell same-mix uncapped price)" "595000 1255000 6240 7715 1055000 2185000"  "same-mix x uncapped x price"
 
-assert_eq "$(cell driver-tier 200k drop)"      "545000 982000 5580 18360 955000 3910000"    "driver-tier x 200k x drop"
-assert_eq "$(cell driver-tier 1m drop)"        "545000 1082000 5580 18560 955000 4110000"   "driver-tier x 1m x drop"
-assert_eq "$(cell driver-tier uncapped drop)"  "545000 1082000 5580 18560 955000 4110000"   "driver-tier x uncapped x drop"
-assert_eq "$(cell driver-tier 200k price)"     "595000 1122000 6240 22360 1055000 4610000"  "driver-tier x 200k x price"
-assert_eq "$(cell driver-tier 1m price)"       "595000 1222000 6240 22560 1055000 4810000"  "driver-tier x 1m x price"
-assert_eq "$(cell driver-tier uncapped price)" "595000 1222000 6240 22560 1055000 4810000"  "driver-tier x uncapped x price"
+assert_eq "$(cell driver-tier 200k drop)" "545000 1015000 5580 18525 955000 4075000"    "driver-tier x 200k x drop"
+assert_eq "$(cell driver-tier 1m drop)" "545000 1115000 5580 18725 955000 4275000"   "driver-tier x 1m x drop"
+assert_eq "$(cell driver-tier uncapped drop)" "545000 1115000 5580 18725 955000 4275000"   "driver-tier x uncapped x drop"
+assert_eq "$(cell driver-tier 200k price)" "595000 1155000 6240 22525 1055000 4775000"  "driver-tier x 200k x price"
+assert_eq "$(cell driver-tier 1m price)" "595000 1255000 6240 22725 1055000 4975000"  "driver-tier x 1m x price"
+assert_eq "$(cell driver-tier uncapped price)" "595000 1255000 6240 22725 1055000 4975000"  "driver-tier x uncapped x price"
 
 # The claim that makes the token column safe to quote: routing cannot move it. Asserted as an
 # identity across the whole matrix rather than left to the reader's trust.
@@ -88,8 +88,8 @@ assert_eq "$(lv watchdog)" "200000 400 400000" \
   "watchdog: a 300,000-token kill, capped by the 200k arm's own window"
 assert_eq "$(lv resume-not-restart)" "50000 50 50000" \
   "resume: 60,000 fresh-start tokens less the 10,000 the checkpoint actually loaded"
-assert_eq "$(lv skip-the-model)" "12000 60 60000" \
-  "skip-the-model: one version-bump at the published per-class estimate"
+assert_eq "$(lv skip-the-model)" "45000 225 225000" \
+  "skip-the-model: one version-bump at the published per-class floor (a worker's first-turn context)"
 assert_eq "$(lv escalation-correction)" "0 -2000 -200000" \
   "escalation: a failed haiku attempt takes ITS routing credit back, so escalations cost us"
 assert_eq "$(lv harness-overhead)" "-25000 -2250 -125000" \
@@ -142,10 +142,10 @@ assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].levers["harness-overhead"].
 # ── partials: both totals, always ────────────────────────────────────────────
 assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].partialsTotals | keys | join(",")')" "drop,price" \
   "both partial-session totals are reported whichever one is selected"
-assert_eq "$(printf '%s' "$d" | jq -r '(.arms["200k"].partialsTotals.price.tokenReductionPct * 100 | round)')" "4697" \
-  "priced partials: 46.97% tokens"
-assert_eq "$(printf '%s' "$d" | jq -r '(.arms["200k"].partialsTotals.drop.tokenReductionPct * 100 | round)')" "4450" \
-  "dropped partials: 44.50% tokens, and the delta between them is always visible"
+assert_eq "$(printf '%s' "$d" | jq -r '(.arms["200k"].partialsTotals.price.tokenReductionPct * 100 | round)')" "4848" \
+  "priced partials: 48.48% tokens"
+assert_eq "$(printf '%s' "$d" | jq -r '(.arms["200k"].partialsTotals.drop.tokenReductionPct * 100 | round)')" "4631" \
+  "dropped partials: 46.31% tokens, and the delta between them is always visible"
 assert_contains "$(run_replay --arm 200k)" "partials: priced" "the human report prints both"
 
 # ── pre-flight aborts are excluded from the bench and counted in the report ──
