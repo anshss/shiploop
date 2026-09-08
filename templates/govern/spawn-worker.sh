@@ -972,15 +972,20 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 #   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
 #                        in bytes over the codebase's own ~4-bytes-per-token estimate (see
 #                        govern-bookkeep.sh's lesson-entry sizing note for the same constant).
-#   freshStartTokens  = what a truly cold restart (no preserved worktree, no notes) would have had
-#                        to re-pay to reach the same point: the PRIOR attempt's own cumulative spend,
-#                        read from its still-intact $jsonl one last time before it is rotated away.
+#   freshStartTokens  = the PRIOR (failed) attempt's context-reconstruction spend ONLY: its
+#                        input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens
+#                        (govern::cumulative_context_tokens, not govern::cumulative_tokens). A
+#                        retry has to redo the actual work either way; the only thing resuming
+#                        avoids is re-reading its way back into context, so crediting the failed
+#                        attempt's OUTPUT here would hand the resume lever savings that were never
+#                        at stake. Read from its still-intact $jsonl one last time before it is
+#                        rotated away further down.
 if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
       && ( -n "$notes_body" || -n "$handoff_block" ) ]]; then
   resume_ckpt_bytes=$(( $(printf '%s' "$notes_body" | wc -c | tr -d '[:space:]') \
     + $(printf '%s' "$handoff_block" | wc -c | tr -d '[:space:]') ))
   resume_ckpt_tokens=$(( resume_ckpt_bytes / 4 ))
-  resume_fresh_tokens="$(govern::cumulative_tokens "$jsonl")"
+  resume_fresh_tokens="$(govern::cumulative_context_tokens "$jsonl")"
   govern::emit_lever_event resume "$N" worker "$model" \
     checkpointTokens="${resume_ckpt_tokens:-0}" freshStartTokens="${resume_fresh_tokens:-0}"
 fi
