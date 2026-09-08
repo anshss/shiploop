@@ -1,0 +1,5 @@
+{"ticket":101,"run":"run-20260101-000000","status":"resolved","ts":1800000001}
+{"ticket":102,"run":"run-20260101-000000","status":"resolved","ts":1800000002}
+{"ticket":103,"run":"run-20260101-000000","status":"failed","ts":1800000003}
+{"ticket":104,"run":"run-20260101-000000","status":"resolved","ts":1800000004}
+{"ticket":105,"run":"run-20260101-000000","status":"failed","ts":1800000005}

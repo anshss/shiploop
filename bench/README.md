@@ -1,0 +1,368 @@
+# bench
+
+The benchmark behind shiploop's cost claim. The unit is **a full session clearing a backlog**, not a
+ticket: the whole loop (scout, cheap-floor dispatch, escalation, fresh context per worker) against
+the whole alternative (one Claude Code session grinding the same backlog, top to bottom).
+
+**What the percentage is a percentage of.** Every number in this file is a reduction in total
+billed tokens across a backlog run (context read, context write, and the response itself), not a
+fraction of your bill. Output tokens, the actual code and prose written, are paid in full by BOTH
+arms: it is the same work and the same code either arm has to produce, and no architecture removes
+that cost. That sets a hard ceiling well under 100% (the `1m` arm's own ceiling is 99.8% tokens /
+92.5% cost, `bench/METHODOLOGY.md`, "The ceiling"). A token or cost reduction quoted from this file
+is never the same claim as cutting your bill by that same fraction, because the bill also carries
+the output share that no reduction touches.
+
+There are two numbers, and this file states which side of each is measured and which is modeled,
+in the same sentence as the number, per `bench/KNOWN-LIMITS.md` (read that file first — it leads
+with what does not hold).
+
+- **The best-case number** (below): `bench/replay.mjs` over real governor transcripts already on
+  disk. The shiploop arm is measured billed usage. The vanilla arm is a **model** of one
+  accumulating session over the same tickets — no vanilla session was run for this number.
+- **The honest number** (`## Path 2`): a real, live, two-arm run — `claude -p` vs the actual
+  governor loop — where BOTH arms are measured, on the same tiny pilot backlog, same model, no
+  remotes, nothing that can push.
+
+Design and rationale: `.specs/2026-09-03-benchmark-design.md`. Where either number does not hold:
+`bench/KNOWN-LIMITS.md`.
+
+## The published claim
+
+The shiploop GitHub repo description and the project website both carry this sentence, verbatim:
+
+> Shiploop minimizes tokens per shipped work, making Claude Code up to 70% more efficient and
+> faster by cutting wasted model work and getting more from its warm prompt cache with lean,
+> context-aware, resilient workers.
+
+This section maps every element of that sentence to what backs it, or states plainly that nothing
+does. Read this before repeating the sentence anywhere else.
+
+| Element of the sentence | Backing |
+|---|---|
+| "up to 70%" | **Backed.** 70.2% token reduction, `1m` arm (1M-context vanilla), shiploop side measured / vanilla side modeled (`## The best-case number` below). "Up to" is load-bearing: reproduce this against the CLI's own default 200k-context session, the arm most readers will actually run, and the same corpus gives **30.1%**, not 70%. |
+| "more efficient" | Ambiguous between tokens and cost, and the two are not the same number. On the same `1m` arm, token reduction is 70.2% but cost reduction is only 57.3% (see "Tokens vs. cost" below). If "efficient" is read as cost, the honest same-arm figure is 57.3%, not 70%. |
+| "and faster" | **NOT BACKED.** This benchmark measures tokens and cost only. No wall-clock timing was ever collected anywhere in this repository (`bench/METHODOLOGY.md`, "What is not measured at all"). Running N fresh worker sessions sequentially may well be SLOWER in wall-clock time than one continuous session: nothing here supports the speed half of the sentence in either direction. The word should not appear next to a number this benchmark produced. |
+| "by cutting wasted model work" | Descriptive mechanism claim, not an independently measured quantity. It is consistent with the token result (fresh workers avoid re-reading carried context that one accumulating session would re-read) but "wasted model work" is not itself a metric this repo computes. |
+| "getting more from its warm prompt cache" | Same treatment: describes *why* the modeled effect exists (the vanilla arm's cost model charges carried context at the cache-read rate every turn), not a separate figure. |
+| "lean, context-aware, resilient workers" | Product description, carries no number, not something this benchmark tests. |
+
+### Tokens vs. cost: not the same robustness
+
+The token reduction is **model-independent by construction**: `vanillaTokens = shipTokens +
+overheadTokens - creditTokens` (`bench/replay.mjs`, `replayRun`) involves no dollar rate at any
+step, so 70.2% would be the same number on a corpus billed at any prices. The cost reduction is
+**not**: it is computed by applying the published per-tier rate table to both arms, so 57.3% is a
+function of this specific corpus's mix of haiku/sonnet/opus sessions and moves if that mix changes,
+even if the underlying token behavior is identical. Do not treat 57.3% as carrying the same
+confidence as 70.2% anywhere it is quoted. See also the mixed-model pricing note in
+`bench/METHODOLOGY.md` ("Flatters shiploop") and `bench/KNOWN-LIMITS.md`, which biases the cost
+figure specifically, not the token one.
+
+## Where the number is worst
+
+Publishing a bad row is the category's cheapest credibility, and it costs nothing to keep doing.
+Three, each with its source, none softened:
+
+- **Ticket position 1 saves exactly 0%.** A fresh session against a fresh session is the same
+  session: nothing has been carried into the first ticket of any run, in every arm, at every fleet,
+  so a per-task claim is indefensible and the claim only exists at the run/backlog level. Measured
+  2026-09-05, n=251 position-1 rows across the corpus (`bench/published-rows/replay-2026-09-05.jsonl`,
+  `bench/results/proof-table.txt`).
+- **The arm most readers will actually run is 30.1%, not 70%.** The published "up to 70%" is the
+  `1m` (1M-context) arm. Against the CLI's own 200k-context default with compaction, the identical
+  corpus gives 30.1% tokens and 18.2% cost (see "The best-case number" below, and
+  `bench/results/proof-table.txt`).
+- **The one live, both-arms-measured run cleared 0 of 2 tickets on either side, and produced no
+  usable savings figure.** `bench/pilot-backlogs/shiploop-mini`, measured 2026-09-05: the shiploop
+  arm spent 17.4M tokens against vanilla's 6.1M, more tokens, not fewer, while costing $4.53 against
+  vanilla's $5.43 (about $0.90 cheaper, driven partly by the governor's own cheap-tier model sizing,
+  not by the architecture the run was meant to isolate). Read this as a cost comparison on
+  unresolved work, not a savings result (see "Path 2" below, and `bench/KNOWN-LIMITS.md`, "The
+  honest live run: both arms scored 0/2 on the mechanical oracle").
+
+Do not quote a number from this file without also carrying the fact directly above it.
+
+## Path 1: replay (what produces the number today)
+
+`bench/replay.mjs` reads governor transcripts a fleet has already written, sums the measured billed
+usage, and models what the same tickets would have cost inside one accumulating Claude Code session.
+Zero dependencies, read only, no `claude` process, no spend.
+
+```bash
+# reproduce the published number: every fleet workspace beside you
+node bench/replay.mjs --arm all
+
+# get your own: point it at your workspace
+node bench/replay.mjs --fleet /path/to/your-workspace --arm all
+
+# or, with the plugin installed, from inside your workspace
+/shiploop:bench
+```
+
+**The number it prints is a modeled counterfactual.** The shiploop arm is measured billed usage.
+The vanilla arm never ran: it is a model. The tool prints that as a line in its own output, not as
+a footnote, and every assumption with its bias direction is in `bench/METHODOLOGY.md`. Read that
+before quoting a percentage.
+
+| Flag | Meaning |
+|---|---|
+| `--fleet <path>` | a workspace to read, repeatable. Omit for auto-discovery of the current workspace and its siblings |
+| `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all`. `uncapped` is computed and labelled unphysical |
+| `--scope all\|resolved` | count every ticket the loop paid for, or only the resolved ones. Default `all` |
+| `--json` | machine-readable, same numbers |
+
+The report always carries the pieces that make the number checkable: n runs, n tickets, sessions
+excluded for having no result event, the ceiling no architecture could beat, the rates
+reconciliation ratio, and the **per-ticket-position curve**. Ticket 1 saves exactly 0%, because
+nothing has been carried into it yet. That is the most useful line in the output.
+
+## The best-case number, on the author's corpus
+
+**Measured 2026-09-05.** Every shiploop fleet workspace on the author's machine, unfiltered:
+251 runs, 607 tickets, 7 workspaces. Reproduce with:
+
+```bash
+node bench/replay.mjs --fleet /path/to/aquanode --fleet /path/to/claude-keepalive \
+  --fleet /path/to/splito --fleet /path/to/tokenjam --fleet /path/to/vibelab \
+  --fleet /path/to/vibetrading --fleet /path/to/shiploop --arm all --json
+```
+
+| vs a session with (modeled vanilla arm) | tokens saved (shiploop measured vs. vanilla modeled) | cost saved (shiploop measured vs. vanilla modeled) |
+|---|---|---|
+| 1M context | **70.2%** | 57.3% |
+| 200k context + compaction | 30.1% | 18.2% |
+
+The shiploop side of every cell above is measured billed usage from real transcripts. The vanilla
+side is a model: no vanilla session was run to produce these numbers (`bench/METHODOLOGY.md`).
+
+**Recompute these three numbers yourself, from the committed rows, with no access to the author's
+machine** (needs only `jq`, and the file already in this repo):
+
+```bash
+jq -s '
+  group_by(.arm)[] |
+  {
+    arm: .[0].arm,
+    tokenReductionPct: ((([.[]|.vanillaTokens]|add) - ([.[]|.shipTokens]|add)) / ([.[]|.vanillaTokens]|add) * 100),
+    costReductionPct:  ((([.[]|.vanillaCostUsd]|add) - ([.[]|.shipCostUsd]|add))  / ([.[]|.vanillaCostUsd]|add)  * 100)
+  }
+' bench/published-rows/replay-2026-09-05.jsonl
+```
+
+That reproduces 70.2%/57.3% (1M), 30.1%/18.2% (200k) and 85.5%/77.4% (uncapped) to one decimal
+place directly from the 1,821 committed rows: sum `shipTokens`/`vanillaTokens` (or the `*CostUsd`
+columns) per arm and the percentage falls out; no transcript, fleet, or `replay.mjs` re-run needed.
+
+The same recompute, formatted as a human-readable table with all three arms side by side, tokens
+and cost per arm, and the per-ticket-position curve, is committed at `bench/results/proof-table.txt`
+(the one path carved out of the otherwise-gitignored `bench/results/`). `node
+bench/gen-proof-table.mjs` regenerates it deterministically from the committed rows alone, no fleet
+or network involved, and `templates/govern/test/test-bench-proof-table.sh` fails CI if the committed
+table ever drifts from what the generator produces, so the published table and the published data
+cannot silently disagree the way two of the category's three benchmarks currently allow (neither
+caveman nor RTK commits a results file a reader can diff against; headroom does, and this follows
+its shape).
+
+**This spans many CLI releases and models, not one "current shiploop version" run** — no transcript
+carries the shiploop package version (`bench/KNOWN-LIMITS.md`). CLI versions seen: `2.1.126` through
+`2.1.246`. Models seen: `claude-haiku-4-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`,
+`claude-sonnet-5`. Date range: 2026-06-12 to 2026-09-04. Restricting to sessions on the CURRENT
+release (1.18.3, released 2026-09-04) leaves **4 run directories and 0 usable tickets** — every
+session from that day was interrupted before finishing — so a current-version-only percentage
+cannot be reported yet from replay; see `## Path 2` below for the current-version data point that
+exists instead, and `bench/KNOWN-LIMITS.md` for the full disclosure.
+
+**The saving is a property of backlog depth, not of the harness.** Ticket 1 saves 0% at the
+median: a fresh session against a fresh session is the same session (3 of 753 position-1 rows are
+the one documented exception, from a same-ticket retry: `bench/METHODOLOGY.md`). Per-position
+median token reduction (1M arm, pooled): ticket 1 (n=248) 0%, ticket 2 (n=71) 38.7%, ticket 3
+(n=54) 63.2%, ticket 5 (n=32) 74.4%, ticket 8 (n=15) 87.2%. Per-fleet breakdown, same measurement
+date, 1M arm:
+
+| Fleet | tickets | runs | median depth | tokens | cost |
+|---|---|---|---|---|---|
+| aquanode | 338 | 80 | 2 | 77.1% | 63.1% |
+| claude-keepalive | 31 | 4 | 8 | 72.7% | 57.7% |
+| tokenjam | 83 | 26 | 2.5 | 69.0% | 59.2% |
+| vibelab | 5 | 1 | 5 | 50.9% | 34.8% |
+| vibetrading | 105 | 98 | 1 | 4.4% | 1.8% |
+| shiploop (the hub's own workspace) | 43 | 40 | 1 | 5.6% | 4.3% |
+| splito | 2 | 2 | 1 | 0% | 0% |
+
+The three fleets at the bottom are not worse-run fleets: they dispatch close to one ticket per run,
+so by this model almost nothing is ever carried. Any single figure quoted from the pooled corpus is
+an average over that spread, and the spread is wider than the figure. Quote the arm alongside the
+number — against the 200k default the same corpus gives 30.1% tokens, and someone reproducing this
+will run the default.
+
+Raw per-(run, ticket-position) rows behind these numbers, fleet/run/ticket identifiers replaced
+with an opaque hash (`replay.mjs --rows`, `bench/KNOWN-LIMITS.md` for what "recomputable" does and
+does not mean here): `bench/published-rows/replay-2026-09-05.jsonl`.
+
+## Path 2: the live A/B harness, and the honest number it produced
+
+**Measured 2026-09-05, `claude 2.1.246`, model default (see the model-mismatch caveat below),
+`bench/pilot-backlogs/shiploop-mini` (2 tickets, mined from shiploop's own history, gitignored,
+not the published 6+-ticket backlog set — `bench/KNOWN-LIMITS.md`).** Two arms actually executed,
+same tickets, no remotes, nothing that can push.
+
+| Arm | tokens | cost | tickets cleared | sessions |
+|---|---|---|---|---|
+| `vanilla` (one `claude -p` session) | 6.1M | $5.43 | 0/2 | 1 |
+| `shiploop` (the real governor loop) | 17.4M | $4.53 | 0/2 | 89 (2 with billed usage; the rest are retries/near-zero — see below) |
+
+**Read this as a cost comparison on unresolved work, not a savings claim.** Neither arm cleared
+either ticket against the golden-test-patch oracle, for reasons that are specific to this pilot
+backlog and disclosed in full in `bench/KNOWN-LIMITS.md` — a resolution-rate or reduction
+percentage is not meaningful when the numerator on both sides is zero. What this run DOES show,
+for what it's worth at n=2: shiploop spent more tokens (retries, driver overhead, a park-and-review
+pass) but less money than one long opus session, partly because the governor's own per-ticket model
+sizing put one of the two workers on sonnet rather than opus — a real product behavior, but one that
+the ticket asked to hold constant across arms and this run did not.
+
+Raw session rows for this run are NOT included in the published-rows file (`bench/KNOWN-LIMITS.md`
+covers why the pilot backlog itself is private); the numbers above are the full disclosure.
+
+Everything below this line is the harness itself: two arms actually executed against a pinned
+backlog with a SWE-bench-shaped oracle, exercised for real above. The replay path (Path 1) remains
+the tool for computing a number from a fleet's own accumulated logs; this path is the one that
+measures both sides at once.
+
+## What is here
+
+```
+bench/
+  replay.mjs                      replay path: fleet transcripts -> measured vs modeled matrix
+  gen-proof-table.mjs             published-rows -> bench/results/proof-table.txt, deterministic
+  METHODOLOGY.md                  what is measured, what is modeled, every assumption and its bias
+  backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
+  pilot-backlogs/                 candidate pool, gitignored, never pushed
+  published-rows/*.jsonl          anonymized per-(run,position) rows behind the published numbers
+  run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
+  validate-backlog.sh             offline fail-to-pass gate; decides which backlogs are eligible
+  arms.sh                         the three arm shapes
+  record.sh                       result events -> results.jsonl rows
+  rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
+  fixtures/                       canned streams, the replay fixture fleet, golden results
+  results/<run-id>/               results.jsonl + session logs, gitignored
+  results/proof-table.txt         the one committed exception: generated, human-readable, tested
+```
+
+## Arms
+
+| Arm | Shape |
+|---|---|
+| `vanilla` | One `claude -p` session for the whole backlog, headless default model, in a fresh worktree of the pinned ref. Prompt is the backlog verbatim. |
+| `shiploop` | The real `templates/govern/run-loop.sh` over a `queue/tickets.md` seeded with the same backlog, in a scaffolded throwaway workspace, defaults on. Cost is everything the loop spends: driver, scouts, workers, escalations. |
+| `vanilla-fresh` | A fresh session per ticket, sequential. Private record only, opt-in via `--arm vanilla-fresh`. |
+
+Ticket text is byte-identical across arms. Neither arm has WebFetch or WebSearch.
+
+## Running the live A/B harness
+
+Requires `node`, `jq`, `git`, and a `claude` CLI on PATH. It spends real quota. The replay path
+above needs none of that and spends nothing.
+
+```bash
+# 1. Dry run first. Zero network, zero spend, canned fixtures for both arm shapes.
+bash bench/run.sh --dry-run
+
+# 2. The real run over the published backlog set.
+bash bench/run.sh --reps 2
+
+# 3. The three metric cuts, the selection ranking, and the headline sentence.
+node bench/rollup.mjs
+```
+
+`run.sh` prints the results path; `rollup.mjs` with no argument reads the newest run under
+`bench/results/`. Pass a path to read a specific one.
+
+The rollup prints every cut it can compute and `n/a` with a reason for any it cannot. The headline
+line names which metric produced its percentage, so a token cut is never published under a cost
+word.
+
+## Rails
+
+Both are always on. Neither is an option.
+
+| Rail | Default | Behavior |
+|---|---|---|
+| `BENCH_MAX_USD` | 60 | Hard cap on API-rate `total_cost_usd` across the run, checked before each cell is dispatched. Past it the driver stops dispatching and records the remaining cells with `status: capped`; the rollup drops a capped backlog rather than counting a truncated run as a saving. |
+| `BENCH_MAX_TURNS` | 200 vanilla session, 80 per shiploop worker | `--max-turns` on every spawned session. A run that hits the ceiling clears fewer tickets, records as failed-to-clear, and drops the backlog from the published set. |
+
+`--max-turns` is gated on a cached `claude --help` capability probe, never a version compare. If the
+CLI does not support it, `run.sh` refuses to spawn rather than silently running uncapped. The
+override is deliberate and explicit: `BENCH_ALLOW_UNCAPPED_TURNS=1`. `BENCH_MAX_TURNS_FLAG=0` is the
+kill switch that omits the flag; `_GOVERN_MAXTURNS_SUPPORTED=1|0` pre-seeds the probe for tests.
+
+Both arms reach that one probe, `govern::claude_supports_max_turns` in
+`templates/govern/lib/common.sh`, so they can never disagree about CLI support. The shiploop arm's
+workers get the ceiling through `GOVERN_WORKER_MAX_TURNS`, which `spawn-worker.sh` resolves behind
+the same probe. That knob is OFF by default (`0` means no flag and no probe), so a fleet that never
+sets it spawns exactly as it did before the bench existed.
+
+Other knobs: `BENCH_CLAUDE_BIN` (default `claude`), `BENCH_OUT_ROOT`, `BENCH_MODEL_LABEL` (the model
+name written onto each row and into the headline sentence).
+
+`bench/backlogs/fixture-backlog/` is a test fixture, not a benchmark backlog. It names a
+`fixture://` repo, so a non-dry run refuses it up front rather than failing halfway through a
+clone, and it can never be counted toward a published backlog total.
+
+## Verification: the golden test patch
+
+`verify_cmd` is the test the merged upstream PR made pass, so **at the pinned `ref` it does not
+exist yet**. The oracle is therefore SWE-bench shaped, and the ordering is the contract:
+
+1. Worktree at `ref`. The arm receives `title` and `body` verbatim and nothing else. It never sees
+   `test_patch`, `merge_sha`, `upstream_pr`, or `verify_cmd`.
+2. The arm finishes and commits.
+3. `git apply` the ticket's `test_patch` onto the arm's tree, then run `verify_cmd`.
+4. If the apply fails, record the sentinel `90` and treat the ticket as unresolved. No 3-way merge,
+   no fuzzy apply, no `--reject`.
+
+Same path for both arms. Per-ticket outcomes land in `results/<run-id>/verify/<cell>.jsonl`, which
+is the private record; only the cell-level counts reach `results.jsonl`. Nothing is judged by a
+model. A backlog either arm fails to fully clear is dropped from the published set, so completion
+on the published sample is 100% by construction and is not a reported metric.
+
+### Backlog validation
+
+Before a backlog can enter the pilot it has to prove the fail-to-pass property offline:
+
+```bash
+bash bench/validate-backlog.sh --backlogs bench/pilot-backlogs --json
+```
+
+Per ticket, against a real clone, no model calls: `test_patch` must apply at `ref`, `verify_cmd`
+must FAIL there, and at `merge_sha` the test content must be present and `verify_cmd` must PASS.
+A backlog under `--min-tickets` (default 6) is marked unusable, and the gate exits non-zero when
+nothing is usable so a pilot script cannot proceed on an empty eligible set.
+
+## Cost figures and account type
+
+Every cost figure comes from `total_cost_usd` on the session's `result` event, which is API-list-rate
+denominated regardless of how the CLI is authenticated. On a subscription those dollars are a proxy
+for quota burn; on an API key they are the invoice. The published figure is a percentage, so it is
+identical in both worlds.
+
+## Tests
+
+`templates/govern/test/test-bench-*.sh`, fixture-driven, zero spawns. They resolve the hub as
+`$DIR/../../..` and skip (exit 77) anywhere else, so they are listed in `tools/hub-context-tests.txt`
+and run by the `hub-context-tests` CI job from the checkout, where a skip is a hard failure.
+
+```bash
+for t in templates/govern/test/test-bench-*.sh; do bash "$t"; done
+```
+
+`test-bench-replay.sh` and `test-bench-replay-schema.sh` cover the replay path against
+`fixtures/replay-fleet`, a synthetic fleet whose every expected figure is derivable by hand from the
+table in `fixtures/README.md`. They assert, among other things, that summing the stream's
+`output_tokens` snapshots (which undercounts real output by a median of 33x) is not what produced
+the shiploop arm.
+
+`test-bench-proof-table.sh` regenerates `bench/results/proof-table.txt` with
+`bench/gen-proof-table.mjs` from the committed `bench/published-rows/*.jsonl` and fails if the
+result differs from the committed file by a single byte, from any working directory. This is the
+guard that makes the published table and the published rows unable to silently disagree.
