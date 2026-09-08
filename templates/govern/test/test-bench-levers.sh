@@ -107,8 +107,13 @@ assert_eq "$(printf '%s' "$d" | jq -r '.instrumentation.unknownEvents')" "1" \
   "an event this reader does not know is counted and skipped"
 assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].unknownScriptedActionClasses["not-a-known-class"]')" "1" \
   "a scripted-action class with no estimate is credited zero and NAMED"
-assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].levers["output-suppression"].status')" "no-event-in-log-format" \
-  "output suppression has no event in the wire contract and says so"
+# output-suppression is event-derived like the other four. This fixture carries no such event, so
+# it must read UNINSTRUMENTED, never a measured zero: the withheld bytes are absent from every
+# transcript by design, so a run without the event proves nothing about what it withheld.
+assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].levers["output-suppression"].status')" "measured" \
+  "this fixture IS instrumented, so the lever is measured; it simply has no suppression event in it"
+assert_eq "$(printf '%s' "$d" | jq -r '.arms["200k"].levers["output-suppression"].tokens')" "0" \
+  "and it contributes nothing while uninstrumented"
 
 # On a corpus with NO lever events at all, an event-derived lever must read as uninstrumented.
 # Reporting it as a measured 0% would be a claim the corpus cannot support.

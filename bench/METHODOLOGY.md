@@ -222,11 +222,12 @@ A run without one is **uninstrumented**, which is not the same as zero-saving an
 as one: the table prints the word `uninstr.` and the coverage count ("credited in N of M runs")
 rather than a zero row that an average would then drag down.
 
-**Expect uninstrumented to be the normal case for a while.** The emitter ships default OFF
-(`GOVERN_LEVER_EVENTS=0`), so essentially every run in every existing corpus carries no events, and
-all four levers are uncredited on them. That understates the harness by an unknown amount and the
-report prints a paragraph saying so next to the coverage count. It is not a fault and it is not a
-measurement that those levers save nothing.
+**Expect uninstrumented to be the normal case for a while.** The emitter ships **on** by default at
+runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch); every run dispatched after that shipped
+carries events, but every run in every corpus collected BEFORE it does not, and all four levers are
+uncredited on them. That understates the harness by an unknown amount and the report prints a
+paragraph saying so next to the coverage count. It is not a fault and it is not a measurement that
+those levers save nothing.
 
 **Absorbed levers.** The vanilla arm is constructed FROM shiploop's own transcripts, so a saving
 already baked into those transcripts (trimmed tool lists, stripped worker context, the scripted

@@ -86,12 +86,20 @@ fi
 # consumers must learn to skip. bench/replay.mjs reads THIS file; a reader that doesn't recognise
 # `event` skips the line, and a line that fails to parse is counted and skipped, never fatal.
 #
-# OFF BY DEFAULT (root CLAUDE.md rule 12, a new mechanism). GOVERN_LEVER_EVENTS=1 opts in; the
-# whole-suite OFF export lives in test/assert.sh (test-lever-events.sh opts back in per case).
+# ON BY DEFAULT at runtime: an operator who installs a release and never touches this flag should
+# still accumulate a real corpus, not discover months later that every run went unrecorded. Kill
+# switch: GOVERN_LEVER_EVENTS=0. Root CLAUDE.md rule 12's "new mechanism defaults off" is satisfied
+# at the TEST layer instead: the whole-suite OFF export lives in test/assert.sh (fixtures must not
+# accumulate event files across the suite), and test-lever-events.sh opts back to 1 per case that
+# needs it. This is the deliberate exception to the runtime-defaults-off pattern rule 12 usually
+# implies, because the failure mode of a default-off instrumentation flag (silence nobody notices
+# until the corpus is checked) is worse here than the failure mode rule 12 guards against (a new
+# mechanism perturbing dispatch behavior). The emitter's own never-abort contract below is what
+# makes that trade safe.
 #
 # HARD CONTRACT, identical to govern::event above: emission must NEVER abort a dispatch. The body
 # runs inside a `{ … } || true` group and ends with an explicit `return 0` (rule 11).
-GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-0}"
+GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-1}"
 
 # govern::emit_lever_event <event> <ticket|-> <session> <tier|-> [k=v ...]
 #
@@ -104,7 +112,7 @@ GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-0}"
 # caller-side quoting needed.
 govern::emit_lever_event() { # <event> <ticket> <session> <tier> [k=v ...]
   {
-    [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+    [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" ]] || return 0
     local file event ticket session tier line kv k v
     event="${1:-unknown}"; ticket="${2:--}"; session="${3:-}"; tier="${4:--}"
     shift 4 2>/dev/null || true

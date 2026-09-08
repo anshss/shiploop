@@ -30,6 +30,7 @@ and skipped, never fatal.
 ## Events
 
 ```jsonl
+{"event":"output-suppression","ts":1788800004,"ticket":108,"session":"worker","tier":null,"withheldBytes":48213,"withheldLines":612,"outcome":"pass"}
 {"event":"watchdog-kill","ts":1788800000,"ticket":108,"session":"worker","tier":"sonnet","ctxTokens":184320,"turns":97,"reason":"context-cap"}
 {"event":"resume","ts":1788800001,"ticket":108,"session":"worker","tier":"sonnet","checkpointTokens":12400,"freshStartTokens":86100}
 {"event":"scripted-action","ts":1788800002,"ticket":108,"session":"driver","tier":null,"class":"version-bump"}
@@ -50,6 +51,25 @@ and skipped, never fatal.
   in the ledger. When in doubt this number is under-counted, never over-counted.
 - `scripted-action`: `class` keys into the per-class token estimate table in `replay.mjs`. An
   unknown class is counted and credited zero, and named in the report.
+- `output-suppression`: emitted by `verify-filter.sh` when it withholds a PASSING command's output
+  from the transcript. `withheldBytes` / `withheldLines` are measured from the capture file at the
+  instant of suppression, immediately before the EXIT trap deletes it. This is the only moment the
+  bytes exist: by design they never enter a transcript, so nothing downstream can recover them.
+
+  **Pass only, deliberately.** A failing run is passed through, bounded at the tail by
+  `GOVERN_VERIFY_FILTER_MAX_LINES`, so its withheld remainder is a partial saving. That saving is
+  real and it is left UNCREDITED, because the claim this lever measures is "successful output stays
+  out of the transcript" and under-counting is the standing rule for every lever here.
+
+  **Coverage is structurally partial and must be disclosed wherever it is printed.** Wrapping a
+  command in `npm run vf` is OPT-IN, and `templates/hooks/router-posture-guard.sh` only nudges via
+  non-blocking advice. So this lever measures suppression that HAPPENED, never suppression that
+  could have happened, and an uncredited session is not evidence that nothing was withheld.
+
+  The reader converts bytes to tokens at `SUPPRESSION_BYTES_PER_TOKEN` (4) and credits the result
+  ONCE. Crediting once is a deliberately loose floor: the real saving is that those bytes would have
+  been re-sent on every later turn, which is the entire reason the wrapper exists.
+
 - `escalation`: emitted when a failed cheap-tier attempt escalates. `failedTokens` is what the
   failed attempt burned; replay SUBTRACTS it from routing credit. Carries `failedTier` instead of
   `tier`.
@@ -61,8 +81,11 @@ and skipped, never fatal.
   (root CLAUDE.md rule 12 applies only to CLI invocations).
 - Govern bash constraints (root CLAUDE.md rule 11): a function whose last statement is a bare
   `[[ c ]] && cmd` must end `return 0`; no dependent locals in one `local` statement.
-- Default OFF via one `export GOVERN_LEVER_EVENTS=0` in `templates/govern/test/assert.sh`,
-  per root CLAUDE.md rule 12's new-mechanism default.
+- ON by default at runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch): this is pure log-format
+  instrumentation with a proven never-abort contract, not a mechanism that changes dispatch
+  behavior, so root CLAUDE.md rule 12's usual new-mechanism-defaults-off is satisfied at the TEST
+  layer instead, via one `export GOVERN_LEVER_EVENTS=0` in `templates/govern/test/assert.sh`
+  (fixtures must not accumulate event files).
 
 ## Reader rules
 

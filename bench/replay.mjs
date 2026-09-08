@@ -74,6 +74,11 @@ const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3 };
 // differentiating them. Inventing a spread per class would be precision this bench has not earned;
 // one honest floor applied uniformly is the conservative choice, and it is stated as such.
 const SCRIPTED_ACTION_FLOOR = 45_000;
+// Bytes-to-tokens for the output-suppression lever. The emitter records BYTES (it is counting a
+// file it is about to delete, not a tokenised stream), so the reader converts. 4 is the same
+// rough constant the governor uses for its own sizing, and it is an ESTIMATE: it is stated
+// wherever this lever is printed rather than presented as a measured token count.
+const SUPPRESSION_BYTES_PER_TOKEN = 4;
 const SCRIPTED_ACTION_ESTIMATES = {
   'config-default': SCRIPTED_ACTION_FLOOR,
   'version-bump': SCRIPTED_ACTION_FLOOR,
@@ -716,7 +721,7 @@ function readLeverEvents(fleetDir, run) {
   const events = [];
   let malformed = 0;
   let unknownEvents = 0;
-  const KNOWN = new Set(['watchdog-kill', 'resume', 'scripted-action', 'escalation']);
+  const KNOWN = new Set(['watchdog-kill', 'resume', 'scripted-action', 'escalation', 'output-suppression']);
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     let ev;
@@ -969,6 +974,7 @@ function leversFromEvents(events, window, driverTier) {
     resume: zero(),
     'skip-the-model': zero(),
     'escalation-correction': zero(),
+    'output-suppression': zero(),
   };
   const unknownClasses = new Map();
   const readRate = (tier) => (RATES[tier].input * CACHE_READ_MULT) / 1e6;
@@ -996,6 +1002,23 @@ function leversFromEvents(events, window, driverTier) {
       out.resume.cost += tk * readRate(tier);
       out.resume.quota += tk * QUOTA_WEIGHTS[tier];
       out.resume.n++;
+    } else if (ev.event === 'output-suppression') {
+      // verify-filter.sh withheld a passing command's output from the transcript. Bytes to tokens
+      // at SUPPRESSION_BYTES_PER_TOKEN, then credited ONCE.
+      //
+      // Crediting once is a hard floor, and a deliberately loose one: the real saving is that these
+      // bytes would have been re-sent on EVERY later turn of the session, which is the whole reason
+      // the wrapper exists. Charging one turn is what can be defended without knowing how many
+      // turns remained, and the report says so rather than implying the lever is small.
+      //
+      // Coverage limit, disclosed wherever this is printed: wrapping a command is OPT-IN and the
+      // router hook only nudges. This measures suppression that HAPPENED, never suppression that
+      // could have happened, so an uncredited session is not evidence that nothing was withheld.
+      const tk = Math.max(0, Math.floor((Number(ev.withheldBytes) || 0) / SUPPRESSION_BYTES_PER_TOKEN));
+      out['output-suppression'].tokens += tk;
+      out['output-suppression'].cost += tk * readRate(tier);
+      out['output-suppression'].quota += tk * QUOTA_WEIGHTS[tier];
+      out['output-suppression'].n++;
     } else if (ev.event === 'scripted-action') {
       const est = SCRIPTED_ACTION_ESTIMATES[ev.class];
       out['skip-the-model'].n++;
@@ -1351,8 +1374,12 @@ function main() {
         resume: { tokens: 0, cost: 0, quota: 0, n: 0 },
         'skip-the-model': { tokens: 0, cost: 0, quota: 0, n: 0 },
         'escalation-correction': { tokens: 0, cost: 0, quota: 0, n: 0 },
+        'output-suppression': { tokens: 0, cost: 0, quota: 0, n: 0 },
       };
-      const coverage = { watchdog: 0, resume: 0, 'skip-the-model': 0, 'escalation-correction': 0 };
+      const coverage = {
+        watchdog: 0, resume: 0, 'skip-the-model': 0, 'escalation-correction': 0,
+        'output-suppression': 0,
+      };
       const unknownClassCounts = new Map();
       let instrumentedRuns = 0;
       for (const key of runKeys) {
@@ -1406,16 +1433,13 @@ function main() {
           status: !routing ? 'not-in-this-baseline' : evStatus,
           coverage: { credited: coverage['escalation-correction'], of: runKeys.size },
         },
-        // Not in the wire contract at all: bench/LEVER-EVENTS.md defines four events and output
-        // suppression is not one of them. The withheld bytes are, by construction, absent from the
-        // transcript, so no reader can recover them. Named, never shown as a measured zero.
+        // Event-derived like the four above, from verify-filter.sh's `output-suppression`.
+        // Uncredited runs are UNINSTRUMENTED, never a measured zero: the withheld bytes are absent
+        // from every transcript, so a run with no event proves nothing about what it withheld.
         'output-suppression': {
-          tokens: 0,
-          cost: 0,
-          quota: 0,
-          n: 0,
-          status: 'no-event-in-log-format',
-          coverage: { credited: 0, of: runKeys.size },
+          ...evLevers['output-suppression'],
+          status: evStatus,
+          coverage: { credited: coverage['output-suppression'], of: runKeys.size },
         },
         'harness-overhead': {
           tokens: -ov.tokens,
@@ -1806,15 +1830,13 @@ function render(out) {
   L.push(`  levers (arm ${headName}, baseline ${out.baseline}) -- components sum to the arm's saving`);
   L.push('    lever                    tokens         cost   quota-weighted   coverage');
   for (const [name, v] of Object.entries(head.levers)) {
-    const blank = v.status === 'uninstrumented' || v.status === 'no-event-in-log-format';
+    const blank = v.status === 'uninstrumented';
     const cov =
       v.status === 'uninstrumented'
         ? `uninstrumented (${v.coverage.of - v.coverage.credited} of ${v.coverage.of} runs carry no lever-events.jsonl)`
-        : v.status === 'no-event-in-log-format'
-          ? 'uninstrumented (no such event in the log format; the withheld bytes are absent from every transcript)'
-          : v.status === 'not-in-this-baseline'
-            ? 'n/a for this baseline'
-            : `credited in ${v.coverage.credited} of ${v.coverage.of} runs`;
+        : v.status === 'not-in-this-baseline'
+          ? 'n/a for this baseline'
+          : `credited in ${v.coverage.credited} of ${v.coverage.of} runs`;
     const tok = blank ? '   uninstr.' : fmtTok(v.tokens).padStart(9);
     const usd = blank ? '   uninstr.' : fmtUsd(v.cost).padStart(11);
     const q = blank ? '   uninstr.' : fmtTok(v.quota).padStart(14);
@@ -1832,7 +1854,7 @@ function render(out) {
         .join(', '),
   );
   L.push(
-    `    Two levers are UNDER-counted on purpose. skip-the-model credits only the context a worker`,
+    `    Three levers are UNDER-counted on purpose. skip-the-model credits only the context a worker`,
   );
   L.push(
     `    would have paid to reach its first turn, not the whole session the deterministic apply`,
@@ -1842,6 +1864,18 @@ function render(out) {
   );
   L.push(
     `    excluded): a retry redoes the work either way, so only the re-reading is avoided.`,
+  );
+  L.push(
+    `    output-suppression credits the withheld bytes ONCE, though they would have been re-sent on`,
+  );
+  L.push(
+    `    every later turn. Its coverage is also structurally partial: wrapping a command in the`,
+  );
+  L.push(
+    `    verify filter is OPT-IN and only nudged, so a zero here can mean nothing was withheld OR`,
+  );
+  L.push(
+    `    that nobody wrapped anything. It is never evidence that the lever does not work.`,
   );
   if (head.levers['escalation-correction'].status === 'measured') {
     L.push(
