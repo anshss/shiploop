@@ -1070,7 +1070,7 @@ they are not re-attempted from scratch.
   First measurement (CLI 2.1.220, `--model opus`, a real spawn): of 164,795 turn-1 request bytes,
   **tool schemas are 85,260 — 51.7%**, ahead of `messages` (43.7%) and the system prompt (4.3%). A
   single tool a headless worker structurally cannot call (`Workflow`, 21,525 B) is 13.1% of the whole
-  request, re-sent every turn. Full table and method in `PROOF.md` section 5.
+  request, re-sent every turn.
 
 - **`GOVERN_WORKER_TOOLS` — opt-in tool-schema trim, -34.5% request bytes measured.** Set it to
   `default` to pass `--tools <recommended list>` to every worker, or give your own space/comma-
