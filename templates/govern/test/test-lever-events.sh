@@ -205,10 +205,13 @@ Freeform scratchpad from attempt one.
 <!-- /GOVERN:HANDOFF -->
 EOF
 # The prior attempt's own stream: must still be at $logdir/worker.jsonl, UNTOUCHED, so
-# freshStartTokens reads a real number before spawn-worker rotates it aside.
-printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a"}}],"usage":{"input_tokens":800,"output_tokens":200}}}\n' \
+# freshStartTokens reads a real number before spawn-worker rotates it aside. Every usage bucket is
+# a DISTINCT, deliberately large value so a leak of output_tokens or cache_read_input_tokens into
+# the sum (the exact regression bench/LEVER-EVENTS.md warns against) fails loudly rather than
+# quietly landing on a coincidentally-plausible number.
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a"}}],"usage":{"input_tokens":800,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":50}}}\n' \
   > "$T/logs10/ticket-7/worker.jsonl"
-printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/b"}}],"usage":{"input_tokens":300,"output_tokens":100}}}\n' \
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/b"}}],"usage":{"input_tokens":300,"output_tokens":100,"cache_read_input_tokens":3000,"cache_creation_input_tokens":25}}}\n' \
   >> "$T/logs10/ticket-7/worker.jsonl"
 # The prior attempt's ledger row: escalation's failedTokens reads THIS, not the raw stream.
 printf '{"attempt":1,"model":"sonnet","tokens":{"input":1000,"output":500,"cacheRead":0,"cacheCreation":0,"total":1500},"status":"failed"}\n' \
@@ -224,7 +227,8 @@ resume10="$(jq -c 'select(.event=="resume")' "$LE10" 2>/dev/null || true)"
 assert_eq "$([[ -n "$resume10" ]] && echo yes || echo no)" "yes" "resume PRESENT: the retry carried real notes + a real handoff block"
 assert_eq "$(jq -r '.ticket' <<<"$resume10")" "7" "resume: ticket=7"
 assert_eq "$(jq -r '.session' <<<"$resume10")" "worker" "resume: session=worker"
-assert_eq "$(jq -r '.freshStartTokens' <<<"$resume10")" "1400" "resume: freshStartTokens = the prior attempt's own cumulative spend (800+200+300+100), read before rotation"
+assert_eq "$(jq -r '.freshStartTokens' <<<"$resume10")" "1175" \
+  "resume: freshStartTokens = input+cache_creation ONLY ((800+50)+(300+25)=1175), read before rotation: output_tokens (200+100) and cache_read_input_tokens (5000+3000) must NOT leak in"
 assert_eq "$([[ "$(jq -r '.checkpointTokens' <<<"$resume10")" -gt 0 ]] && echo ok || echo bad)" "ok" "resume: checkpointTokens > 0 (the injected notes + handoff are non-empty)"
 
 esc10="$(jq -c 'select(.event=="escalation")' "$LE10" 2>/dev/null || true)"

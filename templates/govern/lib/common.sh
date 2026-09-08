@@ -2711,6 +2711,27 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
+# Sibling of govern::cumulative_tokens, NOT a mode flag on it: other callers (the #16 budget
+# watchdog, the timeout/park report synthesis) depend on the FULL total, so this is a separate
+# function rather than a behavior change on a shared one.
+#
+# bench/LEVER-EVENTS.md `resume`'s freshStartTokens: the failed attempt's context-reconstruction
+# spend only, input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens (and
+# cache_read_input_tokens, which is a re-read of a cache the SAME session already built, not
+# reconstruction). A retry has to redo the actual work either way; the only thing resuming avoids
+# is re-reading its way back into context, so crediting the failed attempt's output tokens (or its
+# cache reads) here would hand the resume lever savings that were never at stake, tilting a number
+# spec section 4a exists to keep unbiased. Deliberately narrower than the total: under-counted, not
+# over-counted, when in doubt.
+govern::cumulative_context_tokens() { # worker-jsonl -> integer input+cache_creation total (0 if none/unreadable)
+  local jsonl="${1:-}" total
+  [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
+  total="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } \
+    | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')"
+  echo "${total:-0}"
+}
+
 # ── evidence-based retry escalation (retry-class) ───────────────────────────────────
 # Before this, EVERY retry escalated to GOVERN_WORKER_MODEL (default opus) and discarded the
 # ticket's `Model:`/`Effort:` fields, on the reasoning that "a cheap bet that didn't land shouldn't
