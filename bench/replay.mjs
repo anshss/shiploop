@@ -707,7 +707,7 @@ function preflightAborts(fleetDir) {
   return n;
 }
 
-// The four instrumentation events, read from the run's sibling `lever-events.jsonl`. Contract:
+// The five instrumentation events, read from the run's sibling `lever-events.jsonl`. Contract:
 // bench/LEVER-EVENTS.md. A file that does not exist means UNINSTRUMENTED, which is not the same
 // as zero saving and is never reported as one. A line that will not parse is counted and skipped.
 function readLeverEvents(fleetDir, run) {
@@ -1433,7 +1433,7 @@ function main() {
           status: !routing ? 'not-in-this-baseline' : evStatus,
           coverage: { credited: coverage['escalation-correction'], of: runKeys.size },
         },
-        // Event-derived like the four above, from verify-filter.sh's `output-suppression`.
+        // Event-derived like the five above, from verify-filter.sh's `output-suppression`.
         // Uncredited runs are UNINSTRUMENTED, never a measured zero: the withheld bytes are absent
         // from every transcript, so a run with no event proves nothing about what it withheld.
         'output-suppression': {
@@ -1967,7 +1967,7 @@ function render(out) {
       `                   The emitter ships DEFAULT OFF (GOVERN_LEVER_EVENTS=0), so an uninstrumented`,
     );
     L.push(
-      `                   corpus is the expected state, not a fault. The four event-derived levers`,
+      `                   corpus is the expected state, not a fault. The five event-derived levers`,
     );
     L.push(
       `                   above are therefore UNCREDITED here, which understates the harness. They are`,

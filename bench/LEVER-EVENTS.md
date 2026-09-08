@@ -1,6 +1,6 @@
 # Lever event contract
 
-Authoritative wire shape for the four instrumentation events in
+Authoritative wire shape for the five instrumentation events in
 `.specs/2026-09-08-bench-multi-lever-design.md` section 4b. The governor emitter and the
 `replay.mjs` reader are built against THIS FILE. Neither half may change a field name without
 changing it here first.
@@ -18,7 +18,7 @@ learn to skip. A sibling file has no existing consumers.
 
 | Field | Type | Notes |
 |---|---|---|
-| `event` | string | one of the four names below |
+| `event` | string | one of the five names below |
 | `ts` | integer | unix seconds, `date +%s` at emit |
 | `ticket` | integer \| null | the ticket being worked, null for orchestration-side |
 | `session` | string | transcript basename without `.jsonl`, e.g. `worker`; identifies which session the credit attaches to |

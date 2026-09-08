@@ -126,12 +126,12 @@ one-session A/B. The strict one-session comparison is still computed and still p
 as `coreModel` / "carry-only legacy model". When a reader wants the conservative apples-to-apples
 figure, that is the one, and it is always lower.
 
-## Four levers are credited only where the corpus carries instrumentation
+## Five levers are credited only where the corpus carries instrumentation
 
 `watchdog`, `resume-not-restart`, `skip-the-model` and `escalation-correction` are read from
 `logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). The emitter ships **on**
 by default at runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch), but runs dispatched before that
-shipped carry none, so on any corpus collected before then those four levers report
+shipped carry none, so on any corpus collected before then those five levers report
 `uninstrumented` and contribute nothing. That is an understatement of the harness, not a measurement
 that it saves nothing there, and the report prints the coverage count next to every one of them. A
 corpus mixing instrumented and uninstrumented runs reports a number weighted toward the

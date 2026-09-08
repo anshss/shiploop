@@ -217,14 +217,14 @@ which re-run at the same tier and buy no escalation. A retry with no event is th
 that nothing was wasted, only that no tier change was bought. Nothing in the model assumes one
 event per retry.
 
-The four event-derived levers are credited ONLY in runs that carry `logs/govern/<run>/lever-events.jsonl`.
+The five event-derived levers are credited ONLY in runs that carry `logs/govern/<run>/lever-events.jsonl`.
 A run without one is **uninstrumented**, which is not the same as zero-saving and is never reported
 as one: the table prints the word `uninstr.` and the coverage count ("credited in N of M runs")
 rather than a zero row that an average would then drag down.
 
 **Expect uninstrumented to be the normal case for a while.** The emitter ships **on** by default at
 runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch); every run dispatched after that shipped
-carries events, but every run in every corpus collected BEFORE it does not, and all four levers are
+carries events, but every run in every corpus collected BEFORE it does not, and all five levers are
 uncredited on them. That understates the harness by an unknown amount and the report prints a
 paragraph saying so next to the coverage count. It is not a fault and it is not a measurement that
 those levers save nothing.
