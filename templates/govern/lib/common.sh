@@ -167,6 +167,31 @@ govern::stamp_run_version() { # <run_dir>
   return 0
 }
 
+# Stamps a run dir with the orchestrating (driver) session's own model tier, so bench/replay.mjs's
+# driver-tier baseline can price the counterfactual at what actually dispatched the run instead of
+# falling back to the highest tier observed anywhere in it, which is a guess biased toward the most
+# expensive tier and so toward shiploop's own credit. Same shape and the same never-abort contract
+# as govern::stamp_run_version above (a sibling stamp, NOT a lever event: this is run-scoped context
+# that has to exist before GOVERN_LEVER_EVENTS ever comes into it, and bench/LEVER-EVENTS.md does not
+# define it). Source: govern::session_model, the SAME signal govern::model_ceiling already trusts to
+# clamp every worker's escalation tier on this exact dispatch path, normalised to a bare family name
+# (govern::model_family) because replay.mjs's baseline vocabulary is haiku/sonnet/opus, not a full
+# model id. Best-effort ONLY: an undetectable session model, or one outside the known family list,
+# writes nothing rather than a guess, exactly the standard govern::stamp_run_version already holds
+# to. Called from run-loop.sh right after RUNDIR is created, beside the version stamp.
+govern::stamp_driver_model() { # <run_dir>
+  local run_dir="$1"
+  local fam=""
+  fam="$(govern::model_family "$(govern::session_model)")"
+  # `|| true`: a bare `[[ c ]] && cmd` is NOT a no-op on failure under `set -e` even with a `return
+  # 0` further down the function, because the failing command is not the function's LAST statement
+  # but IS a plain command outside any if/while/&&-that-is-not-last context, so `-e` still aborts
+  # the CALLER right here (root CLAUDE.md rule 11's "returns the test's status" applies to more
+  # than just a literal last line). Confirmed by writing to a deliberately unwritable run_dir.
+  [[ -n "$fam" ]] && { printf '%s\n' "$fam" > "$run_dir/driver-model" 2>/dev/null || true; }
+  return 0
+}
+
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
 # GOVERN_MERGE_REPOS. Frontend (PR-only) = the sub-repos NOT in that allowlist,
 # derived from REPOS. `harness` / a cross-owner skill-template repo live OUTSIDE
@@ -2799,6 +2824,26 @@ govern::model_rank() { # model alias OR full model id -> total-ordered int (0 = 
   [[ "$major" -gt 99 ]] && major=0
   [[ "$minor" -gt 99 ]] && minor=0
   echo "$(( base * 10000 + major * 100 + minor ))"
+}
+
+# Same lowercase-and-strip-the-[…]-suffix pass govern::model_rank runs above, kept as its own
+# function (not a mode on model_rank, which is rank-only and has its own dedicated callers/tests)
+# because a stamp needs the bare FAMILY NAME, not a comparable integer. Duplicated, not shared, on
+# purpose: model_rank's case list is stable and documented as such ("the old ordering is preserved
+# exactly"), so copying it here is lower-risk than adding a second caller into that function's
+# internals.
+govern::model_family() { # model alias OR full model id -> haiku|sonnet|opus|fable|"" (unknown)
+  local m
+  m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  m="${m%%\[*}"                       # claude-opus-5[1m] -> claude-opus-5
+  case "$m" in
+    *haiku*)  echo haiku ;;
+    *sonnet*) echo sonnet ;;
+    *opus*)   echo opus ;;
+    *fable*)  echo fable ;;
+    *) echo "" ;;
+  esac
+  return 0
 }
 govern::model_max() { # a b -> the HIGHER-ranked of the two (b wins ties and unrankable a)
   local ra rb; ra="$(govern::model_rank "${1:-}")"; rb="$(govern::model_rank "${2:-}")"
