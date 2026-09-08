@@ -21,22 +21,22 @@ governor. The only writers left are explicit, single-block operator actions: `cl
 - **`claudemd-trim.sh` is detect-classify-report only.** Over budget, every block is classified into
   `dead-citation`, `duplicate`, `jit-candidate` (cites a path that exists, so the rule has a
   mechanically detectable trigger and can be delivered just-in-time instead) or `judgment` (no
-  detectable trigger — never a candidate, never proposed). Mechanical classes rank above
+  detectable trigger: never a candidate, never proposed). Mechanical classes rank above
   jit-candidate; largest first inside a class. Exit 3 now means "candidates exist" (written to
-  `governor/claudemd-trim-proposals.md`), not "still over budget after an auto-move lane" — the
+  `governor/claudemd-trim-proposals.md`), not "still over budget after an auto-move lane": the
   script itself never changes the file outside `--apply`/`--still-true`.
 - **Dead-citation check ported from a live fleet's own fix to this exact false-positive class**
   (their commit, not this repo's): a citation resolves LIVE via a suffix-fallback path index across
   the whole workspace (catches a bare basename or a partial path, not only a root-relative one), and
   a `<placeholder>` segment or a git refspec (`origin/main`, `HEAD~3`) is unprovable rather than
   dead. Indexing every sub-repo root (not just the workspace root) additionally makes any path under
-  a `templates/` tree read LIVE as a side effect of the same suffix match — `test/assert.sh` now
-  resolves against `.../templates/govern/test/assert.sh` — which is the exact case that regressed.
+  a `templates/` tree read LIVE as a side effect of the same suffix match (`test/assert.sh` now
+  resolves against `.../templates/govern/test/assert.sh`), which is the exact case that regressed.
 - **Load-bearing guard.** A block under a heading matching `anti-pattern` / `load-bearing` /
   `hard rule` (case-insensitive), or whose own text says `load-bearing`, is classified `judgment`
   and excluded from proposals outright. Each run logs how many blocks it protected.
 - **`govern-bookkeep.sh --enforce-budgets` no longer demotes CLAUDE.md sections at all**, by hand or
-  from the run-end flush — a per-entry cap is no less an automatic editor for being manually
+  from the run-end flush: a per-entry cap is no less an automatic editor for being manually
   invoked. An oversized section is now only logged informationally, pointing at `/shiploop:compress`.
   `learnings.md`'s own opt-in TTL archive lane (`SHIPLOOP_LEARNINGS_TTL=1`) is unaffected: it is not
   `CLAUDE.md` and was never part of this incident.
@@ -56,7 +56,7 @@ governor. The only writers left are explicit, single-block operator actions: `cl
   only, at most `GOVERN_RULES_MAX_PACKS` (default 2) packs per call with a capped pack left
   unstamped so it fires later, kill switch `GOVERN_RULES_ON_TOUCH=0`. Keeps the three
   real-traffic-found guards from the source: the per-call cap, a pure search/read command never
-  triggering an action pack (`grep -r` excepted — a recursive sweep is itself a governed action), and
+  triggering an action pack (`grep -r` excepted, a recursive sweep is itself a governed action), and
   the command probe truncated at the first `<<` because a heredoc body is data, not command text. Not
   driver-only: a delegate editing a sub-repo never loads the root `CLAUDE.md`, so JIT delivery is
   worth more in a worker than in the driver. A workspace adds its own packs via
