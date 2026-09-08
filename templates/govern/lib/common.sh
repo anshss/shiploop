@@ -71,6 +71,74 @@ if [[ -f "$GOVERN_LIB_DIR/events.sh" ]]; then source "$GOVERN_LIB_DIR/events.sh"
 # No-op stand-in so no call site needs its own `declare -F` probe. Only defined when the module is
 # genuinely absent — sourcing events.sh above already defined the real one.
 if ! declare -F govern::event >/dev/null 2>&1; then govern::event() { return 0; }; fi
+# Same fallback for the string escaper the lever-events emitter below borrows from events.sh: cheap
+# insurance against a workspace where events.sh is present but somehow didn't define it.
+if ! declare -F govern::_event_jesc >/dev/null 2>&1; then
+  govern::_event_jesc() { printf '%s' "${1-}"; return 0; }
+fi
+
+# ── lever-events emitter (bench multi-lever redesign, spec 4b) ─────────────────────────────────
+# Append-only sibling of $GOVERN_RUN_DIR/state.jsonl: one JSON object per line, one of the four
+# lever-event shapes the contract in bench/LEVER-EVENTS.md defines (watchdog-kill / resume /
+# scripted-action / escalation). Deliberately its OWN file, NOT state.jsonl: that file is a
+# per-ticket outcome log read raw into the govern-improve.sh review prompt and tailed by cursor in
+# govern-supervise.sh, so interleaving lever events there would pollute both and add rows those
+# consumers must learn to skip. bench/replay.mjs reads THIS file; a reader that doesn't recognise
+# `event` skips the line, and a line that fails to parse is counted and skipped, never fatal.
+#
+# OFF BY DEFAULT (root CLAUDE.md rule 12, a new mechanism). GOVERN_LEVER_EVENTS=1 opts in; the
+# whole-suite OFF export lives in test/assert.sh (test-lever-events.sh opts back in per case).
+#
+# HARD CONTRACT, identical to govern::event above: emission must NEVER abort a dispatch. The body
+# runs inside a `{ … } || true` group and ends with an explicit `return 0` (rule 11).
+GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-0}"
+
+# govern::emit_lever_event <event> <ticket|-> <session> <tier|-> [k=v ...]
+#
+# <ticket> is a bare integer, or "-"/"" for the orchestration-side null. <tier> is a bare model
+# alias, or "-"/"" for null: the `escalation` event passes "-" here and carries `failedTier`
+# instead, one of the trailing k=v extras, per the contract's "carries failedTier instead of tier".
+# Extra fields follow govern::event's own bare-scalar-vs-string rule: a value that is an integer or
+# one of true/false/null is emitted unquoted, everything else is a quoted string, so
+# `ctxTokens=184320` lands as a JSON number and `reason=context-cap` as a string, with no
+# caller-side quoting needed.
+govern::emit_lever_event() { # <event> <ticket> <session> <tier> [k=v ...]
+  {
+    [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+    local file event ticket session tier line kv k v
+    event="${1:-unknown}"; ticket="${2:--}"; session="${3:-}"; tier="${4:--}"
+    shift 4 2>/dev/null || true
+    file="${GOVERN_LEVER_EVENTS_FILE:-${GOVERN_RUN_DIR:-$LOG_ROOT}/lever-events.jsonl}"
+    line="{\"event\":\"$(govern::_event_jesc "$event")\",\"ts\":$(date +%s)"
+    if [[ "$ticket" == "-" || -z "$ticket" ]]; then
+      line+=",\"ticket\":null"
+    elif [[ "$ticket" =~ ^-?[0-9]+$ ]]; then
+      line+=",\"ticket\":$ticket"
+    else
+      line+=",\"ticket\":\"$(govern::_event_jesc "$ticket")\""
+    fi
+    line+=",\"session\":\"$(govern::_event_jesc "$session")\""
+    if [[ "$tier" == "-" || -z "$tier" ]]; then
+      line+=",\"tier\":null"
+    else
+      line+=",\"tier\":\"$(govern::_event_jesc "$tier")\""
+    fi
+    for kv in "$@"; do
+      [[ "$kv" == *=* ]] || continue
+      k="${kv%%=*}"; v="${kv#*=}"
+      [[ -n "$k" ]] || continue
+      if [[ "$v" == "true" || "$v" == "false" || "$v" == "null" || "$v" =~ ^-?[0-9]+$ ]]; then
+        line+=",\"$(govern::_event_jesc "$k")\":$v"
+      else
+        line+=",\"$(govern::_event_jesc "$k")\":\"$(govern::_event_jesc "$v")\""
+      fi
+    done
+    line+="}"
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    printf '%s\n' "$line" >> "$file" 2>/dev/null || true
+  } 2>/dev/null || true
+  return 0
+}
 
 # Per-ticket worker-log directory (#75). RUN-SCOPED when GOVERN_RUN_DIR is set (run-loop exports
 # it = $LOG_ROOT/run-<ts>), so a re-run of ticket N writes to a fresh run-<ts>/ticket-N/ and can
