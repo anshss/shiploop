@@ -963,6 +963,27 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
 govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
+
+# bench/LEVER-EVENTS.md `resume`: this attempt is actually RESUMING (the notes/handoff block built
+# above, back in the RETRY CONTEXT section, is non-empty) rather than restarting cold. Both sides
+# must be captured HERE, before $jsonl gets rotated aside a little further down (the #19 per-attempt
+# ledger block), because after that this attempt's PRIOR stream is gone and freshStartTokens becomes
+# unrecoverable, exactly as bench/LEVER-EVENTS.md warns.
+#   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
+#                        in bytes over the codebase's own ~4-bytes-per-token estimate (see
+#                        govern-bookkeep.sh's lesson-entry sizing note for the same constant).
+#   freshStartTokens  = what a truly cold restart (no preserved worktree, no notes) would have had
+#                        to re-pay to reach the same point: the PRIOR attempt's own cumulative spend,
+#                        read from its still-intact $jsonl one last time before it is rotated away.
+if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" && "$MODEL_IS_RETRY" -eq 1 \
+      && ( -n "$notes_body" || -n "$handoff_block" ) ]]; then
+  resume_ckpt_bytes=$(( $(printf '%s' "$notes_body" | wc -c | tr -d '[:space:]') \
+    + $(printf '%s' "$handoff_block" | wc -c | tr -d '[:space:]') ))
+  resume_ckpt_tokens=$(( resume_ckpt_bytes / 4 ))
+  resume_fresh_tokens="$(govern::cumulative_tokens "$jsonl")"
+  govern::emit_lever_event resume "$N" worker "$model" \
+    checkpointTokens="${resume_ckpt_tokens:-0}" freshStartTokens="${resume_fresh_tokens:-0}"
+fi
 # A clamp is never silent: model_source already carries the marker into the log line above and the
 # history record, and this makes it queryable on the fleet event log beside worker_escalated.
 if [[ -n "${MODEL_CLAMPED_FROM:-}" ]]; then
@@ -981,6 +1002,18 @@ fi
 if [[ "$ESCALATION_APPLIED" -eq 1 ]]; then
   govern::event worker_escalated "ticket=$N" "from=${ESCALATION_FROM:-unknown}" "to=$model" \
     "effort=${effort:-}" "reason=$retry_class"
+  # bench/LEVER-EVENTS.md `escalation`: failedTokens is the FAILED attempt's own spend, read from the
+  # #19 per-attempt ledger row the PRIOR spawn-worker.sh invocation appended before this one started
+  # (this invocation has not yet rotated $jsonl or written its own row; see the ledger block below).
+  # Carries failedTier instead of tier (the contract's own wording), so tier is passed as "-" → null.
+  # Gated on GOVERN_LEVER_EVENTS itself, not just the emitter's own gate, so the ledger read never
+  # runs in the common opt-out case.
+  if [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]]; then
+    esc_failed_tokens="$(tail -n1 "$logdir/attempts.jsonl" 2>/dev/null | jq -r '.tokens.total // 0' 2>/dev/null || echo 0)"
+    [[ "$esc_failed_tokens" =~ ^[0-9]+$ ]] || esc_failed_tokens=0
+    govern::emit_lever_event escalation "$N" worker "-" \
+      failedTier="${ESCALATION_FROM:-unknown}" failedTokens="$esc_failed_tokens"
+  fi
 fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
@@ -1361,6 +1394,21 @@ if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
 [[ -f "$budget_marker" ]] && { worker_killed=1; worker_budget_exceeded=1; }
 [[ -f "$early_abort_marker" ]] && { worker_killed=1; worker_early_abort=1; }
 
+# bench/LEVER-EVENTS.md `watchdog-kill`: one of the three watchdogs above (wall-clock / token-budget
+# / early-abort) just terminated this attempt. ctxTokens/turns are read from the now-frozen $jsonl
+# (the process is dead; nothing writes to it again until the rotation further down), so this is the
+# true state at the instant of the kill. Gated on GOVERN_LEVER_EVENTS itself (not just left to the
+# emitter's own gate) so the jq/awk scan never runs in the common opt-out case.
+emit_watchdog_kill() { # <reason>
+  [[ "${GOVERN_LEVER_EVENTS:-0}" == "1" ]] || return 0
+  local ctx turns
+  ctx="$(govern::cumulative_tokens "$jsonl")"
+  turns="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } | wc -l | tr -d '[:space:]')"
+  govern::emit_lever_event watchdog-kill "$N" worker "$model" \
+    ctxTokens="${ctx:-0}" turns="${turns:-0}" reason="$1"
+  return 0
+}
+
 # #239: sweep this worker's orphan resources NOW — before report resolution and on EVERY exit path
 # (resolved / failed / parked / timed-out / killed). A worker hard-killed by GOVERN_WORKER_TIMEOUT
 # after creating real external resources never ran its own cleanup, so they would bill until a human
@@ -1457,6 +1505,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     ea_detail="$(head -c 400 "$early_abort_marker" 2>/dev/null | tr -d '\n' || true)"
     reason="worker was EARLY-ABORTED by the deterministic stall/loop/error watchdog and hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (the escalated retry resumes from it). Signature: ${ea_detail:-unspecified}. This attempt was going nowhere; the point of killing it at ~turn 30 rather than ~turn 218 is that the retry gets the budget instead (§4.4a)."
     govern::log "worker for #$N → early-abort (killed before verdict; NOT recorded failed) [§4.4a]: $reason"
+    emit_watchdog_kill "stall/loop/error: ${ea_detail:-unspecified}"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"early-abort",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-dispatch the ticket to resume from "+$wt+" at the escalated tier (or set GOVERN_EARLY_ABORT=0 / raise GOVERN_EARLY_ABORT_TURNS if this ticket legitimately explores for a long time before its first edit)"),options:[]}}')"
   elif [[ "$worker_budget_exceeded" -eq 1 ]]; then
@@ -1464,12 +1513,14 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     # not failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded the GOVERN_WORKER_MAX_TOKENS budget (${tok_budget} tokens) and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Distinct from a wall-clock timeout: this worker burned its token budget, which usually means it was still exploring/wandering (#16)."
     govern::log "worker for #$N → budget-exceeded (killed before verdict; NOT recorded failed) [#16]: $reason"
+    emit_watchdog_kill "context-cap"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"budget-exceeded",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_MAX_TOKENS if it legitimately needs a bigger budget)"),options:[]}}')"
   elif [[ "$worker_killed" -eq 1 ]]; then
     # #241: kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
     reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result (#241)."
     govern::log "worker for #$N → timeout (killed before verdict; NOT recorded failed) [#241]: $reason"
+    emit_watchdog_kill "wall-clock-timeout"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"timeout",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_TIMEOUT if it legitimately needs longer)"),options:[]}}')"
   else
