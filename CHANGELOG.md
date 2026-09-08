@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.19.1 — 2026-09-08
+
+### Fixed
+
+**Nothing automatic edits `CLAUDE.md` any more.** Three separate mechanisms could rewrite an
+operator's always-loaded rules file without asking, and all three had done it. A section sweep in
+`govern-bookkeep.sh --enforce-budgets` took eight whole `##` sections by size, twice, in one
+workspace: once to the appendix and once to nowhere at all, 32,157 chars down to 2,258. A per-entry
+lesson cap evicted a whole section from a file that was 87% empty. And `claudemd-trim.sh` lane 1
+auto-moved "dead citation" blocks before the budget check, so it fired regardless of size. Every one
+of those paths now produces a proposal instead of an edit. A regression test pins it directly: an
+over-budget `CLAUDE.md` run through the full automatic path comes out byte-identical.
+
+**The dead-citation checker no longer reads live rules as dead.** It resolved a citation only against
+the workspace root or a sub-repo root, so a script named by its bare basename, a partial path, a git
+refspec like `origin/main`, or a `<placeholder>` segment all read as dead and took their rule with
+them. Citations now fall back to a suffix match across the tree, refspecs and placeholders are
+unprovable rather than dead, and a path under any `templates/` tree reads live (a hub-only-by-design
+path such as `test/assert.sh` is absent from a workspace on purpose). An auto-remover must fail
+toward keeping.
+
+**Load-bearing blocks are never candidates.** A block under a heading matching
+`anti-pattern|load-bearing|hard rule`, or whose own text says load-bearing, is classified `judgment`
+and is never proposed. Those are the rules whose whole value is being resident.
+
+### Added
+
+**`/shiploop:compress`, the operator command that does the compressing.** Measure composition per
+section first, classify every block as already-enforced, mechanically-triggerable or pure judgment,
+sort by detectability rather than frequency (a rule that fires rarely but prevents a destroyed box is
+valuable precisely because nobody recalls it), audit that a long form exists before cutting anything,
+move text verbatim, then prove coverage before committing. Judgment rules stay resident by design.
+
+**`templates/hooks/rules-on-touch.sh` delivers rule packs just in time.** A PreToolUse hook that
+injects a rule pack when the surface it governs is touched, so a rule that only matters while editing
+a shell script is not charged to every session that never opens one. Six packs: `shell`, `worklist`,
+`git`, `pr`, `release`, `govern`. Advisory only, kill switch `GOVERN_RULES_ON_TOUCH=0`, capped at two
+packs per call with skipped packs left unstamped so they fire later. It runs in delegates too, which
+is where it is worth most: a subagent editing a sub-repo never loads the root `CLAUDE.md`.
+
+### Changed
+
+- Run-end reports `trim: CLAUDE.md <size>/<budget> chars, <N> compression candidate(s)` and names the
+  command. `doctor.sh` points at the same place.
+- Trim proposals carry a `Class:` field: `dead-citation`, `duplicate`, `jit-candidate` or `judgment`.
+- `GOVERN_TRIM_DEAD` is retired along with its documentation references. Nothing auto-moves, so the
+  kill switch had nothing left to switch.
+- New CI job runs `templates/hooks/test-*.sh`, which the govern suite's glob would never have reached.
+
 ## 1.19.0 — 2026-09-08
 
 ### Added
