@@ -17,6 +17,8 @@
 #      still returns 0.
 #   4. an unwritable run dir does not abort the caller (return 0, no file), the same property
 #      test-lever-events.sh asserts for the lever-events emitter.
+#   4b. the SAME unwritable-run-dir property for govern::stamp_run_version's own write, which had
+#       the identical shape and the identical "never aborts" claim without the guard to back it up.
 #   5. integration: a real run-loop.sh dispatch actually produces the stamp at the real call site,
 #      not just in isolation.
 set -euo pipefail
@@ -80,6 +82,22 @@ else
     "4. an unwritable run dir (mkdir -p fails, the write fails) still returns 0 under set -e"
   [[ -f "$RO/sub/driver-model" ]] && wrote4=yes || wrote4=no
   assert_eq "$wrote4" "no" "4. nothing is written when the target directory could not be created"
+
+  # 4b. govern::stamp_run_version's SIBLING write has the exact same shape and the same "never
+  # aborts" claim in its own comment; this asserts the property this ticket's fix restores for it.
+  # A non-empty .harness-version is required first, or `$v` is empty and the write never fires at
+  # all, proving nothing about the guard.
+  printf '9.9.9\n' > "$T/scripts/lib/.harness-version"
+  out4b="$(GOVERN_WS_ROOT="$T" bash -c '
+    set -euo pipefail
+    source "$1"
+    govern::stamp_run_version "$2"
+    echo "SURVIVED rc=$?"
+  ' _ "$COMMON" "$RO/sub" 2>/dev/null)"
+  assert_contains "$out4b" "SURVIVED rc=0" \
+    "4b. govern::stamp_run_version: same unwritable-run-dir property now holds (its own write, fixed alongside)"
+  [[ -f "$RO/sub/shiploop-version" ]] && wrote4b=yes || wrote4b=no
+  assert_eq "$wrote4b" "no" "4b. nothing is written for the version stamp either when the target directory could not be created"
 fi
 chmod 0755 "$RO"
 
