@@ -171,7 +171,7 @@ ct::roots() {
 # neither: they name a script by its bare basename (`check-indexed-urls-live.sh` is really
 # website/scripts/check-indexed-urls-live.sh there) or by a partial path (`tickets.md` is really
 # queue/tickets.md). Without this, 9 live rules were queued for eviction as "dead citations" on that
-# fleet's own workspace — the same failure the budget sweep in THIS repo had already committed
+# fleet's own workspace: the same failure the budget sweep in THIS repo had already committed
 # twice: an auto-remover proving death from its own narrow lookup. An auto-remover must fail toward
 # KEEPING, so a match anywhere under any of this workspace's roots counts as live. Built once per
 # run and cached in CT_PATH_INDEX.
@@ -180,8 +180,8 @@ ct::roots() {
 # single-repo workspace) is the "add on top" this port needs for a hub/sub-repo layout: a path
 # resolving under any sub-repo's templates/ tree reads LIVE as a plain side effect of the same
 # suffix match, no separate templates-specific lookup required. `test/assert.sh` matches the
-# `…/shiploop/templates/govern/test/assert.sh` index line by the `/test/assert.sh` suffix test below
-# — which is exactly the hub-only-by-design false positive #110 exists to fix (govern's test suite
+# `…/shiploop/templates/govern/test/assert.sh` index line by the `/test/assert.sh` suffix test below,
+# which is exactly the hub-only-by-design false positive #110 exists to fix (govern's test suite
 # ships only inside the hub's templates/, never copied into a scaffolded workspace).
 ct::path_index() {
   [[ -z "${CT_PATH_INDEX:-}" ]] || return 0
@@ -248,7 +248,7 @@ ct::citations() { # <blockfile>
       *[\*\?\[\$\{]*) printf 'unproven\t%s\n' "$w"; continue ;;
       # A `<placeholder>` segment names a shape, not a file, and a git refspec is not a path at all.
       # Both used to resolve as dead and evict a live rule on the fleet this fix was ported from
-      # (a `logs/investigations/<bug>/` citation, an `origin/main` mention) — ported verbatim.
+      # (a `logs/investigations/<bug>/` citation, an `origin/main` mention), ported verbatim.
       *\<*\>*) printf 'unproven\t%s\n' "$w"; continue ;;
       origin/*|upstream/*|HEAD|HEAD~*) printf 'unproven\t%s\n' "$w"; continue ;;
     esac

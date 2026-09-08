@@ -20,7 +20,7 @@ govern::require jq
 # run-loop.sh's run-end flush: this call never demotes a section and the trim it calls (below) never
 # edits CLAUDE.md either. An earlier version demoted any section over GOVERN_LESSON_MAX_CHARS
 # whenever a human ran this directly, which is exactly the "auto-editor confidently wrong about one
-# block silently costs a rule the workspace needed" failure #110 exists to close — a per-entry cap is
+# block silently costs a rule the workspace needed" failure #110 exists to close: a per-entry cap is
 # no less an automatic editor for being manually invoked. The only writers left for CLAUDE.md are
 # `claudemd-trim.sh --apply <hash>` and the `/shiploop:compress` playbook, both explicit per-block
 # operator actions. learnings.md keeps its own separate, opt-in TTL archive lane (item 3 below): it

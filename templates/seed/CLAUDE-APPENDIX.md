@@ -228,7 +228,7 @@ the pack, the reasoning is here, and nothing was dropped.
 **What can move, and what cannot.** A rule moves only if its trigger is mechanically detectable from
 the tool call itself: a `*.sh` path, a `git` command, `gh pr`. Rules whose trigger is a judgment call
 ("is this a proxy or an outcome?") cannot move and stay resident in `CLAUDE.md`. **Detectability is
-the sort key, never frequency** — a rule that fires rarely but prevents a destroyed box is high value
+the sort key, never frequency**: a rule that fires rarely but prevents a destroyed box is high value
 precisely because nobody recalls it, which is exactly the case for just-in-time delivery rather than
 against it.
 
@@ -259,7 +259,7 @@ sweep whose pattern is `gh pr` must not fire the pr pack). And the command probe
 `<<`, because a heredoc body is data: the hook once misfired on the very edit that removed the prose
 it was replacing.
 
-### `shell` — writing or editing a `*.sh` file
+### `shell`: writing or editing a `*.sh` file
 
 Both traps are silent: the script keeps running and produces wrong state rather than an error.
 
@@ -273,7 +273,7 @@ Both traps are silent: the script keeps running and produces wrong state rather 
   script silently at exit 141: no output, no side effect, and a pipeline that matched still reports
   failure. Feed consumers from a file or a herestring (`<<< "$var"`), never a live `printf "$var" |`.
 
-### `worklist` — editing `queue/tickets.md`
+### `worklist`: editing `queue/tickets.md`
 
 Work items only, one `## #N` each, scoped to this workspace's sub-repos and the harness. When editing
 ONE ticket, bound its region by the `## #N` heading FIRST: anchors like `**Done when:**` repeat across
@@ -283,7 +283,7 @@ the line count after any scripted edit, before committing. Consolidate by defaul
 single PR cost a full extra dispatch (a fresh context, a fresh branch, a fresh CI run) to produce the
 same diff. See "Why filing happens at a checkpoint, not mid-discussion" above.
 
-### `git` — running git in a meta-repo
+### `git`: running git in a meta-repo
 
 These were `CLAUDE.md` anti-patterns 1 to 4. Each fails silently in a nested-repo layout, which is why
 they were always-on until the hook could deliver them on the exact call.
@@ -296,7 +296,7 @@ they were always-on until the hook could deliver them on the exact call.
   stash silently no-ops and the "baseline" run measures the same tree twice. Use a throwaway
   `git archive HEAD | tar -x -C "$(mktemp -d)"` export instead.
 
-### `pr` — a command containing `gh pr`
+### `pr`: a command containing `gh pr`
 
 Never mutate an OPEN PR with `gh pr edit`. Two separate failures, one loud and one silent:
 
@@ -308,13 +308,13 @@ Never mutate an OPEN PR with `gh pr edit`. Two separate failures, one loud and o
 Use the REST API instead, which has no `projectCards` query and fails loudly:
 `gh api -X PATCH repos/<org>/<repo>/pulls/<N> -F body=@body.md` (add `-F base=<branch>` for the base).
 
-### `release` — a command touching `VERSION`, `npm version`, or `git tag`
+### `release`: a command touching `VERSION`, `npm version`, or `git tag`
 
 Cut a PATCH release yourself. Ask the operator before a MINOR or a MAJOR, and never publish an x.0.0
 release without them: the version number is a public promise to everyone who has already installed,
 and only the operator makes that promise.
 
-### `govern` — editing anything under `scripts/govern/` or `templates/govern/`
+### `govern`: editing anything under `scripts/govern/` or `templates/govern/`
 
 - Never add a new `claude` flag to the dispatch path unguarded. Gate it on a CACHED `--help` probe,
   never on a version compare: a version string reports what shipped, not what this binary supports,

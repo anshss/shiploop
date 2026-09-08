@@ -326,7 +326,7 @@ MD
 rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=10 bash "$CT" 2>&1)" || rc=$?
 props="$(cat "$T/governor/claudemd-trim-proposals.md" 2>/dev/null || true)"
 assert_contains "$props" "Class: jit-candidate" "K1: the basename citation resolves LIVE (suffix fallback), so it's a jit-candidate"
-assert_not_contains "$props" "Class: dead-citation" "K2: NOT dead-citation — this is the aquanode false-positive class"
+assert_not_contains "$props" "Class: dead-citation" "K2: NOT dead-citation (this is the aquanode false-positive class)"
 rm -rf "$T"
 
 assert_done

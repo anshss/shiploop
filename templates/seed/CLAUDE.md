@@ -68,9 +68,9 @@ removing a sub-repo is a one-file edit there.
 
 ## Anti-patterns (load-bearing)
 
-1. **PRs aren't transactional across sub-repos — merge backend-first**, and state the order in each
+1. **PRs aren't transactional across sub-repos: merge backend-first**, and state the order in each
    sibling PR.
-2. **`.env.example` is the contract.** Never commit `.env` — nothing enforces this mechanically.
+2. **`.env.example` is the contract.** Never commit `.env`: nothing enforces this mechanically.
 3. **Coordination files commit directly to `main` in the main checkout** (`CLAUDE.md`, `queue/`,
    `learnings.md`, `scripts/`) — never branched or PR'd. Branch work belongs in worktrees.
 4. **PR opened → tear the local stack down.** Zombie dev servers hold ports and serve stale code.
