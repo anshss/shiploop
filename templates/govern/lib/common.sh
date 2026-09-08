@@ -81,6 +81,24 @@ govern::worker_logdir() { # ticket -> dir
   if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
 }
 
+# Stamps a run dir with the workspace's synced hub version (#107), so bench/replay.mjs can scope
+# its default corpus to the sessions that ran under the CURRENT harness instead of blending every
+# version a workspace has ever run — no transcript event carries the shiploop package version.
+# Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
+# against (same file doctor.sh / govern-health.sh already read for the update-channel check). Best-
+# effort ONLY: an absent stamp file, an unreadable one, or a workspace that never ran scaffold.sh
+# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Called
+# from run-loop.sh right after RUNDIR is created; a workspace-relative $RUN_DIR keeps this callable
+# from a test harness that overrides GOVERN_WS_ROOT.
+govern::stamp_run_version() { # <run_dir>
+  local run_dir="$1"
+  local stamp="$WS_ROOT/scripts/lib/.harness-version"
+  local v=""
+  v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp" 2>/dev/null || true)"
+  [[ -n "$v" ]] && printf '%s\n' "$v" > "$run_dir/shiploop-version" 2>/dev/null
+  return 0
+}
+
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
 # GOVERN_MERGE_REPOS. Frontend (PR-only) = the sub-repos NOT in that allowlist,
 # derived from REPOS. `harness` / a cross-owner skill-template repo live OUTSIDE

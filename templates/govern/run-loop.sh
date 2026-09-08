@@ -200,6 +200,10 @@ ABORTED=0; ABORT_RC=0; CUR_TICKET=""; CUR_TICKET_MERGED=""
 # RUNDIR afterward by globbing on that child's known pid (see govern::_parallel_run below).
 govern::guard_real_log_write "${GOVERN_CLAUDE_BIN:-claude}"  # #57
 RUNDIR="$LOG_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"; mkdir -p "$RUNDIR"
+# #107: best-effort version stamp (never aborts a dispatch) so bench/replay.mjs can default its
+# corpus to the current harness version instead of blending every version ever run — see
+# govern::stamp_run_version (lib/common.sh).
+govern::stamp_run_version "$RUNDIR"
 # #75: every worker spawned this run writes its log under $RUNDIR/ticket-N/ (via govern::worker_logdir),
 # so a re-run of ticket N can never read a PRIOR run's stale worker.jsonl. Exported so spawn-worker
 # (a child process) inherits it. #183: defined BEFORE the lock so the holder file can record this run id.
