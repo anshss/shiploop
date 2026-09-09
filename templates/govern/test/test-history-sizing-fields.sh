@@ -140,21 +140,29 @@ assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "GOVERN_WORKER_MODEL" "ledger reco
 assert_eq "$(jq -r '.effort' <<<"$r1")"       "null"               "no GOVERN_WORKER_EFFORT set -> effort stays unset (the scout no longer supplies one)"
 assert_eq "$(jq -r '.effortSource' <<<"$r1")" "none (unset)"       "ledger records WHERE the (absent) effort came from"
 assert_eq "$(jq -r '.isRetry' <<<"$r1")"      "false"              "attempt 1 is not a retry"
+assert_eq "$(jq -r '.retryClass' <<<"$r1")"   "first-attempt"      "a first attempt records the class too, not null"
+assert_eq "$(jq -r '.respecRequested' <<<"$r1")" "false"           "a first attempt never asks for a re-specification"
 assert_eq "$(jq -r '.status' <<<"$r1")"       "resolved"           "ledger records the attempt's outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r1")" "1500"               "ledger records the attempt's tokens"
 assert_eq "$(jq -r '.costUsd' <<<"$r1")"      "0.02"               "ledger records the attempt's cost"
 
-# Attempt 2 — the worktree from attempt 1 survives, so this is the retry path: MODEL_IS_RETRY escalates
-# off the sonnet floor to GOVERN_WORKER_ESCALATION_MODEL (default opus) since no prior-attempt evidence
-# exists to classify (retry_class=unknown -> the fail-safe branch). It must land as a SECOND ledger
-# row, and attempt 1's stream must be rotated aside rather than truncated in place.
+# Attempt 2: the worktree from attempt 1 survives, so this is the retry path. With automatic tier
+# escalation removed it HOLDS the sonnet floor (no prior-attempt evidence exists to classify, so
+# retry_class=unknown, which now routes DOWN rather than to the ceiling) and the ledger row records
+# the classifier verdict beside the sizing it produced. It must land as a SECOND ledger row, and
+# attempt 1's stream must be rotated aside rather than truncated in place.
 out2="$(spawn7 "$T2/bin/claude-hang" 1)"
 assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "timeout" "attempt 2 is killed before its verdict"
 assert_eq "$(awk 'END{print NR}' "$LEDGER")" "2" "the ledger is append-only (one row per attempt)"
 r2="$(tail -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r2")" "2"        "attempt number increments across spawns"
 assert_eq "$(jq -r '.isRetry' <<<"$r2")" "true"     "attempt 2 is flagged as a retry"
-assert_eq "$(jq -r '.model' <<<"$r2")"   "opus"     "retry escalates from the sonnet floor to the escalation ceiling"
+assert_eq "$(jq -r '.model' <<<"$r2")"   "sonnet"   "a retry HOLDS the floor tier: nothing escalates automatically any more"
+assert_eq "$(jq -r '.retryClass' <<<"$r2")" "unknown" "rail 11: the ledger records the classifier verdict the sizing was derived from"
+assert_eq "$(jq -r '.respecRequested' <<<"$r2")" "true" "rail 11: and records that the outcome was a re-specification request, not a tier purchase"
+[[ -n "$(jq -r '.retryReason // empty' <<<"$r2")" ]] \
+  && printf 'ok   - %s\n' "the ledger row carries the reason string too" \
+  || { printf 'FAIL - %s\n' "the ledger row carries the reason string too"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 assert_eq "$(jq -r '.status' <<<"$r2")"  "timeout"  "the killed attempt records its real outcome"
 assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null (#19)"
 assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt's usage came from per-turn events"

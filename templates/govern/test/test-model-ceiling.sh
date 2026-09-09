@@ -2,10 +2,14 @@
 # Locks in the model ceiling: a session may never spawn a process at a tier ABOVE
 # max(opus, its own model).
 #
-# Opus is the FLOOR of that ceiling, not the ceiling itself, which is what keeps the existing
-# cheap-floor/escalate-once rail intact: a sonnet (or haiku, or undetectable) session still buys opus
-# for a retry, exactly as before. What the rail forbids is a session buying a tier it does not itself
-# run at, so only a session ABOVE opus can dispatch above opus.
+# Opus is the FLOOR of that ceiling, not the ceiling itself: a sonnet (or haiku, or undetectable)
+# session may still be configured to dispatch opus. What the rail forbids is a session buying a tier
+# it does not itself run at, so only a session ABOVE opus can dispatch above opus.
+#
+# This is the SESSION rail and it is unconditional. It is not the same thing as
+# GOVERN_WORKER_ESCALATION_MODEL, which since automatic escalation was removed is a cap on explicit
+# requests only; both are applied at resolve_sizing's single clamp site, and that interaction is
+# covered in test-retry-escalation.sh.
 #
 # Three layers are covered here:
 #   1. govern::model_rank: the ladder now has to order a bare alias against a full model id, incl.
@@ -153,13 +157,17 @@ out="$(dry sonnet sonnet)"
 assert_eq "$(printf '%s' "$out" | jq -r '.model')" "sonnet" \
   "4. the ordinary sonnet-floor dispatch is untouched by the rail"
 
-# The RETRY rail is the other path that picks a tier, and it picks the highest one the harness ever
-# chooses on its own, so it is clamped at the same choke point, not at the branch.
+# A RETRY no longer picks a tier at all (automatic escalation is removed), so the case that used to
+# assert "the escalation to fable-5 lands on opus" has nothing left to escalate. What replaces it is
+# the inverse guarantee, which is the one that can still go wrong: a retry must not move the tier,
+# and a fable-5 GOVERN_WORKER_ESCALATION_MODEL must not become a destination by any route.
 out="$(dry sonnet sonnet GOVERN_WORKER_ESCALATION_MODEL=claude-fable-5 GOVERN_SPAWN_FORCE_RETRY=1)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "opus" \
-  "4. the retry escalation ceiling is clamped too (escalation to fable-5 lands on opus)"
+assert_eq "$(printf '%s' "$out" | jq -r '.model')" "sonnet" \
+  "4. a retry holds the floor tier: GOVERN_WORKER_ESCALATION_MODEL is not a destination"
 assert_eq "$(printf '%s' "$out" | jq -r '.is_retry')" "1" \
   "4. that case really did take the retry path"
+assert_eq "$(printf '%s' "$out" | jq -r '.model_cap_source')" "" \
+  "4. nothing was clamped, because nothing tried to rise"
 
 out="$(dry sonnet claude-fable-5 GOVERN_MODEL_CEILING=0)"
 assert_eq "$(printf '%s' "$out" | jq -r '.model')" "claude-fable-5" \

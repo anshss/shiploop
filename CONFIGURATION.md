@@ -11,7 +11,8 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_AUTONOMY` | `pr-only` | Trust-ladder rung (`observe` / `pr-only` / `auto`); absent = `auto` for pre-knob installs |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_WORKER_MODEL` | `sonnet` | First-attempt **floor**: the tier every ticket dispatches at. A ticket's own `Model:`/`Effort:` fields no longer participate in dispatch |
-| `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | Escalate-once **ceiling**: the tier a classified judgment failure retries at. A ticket never escalates twice |
+| `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | **Cap**, not a destination: the highest tier an explicit request (a ticket's `Model:` field, honoured only under `GOVERN_MEASURED_SIZING=0`) may ask for. Nothing escalates to it automatically |
+| `GOVERN_RESPEC_ON_CAPABILITY_FAIL` | `1` | A retry classified `judgment` or unrecognized files an operator re-specification request in `escalations.md` instead of buying a tier. `0` disables the filing (the tier still never escalates) |
 | `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model the harness dispatches (worker, scout, supervisor, sync porter) is clamped to `max(opus, the model of the session that spawned it)`. A sonnet or haiku session still buys opus on a retry; only a session above opus may spawn above opus, and never above itself. `0` disables the clamp |
 | `GOVERN_DETERMINISTIC` | `0` (off) | Zero-model lane: let the scout's mechanical patch resolve a ticket with **no model turns** on the fix. Over-strict guards; every doubt falls through to a normal worker |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |

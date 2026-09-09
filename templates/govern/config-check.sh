@@ -53,16 +53,16 @@ req WORKTREE_BASE "${WORKTREE_BASE:-}"
 if [[ "${#REPOS[@]}" -eq 0 ]]; then problems+=("REPOS is empty (no sub-repos configured)"); fi
 
 # ── Worker model floor/ceiling: a HARD assertion, not informational ──
-# GOVERN_WORKER_MODEL (floor, first attempt) and GOVERN_WORKER_ESCALATION_MODEL (ceiling,
-# escalate-once retry) are deliberately two knobs (see workspace.sh): the retry only buys
-# anything if the ceiling actually outranks the floor. `${VAR:-default}` lets a downstream
-# fleet's environment export collapse them to the same tier SILENTLY: the escalation path then
-# stops being degraded and becomes a same-tier no-op that still bills at ceiling rates, with no
-# signal that it happened (it reads as cost variance, not as a bug). Assert it here as a hard
-# PROBLEM (drives exit 1 below), not a warn_only print.
+# GOVERN_WORKER_MODEL (floor, every attempt) and GOVERN_WORKER_ESCALATION_MODEL (the CAP on what an
+# explicit request may ask for) are deliberately two knobs (see workspace.sh). The assertion SURVIVED
+# the removal of automatic escalation, with a new meaning: a cap at or below the floor means every
+# dispatch already runs at or above the highest tier anyone is allowed to request, so the cap knob
+# controls nothing and reads as configured when it is inert. `${VAR:-default}` lets a downstream
+# fleet's environment collapse them to the same tier SILENTLY, with no signal that it happened.
+# Assert it here as a hard PROBLEM (drives exit 1 below), not a warn_only print.
 #
 # Reuse the repo's own tier ordering (govern::model_rank, defined in lib/common.sh and already
-# used via govern::model_max on the spawn-worker.sh escalation path) instead of hard-coding a
+# used on the spawn-worker.sh sizing path) instead of hard-coding a
 # second list of model names here. govern::model_max itself is NOT enough for this check: on a
 # tie it returns the second argument (the ceiling) unchanged ("b wins ties"), so
 # `model_max(floor, ceiling) == ceiling` is true both when floor < ceiling (fine) AND when
@@ -73,7 +73,7 @@ resolved_ceiling="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
 floor_rank="$(govern::model_rank "$resolved_floor")"
 ceiling_rank="$(govern::model_rank "$resolved_ceiling")"
 if [[ "$floor_rank" -ge "$ceiling_rank" ]]; then
-  problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (ceiling, rank $ceiling_rank): a floor equal to or above the ceiling makes escalation a no-op that bills every attempt at ceiling rates")
+  problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (the explicit-request cap, rank $ceiling_rank): a cap at or below the floor is inert, since every dispatch already runs at or above the highest tier a ticket Model: field may ask for")
 fi
 
 # ── Optional knobs (informational) ──
