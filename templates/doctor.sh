@@ -234,6 +234,25 @@ if [ -f "$ROOT/.claude/shiploop/validation/flows.md" ] && [ -f "$ROOT/scripts/go
   fi
 fi
 
+# ── Base branch CI: is main red before this session builds on it? ──
+# Advisory only: reuses preflight-base-ci.sh (the governor's own run-start gate, #49) so a plain
+# session learns it is about to build on a red base without needing to know the dispatch path
+# exists at all. Never duplicates its logic here; the script itself already fails open (exit 0) on
+# everything that is not an unambiguous red: gh missing, gh unauthenticated, no CI configured, no
+# runs yet, an in-progress run, or an API error. Kill switch: GOVERN_DOCTOR_BASE_CI=0.
+if [ "${GOVERN_DOCTOR_BASE_CI:-1}" != "0" ] && [ -f "$ROOT/scripts/govern/preflight-base-ci.sh" ]; then
+  _bci_out="$(GOVERN_WS_ROOT="$ROOT" bash "$ROOT/scripts/govern/preflight-base-ci.sh" 2>&1)"; _bci_rc=$?
+  # rc 0 covers green, no CI configured, gh missing, and offline: none of those are evidence of
+  # anything wrong locally, so this check stays COMPLETELY silent (no section, nothing) exactly like
+  # preflight-base-ci.sh's own fail-open contract, and must never itself break doctor on a flake.
+  if [ "$_bci_rc" -eq 2 ]; then
+    section "base branch CI"
+    _bci_line="$(printf '%s\n' "$_bci_out" | grep -m1 'CI-RED' || printf '%s' "$_bci_out" | tail -1)"
+    _bci_line="${_bci_line#*preflight: }"
+    warn "$_bci_line (building on it now would inherit the break)"
+  fi
+fi
+
 # ── Context budget — is CLAUDE.md over the per-turn budget? ──
 # CLAUDE.md is re-sent on EVERY turn of EVERY session, so an over-budget file is a permanent tax
 # charged to work that never touches the topic. This used to be enforced only inside a per-ticket

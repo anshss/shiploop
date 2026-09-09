@@ -209,7 +209,33 @@ not this queue). Migrate or delete at operator's call. "
   fi
 fi
 
-reason="${outscope_note}${flows_note}Reconcile tickets.md before ending. \
+# --- validation-record nudge advisory (work item 5): a SOFT, never-blocking note folded into the
+# reconcile reason. A validation-shaped OPEN ticket (govern::is_validation_ticket) with no matching
+# .claude/shiploop/validation/ticket-<N>-*.md is "plausibly" one THIS session worked, since this
+# whole reminder only fires once this session already did code work (did_code_work, above): a Stop
+# hook has no per-ticket session attribution, so this is a coarse, ALWAYS-ADVISORY proxy: a false
+# positive costs one extra line pointing at /validated, never a block. Kill switch:
+# GOVERN_VALIDATION_NUDGE=0. Run in a subshell so common.sh's `set -e` can't leak into this hook (no
+# -e here); empty on any failure, degrading to silence.
+validation_note=""
+if [ "${GOVERN_VALIDATION_NUDGE:-1}" != "0" ] && [ -f "$MAIN/queue/tickets.md" ]; then
+  validation_ids="$(
+    GOVERN_WS_ROOT="$MAIN" GOVERN_TICKETS_FILE="$MAIN/queue/tickets.md"
+    export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::tickets_missing_validation_doc >/dev/null 2>&1 || exit 0
+    govern::tickets_missing_validation_doc "$MAIN/queue/tickets.md" "$MAIN" 2>/dev/null | tr '\n' ' '
+  )"
+  validation_ids="$(printf '%s' "${validation_ids:-}" | sed -E 's/ +$//; s/^ +//')"
+  if [ -n "$validation_ids" ]; then
+    validation_note="VALIDATION RECORD (advisory): #$(printf '%s' "$validation_ids" | sed 's/ /, #/g') \
+look validation-shaped and open with no .claude/shiploop/validation/ticket-<N>-*.md evidence file yet. \
+If you live-tested one this session, run /validated <N> to record the evidence durably. "
+  fi
+fi
+
+reason="${outscope_note}${flows_note}${validation_note}Reconcile tickets.md before ending. \
 (1) NEW: for each bug/gap/follow-up from this session not already tracked, first look for an OPEN \
 ticket to fold it into (rewriting its body is fine); mint a new ## #N (Severity/Where/Observed/Fix \
 direction/Done when/Ref) only when independently dispatchable — a different area, or shippable \
