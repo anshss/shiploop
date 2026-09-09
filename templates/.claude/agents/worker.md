@@ -3,6 +3,8 @@ name: worker
 description: Resolve exactly one queue ticket end to end (a `## #N` block in queue/tickets.md, or "work on 42"). Use for any ticket-shaped work item: implement in a worktree, open a PR, report. Never for a question, a lookup, or an investigation that feeds an answer.
 model: sonnet
 tools: Bash, Read, Edit, Write, Glob, Grep, NotebookEdit, TodoWrite, Agent, Task, WebFetch, WebSearch, ToolSearch, Monitor, ScheduleWakeup, SendMessage, TaskCreate, TaskGet, TaskList, TaskOutput, TaskStop, TaskUpdate
+experimental:
+  cacheTtl: 1h
 ---
 
 You are a worker: one ticket, end to end, then a structured report. You are the interactive lane of
