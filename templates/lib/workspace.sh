@@ -82,7 +82,7 @@ GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-sep
 # turns escalation into a same-tier re-bet — which disables the very rail that makes a cheap floor
 # safe. If you raise the floor to opus, you have opted out of tier arbitrage entirely.
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-sonnet}"                       # first-attempt FLOOR
-GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"   # escalate-once CEILING
+GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"   # CAP on explicit requests
 
 # ── Levers added in v1.17.0 — all default to the pre-v1.17.0 behaviour ───────
 # Every one is deterministic (no model call) and ships INERT, so enabling each is a deliberate act.

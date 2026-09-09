@@ -3048,6 +3048,12 @@ govern::model_family() { # model alias OR full model id -> haiku|sonnet|opus|fab
   esac
   return 0
 }
+# NOTE: this has NO caller as of the removal of automatic tier escalation. Its only production use
+# was spawn-worker.sh's `escalated_model` (the "raise to at least the ceiling" step), which is gone
+# because no failure class raises a tier any more. Kept, not deleted: it is a public primitive on a
+# hub template that downstream fleets and forks may call, and govern::model_rank (which it wraps) is
+# still used by config-check.sh and the model ceiling. Delete it in a deliberate contract change, not
+# as a drive-by of this one.
 govern::model_max() { # a b -> the HIGHER-ranked of the two (b wins ties and unrankable a)
   local ra rb; ra="$(govern::model_rank "${1:-}")"; rb="$(govern::model_rank "${2:-}")"
   if [[ "$ra" -gt "$rb" ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi

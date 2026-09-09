@@ -130,8 +130,9 @@ fi
 # First attempt: the brain-decided per-ticket `Model:`/`Effort:` fields win (allowlisted; an unknown
 # value is dropped fail-safe), else the GOVERN_WORKER_MODEL / GOVERN_WORKER_EFFORT floors.
 #
-# Retry: classify WHY the last attempt failed (govern::retry_class) and escalate the axis that
-# actually failed, instead of always jumping to GOVERN_WORKER_MODEL. See the table in lib/common.sh.
+# Retry: classify WHY the last attempt failed (govern::retry_class). NO class raises the tier any
+# more. The only axis a retry can move is EFFORT, and a capability failure is surfaced to the
+# operator as a re-specification request. See the case block and the table in lib/common.sh.
 #
 # §5.2 — THE SCOUT NO LONGER SIZES. It used to fold a cached `--verdict` in here (a deterministic
 # re-score of its own scope measurement) and claim both axes. Measured over every verdict this
@@ -143,21 +144,30 @@ fi
 #
 # So tier now comes from exactly TWO knobs, and ABSENCE OF EVIDENCE ROUTES DOWN:
 #   GOVERN_WORKER_MODEL            — the cheap first-attempt floor (sonnet)
-#   GOVERN_WORKER_ESCALATION_MODEL — the ceiling, reachable ONLY by the retry rail below
-# Nothing else may raise the tier. The scout survives as a pure SURVEYOR: its `--findings` pointer
+#   GOVERN_WORKER_ESCALATION_MODEL: no longer a destination at all. It is now purely a CAP on what
+#                                    an explicit operator request (the ticket `Model:` field) may
+#                                    ask for, applied at the single clamp site in resolve_sizing.
+# Nothing raises the tier. The scout survives as a pure SURVEYOR: its `--findings` pointer
 # block is still appended to the worker prompt further down (the warm-start hints it located), and
 # `--paths` is available to other callers. It just no longer votes on cost.
-# §5.7: set to 1 by resolve_sizing when THIS spawn actually raised a knob above the floor. The live
-# path stamps the worktree from it so the next spawn knows the ticket's one escalation is spent.
-ESCALATION_APPLIED=0
-# The tier this spawn escalated FROM, captured beside the flag so the fleet event log can report
-# `from`/`to` without re-parsing the human-readable model_source prose. Empty when nothing escalated.
-ESCALATION_FROM=""
+# AUTOMATIC TIER ESCALATION IS REMOVED. No failure class buys a tier any more; the retry rail below
+# only ever moves EFFORT. Set to 1 by resolve_sizing when the classifier says the last attempt failed
+# on CAPABILITY (class=judgment, or an unrecognized signature): the live path turns that into an
+# operator re-specification request instead of a bigger model. See the case block for the reasoning.
+RESPEC_REQUESTED=0
+# The class that triggered the re-specification request, carried so the escalation text and the
+# per-attempt ledger row can name it without re-parsing model_source prose. Empty when none.
+RESPEC_CLASS=""
+# Set to 1 when the ticket's own `Model:` field actually decided the tier (GOVERN_MEASURED_SIZING=0).
+# That is the ONE explicit operator request the GOVERN_WORKER_ESCALATION_MODEL cap applies to; see
+# resolve_sizing below, which does the capping at the single existing clamp site.
+TICKET_MODEL_APPLIED=0
 resolve_sizing_uncapped() {
-  local base_model base_effort escalated_model escalated_stamp
+  local base_model base_effort
   retry_class="first-attempt"; retry_reason="first attempt — no prior failure to classify"
-  ESCALATION_APPLIED=0
-  ESCALATION_FROM=""
+  RESPEC_REQUESTED=0
+  RESPEC_CLASS=""
+  TICKET_MODEL_APPLIED=0
 
   # Baseline = what the FIRST attempt would have used: the workspace floors.
   #
@@ -187,7 +197,7 @@ resolve_sizing_uncapped() {
   if [[ "$measured" == "0" ]]; then
     case "${TICKET_MODEL:-}" in
       "") ;;
-      haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field" ;;
+      haiku|sonnet|opus) base_model="$TICKET_MODEL"; model_source="ticket-Model-field"; TICKET_MODEL_APPLIED=1 ;;
       *) model_source="GOVERN_WORKER_MODEL (unknown ticket Model: '$TICKET_MODEL' ignored)" ;;
     esac
     case "${TICKET_EFFORT:-}" in
@@ -196,9 +206,10 @@ resolve_sizing_uncapped() {
       *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
     esac
   fi
-  # (§5.2: the scout `--verdict` fold-in that used to sit here is GONE — see the header above. The
-  # ONLY remaining way for a dispatch to end up above GOVERN_WORKER_MODEL is the retry rail below,
-  # or the operator raising the floor itself.)
+  # (§5.2: the scout `--verdict` fold-in that used to sit here is GONE (see the header above). With
+  # automatic escalation removed, the ONLY remaining ways for a dispatch to end up above
+  # GOVERN_WORKER_MODEL are the operator raising the floor itself, or the ticket `Model:` field under
+  # GOVERN_MEASURED_SIZING=0, and that second one is capped by GOVERN_WORKER_ESCALATION_MODEL.)
   # EXECUTE-ONLY dispatch (GOVERN_EXECUTE_ONLY_BRIEF, set above from a GOVERN_WARM assertion, or
   # directly by a caller, when the parent explicitly asserted it is warm on this ticket): the worker
   # is no longer explore → decide → edit → verify, it is edit → verify against a change someone
@@ -212,6 +223,7 @@ resolve_sizing_uncapped() {
   if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
     base_model="haiku"; model_source="execute-only (parent stated the change)"
     base_effort="low";  effort_source="execute-only (parent stated the change)"
+    TICKET_MODEL_APPLIED=0   # the shortcut, not the ticket field, decided this tier
   fi
   model="$base_model"; effort="$base_effort"
   [[ "${MODEL_IS_RETRY:-0}" -eq 1 ]] || return 0   # first attempt: the baseline IS the answer
@@ -223,89 +235,75 @@ resolve_sizing_uncapped() {
   # GOVERN_RESOLVE_CONFLICT re-spawns this worker to land an ALREADY-OPEN, already-green PR on a
   # moved origin/main: `git merge origin/main`, fix conflicts, push. The ticket was already SOLVED;
   # the failing axis is a textual merge, not judgment. But this spawn sees the preserved worktree,
-  # sets MODEL_IS_RETRY=1, classifies as judgment/unknown and buys the ceiling tier — a SECOND
-  # full-price escalation inside the same run for a mechanical rebase. GOVERN_FIX_CI is already
-  # pinned safe (govern::retry_class forces class=ci for it); this is the same hole one door down.
+  # sets MODEL_IS_RETRY=1 and classifies as judgment/unknown. It used to buy the ceiling tier from
+  # there; now it would instead bump effort and file a re-specification request against a ticket
+  # that was already solved, which is a different kind of wrong and just as false. GOVERN_FIX_CI is
+  # already pinned safe (govern::retry_class forces class=ci for it); this is the same hole one door
+  # down, and the pin is still load-bearing for exactly the same reason.
   if [[ -n "${GOVERN_RESOLVE_CONFLICT:-}" ]]; then
     retry_class="ci"
-    retry_reason="conflict-resolution re-dispatch for ${GOVERN_RESOLVE_CONFLICT} — landing an existing green PR over a moved main is a merge job, not a re-bet on judgment; tier unchanged [§5.7]"
+    retry_reason="conflict-resolution re-dispatch for ${GOVERN_RESOLVE_CONFLICT}: landing an existing green PR over a moved main is a merge job, not a re-bet on judgment; sizing unchanged [§5.7]"
   fi
 
-  # ── §5.7 GUARD 2: escalation fires EXACTLY ONCE per ticket ───────────────────────────────────
-  # Escalation was purely a function of "a preserved worktree exists" — a BOOLEAN, not a counter —
-  # and nothing anywhere recorded that a ticket had already been escalated. In the common path the
-  # once-ness was accidental: pre-dispatch-check.sh auto-parks a ticket at GOVERN_MAX_TICKET_FAILS (default 2)
-  # consecutive bad runs, so run 1 buys the floor, run 2 buys the ceiling, run 3 never spawns. That
-  # is a CAP ON RUNS, not a cap on escalations — every in-run re-dispatch rail (conflict-fix,
-  # CI-fix, infra/interrupted auto-retry) is a separate spawn-worker invocation that independently
-  # re-derives MODEL_IS_RETRY=1 and can buy the ceiling AGAIN inside the same run, all under one
-  # failure count. So make it structural rather than emergent.
-  #
-  # The stamp lives in the PRESERVED WORKTREE — the same artifact whose existence is the retry
-  # signal itself. That is the point: the two facts are created and destroyed together, so cleaning
-  # up a worktree resets the escalation budget exactly when the ticket is genuinely starting over,
-  # and no separate state can rot out of sync with it. A run-scoped ledger could not do this (it
-  # resets every run) and the cross-run history could not either (it records outcomes, not spends).
-  #
-  # `GOVERN_ESCALATE_ONCE=0` restores the previous behavior (escalate on every retry, unbounded).
-  escalated_stamp="$WORKTREE_BASE/$slug/.governor-escalated"
-  if [[ "${GOVERN_ESCALATE_ONCE:-1}" != "0" && -f "$escalated_stamp" ]]; then
-    # The one escalation this ticket gets has ALREADY been spent. Buying the ceiling a second time
-    # is throwing good money after bad: if the top tier could not resolve it, a re-run of the top
-    # tier is the least likely thing to. Stay at the floor and let the failure streak park it as
-    # the systemic blocker it is.
-    retry_class="escalation-spent"
-    retry_reason="this ticket already had its one escalation (stamped at $escalated_stamp) — holding at the floor tier; a repeat ceiling attempt is not evidence-backed, park it instead [§5.7]"
-    model_source="$model_source (retry — escalation already spent, held at the floor) [§5.7]"
-    effort_source="$effort_source (retry — escalation already spent) [§5.7]"
-    return 0
-  fi
+  # ── §5.7 GUARD 2 IS GONE, WITH THE MECHANISM IT BOUNDED ─────────────────────────────────────
+  # A `.governor-escalated` stamp in the preserved worktree used to cap a ticket at ONE automatic
+  # escalation, because escalation was a function of "a preserved worktree exists" (a boolean) and
+  # every in-run re-dispatch rail could therefore buy the ceiling again under one failure count.
+  # With automatic escalation removed there is no spend to bound: nothing writes the stamp, so
+  # reading it would gate a branch that can never fire. The guard, the stamp and GOVERN_ESCALATE_ONCE
+  # are all removed together rather than left as state nothing produces. The cap on repeated futile
+  # attempts is now solely pre-dispatch-check.sh's failure-streak breaker (GOVERN_MAX_TICKET_FAILS),
+  # which is where a cap on RUNS always belonged.
 
-  # Raising the tier means "at least the escalation ceiling" — never BELOW the tier this ticket
-  # already asked for, so an escalation can't accidentally down-grade a `Model: opus` ticket.
-  # DISTINCT from GOVERN_WORKER_MODEL (the first-attempt floor): the floor is deliberately cheap and
-  # the ceiling deliberately capable. Setting them to one value re-couples them and turns a retry
-  # into a re-bet at the same tier.
-  escalated_model="$(govern::model_max "$base_model" "${GOVERN_WORKER_ESCALATION_MODEL:-opus}")"
   case "$retry_class" in
     infra|ci)
       # POSITIVELY identified non-model cause (transport outage / red CI on a portability-or-env
-      # bug). Re-bet the SAME sizing: the tier was never the problem, and escalating it is the waste
-      # the classifier exists to stop. The only path allowed to keep a sub-floor tier on a retry.
+      # bug). Re-bet the SAME sizing on BOTH axes: the tier was never the problem, and neither was
+      # the reasoning budget. Unchanged by this removal.
       model_source="$model_source (retry class=$retry_class — same tier, not escalated) [retry-class]"
-      effort_source="$effort_source (retry class=$retry_class — unchanged) [retry-class]"
+      effort_source="$effort_source (retry class=$retry_class, unchanged) [retry-class]"
       ;;
     budget)
-      # Ran out of room while still exploring → the SCOPE was underestimated, not the judgment.
-      # Raise TIER only; compounding an effort raise on top just multiplies the spend.
-      model="$escalated_model"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
-      model_source="escalated from $base_model (retry class=budget — scope underestimated) [retry-class]"
-      effort_source="$effort_source (retry class=budget — tier raised, effort unchanged) [retry-class]"
+      # Ran out of room while still exploring → the SCOPE was underestimated, not the judgment. This
+      # branch used to raise the TIER. It no longer does: a tier is not scope, and buying one to fix
+      # an underestimated scope was always an indirect bet. Effort is deliberately left alone too:
+      # the prior attempt did not run out of thinking, it ran out of room, and more thinking per turn
+      # spends the same budget faster. Re-bet the same sizing and let the streak breaker park it.
+      model_source="$model_source (retry class=budget, scope underestimated; tier NOT raised, automatic escalation removed) [retry-class]"
+      effort_source="$effort_source (retry class=budget, unchanged) [retry-class]"
       ;;
     judgment)
-      # A coherent but WRONG fix → a judgment failure. Effort is the cheaper knob, so it always
-      # moves; the tier moves too, but only when it is actually below the floor (when the prior
-      # attempt already ran at the floor, judgment was marginal rather than absent and the effort
-      # rung is the whole escalation).
+      # A coherent but WRONG fix → a CAPABILITY failure. Two things happen, and only two.
+      #
+      # 1. EFFORT moves up. Effort is a different and much cheaper knob than tier: it buys more
+      #    reasoning per turn inside the SAME model, at the same per-token price, and it does not
+      #    change which model the prompt cache is keyed on. The operator's ruling removed the
+      #    automatic purchase of a TIER, which is a step change in unit cost; the effort rung is not
+      #    that, so it stays.
+      # 2. A RE-SPECIFICATION REQUEST is surfaced to the operator. The design holds that a scoped
+      #    item failing at the floor on capability is evidence the SPECIFICATION was wrong, not that
+      #    the work needs a bigger model. So the item goes back to a person carrying what the worker
+      #    learned about why the brief was insufficient, instead of being silently re-run at a price
+      #    step that no measurement in this repo supports.
       effort="$(govern::effort_bump "$base_effort")"
-      model="$escalated_model"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
-      effort_source="escalated from ${base_effort:-<unset>} (retry class=judgment) [retry-class]"
-      if [[ "$model" == "$base_model" ]]; then
-        model_source="$model_source (retry class=judgment — already at the floor tier; effort raised instead) [retry-class]"
-      else
-        model_source="escalated from $base_model (retry class=judgment) [retry-class]"
-      fi
+      effort_source="raised from ${base_effort:-<unset>} (retry class=judgment, effort only, tier unchanged) [retry-class]"
+      model_source="$model_source (retry class=judgment, tier unchanged; effort raised and a re-specification request filed) [retry-class]"
+      RESPEC_REQUESTED=1; RESPEC_CLASS="judgment"
       ;;
     *)
-      # UNRECOGNIZED signature → exactly the pre-classifier behavior: discard the ticket's brain-decided
-      # fields and escalate to the workspace floor. Fail-safe by construction.
-      model="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"; ESCALATION_APPLIED=1; ESCALATION_FROM="$base_model"
-      effort="${GOVERN_WORKER_EFFORT:-}"
-      model_source="GOVERN_WORKER_ESCALATION_MODEL (retry — baseline '$base_model' skipped)"
-      effort_source="GOVERN_WORKER_EFFORT"; [[ -z "$effort" ]] && effort_source="none (unset)"
-      if [[ -n "$base_effort" ]]; then
-        effort_source="${effort_source} (retry — baseline '$base_effort' skipped)"
-      fi
+      # UNRECOGNIZED signature. This branch used to discard the ticket's fields and jump straight to
+      # GOVERN_WORKER_ESCALATION_MODEL, and it was the only branch in this case block whose comment
+      # offered no reasoned defence of its own destination. "Fail-safe by construction" is a claim
+      # about direction, not about price. Failing safe upward is only safe when the upgrade is free.
+      #
+      # An unrecognized signature is an ABSENCE of evidence, and absence of evidence routes DOWN
+      # (the same rule the header states for tier selection generally). So: hold at the floor, keep
+      # the sizing the baseline chose, and surface it. An attempt whose failure the classifier
+      # cannot even name is the strongest case in the whole block that a person should look at the
+      # brief rather than the harness spending more money against it.
+      model_source="$model_source (retry class=$retry_class, unrecognized; held at the floor, re-specification request filed) [retry-class]"
+      effort_source="$effort_source (retry class=$retry_class, unchanged) [retry-class]"
+      RESPEC_REQUESTED=1; RESPEC_CLASS="$retry_class"
       ;;
   esac
   # Explicit: under `set -e` a function whose LAST command is a false test would abort the spawn.
@@ -314,25 +312,57 @@ resolve_sizing_uncapped() {
 
 
 # ── model ceiling (the LAST choke point before --model) ─────────────────────────────────────────
-# resolve_sizing_uncapped above has FOUR paths that can set the tier (workspace floor, the ticket
-# field under GOVERN_MEASURED_SIZING=0, the execute-only haiku shortcut, and the retry escalation to
-# GOVERN_WORKER_ESCALATION_MODEL) plus two early returns. Clamping at each of them is four chances to
-# miss one and a fifth the next time someone adds a path, so the clamp lives HERE, wrapping the whole
-# resolver: whatever the selection logic decided, this is the value that reaches the CLI.
+# resolve_sizing_uncapped above has THREE remaining paths that can set the tier (workspace floor, the
+# ticket field under GOVERN_MEASURED_SIZING=0, the execute-only haiku shortcut) plus two early
+# returns; the retry escalation to GOVERN_WORKER_ESCALATION_MODEL was the fourth and is now removed.
+# Clamping at each of them is three chances to miss one and a fourth the next time someone adds a
+# path, so the clamp lives HERE, wrapping the whole resolver: whatever the selection logic decided,
+# this is the value that reaches the CLI.
 #
-# The rail: a session may never buy a tier above max(opus, its own model). See govern::model_clamp.
+# TWO ceilings meet at this one site, and neither gets its own clamp elsewhere:
+#
+#   1. The SESSION rail: a session may never buy a tier above max(opus, its own model). Applies to
+#      every dispatch unconditionally. See govern::model_clamp.
+#   2. GOVERN_WORKER_ESCALATION_MODEL: no longer an escalation DESTINATION (nothing escalates), it
+#      is now a CAP on what an explicit operator request may ask for. The one explicit request in
+#      the system is the ticket's `Model:` field, honoured only under GOVERN_MEASURED_SIZING=0, so
+#      the cap is applied only when that field actually decided the tier (TICKET_MODEL_APPLIED=1).
+#      It deliberately does NOT clamp the workspace floor: an operator setting GOVERN_WORKER_MODEL
+#      is configuring the harness directly, not asking it for something, and silently overriding one
+#      env var with another would make the floor knob lie about what it does.
+#
 # MODEL_CLAMPED_FROM carries the pre-clamp tier so the live path can emit a structured event; it is
-# empty whenever the clamp changed nothing.
+# empty whenever the clamp changed nothing. Both ceilings report through it.
 MODEL_CLAMPED_FROM=""
+# Which of the two ceilings actually bit: "session-ceiling" | "worker-request-cap" | "" (neither).
+# Rail 11: the input to the decision is recorded AT the decision, so the event log says which cap
+# moved the tier instead of leaving a reader to infer it from the model_source prose.
+MODEL_CAP_SOURCE=""
 resolve_sizing() {
   MODEL_CLAMPED_FROM=""
+  MODEL_CAP_SOURCE=""
   resolve_sizing_uncapped "$@"
+  local before="$model"
   local capped; capped="$(govern::model_clamp "$model")"
   if [[ "$capped" != "$model" ]]; then
-    MODEL_CLAMPED_FROM="$model"
     model_source="$model_source (clamped to $capped by the session model ceiling)"
-    model="$capped"
+    model="$capped"; MODEL_CAP_SOURCE="session-ceiling"
   fi
+  # The worker-request cap. Rank comparison, not string equality, so `Model: opus` under a `sonnet`
+  # ceiling is caught while an at-or-below request passes through untouched. An unrankable ceiling
+  # (rank 0) caps nothing rather than inventing a tier, matching govern::model_clamp's own contract.
+  if [[ "$TICKET_MODEL_APPLIED" -eq 1 ]]; then
+    local wcap wrank crank
+    wcap="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
+    wrank="$(govern::model_rank "$wcap")"
+    crank="$(govern::model_rank "$model")"
+    if [[ "$wrank" -gt 0 && "$crank" -gt "$wrank" ]]; then
+      govern::log "worker request cap: ticket Model: '$model' outranks GOVERN_WORKER_ESCALATION_MODEL '$wcap', dispatching at '$wcap'"
+      model_source="$model_source (capped to $wcap by GOVERN_WORKER_ESCALATION_MODEL)"
+      model="$wcap"; MODEL_CAP_SOURCE="worker-request-cap"
+    fi
+  fi
+  [[ "$model" != "$before" ]] && MODEL_CLAMPED_FROM="$before"
   return 0
 }
 
@@ -497,9 +527,12 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg te "$TICKET_EFFORT" \
     --arg rclass "$retry_class" \
     --arg rreason "$retry_reason" \
+    --argjson respec "$RESPEC_REQUESTED" \
+    --arg respecclass "$RESPEC_CLASS" \
+    --arg capsource "$MODEL_CAP_SOURCE" \
     --argjson retry "$MODEL_IS_RETRY" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, respec_requested:($respec == 1), respec_class:$respecclass, model_cap_source:$capsource, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
   exit 0
 fi
 
@@ -984,10 +1017,11 @@ claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 #     recorded them; the harness carries no heuristic of its own), else the GOVERN_WORKER_* floors.
 #     An unknown value is dropped fail-safe. `MODEL_IS_RETRY` was latched BEFORE worktree/new.sh
 #     created a fresh worktree, so it always reflects the STATE-BEFORE-spawn.
-#   - RETRY: the failure signature of the PRIOR attempt decides which axis escalates — an
-#     infra/CI-portability failure re-bets the SAME tier, a budget blow-out raises the tier, a
-#     coherent-but-wrong fix raises effort (and tier), and an UNRECOGNIZED signature falls back to
-#     exactly the pre-classifier escalate-to-GOVERN_WORKER_MODEL behavior.
+#   - RETRY: the failure signature of the PRIOR attempt decides what moves, and NO class moves the
+#     TIER any more (automatic escalation is removed). infra/CI-portability and budget re-bet the
+#     SAME sizing; a coherent-but-wrong fix (judgment) raises EFFORT only; judgment and an
+#     UNRECOGNIZED signature additionally file an operator re-specification request, on the theory
+#     that a capability failure at the floor indicts the brief rather than the tier.
 resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
 govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
@@ -1025,33 +1059,50 @@ fi
 # history record, and this makes it queryable on the fleet event log beside worker_escalated.
 if [[ -n "${MODEL_CLAMPED_FROM:-}" ]]; then
   govern::event worker_model_clamped "ticket=$N" "from=$MODEL_CLAMPED_FROM" "to=$model" \
-    "ceiling=$(govern::model_ceiling)"
+    "ceiling=$(govern::model_ceiling)" "cap=${MODEL_CAP_SOURCE:-session-ceiling}"
 fi
-# §5.7: burn this ticket's ONE escalation. Stamped in the preserved worktree (the same artifact whose
-# existence is the retry signal), and ONLY on the live path — the dry-run seam is a pure observation
-# and must never mutate state a later real dispatch reads. Best-effort: an unwritable worktree loses
-# the guard, never the spawn.
-if [[ "$ESCALATION_APPLIED" -eq 1 && -d "$WORKTREE_BASE/$slug" ]]; then
-  : > "$WORKTREE_BASE/$slug/.governor-escalated" 2>/dev/null || true
+# CAPABILITY FAILURE → OPERATOR RE-SPECIFICATION REQUEST (replaces automatic tier escalation).
+#
+# Surface, and why THIS one: govern::file_open_escalation writes the entry under "## Open" in
+# governor/escalations.md and commits it same-step. That file is the harness's ONE lane that reaches
+# a person and comes back: escalations-emit-pending.sh regenerates pending-escalations.json from it
+# at run-end for the driver to relay, escalations-apply-answers.sh reads the operator's Disposition
+# at the next run-start, and govern-health.sh ages entries that sit unanswered. The alternatives were
+# rejected on the same test: a govern::event row is a fleet METRIC (off unless GOVERN_EVENTS=1, and
+# nothing reads it back into the run), and a bench lever event is an accounting artifact. Neither
+# asks anybody anything. The systemic-blocker park in run-loop.sh reaches the operator through this
+# exact file too, which is the point: this is the existing surface, not a new one beside it.
+#
+# KILL SWITCH: `GOVERN_RESPEC_ON_CAPABILITY_FAIL=0` disables the filing (the tier still never
+# escalates; the failure just goes unsurfaced). DEFAULT ON, deliberately against the usual
+# default-new-mechanisms-OFF idiom: this is the ONLY operator-visible consequence of removing
+# automatic escalation, so shipping it off would mean capability failures silently re-run at the
+# floor, which is precisely the outcome the ruling is meant to avoid. The switch exists because the
+# filing WRITES a tracked file and commits it, on every fleet that syncs this template, in a
+# situation that previously wrote nothing. Note there is NO switch for the escalation removal
+# itself: restoring it would require keeping the branches the operator just ruled out, and a flag
+# that resurrects a removed doctrine makes the doctrine advisory.
+#
+# has_open_escalation dedupes: a ticket that keeps failing files ONE request, not one per attempt.
+# Live-only (the dry-run seam is a pure observation and must never write state), and best-effort:
+# an unwritable escalations file loses the request, never the spawn.
+if [[ "$RESPEC_REQUESTED" -eq 1 && "$mode" != "dry" \
+      && "${GOVERN_RESPEC_ON_CAPABILITY_FAIL:-1}" != "0" ]] && ! govern::has_open_escalation "$N"; then
+  govern::file_open_escalation "$N" \
+    "re-specification needed: the last attempt failed on capability at the floor tier" \
+    "retry class=$RESPEC_CLASS. $retry_reason. Automatic tier escalation is removed: a scoped item that fails on capability is evidence the SPECIFICATION was insufficient, not that the work needs a bigger model. This attempt re-runs at model=$model effort=${effort:-none}; the tier is unchanged, so it is NOT a re-bet at a higher price." \
+    "re-specify #$N from what the worker learned (read .governor-notes.md and the handoff block in $WORKTREE_BASE/$slug, plus $logdir), or split it, or close it. If you judge the brief was already sufficient and the tier genuinely was the limit, set the tier explicitly and say so here." \
+    "re-specify | split | close | dispatch-explicitly-at-a-higher-tier" \
+    "respec" >/dev/null 2>&1 || true
+  govern::log "worker #$N: filed a re-specification request (retry class=$RESPEC_CLASS); capability failure no longer buys a tier"
 fi
-# Fleet event log (off unless GOVERN_EVENTS=1). Emitted from the same condition as the stamp, so
-# an escalation appears on the log exactly when it was actually bought.
-if [[ "$ESCALATION_APPLIED" -eq 1 ]]; then
-  govern::event worker_escalated "ticket=$N" "from=${ESCALATION_FROM:-unknown}" "to=$model" \
-    "effort=${effort:-}" "reason=$retry_class"
-  # bench/LEVER-EVENTS.md `escalation`: failedTokens is the FAILED attempt's own spend, read from the
-  # #19 per-attempt ledger row the PRIOR spawn-worker.sh invocation appended before this one started
-  # (this invocation has not yet rotated $jsonl or written its own row; see the ledger block below).
-  # Carries failedTier instead of tier (the contract's own wording), so tier is passed as "-" → null.
-  # Gated on GOVERN_LEVER_EVENTS itself, not just the emitter's own gate, so the ledger read is
-  # skipped entirely when an operator has explicitly opted out (GOVERN_LEVER_EVENTS=0), rather than
-  # running and then being thrown away by the emitter's own no-op.
-  if [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" ]]; then
-    esc_failed_tokens="$(tail -n1 "$logdir/attempts.jsonl" 2>/dev/null | jq -r '.tokens.total // 0' 2>/dev/null || echo 0)"
-    [[ "$esc_failed_tokens" =~ ^[0-9]+$ ]] || esc_failed_tokens=0
-    govern::emit_lever_event escalation "$N" worker "-" \
-      failedTier="${ESCALATION_FROM:-unknown}" failedTokens="$esc_failed_tokens"
-  fi
+# Fleet event log (off unless GOVERN_EVENTS=1). `worker_escalated` and the bench `escalation` lever
+# event were emitted from here; both are GONE, because nothing escalates and an event that can never
+# fire is worse than no event (it reads as "escalation never happens" rather than "escalation was
+# removed"). This is the replacement signal: the tier is held and the item goes back to a person.
+if [[ "$RESPEC_REQUESTED" -eq 1 ]]; then
+  govern::event worker_respec_requested "ticket=$N" "tier=$model" "effort=${effort:-}" \
+    "reason=$RESPEC_CLASS"
 fi
 
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
@@ -1126,13 +1177,23 @@ record_attempt() { # status -> appends one ledger row
   attempt_row_written=1
   local st="${1:-unknown}" usage
   usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
+  # Rail 11: every INPUT to the sizing decision is recorded AT the moment the decision was made.
+  # retryClass/retryReason are the classifier verdict this attempt was sized from, and respec
+  # records the OUTCOME the new policy produced in place of an escalation. Without them the ledger
+  # says which tier ran but not why, which is exactly the gap this change exists to close.
   jq -nc --argjson a "$attempt" --arg m "$model" --arg ms "$model_source" \
      --arg e "$effort" --arg es "$effort_source" --arg tm "${TICKET_MODEL:-}" \
      --argjson retry "$MODEL_IS_RETRY" --arg mode "$mode" --arg st "$st" \
+     --arg rc "${retry_class:-}" --arg rr "${retry_reason:-}" \
+     --argjson respec "${RESPEC_REQUESTED:-0}" --arg respecclass "${RESPEC_CLASS:-}" \
      --argjson u "$usage" --argjson ts "$(date +%s)" \
      '{attempt:$a, model:$m, modelSource:$ms,
        effort:(if $e == "" then null else $e end), effortSource:$es,
        ticketModel:(if $tm == "" then null else $tm end), isRetry:($retry == 1),
+       retryClass:(if $rc == "" then null else $rc end),
+       retryReason:(if $rr == "" then null else $rr end),
+       respecRequested:($respec == 1),
+       respecClass:(if $respecclass == "" then null else $respecclass end),
        mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
   # Fleet event log (off unless GOVERN_EVENTS=1). record_attempt is the single funnel every exit
   # path runs through (clean return AND the INT/TERM/EXIT teardown), and it is latched idempotent —

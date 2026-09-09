@@ -134,10 +134,18 @@ assert_eq "$(printf '%s' "$d6" | jq -r '.effort')" "low" \
 assert_contains "$(printf '%s' "$d6" | jq -r '.model_source')" "execute-only" \
   "the dispatch record names execute-only as the reason for the tier"
 
-# 7. A RETRY is never re-bet at the cheap tier — the escalation ladder still owns a second attempt.
+# 7. A RETRY of an execute-only dispatch. This case used to assert the retry escalated OFF the cheap
+# tier to opus ("a failed cheap bet is never re-bet"). Automatic tier escalation is REMOVED, so that
+# behaviour is deliberately gone and the retry now HOLDS haiku. The tension is real and worth naming:
+# a failed execute-only attempt is the strongest case in the harness for buying a tier, because the
+# parent asserted the change was already decided and haiku still could not land it. The operator's
+# ruling is that this is exactly the signal that the ASSERTION was wrong, so it goes back to a person
+# as a re-specification request instead of being re-bet at a higher price.
 d7="$(dry 601 warm-retry "GOVERN_WARM=601|$BRIEF" "GOVERN_SPAWN_FORCE_RETRY=1")"
 assert_eq "$(printf '%s' "$d7" | jq -r '.is_retry')" "1" "the retry path is actually exercised"
-assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "opus" \
-  "a retry escalates off the execute-only cheap tier (a failed cheap bet is never re-bet)"
+assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "haiku" \
+  "a retry of an execute-only dispatch HOLDS the cheap tier: no failure class buys a model"
+assert_eq "$(printf '%s' "$d7" | jq -r '.respec_requested')" "true" \
+  "it surfaces a re-specification request instead, which is where a failed warm assertion belongs"
 
 assert_done
