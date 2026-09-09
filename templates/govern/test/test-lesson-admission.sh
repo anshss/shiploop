@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for the #87 always-on context ratchet gates in govern-bookkeep.sh.
+# Regression for the #87 always-on context ratchet gates in land-resolution.sh.
 #
 # The problem these encode: promotion into root CLAUDE.md is automatic, removal is a human noticing.
 # GOVERN_LESSON_MAX_CHARS caps how BIG one lesson may be; nothing caps how MANY. The three gates
@@ -29,7 +29,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not present"; exit 77; }
 

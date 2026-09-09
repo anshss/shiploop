@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #94 — `govern-bookkeep.sh --enforce-budgets` decouples context-budget enforcement from a dispatch.
+# #94 — `context-budgets.sh` decouples context-budget enforcement from a dispatch.
 #
 # The lesson char cap and the CLAUDE.md total budget used to run ONLY inside a per-ticket bookkeep, so
 # a fleet that stops dispatching stops enforcing: measured 2026-09-03, one fleet's root CLAUDE.md sat
@@ -20,7 +20,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../context-budgets.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
@@ -48,7 +48,7 @@ size() { wc -c < "$1" | tr -d '[:space:]'; }
 T="$(mktemp -d)"; mk_ws "$T"
 before="$(size "$T/CLAUDE.md")"
 preap="$(cat "$T/CLAUDE-APPENDIX.md")"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" --enforce-budgets 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" 2>&1)" || rc=$?
 after="$(size "$T/CLAUDE.md")"
 assert_eq "$rc" "3" "A1: exit 3 (alarm) while the file stays over budget: this script never fixes it"
 if [[ "$before" -gt 1200 ]]; then f=1; else f=0; fi
@@ -66,7 +66,7 @@ rm -rf "$T"
 T="$(mktemp -d)"; mk_ws "$T"
 printf '# Small\n\n## Rule\n\nshort.\n' > "$T/CLAUDE.md"
 pre="$(cat "$T/CLAUDE.md")"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=14000 bash "$BK" --enforce-budgets 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=14000 bash "$BK" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "C1: a healthy workspace exits 0"
 assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "C2: …and the file is byte-identical"
 rm -rf "$T"
@@ -74,7 +74,7 @@ rm -rf "$T"
 # ── D: --dry writes nothing (same as non-dry: nothing ever writes to CLAUDE.md here) ───────────
 T="$(mktemp -d)"; mk_ws "$T"
 pre="$(cat "$T/CLAUDE.md")"; preap="$(cat "$T/CLAUDE-APPENDIX.md")"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" --enforce-budgets --dry 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" --dry 2>&1)" || rc=$?
 assert_eq "$rc" "3" "D1: --dry still raises the same alarm as a non-dry run"
 assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "D2: …and leaves CLAUDE.md byte-identical"
 assert_eq "$(cat "$T/CLAUDE-APPENDIX.md")" "$preap" "D3: …and writes nothing to the appendix"
@@ -84,7 +84,7 @@ rm -rf "$T"
 T="$(mktemp -d)"; mk_ws "$T"
 rm -f "$T/CLAUDE-APPENDIX.md"
 pre="$(cat "$T/CLAUDE.md")"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" --enforce-budgets 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=1200 bash "$BK" 2>&1)" || rc=$?
 assert_eq "$rc" "3" "E1: over budget still alarms (exit 3, doctor gates on this) even with no appendix"
 assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "E2: …and never deletes a byte to hit the number"
 if [[ -f "$T/CLAUDE-APPENDIX.md" ]]; then f=1; else f=0; fi
@@ -108,7 +108,7 @@ timed out on 4 of 9 dispatches.
 still true.
 LEARN
 out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_LEARNINGS_TTL=1 SHIPLOOP_LEARNINGS_TTL_DAYS=14 \
-  SHIPLOOP_LEARNINGS_TODAY=2026-09-03 bash "$BK" --enforce-budgets 2>&1)" || true
+  SHIPLOOP_LEARNINGS_TODAY=2026-09-03 bash "$BK" 2>&1)" || true
 assert_contains "$out" "archived learnings entry" "F1: an entry past the TTL window is archived"
 if grep -qF 'provider X flaky' "$T/learnings.md"; then f=1; else f=0; fi
 assert_eq "$f" "0" "F2: …removed from learnings.md"

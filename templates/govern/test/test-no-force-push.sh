@@ -9,7 +9,7 @@
 # governor. If a govern script ever force-pushed `main`, it would drop an already-pushed commit from
 # origin; a concurrent operator's routine `git pull --rebase origin main` then replays those superseded
 # commits as fresh duplicate SHAs. The defense is structural: the governor's only `main` push
-# (govern-bookkeep.sh) is a plain `git push` (ff-only by git's default — a non-ff push is REJECTED,
+# (land-resolution.sh) is a plain `git push` (ff-only by git's default — a non-ff push is REJECTED,
 # never forced), and on rejection it rebases its OWN append-only commit and retries — it never
 # rewrites origin.
 #
@@ -19,7 +19,7 @@
 # rebases the local commit + retries rather than forcing.
 #
 # Template-baseline deltas vs. the harness original: the single-driver template has only ONE
-# main-push path (govern-bookkeep.sh) — there is no preflight-main.sh, and escalations-apply-answers.sh
+# main-push path (land-resolution.sh) — there is no preflight-main.sh, and escalations-apply-answers.sh
 # commits locally and leaves the push to the operator (never pushes main itself), so those assertions
 # are intentionally absent here. The harness's #105 operator-doctrine CLAUDE.md guidance is likewise
 # not part of the generic template baseline.
@@ -53,7 +53,7 @@ filter="$(grep -rnE 'filter-repo|filter-branch' "$GOVERN_DIR"/*.sh "$GOVERN_LIB_
 assert_eq "$filter" "" "no govern script rewrites history with filter-repo / filter-branch"
 
 # ── 2. The single main-push path uses a plain ff-only `git push origin HEAD:main` ────────────────
-BOOKKEEP="$(cat "$GOVERN_DIR/govern-bookkeep.sh")"
+BOOKKEEP="$(cat "$GOVERN_DIR/land-resolution.sh")"
 
 assert_contains "$BOOKKEEP" "git push origin HEAD:main" "bookkeep pushes main via plain ff-only 'git push origin HEAD:main'"
 

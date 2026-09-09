@@ -83,7 +83,7 @@ write_tickets() { cat > "$T/tickets.md" <<'EOF'
 ## #2 — shares a file with #1
 **Severity:** High. y.
 
-**Files:** scripts/govern/lib/common.sh scripts/govern/govern-bookkeep.sh
+**Files:** scripts/govern/lib/common.sh scripts/govern/land-resolution.sh
 ---
 ## #4 — different area entirely
 **Severity:** Medium. w.

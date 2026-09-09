@@ -191,9 +191,10 @@ govern::flow_validate() { # id [file] -> problems on stdout, rc 1 if any
 }
 
 # ── govern::cas_edit — compare-and-swap registry write ──────────────────────
-# Factored from govern-bookkeep.sh's step-0 sync + step-4/5 CAS-with-retry push (bookkeep's own
-# commit_meta_to_main has NO pre-edit sync). Serializes standalone registry writes with bookkeep by
-# taking the SAME bookkeep lock (skipped when the caller already holds it — GOVERN_BOOKKEEP_LOCK_HELD=1
+# Factored from land-resolution.sh's step-0 sync + step-4/5 CAS-with-retry push (its own
+# commit_meta_to_main has NO pre-edit sync). Serializes standalone registry writes with
+# land-resolution.sh by taking the SAME bookkeep lock (skipped when the caller already holds it —
+# GOVERN_BOOKKEEP_LOCK_HELD=1
 # — since the mkdir mutex is not reentrant), syncs the checkout's main to origin/main, applies the
 # caller's <edit-fn> (a shell function name taking the file path; it mutates the file in place), then
 # commits ONLY that file and CAS-pushes with rebase-retry so a concurrent driver sharing origin/main
@@ -414,7 +415,7 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
   local id="$1" repo="$2" f="${3:-$FLOWS_FILE}" v
   v="$(govern::flow_field "$id" Validated "$f")"
   # `|| true` — no recorded pin (UNTESTED flow / grep no-match) is normal, not an error to abort a
-  # set -e caller (bookkeep/run-loop) on.
+  # set -e caller (land-resolution.sh/run-loop) on.
   printf '%s' "$v" | grep -oE "(^|[^A-Za-z0-9._-])${repo}@[0-9a-f]+" 2>/dev/null | sed -n '1p' | sed -E "s/.*${repo}@//" || true
 }
 
@@ -424,7 +425,7 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
 # stamp the registry directly. Translates PASS→resolve / FAIL→gate-park and hands off to
 # govern::flows_stamp_from_report VERBATIM, so every existing guard (never-overwrite-fresher,
 # ancestor-verify + squash-merge substitution, PII-park, evidence promotion, cas_edit under the
-# bookkeep mutex) applies identically regardless of which caller (governor bookkeep or the runner)
+# bookkeep mutex) applies identically regardless of which caller (governor's land-resolution.sh or the runner)
 # produced the verdict. ABORT/ERROR are not registry-stampable (a job that never settled PASS/FAIL
 # carries no verdict to record — it routes to the pending-results escalation path, spec §4, instead):
 # rc 1, nothing written. <record-json> is the same {pr, prs, validation:{…}} shape
@@ -897,7 +898,7 @@ govern::flows_due_advisories() { # [meta-root] -> advisory lines
 # ── Phase 5: kill loop — Flow-op parse, removal-ticket filing, tombstone-on-resolve ─────────────────
 # A ticket's `Flow-op:` field (leading-field-block, anchored like ticket_flow_ids) declares what a
 # resolve does to the flow registry: default "validate" (stamp a verdict), or "remove" (a KILL removal
-# ticket — its PR deletes the feature, and on resolve bookkeep TOMBSTONES the flow rather than stamping
+# ticket — its PR deletes the feature, and on resolve land-resolution.sh TOMBSTONES the flow rather than stamping
 # a verdict). Empty/absent → validate.
 govern::ticket_flow_op() { # N [tickets-file] -> validate|remove
   local n="$1" f="${2:-$TICKETS_FILE}" raw

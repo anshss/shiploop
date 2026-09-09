@@ -11,7 +11,7 @@
 #   • existing id       → Paths/Surface REFRESHED (the mapped-file set legitimately drifts).
 # and NEVER:
 #   • Status / Validated / Disposition / Env / Evidence — verdict state is owned by the governor's
-#     bookkeep stamp, never by re-extraction.
+#     land-resolution.sh stamp, never by re-extraction.
 #   • a Kind or Gate CHANGE on an existing id — flagged for an explicit operator decision, never
 #     auto-applied (a silent correctness→effectiveness flip would rewire the whole verdict vocabulary).
 #

@@ -43,9 +43,15 @@ misrepresent what happened. Go run the thing first, or leave the ticket unvalida
      --ticket <N> --title "<title>" \
      --evidence "<what you actually observed, PASS/FAIL and all>" \
      --pr <repo>#<number> \
-     --source "interactive session"
+     --source "interactive session" --gating self
    ```
    Repeat `--pr` for each PR. Omit it entirely when there is none yet.
+
+`--gating self` is not optional and not a formality: it stamps the record as **self-attested**, meaning
+you asserted this evidence and nothing mechanical checked it. The resolve path passes `--gating machine`
+instead, because a structured report had to claim a real live test before the writer could be reached.
+A later reader weighs the two differently, which only works if you never claim the stronger one.
+
 6. **Report the printed path** to the operator (the script prints ONLY the repo-relative path on
    stdout). If it says the file already existed, that means someone already recorded this ticket:
    say so rather than treating it as a failure.

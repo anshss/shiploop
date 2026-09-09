@@ -53,7 +53,7 @@
 #                                         (missing, corrupt, partial) reads as NOT stamped.
 # Env:
 #   SHIPLOOP_CLAUDEMD_MAX_CHARS   total CLAUDE.md budget (default 14000). GOVERN_LESSON_BUDGET_CHARS
-#                                 wins when set, the same precedence bookkeep and doctor use.
+#                                 wins when set, the same precedence context-budgets.sh and doctor use.
 #   GOVERN_CLAUDEMD_SUGGEST=0     silence the one-line "run /shiploop:compress" suggestion; the
 #                                 proposals file is still written.
 # Exit: 0 = under budget, nothing to do, --dry-run, or an operator command that succeeded;

@@ -118,9 +118,9 @@ printf '%s' "$out" | grep -qiE '^[[:space:]]*NONE[[:space:]]*$' && { govern::log
 govern::log "improve: proposals appended → $OUT"
 
 # Ported from harness #111 (via #112): COMMIT the appended improvements.md to main here — this step
-# is its WRITER, so (exactly like govern-bookkeep commits tickets.md) it must commit its own tracked
-# artifact rather than leave it uncommitted. Left dirty, a later `git pull --rebase` on the main
-# checkout (e.g. the next run's govern-bookkeep pre-edit origin sync) aborts on "cannot pull with
+# is its WRITER, so (exactly like land-resolution.sh commits tickets.md) it must commit its own
+# tracked artifact rather than leave it uncommitted. Left dirty, a later `git pull --rebase` on the
+# main checkout (e.g. the next run's land-resolution.sh pre-edit origin sync) aborts on "cannot pull with
 # rebase: You have unstaged changes". Only the DEFAULT tracked file in the real checkout — a test's
 # GOVERN_IMPROVEMENTS_FILE override points elsewhere, so it's skipped.
 if [[ "$OUT" == "$GOVERNOR_DIR/improvements.md" ]]; then

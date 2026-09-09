@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Regression for the lessonPatch overflow gate: CLAUDE.md is re-sent every turn, so an oversized
 # lessonPatch.text inserted verbatim is a PERMANENT per-turn tax. Past GOVERN_LESSON_MAX_CHARS,
-# govern-bookkeep.sh must keep only the LEAD paragraph in CLAUDE.md (with a pointer) and move the
+# land-resolution.sh must keep only the LEAD paragraph in CLAUDE.md (with a pointer) and move the
 # FULL text into CLAUDE-APPENDIX.md under its own heading — but only when CLAUDE-APPENDIX.md
 # actually exists at the meta-repo root; otherwise it must fall back to the pre-existing
 # insert-everything behavior rather than lose the lesson.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"

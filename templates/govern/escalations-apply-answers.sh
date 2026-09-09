@@ -14,7 +14,7 @@
 #       Distinct from defer (still-todo, manual queue) and do-the-work (retry).
 #   • "Make this a rule?" answered with a rule → append it to preferences.md (grows the doctrine).
 # Unanswered / keep-open entries are left exactly as-is. Idempotent: an already-Resolved entry is
-# never re-touched. Commits the result in the dir holding tickets.md (like govern-bookkeep.sh).
+# never re-touched. Commits the result in the dir holding tickets.md (like land-resolution.sh).
 #
 # Usage:  escalations-apply-answers.sh        (no args; reads the governor files)
 set -euo pipefail
@@ -37,7 +37,7 @@ if [[ "$n_entries" -le 0 ]]; then
 fi
 
 # If the workspace ships the bookkeep mutex (concurrent-driver builds), serialize the
-# tickets.md / escalations.md read-modify-write against a concurrent driver's bookkeep,
+# tickets.md / escalations.md read-modify-write against a concurrent driver's land-resolution.sh run,
 # reusing the same lock. The base scaffold is single-driver and has no such helper — skip then.
 if declare -F govern::lock_acquire >/dev/null 2>&1; then
   BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
@@ -143,7 +143,7 @@ while IFS= read -r row; do
       # Validations Phase 5 kill loop: the operator dispositioned a measured-INEFFECTIVE flow for
       # DELETION. Read the flow id(s) off the still-parked ticket, mark each kill-pending (so `list`/
       # health show it AND the sweep can auto-withdraw the kill if the flow goes STALE first), and file a
-      # normal removal ticket per flow (Flow-op: remove — bookkeep tombstones the flow when its PR opens).
+      # normal removal ticket per flow (Flow-op: remove — land-resolution.sh tombstones the flow when its PR opens).
       # Then close the original validation ticket (its verdict is recorded + dispositioned), like mitigated.
       _kflows=""
       command -v govern::ticket_flow_ids >/dev/null 2>&1 \
@@ -286,8 +286,8 @@ rm -f "$notes_file"
 "$DIR/escalations-emit-pending.sh" >/dev/null 2>&1 || true
 
 # 5. Commit the result in the dir holding tickets.md (the main checkout in real use), the same
-#    place + style govern-bookkeep.sh commits. Guarded push so local main stays == origin/main —
-#    the same invariant govern-bookkeep.sh / preflight-main.sh rely on (a concurrent operator
+#    place + style land-resolution.sh commits. Guarded push so local main stays == origin/main —
+#    the same invariant land-resolution.sh / preflight-main.sh rely on (a concurrent operator
 #    session commits meta files to the SAME main, so the harness must keep them in sync). The push
 #    is plain ff-only (never forced) and is skipped with no remote (local-only / test repo) and
 #    under GOVERN_NO_PUSH=1.

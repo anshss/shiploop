@@ -23,7 +23,7 @@ decision (`escalations.md`).
   Honors merge-backend-first (the consumer waits anyway).
 - "Resolved" = PR opened, not merged. Governor (not worker) does `tickets.md`/`CLAUDE.md` bookkeeping
   in the main checkout.
-- Additive prod migration chain (only if `GOVERN_MIGRATE_CMD` set): merge → apply → verify → bookkeep.
+- Additive prod migration chain (only if `GOVERN_MIGRATE_CMD` set): merge → apply → verify → resolve.
   Safe because old code ignores a new nullable/default column. Destructive migration → do NOT merge,
   escalate.
 

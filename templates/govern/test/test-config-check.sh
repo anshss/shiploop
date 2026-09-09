@@ -99,4 +99,26 @@ else
   echo "ok   - 9. no migration notice once GOVERN_MIGRATE_CMD is configured"
 fi
 
+# ── 10. the next_ticket_number probe is READ-ONLY: .ticket-seq is byte-identical before/after ──
+# Regression: govern::next_ticket_number unconditionally writes the high-water mark
+# (`printf '%s\n' "$maxn" > "$seq_file"`), so a health check calling it for real dirtied
+# governor/.ticket-seq in the operator's git tree on every run. config-check.sh now calls it with
+# GOVERN_SEQ_PEEK=1, which computes and prints the same number WITHOUT the write.
+mkdir -p "$ROOT/governor"
+printf '50\n' > "$ROOT/governor/.ticket-seq"
+seq_before="$(cat "$ROOT/governor/.ticket-seq")"
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+seq_after="$(cat "$ROOT/governor/.ticket-seq")"
+assert_eq "$rc" "0" "10. probe run → exit 0"
+assert_eq "$seq_after" "$seq_before" "10. .ticket-seq is BYTE-IDENTICAL after the health-check probe (no silent write)"
+assert_contains "$out" "next_ticket_number" "10. the probe still ran and reported a value"
+
+# ── 11. same, via --json: the peek value is still correctly computed (hwm 50 + filemax #9 → 51) ──
+out="$(bash "$TOOL" --json 2>&1)"
+seq_after2="$(cat "$ROOT/governor/.ticket-seq")"
+assert_eq "$seq_after2" "$seq_before" "11. --json probe likewise never writes .ticket-seq"
+printf '%s' "$out" | jq -e '.helpers.next_ticket_number == "51"' >/dev/null 2>&1 && \
+  printf 'ok   - 11. peeked value reflects max(hwm 50, tickets.md #9) + 1 = 51\n' || \
+  { printf 'FAIL - 11. unexpected peeked next_ticket_number\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+
 assert_done

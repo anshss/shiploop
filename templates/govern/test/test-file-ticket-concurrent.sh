@@ -5,7 +5,7 @@
 # driver's bookkeep rewrote tickets.md on its own base and the appended entries were LOST with no error.
 #
 # The fix holds the bookkeep lock across allocate→append→commit→push, syncs onto origin/main before
-# appending, and CAS-pushes its append-only commit with rebase-retry (exactly like govern-bookkeep).
+# appending, and CAS-pushes its append-only commit with rebase-retry (exactly like land-resolution.sh).
 # Exercised against a real bare-origin + two clones (one driver lane, one manual filer):
 #   S1  pre-edit-sync path — driver's bookkeep already landed on origin before the filing runs.
 #   S2  CAS-rebase path    — origin advances (driver's delete lands) DURING the filing, between its
@@ -17,7 +17,7 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 FILE_TICKET="$DIR/../file-ticket.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 

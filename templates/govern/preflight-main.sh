@@ -3,9 +3,9 @@
 # governor cuts any harness-lane PR.
 #
 # When the governor delivers a meta-repo-file ticket as a PR, it branches that PR off the meta
-# checkout's main (the worktree is detached at origin/main; bookkeep commits + pushes tickets.md on
+# checkout's main (the worktree is detached at origin/main; land-resolution.sh commits + pushes tickets.md on
 # local main). If local main has drifted or DIVERGED from origin/main — e.g. a pre-existing UNPUSHED
-# filing commit plus a squash-merged PR landing on origin — then a bookkeep ff-pull fails, its push
+# filing commit plus a squash-merged PR landing on origin — then a land-resolution.sh ff-pull fails, its push
 # is rejected, and every LATER meta-lane PR is born conflicting on tickets.md → "merge commit cannot
 # be cleanly created" → parked. One stale unpushed commit silently cascades a whole run. This
 # preflight closes that hole.
