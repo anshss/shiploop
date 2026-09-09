@@ -348,14 +348,9 @@ tractable surfaced, skip — don't invent busywork; tell the operator the queue 
 
 Print "This folder is already a meta-repo workspace — checking what's present vs the latest templates."
 
-### B-pre — Safety: reclaim stale run lock, cheap version check
+### B-pre — cheap version check
 
 ```bash
-# If a cron/loop schedules this workspace's governor, take the run lock FIRST (a bump overwriting
-# govern/lib/common.sh while a governor run is live is a real hazard). Safe to reclaim a dead-holder lock:
-bash scripts/govern/lock-release.sh                # inspect + reclaim iff safe
-bash scripts/govern/lock-release.sh --status       # holder info only
-
 bash "$SCAFFOLD" --version                          # hub VERSION (e.g. 1.2.0)
 cat scripts/lib/.harness-version 2>/dev/null       # this workspace's stamp
 
@@ -496,7 +491,7 @@ Decisions:   autonomy=<rung> · allowlist=<repos|none> · remote=<created|skippe
              (everything above came from the single interview — one recap, no re-asks)
 Try:
   <ROOT_PM> run worktree:new -- try-it && cd <worktree-base>/try-it
-  scripts/govern/run-loop.sh --dry-run <N>   # or just say "dry-run ticket <N>"
+  <ROOT_PM> run govern:dry-run -- <N>   # or just say "dry-run ticket <N>"
 Still needs you:
   - per-sub-repo .env files (see <repo>/.env.example)
   - enable optional hooks: write scripts/lib/{worktree-bootstrap,session-cleanup,doctor-extra}.sh

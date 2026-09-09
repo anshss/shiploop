@@ -63,7 +63,7 @@ far worse than an escalation.
 - Your FINAL MESSAGE must be exactly one JSON object, nothing else:
 
 ```json
-{"status":"ported","files":["govern/run-loop.sh","lib/common.sh"],"escalation":""}
+{"status":"ported","files":["govern/spawn-worker.sh","lib/common.sh"],"escalation":""}
 ```
 or
 ```json

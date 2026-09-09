@@ -86,11 +86,10 @@ done
 [[ -n "$RUN_ID" ]] || RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Absolutize --backlogs / --out NOW, before anything below can `cd` out from under a relative one.
-# bench::arm_shiploop's subshell does `cd "$ws"` before re-reading the backlog file (to compute
-# GOVERN_MAX_TICKETS); a relative --backlogs there silently resolves against $ws instead of the
-# caller's cwd, jq fails to open it, the command substitution yields an empty string, and
-# GOVERN_MAX_TICKETS collapses to run-loop.sh's own `${VAR:-0}` default — the loop dispatches ZERO
-# tickets and exits clean, which reads exactly like a working run that happened to clear nothing.
+# bench::arm_shiploop's subshell does `cd "$ws"` before re-reading the backlog file; a relative
+# --backlogs there silently resolves against $ws instead of the caller's cwd, jq fails to open it,
+# the ticket-number list comes out EMPTY, and the arm dispatches ZERO tickets and exits clean,
+# which reads exactly like a working run that happened to clear nothing.
 BACKLOG_DIR="$(cd "$BACKLOG_DIR" && pwd)" || bench::die "--backlogs dir does not exist: $BACKLOG_DIR"
 mkdir -p "$OUT_ROOT"
 OUT_ROOT="$(cd "$OUT_ROOT" && pwd)"

@@ -2,30 +2,32 @@
 
 A **governor** drives fresh per-ticket **headless `claude -p`** workers over the tickets you name. The
 operator job shrinks to: managing `queue/tickets.md`, choosing what to dispatch, answering
-`escalations.md`, and the two hard-stop decision classes. The governor itself is a **pure-bash driver**
-(`scripts/govern/run-loop.sh`): it spends ~zero Claude context, and Claude runs only inside the bounded
-worker sub-sessions.
+`escalations.md`, and the two hard-stop decision classes. The governor itself is a **deterministic
+Bash pipeline** (`pre-dispatch-check.sh` → `spawn-worker.sh` → `resolve-ticket.sh`): it spends
+~zero Claude context, and Claude runs only inside the bounded worker sub-sessions.
 
 ## Run it
 There is no slash command. From the main checkout, just say what you want worked — the session maps
-plain language straight onto the loop. Named dispatch is the only front door: you name the ticket(s),
-the driver dispatches exactly those, at the least spend, with every gate on. There is no backlog
-sweep and no grind-until-empty loop: a bare invocation prints usage and exits 2.
+plain language straight onto the pipeline. Named dispatch is the only front door: you name the
+ticket(s), the pipeline works exactly those, one at a time, at the least spend, with every gate on.
+There is no backlog sweep and no grind-until-empty loop.
 ```
-"work on 42"                             → run-loop.sh 42
-"work on 42 51 63"                       → run-loop.sh 42 51 63
-"work on 42 51 63 while I'm out"         → run-loop.sh --parallel 42 51 63
+"work on 42"                             → pre-dispatch-check.sh 42 → spawn-worker.sh 42 → resolve-ticket.sh 42
+"work on 42 51 63"                       → the same three steps, once per ticket, in severity order
 ```
-Or directly: `scripts/govern/run-loop.sh [--dry-run] [--exclude N,N] [--parallel[=N]|--serial] <ticket>...`.
-Naming exactly one ticket is always sequential and unbatched. Naming several partitions them into
-**locality groups** (shared measured file paths, capped at `GOVERN_BATCH_MAX` per group); `--parallel`
-spawns one full driver child per group, not per ticket.
+Or directly: `scripts/govern/pre-dispatch-check.sh <N>`, then `scripts/govern/spawn-worker.sh <N>`,
+then pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`.
+Naming several tickets works them one at a time through the same three steps — there is no fan-out
+and no automatic grouping. `pre-dispatch-check.sh` nudges you to batch two OPEN tickets sharing a
+measured file into one worker (`spawn-worker.sh <N> <other>`), but that is always a call you make,
+never an automatic partition.
 
-The trigger changed; the **loop did not**. Detached workers, claim locks, verdict files, resumable
-worktrees and reaping are the only things that survive a closed laptop, and they are untouched — so a
-later session can reap workers an earlier one launched. Note that lowering trigger friction *raises*
-the need for the run-level ceiling (`GOVERN_MAX_TICKETS`): a slash command was a deliberate act,
-a sentence is not.
+The trigger changed, and so did the substrate under it. Detached workers, verdict files, resumable
+worktrees and reaping are still what survive a closed laptop — a later session can reap a worker an
+earlier one launched — but there is no more single-run lock, per-ticket claim lock, or run-level
+ceiling (`GOVERN_MAX_TICKETS` is retired along with it): each of the three scripts is a fresh,
+short-lived invocation, and the operator naming tickets is the only ceiling on how many get worked in
+one sitting.
 
 ## Worker authentication (do this once before a live run)
 Spawned `claude -p` workers need their own credential. Use **subscription OAuth**: run `claude login`
@@ -41,8 +43,8 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
   entries (regenerated every run-end; gitignored runtime state).
 - `worker-prompt.md` / `supervisor-prompt.md`: the templates workers run / the manual audit
   (`npm run govern:audit`) runs.
-- `improvements.md` — self-improvement proposals (output; observe→propose, never auto-applied unless
-  you opt in).
+- `improvements.md` — operator-maintained notes on harness friction (no automated pipeline writes to
+  it any more; the retired self-improvement lane used to).
 - `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
   a recurring decision here graduates into a `preferences.md` rule.
 - `scripts/govern/*.sh` — the mechanism (select / spawn / await-ci / merge / land-resolution / supervise /
@@ -54,25 +56,26 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
 - `claudemd-verdicts.json`: your recorded still-true verdicts, keyed by block content hash (input;
   tracked, see "CLAUDE.md trimming" below).
 
-## Escalation lifecycle (#62 — answers feed back into the loop)
+## Escalation lifecycle (#62 — answers feed back automatically)
 Parked decisions used to be **write-only**: a worker appended a `## Open` entry and nothing ever
-asked the operator, so they sat unanswered indefinitely. Now the loop closes itself:
-- **Run-end (`escalations-emit-pending.sh`):** writes `pending-escalations.json` (the unanswered
-  `## Open` entries) and fires `GOVERN_NOTIFY_CMD` if set — so a headless run still signals you.
+asked the operator, so they sat unanswered indefinitely. Now it closes itself, at SessionStart:
+- **Every SessionStart (`session-reconcile.sh`):** applies any answered escalations
+  (`escalations-apply-answers.sh`) and regenerates `pending-escalations.json` from the current
+  unanswered `## Open` entries (`escalations-emit-pending.sh`) — both runnable by hand too, and
+  `GOVERN_NOTIFY_CMD` still fires if set, so an unattended headless dispatch still signals you.
 - **Relay (the dispatching session):** presents all pending escalations in a **single batched
   `AskUserQuestion`** (#89 — ≤4 questions per prompt; chunk if >4, never one prompt per ticket) and
   records each operator's **Answer** + a canonical **Disposition** (`do-the-work` | `defer` |
   `mitigated` | `keep-open`) back into `escalations.md` (plus an optional "Make this a rule?" sentence).
-- **Next run-start (`escalations-apply-answers.sh`):** acts on each recorded answer —
-  `do-the-work` un-parks (governor retries the ticket), `defer` auto-migrates the ticket to
-  `queue/tickets-parked.md` (renumbered, still TODO) and resolves the escalation, `mitigated` removes the
-  ticket from `queue/tickets.md` and closes it as accepted-current-state (harm already zero — NOT parked as
-  still-todo), and a rule sentence is appended to `preferences.md`. Idempotent and committed the same
-  way land-resolution.sh commits.
+- **Applying an answer (`escalations-apply-answers.sh`, at the next SessionStart or run by hand):**
+  acts on each recorded answer — `do-the-work` un-parks (the ticket is dispatchable again), `defer`
+  auto-migrates the ticket to `queue/tickets-parked.md` (renumbered, still TODO) and resolves the
+  escalation, `mitigated` removes the ticket from `queue/tickets.md` and closes it as
+  accepted-current-state (harm already zero — NOT parked as still-todo), and a rule sentence is
+  appended to `preferences.md`. Idempotent and committed the same way `land-resolution.sh` commits.
 
 `GOVERN_NOTIFY_CMD` (optional): a command fed the alert message on stdin when pending escalations
 exist (e.g. `GOVERN_NOTIFY_CMD='terminal-notifier -title Governor'` or a Slack webhook curl).
-Unset → the run summary's "Needs you" section is the signal.
 
 ## Trust ladder (`GOVERN_AUTONOMY` in workspace.sh)
 One knob sets how far the governor goes on its own; graduate up a rung as trust builds (flip the value,
@@ -129,7 +132,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   identified infra/CI cause may keep a sub-floor tier. Every decision is logged as
   `worker #N sizing: model=… effort=… retry-class=… — <reason>`.
 - **A session may never spawn above its own tier.** Every `--model` the harness assembles (worker,
-  scout, supervisor, self-improve, self-apply, sync porter) is clamped to `max(opus, the model of the
+  scout, supervisor, sync porter) is clamped to `max(opus, the model of the
   session that spawned it)`. Opus is the FLOOR of that ceiling, not the ceiling itself, so a haiku or
   sonnet driver still buys opus on a retry exactly as before; what the rail forbids is a driver
   buying a tier ABOVE the one it is itself running at, which is the only way a cheap session could
@@ -176,14 +179,14 @@ the flat-parent property the governor exists for.
 - `GOVERN_EXECUTE_ONLY=0` — kill switch: hard-disables the branch fleet-wide even when `GOVERN_WARM`
   is set.
 
-## Hard bounds (a run always ends; tune via env)
-- `GOVERN_MAX_TICKETS` (20) — stop after N tickets this run (caps a tickets-beget-tickets loop).
-- `GOVERN_MAX_BAD_STREAK` (4) — stop after N **consecutive** parked/failed.
-- `GOVERN_MAX_RUNTIME` (`0` = no cap, default) — stop starting tickets past this many seconds. Set a
-  positive value to impose a wall-clock cap (e.g. to fit a provider usage window). MAX_TICKETS +
-  per-worker timeout + bad-streak still bound the run.
+## Hard bounds (a worker always ends; tune via env)
+There is no more run-level ceiling: `GOVERN_MAX_TICKETS`, `GOVERN_MAX_BAD_STREAK`, and
+`GOVERN_MAX_RUNTIME` were retired with the run-level driver. The operator naming tickets is the only
+bound on how many get worked in one sitting; per-ticket, `pre-dispatch-check.sh`'s failure-streak
+breaker (`GOVERN_MAX_TICKET_FAILS`, default 2 consecutive failed/timed-out/budget-exceeded attempts)
+files an escalation and stops re-spawning that ONE ticket rather than retrying it forever (#60).
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
-  to stall the loop. `0` = unbounded.
+  to stall. `0` = unbounded.
 - `GOVERN_WORKER_MAX_TOKENS` (`0` = unlimited, default) — per-worker cumulative token cap; a wandering
   worker is killed once it crosses this, same as the wall-clock timeout. Polled every
   `GOVERN_TOKEN_POLL_S` (20s default) against the live worker JSONL. Recorded as a DISTINCT
@@ -191,7 +194,11 @@ the flat-parent property the governor exists for.
   ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
   preserved and a re-run resumes it, exactly like a timeout.
 - No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
-  (`npm run govern:audit`) you invoke against a run directory; it costs zero model spend otherwise.
+  (`npm run govern:audit -- <run-dir>`) that reads `<run-dir>/state.jsonl`; it costs zero model spend
+  otherwise. Nothing in the session lane writes `state.jsonl` any more — that was the retired
+  run-level driver's own bookkeeping — so this audit currently has no live input to read. Treat it as
+  not wired up until its input is replaced with something the session lane still writes (`ticket-history.jsonl`,
+  `governor/events.jsonl`).
 
 ## Upstream-drift pre-gate (`GOVERN_PREGATE_DRIFT`, default `1` = on)
 
@@ -221,48 +228,38 @@ worker is spawned — no LLM call, no network, no writes.
 Codemod auto-detection is deliberately **not** implemented: a false positive that "resolves" a ticket
 without fixing it is far worse than a missed opportunity, and no narrow, safe detector was found.
 
-## Locality batching (`GOVERN_BATCH_MAX`, default `2`; set to `1` to turn it off)
+## Batching two tickets into one worker (manual, not automatic)
 
-Exploration is the dominant cost of a resolved ticket (~98% cacheRead): three tickets that all touch
-`scripts/govern/` mean three workers each paying full discovery cost on the same code — three repo
-loads, three `CLAUDE.md` reads, three architecture explorations. `GOVERN_BATCH_MAX=N` lets ONE worker
-take up to N tickets from the **same area** so that discovery is paid once.
+Exploration is the dominant cost of a resolved ticket (~98% cacheRead): two tickets that touch the
+same code paying full discovery cost twice is real waste. There is no more automatic locality
+grouping of a named set — `GOVERN_BATCH_MAX` and the partitioner it fed are retired along with the
+run-level driver. What survives is manual, and MEASURED-overlap only:
 
-- **Key.** The leaf directory name of the dominant path token on the ticket's `Files:` line (a
-  measured file list, preferred) or its `Where:` line. Depth-1 is deliberate: a hub/workspace mirror
-  pair (`templates/govern/run-loop.sh` ↔ `scripts/govern/run-loop.sh`) *is* the same area. A ticket
-  that names no path is **unlocalized** and is never batched on a guess.
-- **Grouping.** Eligible tickets are partitioned into **disjoint** groups in severity order, capped at
-  N. Groups are disjoint by construction, which also makes `--parallel` safer: concurrent drivers can
-  no longer be handed two tickets that edit the same file.
-- **One worker → one branch → one PR** per group, with per-ticket commits.
-- **Dependencies.** Two tickets in a dependency relation — declared (`**Depends on:**`) or implicit
-  (the other side's `**Blocks:**`) — are **never** co-batched, so a group can't be worked out of order.
-  Each batched ticket also re-passes the pre-spawn dependency gate individually.
-- **Locking.** Every ticket in a group is claim-locked by the driver for the whole run, so the
-  exactly-once guarantee is unchanged. A contended candidate is simply left out of the group.
-- **Partial failure is per-ticket.** The worker returns a `tickets` array of `{ticket,status,note}`.
-  A batched ticket is bookkept (and its block deleted) **only** on an explicit `resolved` entry —
-  any other status, a missing entry, or an unparseable report leaves it in `tickets.md` for a later
-  run. A group's verdict can never mark an unfixed ticket resolved.
-
-Batching and parallelism pull against each other: past a point, bigger groups trade wall-clock for the
-token saving. Hence the default of `2` (small groups, most of the token saving, little wall-clock
-risk) — set `GOVERN_BATCH_MAX=1` to turn batching off and go back to one ticket per worker. No
-production A/B measurement of the default exists yet; today's `2` is a starting point, not a
-validated optimum. Applies to any named ticket set: the operator names the tickets, batching only
-decides how the driver groups them for dispatch.
+- `pre-dispatch-check.sh` prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when some OTHER
+  open ticket shares a measured file (or, weaker, a directory) with the one you named
+  (`GOVERN_OVERLAP_NUDGE`, on by default).
+- Acting on it is `scripts/govern/spawn-worker.sh <N> <other...>`: extra ticket numbers share `#N`'s
+  worktree, branch and PR — **one worker → one branch → one PR**, with per-ticket commits. The
+  worker still returns a `tickets` array of `{ticket,status,note}`, so a batched ticket is bookkept
+  **only** on an explicit `resolved` entry — any other status, a missing entry, or an unparseable
+  report leaves it in `tickets.md` for later. A group's verdict can never mark an unfixed ticket
+  resolved.
+- Nothing checks a dependency relation before a manual batch — that guard lived in the retired
+  partitioner. Don't hand-batch two tickets you know are in a `**Depends on:**` relation.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
   are kept** on disk (uncommitted work survives) + their path is logged. A timeout is a *pause*, not
   lost work — the PR (if opened) is safe on GitHub and the ticket stays in `queue/tickets.md`.
-- **No duplicate PRs on resume:** before spawning, an existing open PR on branch `ticket-<N>` is
-  detected and the run resumes from CI→merge→land-resolution.
+- **Resume reuses the preserved worktree, it doesn't adopt the PR.** `spawn-worker.sh` re-enters a
+  ticket's PRESERVED worktree/branch from a prior attempt instead of recreating it, and the worker
+  continues from there. There is no more shortcut that detects an already-open PR and skips straight
+  to CI→merge without running a worker at all — that adoption was loop-only machinery and is retired.
 - A clean interrupt (Ctrl-C / SIGTERM / sleep) leaves the in-flight ticket + worktree; re-running
   continues (resolved → gone from `queue/tickets.md`; parked → skipped via `escalations.md`).
-- A run writes a plain-words summary on **every exit (clean OR crash/kill)** to
-  `logs/govern/run-*/summary.md` and `logs/govern/last-session.md`.
+- There is no more run-end summary file — that was written by the retired run-level driver. A
+  worker's own outcome is the JSON report it returns, and `govern-health.sh` / `npm run govern:status`
+  read the durable history and event log instead of a per-run summary.
 
 ## Self-ROI telemetry (#272)
 Every run-end **automatically** surfaces a governor-health summary — no manual log spelunking —
@@ -288,8 +285,11 @@ real runs. Mechanics:
 
 - `spawn-worker.sh` appends one row per spawn to `logs/govern/run-*/ticket-N/attempts.jsonl` — the
   resolved model/effort **and where each came from** (a brain-decided ticket field vs the workspace
-  fallback vs a retry escalation), plus that attempt's measured usage. `run-loop.sh` reads the ledger:
-  spend is **summed across the run's attempts** (an in-run re-dispatch's tokens belong to the ticket
+  fallback vs a retry escalation), plus that attempt's measured usage. `resolve-ticket.sh` reads the
+  ledger and writes `ticket-history.jsonl` (mirroring the retired loop's own `record()`/
+  `history_enrich()` exactly, so `govern-health.sh` — which reads only that file — keeps an input now
+  that the loop no longer writes it): spend is **summed across the ticket's attempts** (an earlier
+  re-dispatch's tokens belong to the ticket
   too), while the decision fields come from the **last** attempt — the one that produced the outcome.
   So when reading per-tier success rates, filter to `attempt == 1`: a row with `attempt > 1` records
   the tier that *finished* the ticket, after a cheaper bet had already been tried and escalated away
@@ -308,18 +308,13 @@ real runs. Mechanics:
   forces text semantics; spawn-worker also rotates a prior attempt's stream to
   `worker.attempt<K>.jsonl` so a fresh inode makes the corruption unreachable in the first place.
 
-- **One row per ticket per run, even under the parallel default.** The per-ticket claim lock only keeps
-  a sibling driver off a ticket *while* a worker holds it. A ticket that ends non-resolved (timeout /
-  budget-exceeded / failed / parked) stays in `queue/tickets.md` and frees its claim the moment its
-  outcome is recorded, and the `excludes` list that stops the *same* driver re-picking it is
-  per-process in-memory state a sibling cannot see — so a sibling reaching selection after that
-  release used to re-spawn a second full worker on a question the run had already answered, and write
-  a second `state.jsonl` + history row for it (double-counting the consecutive-failure streak). Each
-  recorded outcome now also appends its ticket number to a run-scoped `attempted.txt`, which every
-  driver folds into its own excludes before selecting; the orchestrator's children share the
-  orchestrator's file, and a driver that skips a ticket this way logs *"already answered by another
-  driver this run"*. Only a child spawned with `--orchestrated` adopts an inherited path, so an
-  unrelated `run-loop.sh` launched inside a live session never picks up another run's set.
+- **Land-time safety, not dispatch-time locking.** There is no more per-ticket claim lock,
+  sibling-driver exclude list, or `--orchestrated` coordination — that was run-loop-only machinery,
+  retired with it. Two concurrent `spawn-worker.sh #N` calls on the SAME ticket are not prevented
+  before they start; what still holds is that only one resolution ever lands: `resolve-ticket.sh` →
+  `land-resolution.sh` serializes the `tickets.md` edit and the history append under the bookkeep
+  lock (`BK_LOCK`) and a CAS push, so a second resolve on an already-landed ticket fails cleanly
+  instead of double-counting a history row (`GOVERN_ALLOW_CONCURRENT=1`, #41).
 
 Rows written before these fields existed simply lack them; every consumer filters on presence, so old
 history keeps working unchanged.
@@ -379,22 +374,14 @@ fleet-wide), the Stop ticket-sweep reminder (clobbers the worker's final stdout)
 flood. The worker still gets user-level config, auth, CLAUDE.md, and skills. The report is read from a
 file, so even a stray Stop hook can't corrupt it — belt and suspenders.
 
-## Self-improvement (observe → propose; never auto-applies)
-After a run that hit friction (any parked/failed ticket or supervisor concern), a fresh read-only
-reviewer (`govern-improve.sh`) appends concrete improvement proposals to `governor/improvements.md`. It
-only *proposes*; the operator reviews and applies. Safety rails (hard-stops, run bounds, permission
-gate, merge allowlist) are **never** auto-changed. Disable with `GOVERN_IMPROVE=0`.
-
-The pass fires **exactly once per run**, in the orchestrator, over the aggregated state after
-reaping, never once per driver. A child driver only ever sees its own slice of the run, so a
-per-driver "review of the run" is structurally a review of a fragment, and an N-way parallel run
-used to file N near-identical tickets (two of them from the same wall-clock run). Children skip the
-pass via the internal `--orchestrated` flag; a sequential dispatch IS the orchestrator, so it always
-runs. Triage also **appends to a standing ticket** rather than minting a new `## #N` each time, since
-the same friction recurs and produces the same proposal. Opt-in guarded
-auto-apply (`GOVERN_SELF_APPLY=1`, default OFF) applies ONE proposal under strict guards (edit-only
-agent, mechanism-scripts allowlist, protected-pattern revert, test-gate) at run-end so it takes effect
-next run.
+## Self-improvement (retired — now operator-maintained notes)
+The automated observe → propose → triage → guarded-auto-apply pipeline (`govern-improve.sh` /
+`govern-improve-triage.sh` / `govern-self-apply.sh`) was retired along with the run-level driver that
+fired it once per run. `governor/improvements.md` is now plain operator-maintained notes on harness
+friction: nothing reads a parked/failed ticket or a supervisor concern and proposes a fix to it
+automatically, and nothing applies one either. Write to it by hand when you notice friction worth
+fixing, and safety rails (hard-stops, per-worker bounds, permission gate, merge allowlist) stay
+exactly as change-controlled as everything else in this repo.
 
 ## Shipped agents (`.claude/agents/`)
 The scaffold installs three agent definitions so the driver's delegation posture (router-posture

@@ -35,8 +35,9 @@ Ignore only these two things in it, which describe the other lane:
 2. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
 3. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
-   `queue/tickets.md`. The queue block stays intact until merge; the driver hands the open PR to
-   `npm run govern -- <N>`, which adopts it rather than redoing the work.
+   `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
+   `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
+   redoing the work.
 4. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
 5. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest

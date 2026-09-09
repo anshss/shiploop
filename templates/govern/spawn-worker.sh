@@ -1592,7 +1592,11 @@ write_handoff_block() { # <status>
 # the ticket, and a handoff claiming otherwise would be noise the retry has to read and discard).
 case "$(printf '%s' "$report" | jq -r '.status // ""' 2>/dev/null || true)" in
   early-abort|timeout|budget-exceeded|failed|parked|interrupted)
-    write_handoff_block "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)" ;;
+    write_handoff_block "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
+    # #48: this spawn PRESERVED its worktree for a resume, so reclaim the regenerable bulk
+    # (node_modules/.next/dist) without touching source or diffs. Moved here from the deleted
+    # run-loop.sh: the process that preserves the worktree is the one that should slim it.
+    govern::slim_worktree "$N" "$wtpath" ;;
 esac
 
 # #19: the outcome is now known — append this attempt's decision + measured usage to the ledger.

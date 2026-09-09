@@ -40,7 +40,7 @@ self-correcting and does not clear the bar, **delete it rather than demote it**.
 | `npm run worktree:status` | List allocated worktree slots |
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
-| `npm run govern -- <N> ...` | Dispatch the tickets you name (or just say "work on 42 51") |
+| `npm run govern:pre-dispatch -- <N>` then `spawn-worker.sh <N>` | Headless dispatch, one ticket at a time (or just say "work on 42 51") |
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
@@ -83,15 +83,18 @@ PR. There are two ways to start one, and both run the same doctrine file,
   right-sizing is not left to judgment) and points at the canonical doctrine rather than restating
   it. The run shows up in the session UI with live token counts and an openable transcript, and its
   structured report comes back to the driver.
-- **Autonomous lane:** `npm run govern -- <N> ...`, or just say "work on 42 51". Same doctrine,
-  headless, plus the full gate stack: dependency ordering, cross-driver re-verify, failure-streak
-  escalation, merge, and queue bookkeeping.
+- **Headless lane:** `bash scripts/govern/spawn-worker.sh <N>` with no session open — gated first by
+  `npm run govern:pre-dispatch -- <N>` (NA-marker skip, already-a-public-issue, still-on-origin/main
+  re-verify, dependency ordering, staleness, the per-ticket failure-streak breaker, upstream drift)
+  — or just say "work on 42 51" and let the session run those same steps for you, one ticket at a
+  time. Merge and queue bookkeeping are a separate last step either lane shares:
+  `npm run govern:resolve -- <N>`, fed the worker's report.
 
 Anything else you spawn with the `Agent` tool is a **subagent**, never a worker. The distinction is
 load-bearing rather than cosmetic: `worker` is a literal string in the call, so a routing rule that
 says "worker" cannot be satisfied by a generic spawn that merely feels worker-like.
 
-**If your CLI does not support agent definitions, use the autonomous lane.** Custom subagent
+**If your CLI does not support agent definitions, use the headless lane.** Custom subagent
 definitions (`.claude/agents/*.md` invoked via `subagent_type`) are a Claude Code feature, so a fleet
 on an older CLI may not read `worker.md` at all. Two things are UNVERIFIED here and are deliberately
 not guessed at: the minimum CLI version that reads these files, and what an older CLI actually does
@@ -99,16 +102,16 @@ when it finds one (silently ignore it, error, or fall back to a generic subagent
 sub-agents documentation specifies neither, and no version was tested for this note.
 
 The practical consequence is what matters, and it is safe either way: if
-`Agent(subagent_type: "worker")` does not behave like a worker on your CLI, **`npm run govern -- <N>`
-is the fallback and always works.** It is the same doctrine and the same worker, spawned headlessly
-by `spawn-worker.sh`, which depends on no agent-definition support whatsoever. Nothing about the
-autonomous lane is gated on this feature. If you are unsure which you have, run a ticket through
-govern once and compare.
+`Agent(subagent_type: "worker")` does not behave like a worker on your CLI, **the headless lane is
+the fallback and always works: `bash scripts/govern/spawn-worker.sh <N>`.** It is the same doctrine
+and the same worker, spawned headlessly, which depends on no agent-definition support whatsoever.
+Nothing about the headless lane is gated on this feature. If you are unsure which you have, run a
+ticket through it once and compare.
 
 **Why the interactive lane stops at PR-open.** Merge, the CI await, the park-on-red-CI recovery path
-and the queue edit all live in govern's run loop, and a session that merged its own PR would bypass
-every one of them. Dispatching `npm run govern -- <N>` once the PR is open adopts that PR instead of
-redoing the work, so the two lanes compose rather than duplicate.
+and the queue edit all live in `resolve-ticket.sh`, and a session that merged its own PR would bypass
+every one of them. Piping the worker's report into `npm run govern:resolve -- <N>` is the shared last
+step, so the two lanes compose rather than duplicate.
 
 **Why the worker makes its own worktree.** The `Agent` tool's `isolation: "worktree"` worktrees the
 root repo only, and a meta-repo's nested sub-repo `.git` directories do not come along, leaving a
@@ -188,10 +191,10 @@ Rules that are both rare and mechanically caught belong here.
 
 ## Fleet visibility — seeing what the governor is actually doing
 
-Governor workers are detached `claude -p` processes. Their pid lives only in a bash array inside
-`run-loop.sh`, and structured state is written only at completion — so while a run is in flight
-nothing on disk says "running". Claude's own subagent panel cannot help: it renders Task-tool
-children of *this* session, and there is no way to inject a row into it from outside.
+A worker is a detached `claude -p` process `spawn-worker.sh` runs to completion, and structured
+state is written only when it finishes — so while one or more are in flight nothing on disk says
+"running" on its own. Claude's own subagent panel cannot help: it renders Task-tool children of
+*this* session, and there is no way to inject a row into it from outside.
 
 `GOVERN_EVENTS=1` turns on one append-only log, `governor/events.jsonl`, and everything else folds
 it. Off by default; nothing about a run changes when you enable it, and a failed append is swallowed

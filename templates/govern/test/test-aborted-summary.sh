@@ -1,112 +1,86 @@
 #!/usr/bin/env bash
-# Regression for #151: a post-merge prod deploy/verify failure must NOT abort the whole run (set -e on
-# an unguarded command-substitution assignment) and mislabel the session "completed normally" while
-# leaving the in-flight ticket merged-but-unbookkept AND omitted from the summary.
+# Regression for #151, re-targeted at resolve-ticket.sh (the loop purge moved this whole step here):
+# a post-merge prod deploy/verify failure must be CLASSIFIED and must PARK the ticket, never silently
+# land it and never be confused with a set -e abort at the unguarded migrate-command capture. The
+# migrate-command capture is guarded with `|| true` precisely so `set -e` cannot abort the script at
+# that line: exit 7 proves the classify-and-refuse path was REACHED, whereas exit 1 would be the old
+# #151 bug (a bare abort that leaves a merged-but-unbookkept ticket looking like nothing happened).
 #
 # Reproduces the observed shape: #1's auto-merge-repo PR merges, then the additive-migration
-# deploy/verify step FAILS. The run must:
-#   1. NOT exit non-zero — the migrate-command capture is guarded (|| true), so control reaches the
-#      verify+classify+PARK logic instead of `set -e` aborting at the capture line;
-#   2. PARK #1 with an escalation (the PR is merged but the post-merge step failed) — keeping its
-#      tickets.md block and recording a `parked` state entry, so it is surfaced, not silently dropped;
-#   3. write a summary that lists #1 (no half-resolved ticket left both unbookkept AND unreported).
-# Hermetic + generic (alpha auto-merge, web frontend; org acme).
+# deploy/verify step FAILS. resolve-ticket.sh must:
+#   1. exit 7 (NOT 1, which is what a raw `set -e` abort at the capture line would give);
+#   2. NOT land — land-resolution.sh (stubbed) must never be reached;
+#   3. classify the failure in stderr (the exact wording resolve-ticket.sh prints);
+#   4. append a `parked` row to ticket-history.jsonl so #1 is surfaced, not silently dropped.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-RL="$DIR/../run-loop.sh"
+set +e
 
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
-cat > "$T/tickets.md" <<'EOF'
+# Sandbox the script next to STUBS of the collaborators it shells out to, so we exercise
+# resolve-ticket's own migration-classification decision without a network, a gh, or a real push.
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+LANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit "${STUB_MERGE_RC:-0}"
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$LANDED"
+landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LANDED" | wc -c | tr -d ' '; }
+
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — additive-migration ticket whose post-merge deploy fails
-**Severity:** Medium — x.
-body1
+
+**Severity:** Medium
+
+Done when: the migration is live.
+
 ---
-EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
-printf 'DOC\n' > "$T/governor/preferences.md"
-printf 'P {{TICKET_BLOCK}} {{REPORT_PATH}}\n' > "$T/governor/worker-prompt.md"
-printf 'SUPERVISOR-REVIEW\n' > "$T/governor/supervisor-prompt.md"
+TIX
+( cd "$T" && git add -A && git commit -qm init )
 
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
+HIST="$T/history.jsonl"
+report='{"status":"resolved","pr":{"repo":"alpha","number":901,"url":"http://pr/1"},"prs":[],"lessonPatch":null,"newTickets":[],"migration":{"needed":true,"destructive":false,"name":"20260623_add_index","note":"CREATE INDEX"}}'
 
-# stub gh: `pr list` (resume/find-pr) → none; `pr checks` → green; `pr merge` → SUCCESS; else pass.
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*)    echo '[]';;
-  *"pr checks"*)  echo '[{"bucket":"pass"}]';;
-  *"pr merge"*)   echo 'merged';  exit 0;;
-  *"pr view"*)    echo 'MERGED';  exit 0;;
-  *)              echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$T/bin/gh"
-
-# stub claude: supervisor verdict on the marker; else a worker that resolves with an auto-merge-repo PR
-# AND declares an ADDITIVE prod migration (needed:true, destructive:false) — the path that, post-merge,
-# applies the migration + verifies the deploy (the step that fails here).
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-n="$(printf '%s' "${GOVERN_REPORT_PATH:-}" | sed -E 's#.*/ticket-([0-9]+)/.*#\1#')"
-report="{\"status\":\"resolved\",\"pr\":{\"repo\":\"alpha\",\"number\":${n}01,\"url\":\"http://pr/${n}\"},\"lessonPatch\":null,\"newTickets\":[],\"crossRefs\":{\"overlaps\":[],\"dependsOn\":[]},\"migration\":{\"needed\":true,\"destructive\":false,\"name\":\"20260623_add_index\",\"note\":\"CREATE INDEX\"},\"escalation\":null}"
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
-
-# GOVERN_MIGRATE_CMD=false → the post-merge migrate-command capture exits NON-ZERO (the #151 failure).
-# Pre-fix this aborted the whole script at the unguarded `mout=$(...)` assignment; post-fix the
-# `|| true` lets control reach the verify (GOVERN_VERIFY_CMD=false) → PARK.
-set +e
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_WS_ROOT="$T" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$T/governor/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$T/governor/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$T/governor/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_MIGRATE_CMD="false" GOVERN_VERIFY_CMD="false" \
-  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 1 </dev/null 2>&1)"
+# GOVERN_MIGRATE_CMD succeeds, GOVERN_VERIFY_CMD FAILS → the post-merge verify step fails (the #151
+# shape). Pre-fix this aborted the whole script at the unguarded `mout=$(...)` assignment; post-fix
+# the `|| true` lets control reach the verify → classify → PARK logic.
+: > "$LANDED"
+out="$( cd "$T" && printf '%s' "$report" \
+  | GOVERN_HISTORY_FILE="$HIST" GOVERN_MIGRATE_CMD="true" GOVERN_VERIFY_CMD="false" \
+    bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
 rc=$?
-set -e
 
-assert_eq "$rc" "0" "run exits 0 — a post-merge deploy/verify failure does NOT abort the loop via set -e (#151 root cause)"
-assert_contains "$out" "merged alpha#101"            "the backend/auto-merge PR merged before the deploy step"
-assert_contains "$out" "migration/verify FAILED for #1" "the post-merge migrate/verify failure was CLASSIFIED (not a silent abort)"
-assert_contains "$out" "parked=1"                    "#1 was PARKED (surfaced), not dropped"
-
-# #1 is half-resolved (PR merged) → its block MUST survive (not bookkept/deleted) and be surfaced.
-remaining="$(grep -c '^## #' "$T/tickets.md" || true)"
-assert_eq "$remaining" "1"                           "ticket #1 block SURVIVES (merged-but-unbookkept, not deleted)"
-assert_contains "$(cat "$T/governor/escalations.md")" "### #1"  "an escalation was filed for #1 (surfaced, not silently dropped)"
-
-# The session summary must reflect reality: #1 listed (recorded parked), NOT omitted.
-SUM="$T/logs/last-session.md"
-[[ -f "$SUM" ]] || SUM="$(ls -t "$T"/logs/run-*/summary.md 2>/dev/null | head -1)"
-assert_contains "$(cat "$SUM")" "#1: parked"         "summary names #1 (no in-flight ticket silently omitted) (#151)"
+assert_eq "$rc" "7" "post-merge migrate/verify failure exits 7 (classify-and-refuse path reached, NOT a set -e abort at the guarded capture)"
+assert_eq "$(landed_count)" "0" "nothing landed — land-resolution.sh was never reached"
+assert_contains "$out" "prod migration/verify FAILED" "the post-merge migrate/verify failure was CLASSIFIED in stderr (not a silent abort)"
+assert_eq "$(jq -r 'select(.ticket==1) | .status' "$HIST" | tail -1)" "parked" "a parked row was appended to ticket-history.jsonl (#1 surfaced, not dropped)"
 
 assert_done

@@ -48,7 +48,7 @@ cat > "$T/tickets.md" <<'EOF'
 body
 ---
 ## #2 — legit harness ticket
-**Where:** `scripts/govern/run-loop.sh`
+**Where:** `scripts/govern/spawn-worker.sh`
 body
 ---
 ## #3 — external tool ticket that leaked in

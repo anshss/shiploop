@@ -80,7 +80,7 @@ cat > "$T/main/queue/tickets.md" <<'EOF'
 
 ## #21 — harness work
 **Severity:** LOW
-**Where:** `scripts/govern/run-loop.sh`
+**Where:** `scripts/govern/spawn-worker.sh`
 **Observed:** the harness itself.
 
 ## #22 — no Where

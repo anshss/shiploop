@@ -30,12 +30,12 @@ mkdir -p "$TPL/test"
 
 git -C "$REPO" init -q
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
-echo 'echo run' > "$REPO/scripts/govern/run-loop.sh"
+echo 'echo run' > "$REPO/scripts/govern/spawn-worker.sh"
 echo 'echo assert' > "$REPO/scripts/govern/test/assert.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm init
 BASE="$(git -C "$REPO" rev-parse HEAD)"
 
-echo 'echo run' > "$TPL/run-loop.sh"
+echo 'echo run' > "$TPL/spawn-worker.sh"
 
 export GOVERN_DIR="$REPO/scripts/govern"
 export GOVERN_SYNC_MARKER="$REPO/scripts/govern/.templates-synced-at"
@@ -54,19 +54,19 @@ rc=0; out="$(bash "$TOOL" --check)" || rc=$?
 assert_eq "$rc" "0" "marker-only commit is not drift → exit 0"
 
 # ── 3. a govern-script change IS drift → exit 3, lists the commit ───────────────────────────────
-echo 'echo run v2' > "$REPO/scripts/govern/run-loop.sh"
-git -C "$REPO" add -A; git -C "$REPO" commit -qm "fix(govern): tweak run-loop (#999)"
+echo 'echo run v2' > "$REPO/scripts/govern/spawn-worker.sh"
+git -C "$REPO" add -A; git -C "$REPO" commit -qm "fix(govern): tweak spawn-worker (#999)"
 rc=0; out="$(bash "$TOOL" --check)" || rc=$?
 assert_eq "$rc" "3" "govern change → exit 3"
-assert_contains "$out" "tweak run-loop (#999)" "drift lists the commit subject"
+assert_contains "$out" "tweak spawn-worker (#999)" "drift lists the commit subject"
 assert_contains "$out" "Batch these into ONE" "drift nudges batch, not per-change ticket"
 
 # ── 4. --files surfaces ONLY mirrored files (a live-only file is filtered out) ───────────────────
 echo 'echo new test' > "$REPO/scripts/govern/test/test-newthing.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm "test(govern): add live-only test"
 files="$(bash "$TOOL" --files)"
-assert_contains "$files" "mirrored" "run-loop.sh classified mirrored"
-assert_contains "$files" "scripts/govern/run-loop.sh" "run-loop.sh listed"
+assert_contains "$files" "mirrored" "spawn-worker.sh classified mirrored"
+assert_contains "$files" "scripts/govern/spawn-worker.sh" "spawn-worker.sh listed"
 assert_not_contains "$files" "test-newthing.sh" "live-only file (no counterpart) is NOT surfaced"
 
 # ── 5. --diff emits the change; --mark to HEAD clears drift ─────────────────────────────────────

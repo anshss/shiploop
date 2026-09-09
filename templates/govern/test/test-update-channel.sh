@@ -75,7 +75,7 @@ stamp_v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$W1/scripts/lib/.harness-ver
 assert_eq "$stamp_v" "$v" "3. converged workspace stamps = hub VERSION (N7)"
 
 # ── 4. mutate an installed file → --diff-only reports behind (exit 3) ──────
-echo "# drift" >> "$W1/scripts/govern/run-loop.sh"
+echo "# drift" >> "$W1/scripts/govern/spawn-worker.sh"
 out="$(bash "$SCAFFOLD" --workspace-dir "$W1" --templates "$TEMPLATES" --diff-only 2>&1)"; rc=$?
 assert_eq "$rc" "3" "4. after drift → --diff-only exit 3"
 assert_contains "$out" "govern: behind" "4. govern reported behind"
@@ -166,7 +166,7 @@ bash "$SCAFFOLD" --workspace-dir "$W5" --templates "$TEMPLATES" \
   --worktree-base "$W5.wt" --yes >/tmp/scaf-w5.log 2>&1
 # Simulate an OLDER, drifted workspace: stamp behind + real drift in one component.
 printf '0.9.0\n' > "$W5/scripts/lib/.harness-version"
-echo "# drift" >> "$W5/scripts/govern/run-loop.sh"
+echo "# drift" >> "$W5/scripts/govern/spawn-worker.sh"
 # A partial bump of an UNRELATED component must NOT re-stamp — govern is still behind.
 bash "$SCAFFOLD" --workspace-dir "$W5" --templates "$TEMPLATES" \
   --component githooks --yes >/dev/null 2>&1

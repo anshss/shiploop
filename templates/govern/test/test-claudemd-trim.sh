@@ -283,7 +283,7 @@ assert_eq "$f" "1" "I4: it wrote classified candidates instead"
 assert_contains "$out" "/shiploop:compress" "I5: the STILL OVER message points at the compress playbook"
 assert_contains "$(cat "$T/CLAUDE.md")" "no citations here" "I6: no blind eviction: every block stayed put"
 # A per-entry cap low enough that the RETIRED demotion lane would have fired: this is the loophole a
-# prior attempt at #110 left open (it gated the demote behind a --report flag that only run-loop.sh's
+# prior attempt at #110 left open (it gated the demote behind a --report flag that only the driver's
 # call passed, so a bare `npm run govern:context-budgets` still silently demoted). There is no writer left
 # here at all now, bare or not.
 rm -f "$T/governor/claudemd-trim-proposals.md"

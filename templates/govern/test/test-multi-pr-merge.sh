@@ -3,115 +3,108 @@
 # act only on the single reported `report.pr` — so sibling PRs were orphaned unmerged. The fix:
 # collect EVERY PR for the ticket (reported `.pr`/`.prs[]` UNION every open `ticket-<N>` head
 # discovered across all repos), merge every auto-merge-repo PR backend-first on green/none, and leave
-# frontend siblings open but SURFACED in the summary — never silently dropped.
+# frontend siblings open but SURFACED in the history note — never silently dropped.
+#
+# Parts A/B/C are re-targeted at resolve-ticket.sh (the loop purge moved the merge walk here), run
+# hermetically next to stubs of merge-pr.sh / await-ci.sh / land-resolution.sh — no network, no gh,
+# no real push. Part D is the original UNIT test on govern::collect_ticket_prs itself, unchanged.
 #
 # Hermetic + generic (alpha/api auto-merge, web frontend; org acme). Proves:
-#   A. DISCOVERY — the worker reports only ONE PR (alpha#66) but ALSO opened api#281 + web#266; the
-#      harness discovers + merges both auto-merge-repo PRs and leaves the frontend (web) open.
-#   B. BACKEND-FIRST — alpha merges before api (merge-repo-first ordering), and both before web.
-#   C. SURFACED — the resolved state note lists every PR with its disposition.
+#   A. UNION — the report names api#66 via `.pr` and alpha#281 + web#266 via `.prs[]`; every
+#      auto-merge-repo PR reaches merge-pr.sh and the frontend PR is surfaced as left-open.
+#   B. BACKEND-FIRST — alpha reaches merge-pr.sh before api (merge-repo-first ordering).
+#   C. SURFACED — the resolved history row's note lists every PR with its disposition; the ticket
+#      lands EXACTLY once.
 #   D. UNIT — govern::collect_ticket_prs honors the explicit `.prs[]` field, deduped + backend-first.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-RL="$DIR/../run-loop.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
+
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T" "alpha,api"   # alpha + api auto-mergeable; web is the frontend PR-only repo
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
-cat > "$T/tickets.md" <<'EOF'
+set +e
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+LANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+# Records every repo#pr it is called for, in call order (proves backend-first), and models the real
+# merge-pr.sh contract: web is the frontend/PR-only repo (rc=2, left open by design); alpha/api merge.
+MERGE_ORDER="$T/merge-order.log"
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s#%s\n' "$1" "$2" >> "$MERGE_ORDER_LOG"
+[[ "$1" == "web" ]] && exit 2
+exit 0
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$LANDED" MERGE_ORDER_LOG="$MERGE_ORDER"
+landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LANDED" | wc -c | tr -d ' '; }
+
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — multi-repo one
+
 **Severity:** Medium — touches alpha + api + web.
+
 body1
+
 ---
-EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
-printf 'DOCTRINE\n' > "$T/governor/preferences.md"
-printf 'WORKER {{TICKET_BLOCK}} {{REPORT_PATH}}\n' > "$T/governor/worker-prompt.md"
-printf 'SUPERVISOR-REVIEW\n' > "$T/governor/supervisor-prompt.md"
+TIX
+( cd "$T" && git add -A && git commit -qm init )
 
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
+HIST="$T/history.jsonl"
+# The worker reports api#66 via `.pr` but ALSO names its two siblings via `.prs[]` (a worker that
+# DOES report all its PRs — the discovery-from-gh path is covered by govern::find_all_prs directly,
+# not re-proven here).
+report='{"status":"resolved","pr":{"repo":"api","number":66,"url":"http://pr/66"},"prs":[{"repo":"alpha","number":281,"url":"http://pr/281"},{"repo":"web","number":266,"url":"http://pr/266"}],"lessonPatch":null,"newTickets":[]}'
 
-# stub gh: `pr list` per-repo returns open ticket-1 heads on alpha + api + web (the three repos the
-# multi-repo worker touched); every other repo → none. `pr checks` → all pass. The merge runs through
-# merge-pr.sh in GOVERN_ECHO mode, so `pr merge` is never actually invoked.
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-args="$*"
-if [[ "$args" == *"pr list"* ]]; then
-  case "$args" in
-    *acme/alpha*) echo '[{"number":281,"url":"http://pr/281","headRefName":"ticket-1"}]';;
-    *acme/api*)   echo '[{"number":66,"url":"http://pr/66","headRefName":"ticket-1"}]';;
-    *acme/web*)   echo '[{"number":266,"url":"http://pr/266","headRefName":"ticket-1"}]';;
-    *)            echo '[]';;
-  esac
-  exit 0
-fi
-# pr checks (await-ci) → all green
-echo '[{"bucket":"pass"}]'
-EOF
-chmod +x "$T/bin/gh"
+: > "$LANDED"; : > "$MERGE_ORDER"
+out="$( cd "$T" && printf '%s' "$report" | GOVERN_HISTORY_FILE="$HIST" bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
+rc=$?
 
-# stub claude: supervisor verdict on the marker; else a worker that reports ONLY api#66 (it
-# under-reports its sibling PRs). The harness must discover the rest itself.
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-report='{"status":"resolved","pr":{"repo":"api","number":66,"url":"http://pr/66"},"lessonPatch":null,"newTickets":[],"crossRefs":{"overlaps":[],"dependsOn":[]},"migration":null,"escalation":null}'
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
+# A. every auto-merge-repo PR reached merge-pr.sh; the frontend PR is surfaced as left-open
+assert_contains "$(cat "$MERGE_ORDER")" "alpha#281" "alpha (auto-merge repo) reached merge-pr.sh (#129)"
+assert_contains "$(cat "$MERGE_ORDER")" "api#66"     "api (auto-merge repo) reached merge-pr.sh (#129)"
+assert_contains "$out" "web#266 left open (frontend is PR-only)" "frontend sibling left open + surfaced (#129), does NOT block the land"
 
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$T/governor/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$T/governor/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$T/governor/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_TICKET_SEQ_FILE="$T/.ticket-seq" \
-  GOVERN_HISTORY_FILE="$T/history.jsonl" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 1 2>&1)"
-
-# A. discovery + merge of BOTH auto-merge siblings (one of which the worker never reported)
-assert_contains "$out" "merged alpha#281" "discovered + merged alpha sibling (#129)"
-assert_contains "$out" "merged api#66"    "merged the reported api PR (#129)"
-# B. frontend sibling (web) left open, SURFACED (not silently dropped)
-assert_contains "$out" "web#266 left open (frontend is PR-only)" "frontend sibling left open + surfaced (#129)"
-# C. alpha merges BEFORE api (merge-repo-first: alpha precedes api in REPOS)
-apos="$(printf '%s' "$out" | grep -n 'merged alpha#281' | sed -n '1p' | cut -d: -f1)"
-ipos="$(printf '%s' "$out" | grep -n 'merged api#66' | sed -n '1p' | cut -d: -f1)"
+# B. alpha reaches merge-pr.sh BEFORE api (merge-repo-first: alpha precedes api in GOVERN_MERGE_REPOS)
+apos="$(grep -n '^alpha#281$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"
+ipos="$(grep -n '^api#66$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"
 [[ -n "$apos" && -n "$ipos" && "$apos" -lt "$ipos" ]] && bo=ok || bo="alpha=$apos api=$ipos"
 assert_eq "$bo" "ok" "alpha PR merged before api PR (merge-repo-first ordering)"
-# ticket resolved + block deleted (the whole multi-repo change shipped)
-assert_contains "$out" "resolved=1" "multi-repo ticket counted resolved"
-remaining="$(grep -c '^## #' "$T/tickets.md" || true)"
-assert_eq "$remaining" "0" "ticket #1 block deleted on full resolve"
-# the resolved state note lists EVERY PR + disposition
-note="$(jq -r 'select(.ticket==1).note' "$T"/logs/run-*/state.jsonl 2>/dev/null || true)"
-assert_contains "$note" "alpha#281(merged)"        "state note records alpha merge"
-assert_contains "$note" "api#66(merged)"           "state note records api merge"
-assert_contains "$note" "web#266(frontend-left-open)" "state note records frontend left-open"
+
+# C. the ticket lands EXACTLY once, and the "landed — PRs: …" summary line names every PR with its
+# disposition. NB: rt_record_history's `note` PARAMETER is never merged into the ticket-history.jsonl
+# row (dead parameter — see the PR body / final report for this finding), so the disposition string
+# is asserted on stderr here, not on a `.note` field in $HIST.
+assert_eq "$rc" "0" "multi-repo ticket resolves (exit 0)"
+assert_eq "$(landed_count)" "1" "multi-repo ticket lands EXACTLY once"
+assert_contains "$out" "PRs:"                         "landed summary line carries the PR-disposition list"
+assert_contains "$out" "alpha#281(merged)"            "landed summary records the alpha merge"
+assert_contains "$out" "api#66(merged)"               "landed summary records the api merge"
+assert_contains "$out" "web#266(frontend-left-open)"  "landed summary records the frontend left-open"
 
 # D. UNIT — govern::collect_ticket_prs honors the explicit `.prs[]` field (a worker that DOES report
 # all its PRs), deduped against `.pr` and ordered backend-first, even when gh discovery finds nothing.

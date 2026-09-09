@@ -3,9 +3,9 @@
 #
 # bench/run.sh's offline guard strips every git remote before any arm spawns, so a real `gh` CLI
 # would have nothing to reach anyway — but the shiploop arm still needs its worker's `gh pr create`
-# and the governor's own `gh pr checks/view/merge` to DO something, or the loop can never actually
+# and the governor's own `gh pr checks/view/merge` to DO something, or the arm can never actually
 # land a fix and bench/arms.sh's write-back has nothing to copy back. This script is that something:
-# bench::install_local_gh puts its directory first on PATH for the run-loop.sh subshell, so every
+# bench::install_local_gh puts its directory first on PATH for the arm's dispatch subshell, so every
 # `gh` call in that subprocess tree resolves here instead. It backs pr create/list/checks/view/merge
 # with a flat JSONL ledger (BENCH_GH_LEDGER) and plain local git operations against
 # BENCH_GH_REPO_DIR — no push, no network, no GitHub account, ever: `gh pr create` never needs

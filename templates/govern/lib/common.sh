@@ -62,21 +62,157 @@ PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.jso
 TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
-# Fleet event log (govern::event). Sourced HERE, not beside flows.sh/pregate.sh above — the log's
-# default location derives from GOVERNOR_DIR, which is only defined a few lines up. Same existence
-# guard as those modules, so a workspace scaffolded before this shipped still runs. OFF by default
-# behind GOVERN_EVENTS; see events.sh for the never-abort-the-run contract.
-# (`if`, not the `[[ … ]] && source` one-liner used above for flows/pregate: under `set -e` that
-# form ABORTS the sourcing shell when the file is absent — the very upgrade case it means to survive.)
-if [[ -f "$GOVERN_LIB_DIR/events.sh" ]]; then source "$GOVERN_LIB_DIR/events.sh"; fi
-# No-op stand-in so no call site needs its own `declare -F` probe. Only defined when the module is
-# genuinely absent — sourcing events.sh above already defined the real one.
-if ! declare -F govern::event >/dev/null 2>&1; then govern::event() { return 0; }; fi
-# Same fallback for the string escaper the lever-events emitter below borrows from events.sh: cheap
-# insurance against a workspace where events.sh is present but somehow didn't define it.
-if ! declare -F govern::_event_jesc >/dev/null 2>&1; then
-  govern::_event_jesc() { printf '%s' "${1-}"; return 0; }
-fi
+# ── Fleet event log (govern::event) ─────────────────────────────────────────────────────────────
+# Folded in from the former lib/events.sh (deleted with the dispatch loop, 1.19.3). The emitter is
+# NOT loop machinery: spawn-worker.sh, status.sh, statusline-segment.sh and the plugin monitor all
+# read/write it, and every one of them survives the loop purge. It lives here now so there is one
+# file to source and no existence guard to get wrong on an old workspace.
+#
+# HARD CONTRACT — the emitter can NEVER abort a caller. Every govern:: caller runs under
+# `set -euo pipefail`. A broken emitter (unwritable governor/, full disk, a malformed key) that
+# returned non-zero would kill the caller, a catastrophic trade for a telemetry line. So the whole
+# body runs inside a `{ … } || true` group and the function ends with an explicit `return 0` (root
+# CLAUDE.md rule 11).
+#
+# OFF BY DEFAULT (rule 12). GOVERN_EVENTS=1 opts in. Nothing changes at 0 beyond a handful of
+# no-op function calls.
+# Opt-in switch and the log location. GOVERNOR_DIR comes from common.sh; the fallback keeps this
+# file sourceable standalone (the tests do exactly that).
+GOVERN_EVENTS="${GOVERN_EVENTS:-0}"
+GOVERN_EVENTS_FILE="${GOVERN_EVENTS_FILE:-${GOVERNOR_DIR:-.}/events.jsonl}"
+
+# Minimal JSON string escaper. Pure bash parameter expansion — no subprocess, so emitting an event
+# costs nothing measurable and cannot fail on a fork limit. Covers backslash, quote, and the three
+# whitespace control characters that actually appear in governor values (a ticket title, a park
+# reason, a retry-class sentence). Other C0 controls are deliberately NOT handled: nothing the
+# governor emits contains them, and a bracket-range strip is locale-collation dependent — a
+# portability trap worse than the case it would guard.
+govern::_event_jesc() { # <string> -> escaped, WITHOUT surrounding quotes
+  local s="${1-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+  return 0
+}
+
+# The run identifier stamped on every line. Precedence:
+#   GOVERN_EVENT_RUN_ID  — explicit override (tests)
+#   TJ_RUN_ID            — the TokenJam run id run-loop.sh exports; the same id every worker of a
+#                          run is tagged with, so events join cleanly against OTel data
+#   GOVERN_RUN_DIR       — basename of the run dir (a spawn-worker inherits this even standalone)
+#   adhoc-$$             — a manual invocation outside any run
+govern::_event_run_id() {
+  local rid="${GOVERN_EVENT_RUN_ID:-${TJ_RUN_ID:-}}"
+  if [[ -z "$rid" && -n "${GOVERN_RUN_DIR:-}" ]]; then rid="${GOVERN_RUN_DIR##*/}"; fi
+  if [[ -z "$rid" ]]; then rid="adhoc-$$"; fi
+  printf '%s' "$rid"
+  return 0
+}
+
+# govern::event <type> [key=value ...]
+#
+# Appends ONE JSON object per line to $GOVERN_EVENTS_FILE. Always-on fields, always in this order:
+#   {"ts":<epoch>,"run_id":"<id>","type":"<type>", …extras}
+# `ts` first and every later key preceded by a comma is load-bearing: the readers locate a field by
+# searching for `,"key":` (or `{"key":`), which an ESCAPED quote inside a string value can never
+# false-match. Values that look like an integer or a JSON literal are emitted bare (so `pid` and
+# `elapsed` are numbers a consumer can compare); everything else is a quoted string.
+#
+# The append is a single `printf >>`. On every platform the governor runs on, an O_APPEND write
+# below PIPE_BUF (4096 on macOS/Linux) is atomic, so two concurrent drivers can append to the same
+# log without interleaving a line. Event lines are far below that; a pathological long value is
+# truncated (see GOVERN_EVENT_MAX_LINE) rather than risking a torn line.
+govern::event() { # <type> [k=v ...]
+  {
+    [[ "${GOVERN_EVENTS:-0}" == "1" ]] || return 0
+    local file type line kv k v maxlen
+    file="${GOVERN_EVENTS_FILE:-${GOVERNOR_DIR:-.}/events.jsonl}"
+    type="${1:-unknown}"
+    shift 2>/dev/null || true
+    line="{\"ts\":$(date +%s),\"run_id\":\"$(govern::_event_jesc "$(govern::_event_run_id)")\",\"type\":\"$(govern::_event_jesc "$type")\""
+    for kv in "$@"; do
+      [[ "$kv" == *=* ]] || continue
+      k="${kv%%=*}"; v="${kv#*=}"
+      [[ -n "$k" ]] || continue
+      # Bare JSON scalar iff it is an integer or one of the three literals — everything else is a
+      # quoted string. An `=~` regex, not a `case` glob: the glob forms that approximate `^-?[0-9]+$`
+      # all admit something like `1-2`, which would emit a bare token and produce invalid JSON.
+      if [[ "$v" == "true" || "$v" == "false" || "$v" == "null" || "$v" =~ ^-?[0-9]+$ ]]; then
+        line+=",\"$(govern::_event_jesc "$k")\":$v"
+      else
+        line+=",\"$(govern::_event_jesc "$k")\":\"$(govern::_event_jesc "$v")\""
+      fi
+    done
+    line+="}"
+    maxlen="${GOVERN_EVENT_MAX_LINE:-3500}"
+    if [[ "${#line}" -gt "$maxlen" ]]; then line="${line:0:$((maxlen-2))}\"}"; fi
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    printf '%s\n' "$line" >> "$file" 2>/dev/null || true
+  } 2>/dev/null || true
+  return 0
+}
+
+# The awk field extractor every reader shares (status.sh, statusline-segment.sh, the plugin
+# monitor). Emitted as a text blob so each consumer can prepend it to its own awk program — bash
+# has no way to share an awk function otherwise, and three divergent copies of a JSON scanner is
+# exactly the drift this avoids.
+#
+# jget(line, key) returns the scalar value of `key`, or "" when absent. It anchors on `{"key":` /
+# `,"key":`, so a key name appearing INSIDE a string value (where every quote is backslash-escaped)
+# cannot false-match. Only valid on lines this emitter wrote: flat, one level deep, no nesting.
+govern::event_awk_lib() {
+  cat <<'AWKLIB'
+function jget(line, key,   pat, i, s, c, out, esc, n) {
+  pat = "\"" key "\":"
+  i = index(line, "{" pat)
+  if (i > 0) { i = i + 1 } else {
+    i = index(line, "," pat)
+    if (i == 0) return ""
+    i = i + 1
+  }
+  s = substr(line, i + length(pat))
+  if (substr(s, 1, 1) == "\"") {
+    s = substr(s, 2); out = ""; esc = 0; n = length(s)
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (esc) {
+        if (c == "n") out = out "\n"
+        else if (c == "t") out = out "\t"
+        else if (c == "r") out = out "\r"
+        else out = out c
+        esc = 0
+      } else if (c == "\\") { esc = 1 }
+      else if (c == "\"") { break }
+      else { out = out c }
+    }
+    return out
+  }
+  if (match(s, /^[^,}]*/)) return substr(s, 1, RLENGTH)
+  return ""
+}
+AWKLIB
+  return 0
+}
+
+# Resolve the workspace event log by walking UP from a directory. Used by every surface that is
+# handed a cwd rather than a workspace root (the statusline segment, the plugin monitor): a session
+# is usually inside a sub-repo or a worktree, several levels below governor/.
+# Prints the path and returns 0 when found; prints nothing and returns 1 otherwise.
+govern::event_find_log() { # [start-dir]
+  local d="${1:-$PWD}" i=0
+  if [[ -n "${GOVERN_EVENTS_FILE:-}" && -f "${GOVERN_EVENTS_FILE:-}" ]]; then
+    printf '%s' "$GOVERN_EVENTS_FILE"; return 0
+  fi
+  d="$(cd "$d" 2>/dev/null && pwd)" || return 1
+  while [[ -n "$d" && "$d" != "/" && "$i" -lt 12 ]]; do
+    if [[ -f "$d/governor/events.jsonl" ]]; then printf '%s' "$d/governor/events.jsonl"; return 0; fi
+    d="$(dirname "$d")"; i=$((i+1))
+  done
+  return 1
+}
 
 # ── lever-events emitter (bench multi-lever redesign, spec 4b) ─────────────────────────────────
 # Append-only sibling of $GOVERN_RUN_DIR/state.jsonl: one JSON object per line, one of the four
@@ -158,6 +294,26 @@ govern::worker_logdir() { # ticket -> dir
   if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
 }
 
+# Reclaim disk from a PRESERVED (parked/failed/timed-out) worktree WITHOUT discarding any work.
+# node_modules / .next / dist are gitignored + regenerable, never uncommitted work, so stripping
+# them frees the bulk of a bootstrapped worktree while keeping the source checkout + any diffs for
+# inspection/resume. This is what stops a fleet from self-bricking: a handful of parks no longer
+# fills the disk (#48). Moved here from run-loop.sh's slim_worktree() when the loop was deleted:
+# the caller that PRESERVES a worktree is spawn-worker.sh, so the slim belongs beside it.
+# Skipped in dry mode and when a worktree-cmd override is set (tests).
+govern::slim_worktree() { # <ticket> [worktree-path]
+  local n="$1" wt="${2:-}"
+  [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] || return 0
+  [[ -n "$wt" ]] || wt="${WORKTREE_BASE:-}/ticket-$n"
+  [[ -d "$wt" ]] || return 0
+  local before after
+  before=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
+  find "$wt" -type d \( -name node_modules -o -name .next -o -name dist \) -prune -exec rm -rf {} + 2>/dev/null || true
+  after=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
+  govern::log "slimmed worktree ticket-$n: ${before:-?}MB → ${after:-?}MB (node_modules/.next/dist stripped; source + diffs kept)"
+  return 0
+}
+
 # Stamps a run dir with the workspace's synced hub version (#107), so bench/replay.mjs can scope
 # its default corpus to the sessions that ran under the CURRENT harness instead of blending every
 # version a workspace has ever run: no transcript event carries the shiploop package version.
@@ -237,17 +393,6 @@ unset _r _x _in_repos _govern_selfref_default
 govern::is_selfref_repo() { # repo -> 0 if self-referential (harness/templates), 1 otherwise
   local r="$1" x; for x in $GOVERN_SELFREF_REPOS; do [[ "$r" == "$x" ]] && return 0; done; return 1
 }
-
-# Shared safety-rail knob identifiers (#331). govern-self-apply.sh and govern-improve-triage.sh both
-# need to recognize the same protected knobs; keeping the list in ONE place stops a rail added to one
-# but not the other from leaving the knob unprotected in the other:
-#   • govern-self-apply.sh greps the applied DIFF (case-sensitively) for these + its own diff-shape
-#     guards (`destructive`, the merge-gate `"green" ||` clause).
-#   • govern-improve-triage.sh greps each PROPOSAL LINE (case-INsensitively) for these + the
-#     human-readable rail PHRASES the improve-reviewer writes ("auto-merge", "hard-stop", …).
-# Only genuinely shared knob names live here; each script appends its own extras (see there). Alternation
-# for `grep -E`; every token is a literal identifier (no regex metachars), so it composes safely with `|`.
-GOVERN_PROTECTED_PATTERNS='GOVERN_MERGE_REPOS|is_merge_repo|bypassPermissions|GOVERN_PERMISSION_MODE|permflag|setting-sources|GOVERN_MAX_TICKETS|GOVERN_MAX_BAD_STREAK|GOVERN_MAX_RUNTIME|GOVERN_SELF_APPLY'
 
 govern::log() { printf '[govern %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 govern::die() { printf '[govern ERROR] %s\n' "$*" >&2; exit 1; }
@@ -2378,9 +2523,9 @@ govern::overlap_nudge() { # named-csv [tickets-file]
       [[ -n "$tier" ]] || continue
 
       if [[ "$tier" == "exact" ]]; then
-        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: batch with npm run govern -- $tn $other"
+        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: batch with scripts/govern/spawn-worker.sh $tn $other"
       else
-        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider npm run govern -- $tn $other"
+        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider scripts/govern/spawn-worker.sh $tn $other"
       fi
       shown=$((shown+1))
       if [[ "${GOVERN_EVENTS:-0}" == "1" ]]; then

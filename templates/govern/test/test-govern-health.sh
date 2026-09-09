@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Governor self-ROI telemetry (#272): govern-health.sh computes park rate + self-referential churn
-# classification + tokens-per-ticket from ticket-history.jsonl, and run-loop's record() ENRICHES
-# each history entry with token spend (from the worker's stream-json result) + a churn flag (from
-# the report's PR repos). Two parts: (A) the health computation over a synthetic history; (B) an
-# end-to-end proof that a real run writes enriched entries and surfaces the ROI block at run-end.
-# Hermetic + generic (mk_ws_stub seeds a throwaway workspace; churn set pinned via GOVERN_SELFREF_REPOS).
+# classification + tokens-per-ticket from ticket-history.jsonl, and resolve-ticket.sh's
+# rt_history_enrich() (the loop purge moved run-loop's record()/history_enrich() here) ENRICHES each
+# history entry with token spend (from the worker's log stream) + a churn flag (from the report's PR
+# repos). Two parts: (A) the health computation over a synthetic history — UNCHANGED; (B) a proof
+# that a real resolve-ticket.sh pass writes an enriched history row (tokens/costUsd/churn). Hermetic
+# + generic (mk_ws_stub seeds a throwaway workspace; churn set pinned via GOVERN_SELFREF_REPOS).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 HEALTH="$DIR/../govern-health.sh"
-RL="$DIR/../run-loop.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
@@ -69,87 +69,77 @@ assert_contains "$htxt" "per ticket"       "human output surfaces tokens-per-tic
 # empty / missing history degrades cleanly
 assert_contains "$(GOVERN_HISTORY_FILE="$T/none.jsonl" bash "$HEALTH")" "no history yet" "missing history degrades cleanly"
 
-# ── Part B: end-to-end — run-loop enriches history + emits ROI block at run-end ───────────────
-E="$(mktemp -d)"; mk_ws_stub "$E"
-mkdir -p "$E/bin" "$E/governor" "$E/logs" "$E/wt"
+# ── Part B: resolve-ticket.sh's rt_history_enrich() writes tokens/costUsd/churn on a green pass ──
+# resolve-ticket.sh no longer spawns a worker itself — it lands a worker's ALREADY-PRODUCED report —
+# so this seeds the worker's log stream directly (govern::worker_logdir's fallback: a `worker.jsonl`
+# result event, read via govern::stream_usage) rather than driving a stubbed `claude` through a whole
+# dispatch. #1's PR targets `harness`, pinned self-referential via GOVERN_SELFREF_REPOS below.
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
+
+E="$(mktemp -d)"
+mk_ws_stub "$E"
+export GOVERN_QUEUE_DIR="$E/queue"
+mkdir -p "$E/bin/lib" "$E/queue" "$E/logs/ticket-1"
 ( cd "$E" && git init -q && git config user.email t@t && git config user.name t )
-cat > "$E/tickets.md" <<'EOF'
+
+set +e
+cp "$RT" "$E/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$E/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$E/bin/lib/"
+
+ELANDED="$E/landed.log"
+cat > "$E/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$E/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+cat > "$E/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$E/bin"/*.sh
+export LANDED_LOG="$ELANDED"
+landed_count() { [[ -f "$ELANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$ELANDED" | wc -c | tr -d ' '; }
+
+cat > "$E/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — self-referential one
-**Severity:** High — x.
-body1
+
+**Severity:** High
+
+Done when: x.
+
 ---
-## #2 — product one
-**Severity:** Medium — y.
-body2
----
-EOF
-printf '## Open\n\n## Resolved\n' > "$E/governor/escalations.md"
-cat > "$E/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$E/wt/\$1"; echo "$E/wt/\$1"
-EOF
-chmod +x "$E/wt.sh"
-cat > "$E/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*) echo '[]';;
-  *)           echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$E/bin/gh"
-# stub claude: supervisor → ok; worker → resolved report + a result event carrying token USAGE, and
-# a PR whose repo makes #1 self-referential (harness) and #2 product (backend).
-cat > "$E/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-n="$(printf '%s' "${GOVERN_REPORT_PATH:-}" | sed -E 's#.*/ticket-([0-9]+)/.*#\1#')"
-repo="backend"; [[ "$n" == "1" ]] && repo="harness"
-report="{\"status\":\"resolved\",\"pr\":{\"repo\":\"$repo\",\"number\":${n}01,\"url\":\"http://pr/$n\"},\"lessonPatch\":null,\"newTickets\":[],\"crossRefs\":{},\"migration\":null,\"escalation\":null}"
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-# a stream-json result event carrying token usage + cost (what history_enrich reads)
-printf '{"type":"result","subtype":"success","total_cost_usd":2.5,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700},"result":%s}\n' \
-  "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$E/bin/claude"
+TIX
+( cd "$E" && git add -A && git commit -qm init )
 
-HIST="$E/governor/ticket-history.jsonl"; : > "$HIST"
-out="$(PATH="$E/bin:$PATH" \
-  ROOT_PM=npm \
-  GOVERN_SELFREF_REPOS="harness shiploop" \
-  GOVERN_TICKETS_FILE="$E/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$E/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$E/logs" \
-  GOVERN_HISTORY_FILE="$HIST" \
-  GOVERN_TICKET_SEQ_FILE="$E/.ticket-seq" \
-  GOVERN_LOCK="$E/lock" \
-  GOVERN_WORKTREE_CMD="$E/wt.sh" \
-  GOVERN_CLAUDE_BIN="$E/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" --serial 1 2 2>&1)"
+# a result event carrying token usage + cost — what govern::stream_usage / rt_history_enrich reads
+printf '{"type":"result","subtype":"success","total_cost_usd":2.5,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700}}\n' \
+  > "$E/logs/ticket-1/worker.jsonl"
 
-assert_contains "$out" "resolved=2"                 "e2e: both tickets resolved"
-assert_contains "$out" "health |"                   "e2e: ROI health logged at run-end"
-# the enriched history entries carry token spend + churn classification
-t1="$(jq -sc '[.[]|select(.ticket==1 and .status=="resolved")]|last' "$HIST")"
-t2="$(jq -sc '[.[]|select(.ticket==2 and .status=="resolved")]|last' "$HIST")"
-assert_eq "$(jq -r '.tokens.total' <<<"$t1")" "6000" "e2e: #1 history entry carries total token spend (100+200+5000+700)"
-assert_eq "$(jq -r '.costUsd' <<<"$t1")"      "2.5"  "e2e: #1 history entry carries costUsd"
-assert_eq "$(jq -r '.churn' <<<"$t1")"        "true" "e2e: #1 (harness PR) classified self-referential churn"
-assert_eq "$(jq -r '.churn' <<<"$t2")"        "false" "e2e: #2 (backend PR) classified product"
+EHIST="$E/history.jsonl"
+report='{"status":"resolved","pr":{"repo":"harness","number":101,"url":"http://pr/1"},"prs":[]}'
+: > "$ELANDED"
+out="$( cd "$E" && printf '%s' "$report" \
+  | GOVERN_HISTORY_FILE="$EHIST" GOVERN_LOG_ROOT="$E/logs" GOVERN_SELFREF_REPOS="harness shiploop" \
+    bash "$E/bin/resolve-ticket.sh" 1 2>&1 )"
+rc=$?
 
-# the run summary.md carries the ROI block
-summ="$(cat "$E/logs"/run-*/summary.md 2>/dev/null || true)"
-assert_contains "$summ" "Governor ROI (self-telemetry" "e2e: summary.md carries the ROI section"
+assert_eq "$rc" "0" "e2e: a green, evidenced resolve exits 0"
+assert_eq "$(landed_count)" "1" "e2e: the ticket lands exactly once"
+row="$(jq -c 'select(.ticket==1)' "$EHIST" | tail -1)"
+assert_eq "$(jq -r '.status' <<<"$row")"       "resolved" "e2e: history row records the outcome"
+assert_eq "$(jq -r '.tokens.total' <<<"$row")" "6000"     "e2e: history row carries the token total (100+200+5000+700)"
+assert_eq "$(jq -r '.costUsd' <<<"$row")"      "2.5"      "e2e: history row carries costUsd"
+assert_eq "$(jq -r '.churn' <<<"$row")"        "true"     "e2e: history row classifies self-referential churn (harness PR)"
 
 rm -rf "$E"
 assert_done

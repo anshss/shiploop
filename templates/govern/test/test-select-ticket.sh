@@ -71,34 +71,34 @@ assert_eq "$na" "$(printf '5\tNOT govern-automatable')" "helper flags only the b
 # basename mention does NOT collide — and a RESOLVED sync-port escalation does NOT exclude.
 cat > "$TMP/sp-tickets.md" <<'EOF'
 ## #20 — high, edits a file with an OPEN sync-port port
-**Severity:** High — refactor `scripts/govern/run-loop.sh` heartbeat.
+**Severity:** High — refactor `scripts/govern/spawn-worker.sh` heartbeat.
 ---
 ## #21 — medium, untouched by any sync-port escalation
 **Severity:** Medium — tweak the docs.
 ---
 ## #22 — low, only names a bare basename (not the full path)
-**Severity:** Low — run-loop.sh logging polish.
+**Severity:** Low — spawn-worker.sh logging polish.
 ---
 EOF
 cat > "$TMP/sp-esc-open.md" <<'EOF'
 ## Open
 ### #99 — sync-port: 1 file(s) need manual porting
 - **Branch:** sync-auto-abc123def-1f
-- **Files:** scripts/govern/run-loop.sh
+- **Files:** scripts/govern/spawn-worker.sh
 ## Resolved
 EOF
 cat > "$TMP/sp-esc-resolved.md" <<'EOF'
 ## Open
 ## Resolved
 ### #99 — sync-port: 1 file(s) need manual porting — RESOLVED
-- **Files:** scripts/govern/run-loop.sh
+- **Files:** scripts/govern/spawn-worker.sh
 EOF
 
 # helper flags ONLY the full-path open-collision ticket (#20); the untouched #21 and the
 # bare-basename mention #22 are clear.
 sp="$(GOVERN_TICKETS_FILE="$TMP/sp-tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/sp-esc-open.md" \
   bash -c 'source "'"$DIR"'/../lib/common.sh"; govern::sync_port_collision_tickets')"
-assert_eq "$sp" "$(printf '20\tscripts/govern/run-loop.sh')" "sync-port helper flags only the full-path open-collision ticket"
+assert_eq "$sp" "$(printf '20\tscripts/govern/spawn-worker.sh')" "sync-port helper flags only the full-path open-collision ticket"
 
 # select-ticket EXCLUDES the colliding High #20 → picks Medium #21 over Low #22 (proves the
 # High collider was skipped, not merely deprioritized).

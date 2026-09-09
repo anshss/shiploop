@@ -2,7 +2,7 @@
 # The internal ticket id is suppressed on PRs BY DEFAULT — for every workspace, not just the ones
 # whose repos are public.
 #
-# Why it exists: the run-loop's post-hoc scrub only reaches a PR's title+body. A COMMIT SUBJECT is
+# Why it exists: resolve-ticket.sh's post-hoc scrub only reaches a PR's title+body. A COMMIT SUBJECT is
 # unreachable (rewriting pushed history = force-push = hard stop), so the only control for commit
 # subjects is telling the worker up front — and before this that instruction was injected only when
 # some repo in the workspace was detected PUBLIC. A private-only fleet therefore shipped `#N` into

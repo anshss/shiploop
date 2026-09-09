@@ -63,7 +63,7 @@ assert_contains "$out" '"permissionDecision": "deny"' "1. ticket-shaped Agent ca
 assert_contains "$out" 'Agent(' "1b. deny reason contains the call to paste"
 assert_contains "$out" 'subagent_type' "1c. deny reason names subagent_type"
 assert_contains "$out" 'worker' "1d. deny reason names the worker agent type"
-assert_contains "$out" 'npm run govern -- 42' "1e. deny reason carries the govern alternative with the real ticket number"
+assert_contains "$out" 'npm run govern:pre-dispatch -- 42' "1e. deny reason carries the headless govern alternative with the real ticket number"
 assert_contains "$out" 'GOVERN_TICKET_ROUTE_GUARD=0' "1f. deny reason names its own kill switch"
 clear_counter "$sid"
 

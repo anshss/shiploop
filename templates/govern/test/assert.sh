@@ -36,7 +36,7 @@ export _GOVERN_ASSUME_MERGE_ALLOWED=1
 unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
 
 # Hermetic sizing: the #21 scout runs a REAL `claude -p` pass on the dispatch path, so leaving it on
-# would (a) make every run-loop test issue an implicit model call and (b) burn one invocation of the
+# would (a) make every dispatch test issue an implicit model call and (b) burn one invocation of the
 # stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"
 # fixture by one and failing tests that have nothing to do with sizing. Off by default here; the
 # scout's own test (test-scout-survey.sh) exercises the sanitize/clamp guard directly and sets what
@@ -75,7 +75,7 @@ export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter (spec 4b): it
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
 
-# §4.3 index rebuild fires post-resolve in run-loop.sh. It is git/grep only — no model call — but it
+# §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only — no model call — but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
 export GOVERN_INDEX=0
@@ -95,7 +95,7 @@ export _GOVERN_MAXBUDGETUSD_SUPPORTED=0
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it
 # right after `mktemp -d`. Pass the auto-merge repos as a comma list (default "alpha"); REPOS = those plus
 # a frontend "web" repo (PR-only). Exports GOVERN_WS_ROOT (+ GOVERN_EXTERNALIZE_LANE=0, harmless where the
-# externalize lane doesn't exist, required where it does so run-loop's lane doesn't fire under the stub).
+# externalize lane doesn't exist, required where it does so the externalize lane doesn't fire under the stub).
 #   mk_ws_stub "$T"                     # alpha auto-mergeable, web PR-only
 #   mk_ws_stub "$T" "alpha,api"         # alpha + api auto-mergeable
 #   mk_ws_stub "$T" "" "alpha"          # alpha PR-only AND local-first (#72)

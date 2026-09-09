@@ -13,9 +13,11 @@
 #      the fallback ceiling, gated on its own probe/seam, for a CLI with no --max-turns
 #   6. a CLI with NEITHER flag is a HARD STOP, not a silent uncapped spawn; BENCH_ALLOW_UNCAPPED_TURNS=1
 #      is the only way past it
-#   7. the shiploop arm seeds one queue ticket per backlog line, numbered so run-loop.sh can be
-#      handed the whole set in ONE named dispatch (a per-ticket fan-out would bypass the loop's
-#      dependency gate and escalation, which are part of what is being measured)
+#   7. the shiploop arm seeds one queue ticket per backlog line, numbered so the arm can walk the
+#      whole set, and it drives the SHIPPED session lane per item (pre-dispatch-check.sh, then
+#      spawn-worker.sh, then resolve-ticket.sh). Skipping the gate script or the resolve script
+#      would measure something that is not the product, and it stamps its own run directory so
+#      bench/replay.mjs still finds shiploop-version and driver-model
 #   8. the seeded queue is really dispatchable: the shipped select-ticket.sh orders every ticket.
 #      Without this the arm could scaffold, seed a queue the selector rejects, record zero cost,
 #      and have the rollup report that as a 100% saving
@@ -173,10 +175,23 @@ assert_not_contains "$seeded" "Verify with" "7. and carries no verify_cmd, same 
 # that as a 100% saving. This is the assertion that stops a silent 100%.
 assert_contains "$seeded" "Repo: bench" "7. Repo: is the sub-repo name the selector matches on"
 assert_not_contains "$seeded" "Repo: fixture://" "7. never the clone URL"
-# One named dispatch of the full set, not a per-ticket fan-out: the dependency gate, the
-# cross-driver re-verify, and the failure-streak escalation only exist in the full loop.
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'run-loop.sh" --serial $nums' \
-  "7. the arm hands run-loop.sh every ticket number in one dispatch"
+# All three lane scripts, in order. The pre-spawn gates (dependency, cross-session re-verify,
+# failure-streak breaker, upstream drift) live ONLY in pre-dispatch-check.sh, and the await-CI +
+# merge + land path lives ONLY in resolve-ticket.sh: an arm that called spawn-worker.sh alone would
+# measure a worker, not the product.
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'pre-dispatch-check.sh" "$n"' \
+  "7. the arm runs the pre-spawn gate for every item"
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'spawn-worker.sh" "$n"' \
+  "7. the arm spawns the real worker"
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'resolve-ticket.sh" "$n"' \
+  "7. the arm feeds the worker report to the real resolve path"
+# The run-dir stamps bench/replay.mjs reads (shiploop-version, driver-model) are written by the
+# arm itself now: nothing on the interactive lane sets GOVERN_RUN_DIR any more, so the ONE consumer
+# that actually feeds replay.mjs has to establish it. See bench/KNOWN-LIMITS.md.
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'export GOVERN_RUN_DIR="$rundir"' \
+  "7. the arm scopes every worker log to one run directory"
+assert_contains "$(cat "$HUB/bench/arms.sh")" 'govern::stamp_driver_model "$rundir"' \
+  "7. and stamps it, so replay.mjs is not left guessing the driver tier"
 # The shiploop arm carries the SAME two rails as the vanilla arm, through the governor's own knobs.
 assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_TURNS="$worker_turns"' \
   "7. the per-worker turn ceiling reaches the loop's workers"
@@ -194,13 +209,13 @@ mkdir -p "$T/state/wd-y"
   && git -c user.email=a@b -c user.name=a add -A \
   && git -c user.email=a@b -c user.name=a commit -qm init ) >/dev/null 2>&1
 ws="$(armsh "bench::scaffold_workspace '$T/state/wd-y' probe bench" | tail -1)"
-if [ -x "$ws/scripts/govern/run-loop.sh" ]; then
-  printf 'ok   - 8. the arm scaffolds a workspace carrying the real run-loop.sh\n'
+if [ -x "$ws/scripts/govern/spawn-worker.sh" ] && [ -x "$ws/scripts/govern/resolve-ticket.sh" ]; then
+  printf 'ok   - 8. the arm scaffolds a workspace carrying the real lane scripts\n'
   armsh "bench::seed_tickets '$BL' '$ws/queue/tickets.md' bench" >/dev/null
   sel="$(cd "$ws" && GOVERN_WS_ROOT="$ws" bash "$ws/scripts/govern/select-ticket.sh" "" "1,2,3,4,5,6" 2>&1 | tr '\n' ',')"
   assert_eq "$sel" "1,2,3,4,5,6," "8. the real selector orders every seeded ticket for dispatch"
 else
-  printf 'FAIL - 8. scaffold_workspace produced no run-loop.sh (ws=%s)\n' "$ws"
+  printf 'FAIL - 8. scaffold_workspace produced no lane scripts (ws=%s)\n' "$ws"
   ASSERT_FAILS=$((ASSERT_FAILS+1))
 fi
 

@@ -1,98 +1,72 @@
 #!/usr/bin/env bash
-# Fail-closed CI verification (companion to #34b / #42): when a resolved ticket's PR is on a
-# merge-repo but its CI state cannot be VERIFIED (gh network/auth/rate-limit/5xx — await-ci returns
-# 'error'), run-loop must PARK the ticket (keep its block, leave the PR open, escalate) and NEVER
-# merge blind. This is the regression guard for the pre-fix fail-OPEN where a broken gh looked
-# identical to a checkless repo (`… || echo '[]'`) and auto-merged an un-verified PR.
+# Fail-closed CI verification (companion to #34b / #42), re-targeted at resolve-ticket.sh (the loop
+# purge moved this step here): when a resolved ticket's PR is on a merge-repo but its CI state cannot
+# be VERIFIED (merge-pr.sh returns rc=4, its "CI state unverifiable" exit), resolve-ticket.sh must
+# refuse to land — keep the tickets.md block untouched, exit non-zero, never merge blind. This is the
+# regression guard for the pre-fix fail-OPEN where a broken gh looked identical to a checkless repo
+# and auto-merged an un-verified PR. Hermetic — resolve-ticket.sh sandboxed next to stubs of
+# merge-pr.sh / await-ci.sh / land-resolution.sh, no network, no gh, no real push.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-RL="$DIR/../run-loop.sh"
+set +e
+
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
-cat > "$T/tickets.md" <<'EOF'
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+LANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+# rc=4 — merge-pr.sh's own "CI state UNVERIFIABLE" exit (gh network/auth/rate-limit/5xx).
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 4
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$LANDED"
+landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LANDED" | wc -c | tr -d ' '; }
+
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — high one
-**Severity:** High — x.
-body1
+
+**Severity:** High
+
+Done when: x.
+
 ---
-EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
+TIX
+( cd "$T" && git add -A && git commit -qm init )
 
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
+report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/1"},"prs":[]}'
+: > "$LANDED"
+out="$( cd "$T" && printf '%s' "$report" | bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
+rc=$?
 
-# stub gh: `pr list` (resume/discovery) → none; `pr checks` → ERROR (exit 1, no JSON — models a
-# gh/GitHub API failure); else pass. await-ci must therefore conclude 'error', NOT 'none'.
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*)   echo '[]';;
-  *"pr checks"*) exit 1;;
-  *"pr merge"*)  echo 'MERGED (should never happen for unverifiable CI)'; exit 0;;
-  *)             echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$T/bin/gh"
+assert_eq "$rc" "5" "unverifiable CI (merge-pr rc=4) is a refusal — resolve-ticket exits 5"
+assert_eq "$(landed_count)" "0" "unverifiable CI does not land — land-resolution.sh was never reached"
+assert_contains "$out" "CI state could not be verified" "resolve-ticket's own unverifiable-CI wording is surfaced"
+remaining="$(grep -c '^## #' "$T/queue/tickets.md" || true)"
+assert_eq "$remaining" "1" "ticket #1 block SURVIVES unverifiable CI (fail-closed: never merge blind, never delete the block for a PR whose CI was never verified)"
 
-# stub claude: supervisor verdict on the marker, else a worker that resolves with a merge-repo PR
-# on `alpha` (the mk_ws_stub allowlist default).
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-n="$(printf '%s' "${GOVERN_REPORT_PATH:-}" | sed -E 's#.*/ticket-([0-9]+)/.*#\1#')"
-report="{\"status\":\"resolved\",\"pr\":{\"repo\":\"alpha\",\"number\":${n}01,\"url\":\"http://pr/${n}\"},\"lessonPatch\":null,\"newTickets\":[],\"crossRefs\":{\"overlaps\":[],\"dependsOn\":[]},\"migration\":null,\"escalation\":null}"
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
-
-# NB: GOVERN_SKIP_CI is UNSET → merge_pr_for_ticket runs the real await-ci (which errors here).
-# GOVERN_CI_ERR_MAX=1 / GRACE=0 keep the error conclusion instant. GOVERN_CI_FIX_TRIES=0 so an
-# 'error' never triggers a CI-fix re-dispatch loop. Governor prompt files come from the
-# assert.sh-resolved template governor dir (see GOVERN_PROMPTS_DIR).
-[[ -n "${GOVERN_PROMPTS_DIR:-}" ]] || { echo "SKIP - GOVERN_PROMPTS_DIR unresolved"; exit 0; }
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_HISTORY_FILE="$T/history.jsonl" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_CI_ERR_MAX=1 GOVERN_CI_NONE_GRACE=0 GOVERN_CI_FIX_TRIES=0 \
-  GOVERN_IMPROVE=0 \
-  bash "$RL" 1 2>&1)"
-
-assert_contains "$out" "CI state unverifiable"           "unverifiable CI is detected + logged"
-assert_contains "$out" "parking (ticket NOT deleted)"    "unverifiable CI parks instead of resolving"
-assert_contains "$out" "parked=1"                        "#1 counted as parked, not resolved"
-remaining="$(grep -c '^## #' "$T/tickets.md" || true)"
-assert_eq "$remaining" "1" "ticket #1 block SURVIVES unverifiable CI (not deleted)"
-commits="$(cd "$T" && git log --oneline 2>/dev/null | grep -c 'resolve #' || true)"
-assert_eq "$commits" "0" "no resolve commit for a PR whose CI was never verified"
-merged_attempted="$(grep -c 'should never happen for unverifiable CI' <<<"$out" || true)"
-assert_eq "$merged_attempted" "0" "gh pr merge was NEVER invoked on unverifiable CI (fail closed)"
-assert_contains "$(cat "$T/governor/escalations.md")" "could not be verified" "escalation filed for the unverified PR"
-# The driver TAGS the failure signature it observed onto the cross-run history row: a gh error is an
-# infra signature, so the next attempt re-bets the ticket's own sizing instead of escalating a tier
-# that never failed (see govern::retry_class).
-assert_eq "$(jq -r 'select(.ticket==1) | .retryClass // ""' "$T/history.jsonl" 2>/dev/null)" "infra" \
-  "unverifiable CI stamps an infra retry signature onto the history row"
 assert_done
