@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-604","model":"claude-mythos-5"}
+{"type":"assistant","message":{"id":"msg_fixture_604_0","model":"claude-mythos-5","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}},"session_id":"fixture-604"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"fixture-604","total_cost_usd":0.06,"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}},"modelUsage":{"claude-mythos-5":{"inputTokens":1000,"outputTokens":1000,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}

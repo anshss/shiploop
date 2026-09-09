@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-602","model":"claude-fable-5-1"}
+{"type":"assistant","message":{"id":"msg_fixture_602_0","model":"claude-fable-5-1","usage":{"input_tokens":15000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}},"session_id":"fixture-602"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"fixture-602","usage":{"input_tokens":15000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}},"modelUsage":{"claude-fable-5-1":{"inputTokens":15000,"outputTokens":500,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}
