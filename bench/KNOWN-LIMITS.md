@@ -73,8 +73,8 @@ real remote and this friction does not exist there.
 
 ## `await-ci` genuinely polls; it is not shortcut
 
-The shiploop arm does **not** set `GOVERN_SKIP_CI` (that knob is `run-loop.sh`'s own internal
-optimization when it just confirmed green itself — not a top-level bypass). `await-ci.sh` really
+The shiploop arm does **not** set `GOVERN_SKIP_CI` (that knob is an internal optimization for a
+caller that just confirmed green itself, not a top-level bypass). `await-ci.sh` really
 calls the local `gh pr checks`/`gh pr view` twice, `GOVERN_CI_NONE_GRACE` seconds apart (default 6s),
 before it verifies "checkless" and lets the merge proceed. That is ~12-18 real wall-clock seconds
 per ticket that a genuinely CI-less installed workspace would also pay — it is not simulated away,
@@ -167,9 +167,10 @@ the run is not counted by this path and never will be: it writes no transcript i
 
 No transcript event carries the shiploop *package* version — only the Claude Code CLI version
 (`claude_code_version` on the session's `init` event) and the model. The package version instead
-comes from a sibling file next to the transcript: `run-loop.sh` stamps every run directory it
-creates with `run-.../shiploop-version`, the workspace's synced hub version, at dispatch time
-(`govern::stamp_run_version`, `templates/govern/lib/common.sh`). The write is best-effort — an
+comes from a sibling file next to the transcript: whoever creates a run directory stamps it with
+`run-.../shiploop-version`, the workspace's synced hub version
+(`govern::stamp_run_version`, `templates/govern/lib/common.sh`). Since the dispatch loop was
+retired, that caller is `bench::arm_shiploop` (see "Run-scoped stamps" below). The write is best-effort, an
 unreadable or absent version marker never blocks a dispatch, it just leaves that run unstamped.
 
 `bench/replay.mjs` uses the stamp to scope its default corpus: it keeps only the runs stamped with
@@ -243,7 +244,7 @@ applied) finished with **neither arm clearing either ticket** by `verify_cmd` + 
   Ironically, **this ticket's own body — which explains the validation-gate recognizer bug by
   quoting the exact trigger phrases as an illustrative example ("Done when: a PASS/FAIL table from
   an actual run against the sandbox")** — tripped the CURRENT (pre-fix) validation gate on the
-  ticket text itself: `run-loop.sh` refused to auto-resolve because "the worker gave no live-test
+  ticket text itself: the harness refused to auto-resolve because "the worker gave no live-test
   evidence." This is a real, if unintended, demonstration that the existing gate does substring-
   match on ticket text, but it makes this specific ticket unusable for a clean pass/fail bench
   measurement. A backlog ticket about the validation gate should never quote a validation-triggering
@@ -276,7 +277,7 @@ observed default before trusting a future run's cost delta as an apples-to-apple
 
 ## Small "ticket" fragments neither dispatched ticket ever named
 
-Every real `run-loop.sh` invocation observed during this ticket's live runs wrote a handful of
+Every real dispatch observed during this ticket's live runs wrote a handful of
 tiny (single-digit-KB, near-zero-token) `ticket-5`, `ticket-7`, `ticket-8`, `ticket-9` (and, on a
 resume, `ticket-301`/`ticket-401`) directories under `logs/govern/run-*/` with attempt-log-shaped
 JSON, for ticket numbers never named in `--serial`. They were traced far enough to confirm they are
@@ -285,3 +286,32 @@ contribute negligible tokens (~150 each) and null cost, so they do not materiall
 here — but their exact source inside the governor (a self-check the dispatcher runs at startup is
 the leading guess) was not identified before this ticket's time ran out. Filed as a new ticket
 rather than solved here.
+
+## Run-scoped stamps now come from the bench arm, not from the product
+
+`GOVERN_RUN_DIR` used to be exported in exactly one place, by the autonomous dispatch loop, right
+after it created `logs/govern/run-<ts>-<pid>/`. Everything run-scoped hung off it: each worker's log
+directory (`govern::worker_logdir`), the five capability-probe caches, `lever-events.jsonl`, and the
+two sibling stamps `shiploop-version` and `driver-model` that `bench/replay.mjs` reads (replay.mjs
+lines 598, 714 and 754).
+
+The loop is retired, and the replacement session lane deliberately does NOT set it. A plain
+interactive session running `pre-dispatch-check.sh`, then a worker, then `resolve-ticket.sh` falls
+back to the documented flat layout, `logs/govern/ticket-N/`, and writes no version or driver-model
+stamp at all.
+
+**What that costs, stated plainly.** For an ordinary interactive session: a re-attempt on the same
+item reads and overwrites the previous attempt's `worker.jsonl` at the flat path instead of getting
+a fresh run-scoped directory, and nothing records which harness version or which driver tier that
+attempt ran under. For bench: nothing, because `bench::arm_shiploop` mints its own per-arm run
+directory, exports `GOVERN_RUN_DIR` into the lane, and calls `govern::stamp_run_version` and
+`govern::stamp_driver_model` on it before spawning anything. The one consumer that actually feeds
+`replay.mjs` is therefore still fully stamped.
+
+**Why that way round.** The alternative was to have `spawn-worker.sh` mint a run directory whenever
+`GOVERN_RUN_DIR` is unset. That puts run-scope creation inside the worker boundary, mints one "run"
+per item (so the identifier stops meaning what its consumers assume it means), and breaks the flat
+fallback that `test-worker-log-runscope.sh` and `test-log-guard.sh` exist to pin. Since this
+directory already states that nothing in the published corpus is instrumented, paying that to stamp
+sessions nobody replays was the worse trade. Any caller that wants the old layout back gets it by
+exporting `GOVERN_RUN_DIR` before the lane runs, exactly as the bench arm does.

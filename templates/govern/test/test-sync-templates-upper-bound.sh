@@ -27,8 +27,8 @@ REPO="$SANDBOX/repo"; mkdir -p "$REPO/scripts/govern/test"
 TPL_ROOT="$SANDBOX/templates"; TPL="$TPL_ROOT/govern"; mkdir -p "$TPL/test"
 
 git -C "$REPO" init -q; git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
-echo 'echo run' > "$TPL/run-loop.sh"                          # template counterpart exists
-echo 'echo run' > "$REPO/scripts/govern/run-loop.sh"
+echo 'echo run' > "$TPL/spawn-worker.sh"                          # template counterpart exists
+echo 'echo run' > "$REPO/scripts/govern/spawn-worker.sh"
 echo 'echo assert' > "$REPO/scripts/govern/test/assert.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm init
 BASE="$(git -C "$REPO" rev-parse HEAD)"
@@ -39,12 +39,12 @@ export GOVERN_TEMPLATE_DIR="$TPL"
 bash "$TOOL" --mark "$BASE" >/dev/null
 
 # C1 — the change that WILL be ported (append so both lines stay visible in a diff).
-printf 'echo C1_LOCAL_IMPROVEMENT\n' >> "$REPO/scripts/govern/run-loop.sh"
+printf 'echo C1_LOCAL_IMPROVEMENT\n' >> "$REPO/scripts/govern/spawn-worker.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm "feat(govern): C1 local improvement"
 C1="$(git -C "$REPO" rev-parse HEAD)"
 
 # C2 — the "mid-run" commit that lands AFTER the bound is captured.
-printf 'echo C2_MIDRUN_COMMIT\n' >> "$REPO/scripts/govern/run-loop.sh"
+printf 'echo C2_MIDRUN_COMMIT\n' >> "$REPO/scripts/govern/spawn-worker.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm "feat(govern): C2 mid-run commit"
 
 # ── 1. bounded to C1: C1 is in scope, C2 is excluded ─────────────────────────────────────────────

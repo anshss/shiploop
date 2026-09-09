@@ -57,7 +57,7 @@ wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";
 wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
-  printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"
+  printf 'echo run\n' > "$H/scripts/govern/spawn-worker.sh"
   printf '# marker placeholder\n' > "$H/scripts/govern/.templates-synced-at"
   printf '# Escalations\n\n## Open\n' > "$H/governor/escalations.md"
   printf '# tickets\n' > "$H/queue/tickets.md"
@@ -68,7 +68,7 @@ EOF
   local BASE; BASE="$(git -C "$H" rev-parse HEAD)"
 
   # Template counterparts.
-  printf 'echo run\n' > "$T/templates/govern/run-loop.sh"
+  printf 'echo run\n' > "$T/templates/govern/spawn-worker.sh"
   printf '#!/usr/bin/env bash\nMETA_NAME="__META_NAME__"\nGITHUB_ORG="__GITHUB_ORG__"\nREPOS=(__REPOS__)\n' > "$T/templates/lib/workspace.sh"
   printf 'echo assert\n' > "$T/templates/govern/test/assert.sh"
   git -C "$T" init -q; git -C "$T" config user.email t@t; git -C "$T" config user.name t
@@ -118,11 +118,11 @@ assert_eq "$( [ -s "$mrec" ] && echo yes || echo no )" "no" "1. no merge invoked
 
 # ── Case 2: drift on a MIRRORED file → sync-templates reports drift ────────
 s="$(mk_sandbox)"
-printf 'echo v2\n' >> "$s/harness/scripts/govern/run-loop.sh"
-git -C "$s/harness" add -A; git -C "$s/harness" commit -qm "feat: improve run-loop"
+printf 'echo v2\n' >> "$s/harness/scripts/govern/spawn-worker.sh"
+git -C "$s/harness" add -A; git -C "$s/harness" commit -qm "feat: improve spawn-worker"
 out="$( tool_env "$s"; bash "$SYNCTPL" --check 2>&1 )"; rc=$?
 assert_eq "$rc" "3" "2. mirrored drift → sync-templates exit 3"
-assert_contains "$out" "improve run-loop" "2. drift lists the commit subject"
+assert_contains "$out" "improve spawn-worker" "2. drift lists the commit subject"
 
 # ── Case 3: workspace.sh-only change → NOT surfaced as drift ────────────────
 s="$(mk_sandbox)"
@@ -145,13 +145,13 @@ assert_eq "$rc" "0" "4. package.json change → NOT drift (exit 0)"
 
 # ── Case 5: --dry-run prints plan, cuts no branch, invokes nothing ─────────
 s="$(mk_sandbox)"
-printf 'echo v2\n' >> "$s/harness/scripts/govern/run-loop.sh"
-git -C "$s/harness" add -A; git -C "$s/harness" commit -qm "feat: run-loop tweak"
+printf 'echo v2\n' >> "$s/harness/scripts/govern/spawn-worker.sh"
+git -C "$s/harness" add -A; git -C "$s/harness" commit -qm "feat: spawn-worker tweak"
 mrec="$s/mrec.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 out="$( tool_env "$s"; export GOVERN_MERGE_CMD="$merge"; bash "$SYNCPORT" --dry-run 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "5. --dry-run → exit 0"
 assert_contains "$out" "DRY RUN" "5. announces DRY RUN"
-assert_contains "$out" "scripts/govern/run-loop.sh" "5. lists drifted file"
+assert_contains "$out" "scripts/govern/spawn-worker.sh" "5. lists drifted file"
 assert_eq "$( [ -s "$mrec" ] && echo yes || echo no )" "no" "5. dry-run: no merge invoked"
 # No branch cut in the templates repo:
 branches="$(git -C "$s/templates" branch --list 'sync-auto-*' 2>/dev/null)"

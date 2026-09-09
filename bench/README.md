@@ -238,7 +238,7 @@ bench/
 | Arm | Shape |
 |---|---|
 | `vanilla` | One `claude -p` session for the whole backlog, headless default model, in a fresh worktree of the pinned ref. Prompt is the backlog verbatim. |
-| `shiploop` | The real `templates/govern/run-loop.sh` over a `queue/tickets.md` seeded with the same backlog, in a scaffolded throwaway workspace, defaults on. Cost is everything the loop spends: driver, scouts, workers, escalations. |
+| `shiploop` | The real shipped session lane (`pre-dispatch-check.sh`, then `spawn-worker.sh`, then `resolve-ticket.sh`) walked over a `queue/tickets.md` seeded with the same backlog, in a scaffolded throwaway workspace, defaults on. Cost is everything the lane spends: gates, scouts, workers, escalations. |
 | `vanilla-fresh` | A fresh session per ticket, sequential. Private record only, opt-in via `--arm vanilla-fresh`. |
 
 Ticket text is byte-identical across arms. Neither arm has WebFetch or WebSearch.

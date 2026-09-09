@@ -54,14 +54,14 @@ wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";
 wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
-  printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"
+  printf 'echo run\n' > "$H/scripts/govern/spawn-worker.sh"
   printf '# marker placeholder\n' > "$H/scripts/govern/.templates-synced-at"
   printf '# Escalations\n\n## Open\n' > "$H/governor/escalations.md"
   printf '# tickets\n' > "$H/queue/tickets.md"
   git -C "$H" init -q; git -C "$H" config user.email t@t; git -C "$H" config user.name t
   git -C "$H" add -A; git -C "$H" commit -qm init
   local BASE; BASE="$(git -C "$H" rev-parse HEAD)"
-  printf 'echo run\n' > "$T/templates/govern/run-loop.sh"
+  printf 'echo run\n' > "$T/templates/govern/spawn-worker.sh"
   printf '#!/usr/bin/env bash\nMETA_NAME="__META_NAME__"\nGITHUB_ORG="__GITHUB_ORG__"\nREPOS=(__REPOS__)\n' > "$T/templates/lib/workspace.sh"
   printf 'echo assert\n' > "$T/templates/govern/test/assert.sh"
   git -C "$T" init -q; git -C "$T" config user.email t@t; git -C "$T" config user.name t
@@ -73,8 +73,8 @@ EOF
   GOVERN_DIR="$H/scripts/govern" GOVERN_SYNC_MARKER="$H/scripts/govern/.templates-synced-at" \
     GOVERN_TEMPLATE_DIR="$T/templates/govern" bash "$STPL" --mark "$BASE"
   git -C "$H" add -A; git -C "$H" commit -qm "mark base"
-  printf 'echo run v2\n' >> "$H/scripts/govern/run-loop.sh"
-  git -C "$H" add -A; git -C "$H" commit -qm "feat: improve run-loop mechanism"
+  printf 'echo run v2\n' >> "$H/scripts/govern/spawn-worker.sh"
+  git -C "$H" add -A; git -C "$H" commit -qm "feat: improve spawn-worker mechanism"
   } >/dev/null 2>&1
   printf '%s\n' "$s"
 }
@@ -84,7 +84,7 @@ mk_porter_stub() { cat > "$1" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' 'echo "run v2 generic mechanism"' >> "$2"
 git add -A >/dev/null 2>&1; git commit -qm "port: stub change" >/dev/null 2>&1
-report='{"status":"ported","files":["govern/run-loop.sh"]}'
+report='{"status":"ported","files":["govern/spawn-worker.sh"]}'
 [ -n "\${GOVERN_REPORT_PATH:-}" ] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
 printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
 EOF
@@ -132,7 +132,7 @@ run_posture() { # <s>
 
 setup_case() { # <s>
   local s="$1"
-  mk_porter_stub "$s/porter.sh" "$s/templates/templates/govern/run-loop.sh"
+  mk_porter_stub "$s/porter.sh" "$s/templates/templates/govern/spawn-worker.sh"
   mk_gh_stub "$s/gh.sh"
   : > "$s/gh-rec.txt"
 }

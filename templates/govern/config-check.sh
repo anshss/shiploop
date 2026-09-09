@@ -155,8 +155,9 @@ if [[ "${GOVERN_EXTERNALIZE_LANE:-0}" == "1" ]]; then
 fi
 
 # With no GOVERN_MIGRATE_CMD configured, a migration-shaped ticket sitting in the backlog is a
-# silent gap today — the only existing detection is REACTIVE, in run-loop.sh's mneeded/GOVERN_MIGRATE_CMD
-# check, which fires AFTER a worker has already built and opened a PR for it (confirmed via
+# silent gap today: the only existing detection is REACTIVE, resolve-ticket.sh's
+# mneeded/GOVERN_MIGRATE_CMD check, which fires AFTER a worker has already built and opened a PR
+# for it (confirmed via
 # preflight-main.sh/govern-health.sh: neither checks this pre-run). Surface it proactively here as a
 # dedicated notice — NOT buried among the ~9 neutral optional-knob lines below — so the operator sees
 # it before a worker is ever burned on it.

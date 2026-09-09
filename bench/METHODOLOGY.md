@@ -293,9 +293,12 @@ tickets skew toward earlier positions in a run, where less has been carried.
 
 No transcript event names the shiploop *package* version, so by default the tool would blend every
 harness version a workspace has ever run into one number — an old workspace's figure diluted by
-whatever the harness did three versions ago. `run-loop.sh` now stamps each run directory it creates
-with `run-.../shiploop-version` at dispatch (best-effort: an unreadable version marker never blocks
-a dispatch, the run is simply left unstamped). By default `bench/replay.mjs` keeps only the runs
+whatever the harness did three versions ago. `govern::stamp_run_version` writes
+`run-.../shiploop-version` into a run directory (best-effort: an unreadable version marker never
+blocks a dispatch, the run is simply left unstamped). Since the dispatch loop was retired, the
+caller that creates a run directory and calls that stamp is `bench::arm_shiploop` itself: a plain
+interactive session sets no `GOVERN_RUN_DIR` and its worker logs land unstamped in the flat
+`logs/govern/ticket-N/` fallback. See `bench/KNOWN-LIMITS.md`, "Run-scoped stamps". By default `bench/replay.mjs` keeps only the runs
 stamped with the newest version present in the corpus and reports the rest as excluded, split into
 older-stamped and unstamped-legacy so the two are never conflated. `--all` restores the full,
 unscoped sweep. If nothing in the corpus is stamped at all, there is no "newest" to select, so the

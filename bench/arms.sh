@@ -8,12 +8,15 @@
 #   vanilla-fresh  a fresh `claude -p` per ticket, sequential, same prompt shape. Private record
 #                  only (section 2): if a teardown replays us with per-ticket sessions we already know the
 #                  delta. Never published.
-#   shiploop       the REAL governor loop (templates/govern/run-loop.sh) in a scaffolded throwaway
-#                  workspace, over a queue/tickets.md seeded with the same backlog, defaults on.
-#                  Every ticket is named in ONE dispatch, so the full loop runs: dependency gate,
-#                  cross-driver re-verify, failure-streak breaker, escalation. A per-ticket
-#                  fan-out would bypass all of them and measure something that is not the product
-#                  (CLAUDE.md anti-pattern 15).
+#   shiploop       the REAL shipped session lane in a scaffolded throwaway workspace, over a
+#                  queue/tickets.md seeded with the same backlog, defaults on. Per ticket, in the
+#                  same order a session would: pre-dispatch-check.sh (every pre-spawn gate:
+#                  NA-marker, public-issue dedup, still-on-origin re-verify, dependency gate,
+#                  staleness, failure-streak breaker, upstream drift), then spawn-worker.sh, then
+#                  resolve-ticket.sh fed the worker's own report (await CI, merge, land). Nothing
+#                  here reimplements a gate: this loop only sequences the shipped scripts, exactly
+#                  as the doctrine tells a session to. Skipping any of the three would measure
+#                  something that is not the product.
 #
 # Ticket text is byte-identical across arms. The treatment arm gets no hints: asymmetric input is
 # the first thing a replay finds, and it voids even true numbers.
@@ -160,8 +163,8 @@ bench::arm_vanilla_fresh() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
 
 # ── shiploop ────────────────────────────────────────────────────────────────
 # Scaffold a throwaway workspace around the SAME checkout the vanilla arm gets, seed
-# queue/tickets.md from the backlog, and hand every ticket number to the real run-loop.sh in one
-# named dispatch. Nothing here reimplements the loop; the gates being measured are the product.
+# queue/tickets.md from the backlog, and drive the shipped session lane over every ticket number in
+# order. Nothing here reimplements a gate; the scripts being measured are the product.
 bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3" name="$4"
   local ws nums slug ghbin
@@ -187,22 +190,48 @@ bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
     "--max-turns "*)       worker_turns="$BENCH_TURNS_WORKER" ;;
     "--max-budget-usd "*)  worker_budget="$BENCH_SESSION_USD_WORKER" ;;
   esac
+  # One run directory for the whole arm, exported so every worker of this arm logs under
+  # logs/govern/run-<ts>/ticket-N/ and the run-scoped stamps replay.mjs reads (shiploop-version,
+  # driver-model, lever-events.jsonl) exist. Nothing sets GOVERN_RUN_DIR on the interactive lane
+  # any more, so the ONE consumer that actually feeds replay.mjs establishes it itself. See
+  # bench/KNOWN-LIMITS.md, "run-scoped stamps".
+  local rundir="$ws/logs/govern/run-$(date +%Y%m%d-%H%M%S)-$$"
+  mkdir -p "$rundir"
   (
     cd "$ws"
-    PATH="$ghbin:$PATH" \
-    GOVERN_WS_ROOT="$ws" \
-    GOVERN_WORKER_TOOLS="$BENCH_TOOLS" \
-    GOVERN_WORKER_MAX_TURNS="$worker_turns" \
-    GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget" \
-    GOVERN_MAX_TICKETS="$(jq -s 'length' "$backlog")" \
-    GOVERN_AUTONOMY=auto \
-    GOVERN_PR_TICKET_REF=1 \
-    _GOVERN_ASSUME_MERGE_ALLOWED=1 \
-    env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GH_HOST -u GH_REPO \
-    bash "$ws/scripts/govern/run-loop.sh" --serial $nums
+    # shellcheck source=/dev/null
+    source "$ws/scripts/govern/lib/common.sh" 2>/dev/null || true
+    if declare -F govern::stamp_run_version >/dev/null 2>&1; then
+      GOVERN_WS_ROOT="$ws" govern::stamp_run_version "$rundir" || true
+      GOVERN_WS_ROOT="$ws" govern::stamp_driver_model "$rundir" || true
+    fi
+  ) >/dev/null 2>&1 || true
+  (
+    cd "$ws"
+    export PATH="$ghbin:$PATH"
+    export GOVERN_WS_ROOT="$ws"
+    export GOVERN_RUN_DIR="$rundir"
+    export GOVERN_WORKER_TOOLS="$BENCH_TOOLS"
+    export GOVERN_WORKER_MAX_TURNS="$worker_turns"
+    export GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget"
+    export GOVERN_AUTONOMY=auto
+    export GOVERN_PR_TICKET_REF=1
+    export _GOVERN_ASSUME_MERGE_ALLOWED=1
+    unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GH_HOST GH_REPO
+    local n verdict report
+    for n in $nums; do
+      verdict="$(bash "$ws/scripts/govern/pre-dispatch-check.sh" "$n" 2>&1 | tail -1)" || verdict="proceed"
+      case "$verdict" in
+        proceed) ;;
+        *) printf '[bench] ticket %s: %s\n' "$n" "$verdict"; continue ;;
+      esac
+      report="$(bash "$ws/scripts/govern/spawn-worker.sh" "$n")" || true
+      [[ -n "$report" ]] || { printf '[bench] ticket %s: worker produced no report\n' "$n"; continue; }
+      printf '%s' "$report" | bash "$ws/scripts/govern/resolve-ticket.sh" "$n" || true
+    done
   ) >"$logdir/00-driver.log" 2>&1 || true
   bench::collect_govern_streams "$ws" "$logdir"
-  # Write-back: the loop above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace
+  # Write-back: the dispatch above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace
   # made of $wd (arms.sh cp -R). run.sh's main loop verifies "$wd" (the ORIGINAL), never the copy —
   # so without this, verify always sees the pristine pre-run checkout and the shiploop arm can never
   # register a cleared ticket, no matter how correct the worker's fix was. The copy IS the fully
@@ -233,18 +262,18 @@ EOF
   chmod +x "$bindir/gh"
   : > "$ws.gh-ledger.jsonl"
   # Pre-seed the repo-visibility cache (templates/govern/lib/common.sh: govern::repo_is_public) so
-  # the governor never calls `gh repo view` at all — the shim doesn't implement it, and a benchmark
-  # repo is never public. GOVERN_RUN_DIR is unset for a plain run-loop.sh invocation, so the cache
-  # resolves to $GOVERNOR_DIR/.repo-visibility = "$ws/governor/.repo-visibility".
+  # the governor never calls `gh repo view` at all: the shim doesn't implement it, and a benchmark
+  # repo is never public. The visibility cache is keyed on $GOVERNOR_DIR, not the run dir, so it
+  # resolves to "$ws/governor/.repo-visibility" whether or not GOVERN_RUN_DIR is set.
   mkdir -p "$ws/governor"
   printf '%s private\n' "$repo" > "$ws/governor/.repo-visibility"
   printf '%s\n' "$bindir"
   return 0
 }
 
-# Copy every session stream the loop produced into the bench log dir, in dispatch order, named
-# NN-<ticket>.jsonl so record.sh derives `task` from the filename. A run that spawned scouts and
-# escalations copies those too: section 2 says cost is EVERYTHING the loop spends.
+# Copy every session stream the arm produced into the bench log dir, in dispatch order, named
+# NN-<ticket>.jsonl so record.sh derives `task` from the filename. An arm that spawned scouts and
+# escalations copies those too: section 2 says cost is EVERYTHING the lane spends.
 bench::collect_govern_streams() { # <workspace> <logdir>
   local ws="$1" logdir="$2" i=0 f rel tag
   # `find`, not a `**` glob: globstar is bash 4+ and macOS ships bash 3.2, where `**` would
@@ -280,7 +309,7 @@ bench::repo_slug() { # <backlog.jsonl> -> repo name
 }
 
 # Seed queue/tickets.md from a backlog.jsonl. Ticket N is the Nth line of the backlog, so the
-# numbers handed to run-loop.sh are stable and the body is byte-identical to the vanilla prompt's.
+# numbers the shiploop arm dispatches are stable and the body is byte-identical to the vanilla prompt's.
 # Same omission as the prompts above: no verify_cmd, because it names the test file the golden
 # patch will add at verify time.
 bench::seed_tickets() { # <backlog.jsonl> <tickets.md> <repo-slug>
@@ -313,8 +342,8 @@ bench::scaffold_workspace() { # <repo-workdir> <name> <repo-slug> -> workspace p
   # A throwaway benchmark workspace has no reviewer, so GOVERN_AUTONOMY's scaffold-seeded default
   # (pr-only — templates/lib/workspace.sh) would leave every worker's fix stranded on an unmerged
   # branch forever: the tree bench/run.sh verifies never receives the work. bench::arm_shiploop
-  # exports GOVERN_AUTONOMY=auto into run-loop.sh's own env, which — because workspace.sh seeds it
-  # as `${GOVERN_AUTONOMY:-pr-only}` — wins over the file's default without editing the scaffold.
+  # exports GOVERN_AUTONOMY=auto into the lane's own env, which (because workspace.sh seeds it as
+  # `${GOVERN_AUTONOMY:-pr-only}`) wins over the file's default without editing the scaffold.
   # --merge-allowlist above is the OTHER half: GOVERN_AUTONOMY=auto alone still refuses to merge a
   # repo that isn't in GOVERN_MERGE_REPOS (govern::is_merge_repo), which an empty allowlist always
   # fails.

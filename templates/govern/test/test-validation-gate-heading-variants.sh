@@ -1,33 +1,59 @@
 #!/usr/bin/env bash
-# Proves the #67 VALIDATION-EVIDENCE gate fires under HEADING WHITESPACE / PUNCTUATION variance.
-# Previously the gate awk required exactly `## #N ` (single space), so a ticket whose heading
-# was `##  #N` (double-space) or `## #N—Title` (em-dash with no space between `#N` and title)
-# yielded an empty tblock — the VALIDATION|SPIKE grep then missed, and a validation ticket
-# auto-resolved on static code analysis with no live-test evidence, defeating the gate. The fix
-# routes the gate through the shared tolerant parser (govern::ticket_block).
+# Proves the #67 VALIDATION-EVIDENCE gate, resolve-ticket.sh's step 2, since the loop purge moved
+# this check here, fires under HEADING WHITESPACE / PUNCTUATION variance. Previously the gate awk
+# required exactly `## #N ` (single space), so a ticket whose heading was `##  #N` (double-space) or
+# `## #N-Title` (em-dash with no space between `#N` and title) yielded an empty tblock, the
+# VALIDATION|SPIKE grep then missed, and a validation ticket auto-resolved on static code analysis
+# with no live-test evidence, defeating the gate. The fix routes the gate through the shared tolerant
+# parser (govern::ticket_block), which resolve-ticket.sh still uses unchanged.
 #
-# #84 audit note: same finding as test-validation-gate.sh — every assertion here is on run-loop.sh's
-# own log vocabulary ("resolved=N parked=N") and on the synthetic tickets.md/git-log fixtures this
-# test writes itself, never on templates/governor/worker-prompt.md prose (the stubbed `claude`
-# below scripts its report off $GOVERN_REPORT_PATH, not the prompt text). No rewrite was needed for
-# #84; it stays as a real-file-input test (not the sentinel-fixture pattern) because its subject —
-# the ticket-heading tolerant parser — has nothing to do with worker-prompt.md's section fencing.
+# Hermetic, resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
+# land-resolution.sh, no network, no gh, no real push. Every assertion is on resolve-ticket.sh's own
+# exit code + stderr wording and on the synthetic tickets.md fixture this test writes itself.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-RL="$DIR/../run-loop.sh"
+set +e
+
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
+
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+LANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$LANDED"
+landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LANDED" | wc -c | tr -d ' '; }
 
 # #1: heading has DOUBLE-SPACE after `##` (`##  #1`) — a common markdown-formatter drift.
 # #2: heading has EM-DASH glued to the number (`## #2—…`) — no space between `#2` and `—`.
-# Both are validation tickets; the worker reports resolved WITHOUT live-test evidence. If the
-# gate parses each block, both must be downgraded to parked. If the strict old regex is used,
-# both empty-block through the gate and get bookkept as resolved (the bug).
-cat > "$T/tickets.md" <<'EOF'
+# Both are validation tickets; each report below is resolved WITHOUT live-test evidence. If the gate
+# parses each block, both must be refused. If the strict old regex is used, both empty-block through
+# the gate and would land.
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
 ---
 ##  #1 — VALIDATION/SPIKE: double-space heading trap
@@ -38,70 +64,29 @@ body1
 **Severity:** High — gates the pillar.
 body2
 ---
-EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
+TIX
+( cd "$T" && git add -A && git commit -qm init )
 
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
+rpt() { printf '{"status":"resolved","pr":{"repo":"alpha","number":%s01,"url":"u"},"prs":[],"validation":null}' "$1"; }
 
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*)  echo '[]';;
-  *)            echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$T/bin/gh"
+: > "$LANDED"
+out1="$( cd "$T" && printf '%s' "$(rpt 1)" | bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
+rc1=$?
+out2="$( cd "$T" && printf '%s' "$(rpt 2)" | bash "$T/bin/resolve-ticket.sh" 2 2>&1 )"
+rc2=$?
 
-# stub claude: supervisor → ok; worker → resolved with validation:null (no evidence at all,
-# exactly the bug the gate exists to catch). If the gate is bypassed on either ticket, its
-# resolve will bookkeep the delete + a resolve commit will land.
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-n="$(printf '%s' "${GOVERN_REPORT_PATH:-}" | sed -E 's#.*/ticket-([0-9]+)/.*#\1#')"
-report="{\"status\":\"resolved\",\"pr\":{\"repo\":\"alpha\",\"number\":${n}01,\"url\":\"http://pr/${n}\"},\"lessonPatch\":null,\"newTickets\":[],\"crossRefs\":{\"overlaps\":[],\"dependsOn\":[]},\"migration\":null,\"validation\":null,\"escalation\":null}"
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
+assert_eq "$rc1" "3" "double-space heading #1 still trips the gate (exit 3)"
+assert_contains "$out1" "no live-test evidence" "double-space heading #1: gate refuses on the no-evidence wording"
+assert_eq "$rc2" "3" "em-dash-glued heading #2 still trips the gate (exit 3)"
+assert_contains "$out2" "no live-test evidence" "em-dash-glued heading #2: gate refuses on the no-evidence wording"
+assert_eq "$(landed_count)" "0" "no resolve landed, no validation ticket slipped past the gate"
 
-[[ -n "${GOVERN_PROMPTS_DIR:-}" ]] || { echo "SKIP - GOVERN_PROMPTS_DIR unresolved"; exit 0; }
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_TICKET_SEQ_FILE="$T/.ticket-seq" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_ECHO=1 GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" --serial 1 2 2>&1)"
-
-# Both tickets should be parked by the gate (no live-test evidence + validation-shaped title).
-# The gate must fire on BOTH heading variants. If either variant is missed, that ticket
-# resolves+bookkeeps and its block leaves tickets.md.
-assert_contains "$out" "resolved=0 parked=2" "both heading-variant validation tickets parked by the gate"
-
-# Both blocks must SURVIVE in tickets.md (parked, not bookkept-deleted).
-h1="$(grep -cE '^##  +#1 ' "$T/tickets.md" || true)"
-h2="$(grep -cE '^## #2—' "$T/tickets.md" || true)"
+# Both blocks must SURVIVE in tickets.md (the gate refuses before resolve-ticket ever touches the file).
+h1="$(grep -cE '^##  +#1 ' "$T/queue/tickets.md" || true)"
+# The em dash below is LOAD-BEARING: this whole file exists because a heading with an em dash glued
+# to the number used to yield an empty ticket block. The pattern must match the fixture exactly.
+h2="$(grep -cE '^## #2—' "$T/queue/tickets.md" || true)"
 assert_eq "$h1" "1" "double-space heading #1 remains in tickets.md (gate did NOT skip it)"
 assert_eq "$h2" "1" "em-dash-glued heading #2 remains in tickets.md (gate did NOT skip it)"
-
-# No resolve commit at all — the gate stopped both bookkeeps.
-commits="$(cd "$T" && git log --oneline 2>/dev/null | grep -c 'resolve #' || true)"
-assert_eq "$commits" "0" "no resolve commit — no validation ticket slipped past the gate"
 
 assert_done

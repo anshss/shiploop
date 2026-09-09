@@ -87,11 +87,6 @@ Not on it → STOP, offer `git switch` first.
 else STOP and print the paths; the command overwrites mechanism scripts and would clobber uncommitted
 changes.
 
-**Governor lock guard.** If `governor/.govern.lock` or any `governor/.locks/ticket-<N>` claim lock is
-held, a live governor is running — STOP, tell the operator to wait (or reclaim a stale lock with
-`bash scripts/govern/lock-release.sh`). A bump overwriting `govern/lib/common.sh` mid-run is a real
-hazard.
-
 ## Phase 2 — Version + diff check (no writes)
 
 ```bash
