@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# govern::event — the fleet event log emitter (lib/events.sh).
+# govern::event: the fleet event log emitter (folded into lib/common.sh in 1.19.3, when the
+# former lib/events.sh was deleted with the dispatch loop; the functions moved verbatim).
 #
 # Contract:
 #   1. OFF by default. GOVERN_EVENTS unset/0 writes nothing at all (rule 12).

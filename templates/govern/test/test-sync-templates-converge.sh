@@ -21,11 +21,11 @@ TPL_ROOT="$SANDBOX/templates"; TPL="$TPL_ROOT/govern"; mkdir -p "$TPL/test"
 
 git -C "$REPO" init -q; git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 
-# The HUB's current template for run-loop.sh (what a pull would bring the workspace TO).
-printf 'echo run\necho HUB_IMPROVEMENT_V2\n' > "$TPL/run-loop.sh"
+# The HUB's current template for spawn-worker.sh (what a pull would bring the workspace TO).
+printf 'echo run\necho HUB_IMPROVEMENT_V2\n' > "$TPL/spawn-worker.sh"
 
 # Workspace starts at an OLDER state (differs from the template — but that's the base).
-printf 'echo run\n' > "$REPO/scripts/govern/run-loop.sh"
+printf 'echo run\n' > "$REPO/scripts/govern/spawn-worker.sh"
 echo 'echo assert' > "$REPO/scripts/govern/test/assert.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm init
 BASE="$(git -C "$REPO" rev-parse HEAD)"
@@ -37,14 +37,14 @@ export GOVERN_TEMPLATE_DIR="$TPL"
 bash "$TOOL" --mark "$BASE" >/dev/null
 
 # ── 1. simulate a /shiploop:update pull-converge: rewrite the mirrored file to MATCH the template ──
-printf 'echo run\necho HUB_IMPROVEMENT_V2\n' > "$REPO/scripts/govern/run-loop.sh"
+printf 'echo run\necho HUB_IMPROVEMENT_V2\n' > "$REPO/scripts/govern/spawn-worker.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm "chore(harness): converge to hub v2 (/shiploop:update)"
 rc=0; out="$(bash "$TOOL" --check)" || rc=$?
 assert_eq "$rc" "0" "pull-converge (post-state == template) → NOT drift, exit 0"
 assert_contains "$out" "in sync" "converge → in-sync message (pull not counted as drift)"
 
 # ── 2. a genuine local improvement that DIVERGES from the template IS still drift ─────────────────
-printf 'echo run\necho HUB_IMPROVEMENT_V2\necho LOCAL_TWEAK\n' > "$REPO/scripts/govern/run-loop.sh"
+printf 'echo run\necho HUB_IMPROVEMENT_V2\necho LOCAL_TWEAK\n' > "$REPO/scripts/govern/spawn-worker.sh"
 git -C "$REPO" add -A; git -C "$REPO" commit -qm "feat(govern): genuine local improvement (#12)"
 rc=0; out="$(bash "$TOOL" --check)" || rc=$?
 assert_eq "$rc" "3" "local improvement (post-state != template) → drift exit 3"

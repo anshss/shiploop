@@ -106,8 +106,8 @@ assert_contains "$body" 'isolation: "worktree"' \
   "5b. the Agent tool's worktree isolation is called out"
 assert_contains "$body" "NEVER" \
   "5c. that call-out is a prohibition, not a suggestion"
-assert_contains "$body" "npm run govern --" \
-  "5d. the lane bridge names govern's PR-adoption path"
+assert_contains "$body" "npm run govern:resolve --" \
+  "5d. the lane bridge names govern's resolve path"
 assert_contains "$body" "queue/tickets.md" \
   "5e. the queue-bookkeeping boundary is stated"
 

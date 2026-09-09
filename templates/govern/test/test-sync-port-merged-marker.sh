@@ -41,7 +41,7 @@ wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";
 wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
-printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"
+printf 'echo run\n' > "$H/scripts/govern/spawn-worker.sh"
 printf '# marker placeholder\n' > "$H/scripts/govern/.templates-synced-at"
 printf '# Escalations\n\n## Open\n' > "$H/governor/escalations.md"
 printf '# tickets\n' > "$H/queue/tickets.md"
@@ -50,7 +50,7 @@ git -C "$H" add -A; git -C "$H" commit -qm init >/dev/null
 BASE="$(git -C "$H" rev-parse HEAD)"
 
 # templates repo: the counterpart (so drift is "mirrored")
-printf 'echo run\n' > "$T/templates/govern/run-loop.sh"
+printf 'echo run\n' > "$T/templates/govern/spawn-worker.sh"
 git -C "$T" init -q; git -C "$T" config user.email t@t; git -C "$T" config user.name t
 git -C "$T" add -A; git -C "$T" commit -qm "init templates" >/dev/null
 
@@ -58,8 +58,8 @@ git -C "$T" add -A; git -C "$T" commit -qm "init templates" >/dev/null
 GOVERN_DIR="$H/scripts/govern" GOVERN_SYNC_MARKER="$H/scripts/govern/.templates-synced-at" \
   GOVERN_TEMPLATE_DIR="$T/templates/govern" bash "$STPL" --mark "$BASE" >/dev/null
 git -C "$H" add -A; git -C "$H" commit -qm "mark base" >/dev/null
-printf 'echo run v2\n' >> "$H/scripts/govern/run-loop.sh"
-git -C "$H" add -A; git -C "$H" commit -qm "feat: improve run-loop mechanism" >/dev/null
+printf 'echo run v2\n' >> "$H/scripts/govern/spawn-worker.sh"
+git -C "$H" add -A; git -C "$H" commit -qm "feat: improve spawn-worker mechanism" >/dev/null
 MARK_TO="$(git -C "$H" rev-parse HEAD)"
 
 # ── stubs ──

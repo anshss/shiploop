@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Durable validation runner (spec §4) — pending-results delivery. All three readers (the governor
-# supervisor's periodic pass in run-loop.sh, the SessionStart hook, and `govern-validations.sh` on
+# supervisor audit `npm run govern:audit`, the SessionStart hook, and `govern-validations.sh` on
 # demand) call this SAME mechanical script so "apply + mark consumed" always runs through one code
 # path under one mutex. First scans every job dir under logs/govern/validations/<job>/ (owned by the
 # runner, ticket #5) for a terminal status.jsonl record, atomically emitting a pending-result.json

@@ -17,10 +17,11 @@ promote any durable lesson to `CLAUDE.md` — only if settled, not already recor
 uncovered — fold them into open tickets by default, minting a new number only for work that is
 independently dispatchable.
 
-The governor reads this file when you DISPATCH a ticket by number (`npm run govern -- 42 51`): it
-severity-orders the named set, groups tickets that touch the same files, works them, and deletes each
-one on resolve. Nothing is selected for you: there is no backlog sweep. Keep entries in the shape
-below so the parser finds them.
+The governor reads this file when you DISPATCH a ticket by number, one ticket at a time
+(`pre-dispatch-check.sh` → `spawn-worker.sh` → `resolve-ticket.sh`, or just say "work on 42"), and
+deletes the entry on resolve. Nothing is selected for you: there is no backlog sweep. Two named
+tickets that touch the same file only ever earn a non-blocking nudge to batch them into one worker
+by hand, never an automatic grouping. Keep entries in the shape below so the parser finds them.
 
 ---
 

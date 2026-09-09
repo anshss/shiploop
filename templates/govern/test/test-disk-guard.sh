@@ -3,13 +3,16 @@
 # Covers the two load-bearing pieces of the fix:
 #   1. worktree/new.sh disk guard is non-interactive-safe (assume-yes / no-TTY / interactive).
 #   2. the "slim a preserved worktree" strip removes regenerable dirs but keeps source + diffs.
-# Plus static assertions that spawn-worker passes WORKTREE_ASSUME_YES and run-loop has the
-# pre-flight guard + slim calls wired in.
+# Plus static assertions that spawn-worker passes WORKTREE_ASSUME_YES, that the pre-flight guard is
+# wired into pre-dispatch-check.sh (the gate a session runs before spawning anything) and that the
+# slim call is wired into spawn-worker.sh (the process that PRESERVES the worktree on a park or a
+# failure, so it is the one that should reclaim the regenerable bulk).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 SPAWN="$DIR/../spawn-worker.sh"
-RL="$DIR/../run-loop.sh"
+PDC="$DIR/../pre-dispatch-check.sh"
+COMMON="$DIR/../lib/common.sh"
 
 # new.sh sources scripts/lib/workspace.sh + worktree/lib/registry.sh (for ROOT_PM, wsp_repos_csv),
 # present only in a real workspace; its no-TTY exit-3 message references $ROOT_PM, so under set -u it
@@ -50,7 +53,7 @@ echo built > "$T/sub/.next/cache/x"
 echo dist  > "$T/sub/dist/bundle.js"
 echo source > "$T/sub/src/app.ts"
 echo "uncommitted work" > "$T/sub/src/wip.ts"
-# exact strip command used by run-loop's slim_worktree()
+# exact strip command used by govern::slim_worktree()
 find "$T" -type d \( -name node_modules -o -name .next -o -name dist \) -prune -exec rm -rf {} + 2>/dev/null || true
 assert_eq "$([ -d "$T/sub/node_modules" ] && echo y || echo n)" "n" "slim removes node_modules"
 assert_eq "$([ -d "$T/sub/.next" ] && echo y || echo n)" "n" "slim removes .next"
@@ -60,7 +63,8 @@ assert_eq "$(cat "$T/sub/src/wip.ts")" "uncommitted work" "slim keeps uncommitte
 
 # ── 3. wiring is actually in place (so the fix can't silently regress) ──
 assert_contains "$(cat "$SPAWN")" "WORKTREE_ASSUME_YES=1" "spawn-worker passes WORKTREE_ASSUME_YES to worktree:new"
-assert_contains "$(cat "$RL")" "slim_worktree" "run-loop defines + calls slim_worktree"
-assert_contains "$(cat "$RL")" "GOVERN_MIN_FREE_GB" "run-loop has the pre-flight disk guard"
+assert_contains "$(cat "$COMMON")" "govern::slim_worktree()" "lib/common.sh defines govern::slim_worktree"
+assert_contains "$(cat "$SPAWN")" "govern::slim_worktree" "spawn-worker calls it on every worktree-preserving outcome"
+assert_contains "$(cat "$PDC")" "GOVERN_MIN_FREE_GB" "pre-dispatch-check carries the pre-flight disk guard"
 
 assert_done

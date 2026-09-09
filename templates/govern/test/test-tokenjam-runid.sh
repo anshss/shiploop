@@ -96,39 +96,4 @@ l3="$(sed -n 1p "$SINK")"
 assert_contains "$l3" "tokenjam.run_id=gov-FROMFILE-999" "standalone worker reads run id from the persisted file"
 assert_contains "$l3" "service.instance.id=ticket-8"     "standalone worker still gets a ticket-slug label"
 
-# --- Case 4 & 5: run-loop ADOPTS a fresh run-id file but IGNORES a stale one (#3 freshness guard) ---
-# Drive the real run-loop in dry mode against an EMPTY backlog → it sets up (reads/generates the run
-# id), finds no eligible tickets, and exits cleanly. We assert on the "TokenJam run id:" log line.
-RL="$DIR/../run-loop.sh"
-mkdir -p "$TMP/gov2/scripts/lib"
-printf '# Tickets\n' > "$TMP/empty-tickets.md"
-printf '## Open\n' > "$TMP/gov2/escalations.md"
-: > "$TMP/gov2/preferences.md"
-# A self-contained mini-workspace: the live common.sh ignores scripts/lib/workspace.sh, the template
-# common.sh sources it — so providing it keeps cases 4 & 5 portable across both baselines.
-printf '#!/usr/bin/env bash\nREPOS=(backend)\nGITHUB_ORG="ExampleOrg"\nWORKTREE_BASE="%s/gov2.wt"\nwsp_is_merge_repo() { [[ "$1" == "backend" ]]; }\n' "$TMP" > "$TMP/gov2/scripts/lib/workspace.sh"
-RIDF="$TMP/gov2/.run-id"
-run_loop_dry() {
-  GOVERN_WS_ROOT="$TMP/gov2" \
-  GOVERN_TICKETS_FILE="$TMP/empty-tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$TMP/gov2/escalations.md" \
-  GOVERN_PREFERENCES_FILE="$TMP/gov2/preferences.md" \
-  GOVERN_LOG_ROOT="$TMP/gov2/logs" \
-  GOVERN_RUN_ID_FILE="$RIDF" \
-  GOVERN_LOCK="$TMP/gov2/.lock" \
-  bash "$RL" --dry-run --serial 7 8 2>&1
-}
-
-# FRESH: a just-written file (current mtime) is reused verbatim — the resume keeps the id.
-printf 'gov-FRESH-1\n' > "$RIDF"
-log4="$(run_loop_dry)"
-assert_contains "$log4" "TokenJam run id: gov-FRESH-1" "fresh run-id file is reused (resume keeps the id)"
-
-# STALE: a long-old file (mtime backdated past the window) is ignored → a NEW id is generated.
-printf 'gov-STALE-1\n' > "$RIDF"
-touch -t 202001010000 "$RIDF"
-log5="$(run_loop_dry)"
-assert_eq "$(printf '%s' "$log5" | grep -c 'TokenJam run id: gov-STALE-1' || true)" "0" "stale run-id file is NOT reused"
-assert_contains "$log5" "ignoring stale run-id file" "stale run-id file is explicitly ignored"
-
 assert_done

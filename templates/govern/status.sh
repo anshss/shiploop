@@ -2,7 +2,8 @@
 # govern:status — what is the fleet doing RIGHT NOW.
 #
 # One-shot reader over the append-only event log (governor/events.jsonl, written by
-# scripts/govern/lib/events.sh when GOVERN_EVENTS=1). Folds the log into live state, verifies every
+# govern::event in scripts/govern/lib/common.sh when GOVERN_EVENTS=1). Folds the log into live
+# state, verifies every
 # claimed-live worker with `kill -0`, reaps the ones whose process is gone, and prints it. Text by
 # default, `--json` for machines. No model call, no network, no lock — safe to run from inside a
 # Claude session, from CI, or over SSH while a run is mid-flight.
@@ -128,8 +129,8 @@ NEWEST_TS="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="META"{print $2}')"
 NEWEST_TS="${NEWEST_TS:-0}"
 
 # ── forever-stale governor state guard ────────────────────────────────────────────────────────
-# events.jsonl's only writers are the dispatch path (run-loop.sh / spawn-worker.sh). A crashed
-# driver never writes run_done, so without this guard the text below never expires: a run from 30
+# events.jsonl's only writer on the dispatch path is spawn-worker.sh. Nothing writes a run_done
+# event any more, so without this guard the text below never expires: a dispatch from 30
 # days ago reads as "running ... up 30d" forever, a claim about the PRESENT built from a log
 # nothing has touched in a month (and a claimed-live pid surviving that long is far more likely PID
 # reuse than a genuinely month-old worker). If the newest event in the WHOLE log is older than

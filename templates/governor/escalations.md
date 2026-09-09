@@ -15,20 +15,22 @@ gap (they PARK the ticket: clean exit, no PR). Format of an open entry:
 
 ## Lifecycle (#62 — escalations are no longer write-only)
 
-The selector skips any ticket # that has an entry under `## Open`, so a parked ticket sits here
-until answered. The driver + relay close the loop automatically:
+`pre-dispatch-check.sh` skips any ticket # that has an entry under `## Open`, so a parked ticket sits
+here until answered. Session + relay close the loop automatically:
 
-1. **Surface (run-end).** `run-loop.sh` writes `governor/pending-escalations.json` — the still-
-   unanswered `## Open` entries — and fires `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session
-   run still signals that decisions are waiting.
+1. **Surface (every SessionStart).** `session-reconcile.sh` runs `escalations-emit-pending.sh`, which
+   writes `governor/pending-escalations.json`, the still-unanswered `## Open` entries, and fires
+   `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session dispatch still signals that decisions are
+   waiting. Runnable by hand too: `npm run govern:escalations-emit`.
 2. **Ask (relay).** The launching session reads that JSON and presents the pending entries
    in a **single batched `AskUserQuestion`** (#89 — `AskUserQuestion` takes up to **4 questions per
    prompt**, so one entry → one question and a whole run's blocked tickets are asked **at once**;
    chunk into ceil(count/4) calls if >4, never one prompt per ticket), then writes each chosen
    **Answer** + a canonical **Disposition** token back into this file (and "Make this a rule?" if the
    operator wants it added to the doctrine).
-3. **Act (next run-start).** `escalations-apply-answers.sh` reads the recorded answers and DRIVES
-   an action — answers stop being inert file text:
+3. **Act (next SessionStart, or run it by hand: `npm run govern:escalations-apply`).**
+   `escalations-apply-answers.sh` reads the recorded answers and DRIVES an action, answers stop
+   being inert file text:
    - **`do-the-work`** → un-park: the entry moves to `## Resolved` and the ticket (still in
      `tickets.md`) becomes selectable again, so the governor retries it.
    - **`defer`** (defer-indefinitely / won't-do / keep-manual) → the ticket block is **auto-migrated**

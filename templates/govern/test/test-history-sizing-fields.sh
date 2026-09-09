@@ -11,13 +11,14 @@
 #      tokens are recovered from the per-turn `.message.usage` events (cost stays null — never invented).
 #   2. spawn-worker.sh's per-attempt ledger (attempts.jsonl): attempt numbering, model/effort +
 #      their sources, the retry escalation, stream rotation, and a timed-out attempt recording usage.
-#   3. run-loop.sh → ticket-history.jsonl rows carry model/effort/attempt/usageSource, govern-health.sh
-#      still runs and reports, exposes the per-model breakdown, and pre-#19 rows (no model) don't break it.
+#   3. resolve-ticket.sh's rt_history_enrich() (the loop purge moved run-loop's record()/
+#      history_enrich() here) → ticket-history.jsonl rows carry model/effort/attempt/usageSource when
+#      a per-attempt ledger (attempts.jsonl) exists in the worker log dir; govern-health.sh still
+#      runs and reports, exposes the per-model breakdown, and pre-#19 rows (no model) don't break it.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 SPAWN="$DIR/../spawn-worker.sh"
-RL="$DIR/../run-loop.sh"
 HEALTH="$DIR/../govern-health.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
@@ -161,75 +162,69 @@ assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt
   && printf 'ok   - %s\n' "attempt 1's stream is rotated aside, not clobbered" \
   || { printf 'FAIL - %s\n' "attempt 1's stream is rotated aside, not clobbered"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
-# ── Part 3 — end-to-end: ticket-history rows + govern-health ────────────────
+# ── Part 3, resolve-ticket.sh: ticket-history rows carry sizing fields, + govern-health ─────────
+# rt_history_enrich() prefers a per-attempt ledger (attempts.jsonl) in the worker log dir when one
+# exists over the govern::stream_usage fallback over worker.jsonl (that fallback is Part 1's own
+# subject), seed attempts.jsonl directly here, the same shape spawn-worker.sh's Part-2 ledger writes.
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
+
 T="$(mktemp -d)"; trap 'rm -rf "$U" "$T2" "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue" "$T/logs/ticket-1"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
-cat > "$T/tickets.md" <<'EOF'
+
+set +e
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+TLANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$TLANDED"
+landed_count() { [[ -f "$TLANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$TLANDED" | wc -c | tr -d ' '; }
+
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — a ticket whose history row carries its sizing decision
+
 **Severity:** Medium
 
 body1
+
 ---
+TIX
+( cd "$T" && git add -A && git commit -qm init )
+
+cat > "$T/logs/ticket-1/attempts.jsonl" <<'EOF'
+{"attempt":1,"isRetry":false,"model":"sonnet","modelSource":"GOVERN_WORKER_MODEL","effort":"high","effortSource":"GOVERN_WORKER_EFFORT","status":"resolved","tokens":{"input":1000,"output":500,"cacheRead":0,"cacheCreation":0,"total":1500},"costUsd":0.0123,"usageSource":"result"}
 EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
-printf 'DOC\n' > "$T/governor/preferences.md"
-printf 'P {{TICKET_BLOCK}} {{REPORT_PATH}}\n' > "$T/governor/worker-prompt.md"
-printf 'SUPERVISOR-REVIEW\n' > "$T/governor/supervisor-prompt.md"
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*)   echo '[]';;
-  *"pr checks"*) echo '[{"bucket":"pass"}]';;
-  *"pr merge"*)  echo 'merged'; exit 0;;
-  *"pr view"*)   echo 'ticket-1'; exit 0;;
-  *)             echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$T/bin/gh"
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/1"},"lessonPatch":null,"newTickets":[],"escalation":null}'
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s,"usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.0123}\n' \
-  "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
 
 HIST="$T/logs/history.jsonl"
-set +e
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_WS_ROOT="$T" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$T/governor/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$T/governor/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$T/governor/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_HISTORY_FILE="$HIST" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_WORKER_MODEL=sonnet GOVERN_WORKER_EFFORT=high GOVERN_SCOUT=0 \
-  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 1 </dev/null 2>&1)"
+report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/1"},"prs":[]}'
+: > "$TLANDED"
+out="$( cd "$T" && printf '%s' "$report" \
+  | GOVERN_HISTORY_FILE="$HIST" GOVERN_LOG_ROOT="$T/logs" bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
 rc=$?
-set -e
 assert_eq "$rc" "0" "run exits 0"
+assert_eq "$(landed_count)" "1" "the ticket lands exactly once"
 
 row="$(jq -c 'select(.ticket == 1 and .kind == null)' "$HIST" | tail -1)"
 assert_eq "$(jq -r '.status' <<<"$row")"       "resolved" "history row records the outcome (unchanged)"

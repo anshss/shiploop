@@ -33,10 +33,10 @@ source "$DIR/../lib/common.sh"
 
 TF="$ROOT/tickets.md"
 cat > "$TF" <<'EOF'
-## #1 — run-loop knob
+## #1, spawn-worker knob
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh templates/govern/lib/common.sh
+**Files:** templates/govern/spawn-worker.sh templates/govern/lib/common.sh
 
 Body prose mentioning some/other/path.ts that must not enter the measured set.
 ---
@@ -48,7 +48,7 @@ Body prose mentioning some/other/path.ts that must not enter the measured set.
 ## #3 — spawn-worker retry
 **Severity:** Medium
 
-**Files:** templates/govern/run-loop.sh templates/govern/spawn-worker.sh $WORKTREE_BASE/ticket-N
+**Files:** templates/govern/resolve-ticket.sh templates/govern/spawn-worker.sh $WORKTREE_BASE/ticket-N
 ---
 ## #4 — test flake
 **Severity:** Medium
@@ -63,14 +63,14 @@ Where: the operator's judgment about how aggressive the default should be
 ## #6 — prose is not a measurement
 **Severity:** Low
 
-Where: templates/govern/run-loop.sh and templates/govern/lib/common.sh
+Where: templates/govern/spawn-worker.sh and templates/govern/lib/common.sh
 ---
 ## #7 — depends on #1
 **Severity:** Low
 
 **Depends on:** #1
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 ## #8 — blocks #2 from the other side
 **Severity:** Low
@@ -83,10 +83,10 @@ EOF
 
 # ── (A) measured-path derivation + exact overlap ────────────────────────────
 assert_eq "$(govern::ticket_paths 1 "$TF" | tr '\n' ' ')" \
-  "templates/govern/run-loop.sh templates/govern/lib/common.sh " \
+  "templates/govern/spawn-worker.sh templates/govern/lib/common.sh " \
   "A1: **Files:** yields the measured path list, in order"
 assert_eq "$(govern::ticket_paths 3 "$TF" | tr '\n' ' ')" \
-  "templates/govern/run-loop.sh templates/govern/spawn-worker.sh " \
+  "templates/govern/resolve-ticket.sh templates/govern/spawn-worker.sh " \
   "A2: \$VAR interpolation is dropped, not treated as a measured path"
 assert_eq "$(govern::ticket_paths 5 "$TF")" "" "A3: a ticket declaring no path is unmeasured"
 assert_eq "$(govern::ticket_paths 6 "$TF")" "" \
@@ -185,7 +185,7 @@ EOF
   }
 
   batched="$(run_spawn "$ROOT/p-batch" 1 2 3)"
-  assert_contains "$batched" "## #1 — run-loop knob"      "G1: primary ticket block present"
+  assert_contains "$batched" "## #1, spawn-worker knob"      "G1: primary ticket block present"
   assert_contains "$batched" "## #2 — bookkeep field"     "G2: batched ticket #2 block folded in"
   assert_contains "$batched" "## #3 — spawn-worker retry" "G3: batched ticket #3 block folded in"
   assert_contains "$batched" "LOCALITY BATCH"             "G4: batch addendum overrides 'EXACTLY ONE ticket'"
@@ -193,13 +193,13 @@ EOF
   assert_contains "$batched" "#1, #2, #3"                 "G6: the group roster is stated to the worker"
 
   single="$(run_spawn "$ROOT/p-single" 1)"
-  assert_contains "$single" "## #1 — run-loop knob"  "G7: single spawn still carries its block"
+  assert_contains "$single" "## #1, spawn-worker knob"  "G7: single spawn still carries its block"
   assert_absent   "$single" "LOCALITY BATCH"         "G8: a single-ticket spawn is NOT batched"
   assert_absent   "$single" "## #2 — bookkeep field" "G9: …and carries no other ticket's block"
 
   # A batched number no longer in tickets.md (a concurrent driver resolved it) is DROPPED, not fatal.
   gone="$(run_spawn "$ROOT/p-gone" 1 999)"
-  assert_contains "$gone" "## #1 — run-loop knob" "G10: an already-resolved batch member does not fail the spawn"
+  assert_contains "$gone" "## #1, spawn-worker knob" "G10: an already-resolved batch member does not fail the spawn"
   assert_absent   "$gone" "LOCALITY BATCH"        "G11: …and the group collapses back to a plain single spawn"
 else
   printf 'skip - G: jq not installed\n'

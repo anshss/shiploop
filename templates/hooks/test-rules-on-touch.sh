@@ -72,7 +72,7 @@ expect_tag "pr pack on gh pr"                   "[RULES/pr]"       p6 Bash  "" "
 expect_tag "release pack on a VERSION write"    "[RULES/release]"  p7 Write "/ws/VERSION" ""
 expect_tag "release pack on npm version"        "[RULES/release]"  p8 Bash  "" "npm version minor"
 expect_tag "release pack on git tag"            "[RULES/release]"  p9 Bash  "" "git tag -a v1.2.0 -m rel"
-expect_tag "govern pack on scripts/govern edit" "[RULES/govern]"   p10 Edit "/ws/scripts/govern/run-loop.sh" ""
+expect_tag "govern pack on scripts/govern edit" "[RULES/govern]"   p10 Edit "/ws/scripts/govern/spawn-worker.sh" ""
 expect_tag "govern pack on templates/govern"    "[RULES/govern]"   p11 Edit "/hub/templates/govern/spawn-worker.sh" ""
 
 echo "each pack carries its actual rule text, not just its tag"
@@ -107,7 +107,7 @@ expect_silent "'npm run versions' is not 'npm version'" n10 Bash "" "npm run ver
 lib_out="$(run n11 Edit "/ws/scripts/lib/workspace.sh" "")"
 case "$lib_out" in *"[RULES/govern]"*) bad "scripts/lib wrongly fired the govern pack" ;;
   *) ok "scripts/lib is not scripts/govern" ;; esac
-expect_silent "running govern is not editing it"  n12 Bash "" "npm run govern -- 42"
+expect_silent "running govern is not editing it"  n12 Bash "" "npm run govern:resolve -- 42"
 
 echo "once-per-session: a pack fires once, then goes quiet"
 expect_tag    "first .sh write fires"   "[RULES/shell]" rep Write "/a.sh" ""

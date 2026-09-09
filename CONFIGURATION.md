@@ -12,7 +12,7 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_WORKER_MODEL` | `sonnet` | First-attempt **floor**: the tier every ticket dispatches at. A ticket's own `Model:`/`Effort:` fields no longer participate in dispatch |
 | `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | Escalate-once **ceiling**: the tier a classified judgment failure retries at. A ticket never escalates twice |
-| `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model the harness dispatches (worker, scout, supervisor, self-improve, self-apply, sync porter) is clamped to `max(opus, the model of the session that spawned it)`. A sonnet or haiku driver still buys opus on a retry; only a session above opus may spawn above opus, and never above itself. `0` disables the clamp |
+| `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model the harness dispatches (worker, scout, supervisor, sync porter) is clamped to `max(opus, the model of the session that spawned it)`. A sonnet or haiku session still buys opus on a retry; only a session above opus may spawn above opus, and never above itself. `0` disables the clamp |
 | `GOVERN_DETERMINISTIC` | `0` (off) | Zero-model lane: let the scout's mechanical patch resolve a ticket with **no model turns** on the fix. Over-strict guards; every doubt falls through to a normal worker |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |
 | `GOVERN_STALENESS_RUN_TESTS` | `0` (off) | On top of the staleness check, also execute a test command read out of `tickets.md`. A separate opt-in on purpose: the queue is partly machine-written, and a stat() is not a `bash -c` |
@@ -23,7 +23,6 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_SCOUT` | on | Pre-dispatch survey (verified file paths, coverage, precedent commit) used as a worker warm start, the batching key, and the zero-model patch source. It does **not** pick the tier |
 | `GOVERN_SCOUT_MODEL` | `haiku` | Tier the scout pass itself runs at; recon should cost a rounding error |
 | `GOVERN_SCOUT_TIMEOUT` | `180` | Seconds the scout pass may run before it is abandoned; dispatch proceeds without a survey |
-| `GOVERN_PARALLEL_DEFAULT` | `4` | Locality groups a named `run-loop.sh <N> ...` dispatch works at once: `N > 1` runs N concurrent full-driver children, one per group (N× the spend); per-run `--parallel[=N]` / `--serial` override it. Naming exactly one ticket, or resolving to a single group, always collapses to sequential |
 | `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_LESSON_MAX_CHARS` | `600` | Char cap on a single lesson promoted into `CLAUDE.md`; overflow keeps the lead rule inline and parks the full text in `CLAUDE-APPENDIX.md` |
 | `GOVERN_LESSON_EVICT` | `1` (on) | Forced eviction at budget: once root `CLAUDE.md` is at/over `GOVERN_LESSON_BUDGET_CHARS`, a new always-on lesson must name the existing entry it displaces (`lessonPatch.evicts`, matching exactly one heading/rule line) or it is routed to `CLAUDE-APPENDIX.md` instead of growing the always-on file. `0` restores the old always-insert-into-`CLAUDE.md` behaviour |
@@ -35,7 +34,7 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_LOCAL_FIRST_REPOS` | empty | Repos with no prod DB: additive migrations merge instead of parking |
 | `GOVERN_MIGRATE_CMD` / `GOVERN_VERIFY_CMD` | empty | If a resolved ticket carries an additive prod migration, the governor runs MIGRATE then VERIFY after merge. Leave unset and a ticket like that escalates instead, asking you to apply the migration manually |
 | `GOVERN_PUBLIC_REPOS` | auto-detect | Public repos get neutral `sl-<hex>` branches, no ticket ids on PRs |
-| `GOVERN_PR_TICKET_REF` | `0` (ids suppressed) | `1` puts the internal ticket id back in PR titles/bodies/commit subjects. By default every worker is told to keep `#N` off the PR and the run-loop scrubs title+body as a backstop; branches stay `ticket-<N>` either way. The opt-out never applies to a **public** repo |
+| `GOVERN_PR_TICKET_REF` | `0` (ids suppressed) | `1` puts the internal ticket id back in PR titles/bodies/commit subjects. By default every worker is told to keep `#N` off the PR and `resolve-ticket.sh` scrubs title+body as a backstop; branches stay `ticket-<N>` either way. The opt-out never applies to a **public** repo |
 | `GOVERN_EXTERNALIZE_LANE` | `1` (on) | Master switch for the externalization lane itself; `0` disables it outright even if the vars below are set. Still a no-op until `GOVERN_EXTERNALIZE_REPO`/`_SUBREPO` are also configured |
 | `GOVERN_EXTERNALIZE_REPO` / `_SUBREPO` | empty | Stage low-severity OSS tickets as public "good first issue"s, filed only on your approval |
 | `GOVERN_EXTERNALIZE_LABELS` | empty | Manual label override applied verbatim to filed issues. Empty means auto-decide: the lane fetches the target repo's existing labels and picks from them per issue |
@@ -64,33 +63,24 @@ prints nothing at all when there is no fleet.
 | `GOVERN_PERMISSION_MODE` | `bypassPermissions` | The `--permission-mode` every headless worker runs under. The default lets a worker act without prompting, which is what makes an unattended run possible, and also the single widest grant in the harness. Tighten it if you want workers to stop at the permission boundary; note that a mode which prompts will stall a headless run rather than fail it |
 | `GOVERN_WORKER_MCP` | `0` (off) | Give workers the workspace's MCP servers. Off by default: MCP tool schemas are re-sent on every turn, so this is a standing per-turn cost |
 
-### Hard bounds: how a run is guaranteed to end
+### Hard bounds: how a worker is guaranteed to end
 
 | Knob | Default | Turns on |
 |---|---|---|
-| `GOVERN_MAX_TICKETS` | `20` | Tickets one driver will work before stopping. **Per driver**, so a `--parallel` dispatch's real ceiling is N × this |
-| `GOVERN_MAX_BAD_STREAK` | `4` | Consecutive parked/failed tickets before the run halts itself |
-| `GOVERN_MAX_RUNTIME` | `0` (no cap) | Wall-clock seconds. There is **no** time bound unless you set one |
 | `GOVERN_WORKER_TIMEOUT` | `3600` (1h) | Seconds one worker may run before it is killed rather than left stalled |
 | `GOVERN_WORKER_MAX_TOKENS` | `0` (unlimited) | Token ceiling per worker; crossing it kills the worker with a distinct `budget-exceeded` outcome |
 | `GOVERN_WORKER_MAX_TURNS` | `0` (off) | Assistant-turn ceiling per worker attempt, passed as `--max-turns`. Capability-probed against the running CLI's `--help`; unsupported means the cap is logged as unenforceable, never a killed spawn |
 | `GOVERN_WORKER_MAX_BUDGET_USD` | `0` (off) | Dollar ceiling per worker attempt, passed as `--max-budget-usd`. Fallback for a CLI that dropped `--max-turns`; only consulted when `--max-turns` is unset or unsupported |
-| `GOVERN_MIN_FREE_GB` | `5` | Free-disk floor checked before spawning; below it the run stops rather than filling the volume |
+| `GOVERN_MIN_FREE_GB` | `5` | Free-disk floor checked by `pre-dispatch-check.sh` before spawning; below it, dispatch refuses rather than filling the volume |
 
-### CI, retries, and cadence
+### CI and cadence
 
 | Knob | Default | Turns on |
 |---|---|---|
 | `GOVERN_CI_INTERVAL` | `30` | Seconds between CI polls while awaiting checks |
 | `GOVERN_CI_MAX_TRIES` | `60` | Polls before CI is treated as never-settling (≈30 min at the default interval) |
-| `GOVERN_CI_FIX_TRIES` | `1` | Attempts a worker gets at fixing its own red CI before the ticket parks |
-| `GOVERN_CONFLICT_FIX_TRIES` | `1` | Attempts at resolving a merge conflict before parking |
-| `GOVERN_INFRA_RETRY` | `1` | Retries for an infrastructure-class failure (API/transport). Retried at the **same** model tier, not escalated |
-| `GOVERN_INTERRUPT_RETRY` | `1` | Retries for a worker killed mid-flight |
 | `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the manual audit (`govern:audit`) runs at |
-| `GOVERN_BATCH_MAX` | `2` | Tickets with overlapping scout-measured file paths that one worker may take as a group, exploring once and opening one PR. Kept low because no production A/B measurement of batching exists yet; `1` disables it |
-| `GOVERN_OVERLAP_NUDGE` | `1` (on) | Dispatch-time hint, zero model calls: before a named dispatch proceeds, print up to 5 `[overlap]`/`[overlap-dir]` lines naming any OTHER open ticket that shares a file (or, weaker, a directory) with what you named, so you can re-run with both on `npm run govern --`. Log line only, never blocks and never touches the queue; `0` silences it |
-| `GOVERN_AUTO_BUDGETS` | `1` (on) | Run `context-budgets.sh` once at the end of every dispatch, after every worker is reaped (never per-ticket, so an N-way `--parallel` fan-out doesn't overfire it). A "still over budget" alarm from that pass (exit 3) is logged but never changes the dispatch's own exit status. `0` disables the auto-run; `npm run govern:context-budgets` still works manually either way |
+| `GOVERN_OVERLAP_NUDGE` | `1` (on) | Dispatch-time hint, zero model calls: `pre-dispatch-check.sh` prints up to 5 `[overlap]`/`[overlap-dir]` lines naming any OTHER open ticket that shares a file (or, weaker, a directory) with the one you named, so you can batch both into one worker with `scripts/govern/spawn-worker.sh <N> <other>`. Log line only, never blocks and never touches the queue; `0` silences it |
 
 ### Script-level overrides (not seeded in workspace.sh)
 
@@ -108,6 +98,5 @@ environment variables if you need to change one.
 | `GOVERN_RULES_ON_TOUCH_PACKS` | _(unset)_ | Comma-list restricting `rules-on-touch.sh` to the named packs (debugging and tests) |
 | `GOVERN_RULES_STATE_DIR` | `$TMPDIR` | Where `rules-on-touch.sh` writes its per-session, per-pack delivery stamps (tests point this at a scratch dir) |
 | `GOVERN_RULES_LOCAL` | `scripts/rules-on-touch.local.sh` | This workspace's own rule packs: define `rules_local_triggers` and `rules_local_pack_text` there to extend the hook without editing the template |
-| `GOVERN_SELF_APPLY` | `0` (off) | Lets the self-improvement lane (`templates/govern/govern-self-apply.sh`) apply its own proposed harness diffs to an allow-listed set of mechanism scripts. `1` enables it |
 | `WSP_ANALYTICS_QUERY_CMD` | empty | Command a flow's passive-evidence check (`templates/govern/lib/flows.sh`) shells out to for analytics data; unset means the check degrades to "no passive evidence" |
 

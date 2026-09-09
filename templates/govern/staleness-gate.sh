@@ -174,7 +174,7 @@ done <<< "$BLOCK"
 
 # SEPARATE opt-in from GOVERN_STALENESS_GATE, deliberately. The path-existence half of this gate only
 # ever stat()s files; this half executes a command string lifted out of `tickets.md`. The queue is
-# partly MACHINE-generated (workers file their own `newTickets[]`, and govern-improve-triage.sh files
+# partly MACHINE-generated (workers file their own `newTickets[]`, and file-ticket.sh files
 # harness proposals), so "enable the cheap staleness check" must not silently also mean "execute
 # whatever ended up backticked in a queue entry". Two knobs, two decisions.
 if [[ -n "$TEST_CMD" && "${GOVERN_STALENESS_RUN_TESTS:-0}" != "1" ]]; then

@@ -82,7 +82,7 @@ printf '%s' "$out" | jq -e 'has("root_remote")' >/dev/null 2>&1 && \
   { printf 'FAIL - 7. JSON missing root_remote\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
 # ── 8. GOVERN_MIGRATE_CMD unset + a migration-shaped ticket → dedicated notice ──
-# Today the actual gap-detection only happens reactively in run-loop.sh, AFTER a worker already
+# Today the actual gap-detection only happens reactively in resolve-ticket.sh, AFTER a worker already
 # built + opened a PR for the migration ticket. This surfaces it proactively, pre-run.
 printf '## #9 — needs an ALTER TABLE migration\n\n**Severity:** High\n\nbody\n\n---\n' >> "$ROOT/queue/tickets.md"
 out="$(bash "$TOOL" 2>&1)"; rc=$?

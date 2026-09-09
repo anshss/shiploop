@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regression for ticket #122: governor self-review input fidelity.
-#   A. govern-improve.sh feeds PARKED tickets' worker escalation (from this run's report.json)
-#      AND the HEAD of each FAILED ticket's worker.jsonl into the improve-reviewer prompt — so the
-#      "why parked/failed" sections are populated from real worker context, not empty.
-#   B. govern-supervise.sh ticket-bodies window is GOVERN_SUPERVISOR_BLOCKS_LINES-configurable and
-#      defaults to 500 (was a hardcoded head -260 that silently truncated conflict-detection past
-#      ~ticket 25).
-# Both reviewers shell out to `claude` (overridable via GOVERN_CLAUDE_BIN). The mock captures the
+# Regression for ticket #122: reviewer input fidelity.
+# govern-supervise.sh's ticket-bodies window is GOVERN_SUPERVISOR_BLOCKS_LINES-configurable and
+# defaults to 500 (it was a hardcoded head -260 that silently truncated conflict detection past
+# ~ticket 25).
+# The part of this file that covered govern-improve.sh went with that script when the
+# self-improvement lane was deleted in 1.19.3. govern-supervise.sh survives: it is a MANUAL audit,
+# never on any dispatch path.
+# The reviewer shells out to `claude` (overridable via GOVERN_CLAUDE_BIN). The mock captures the
 # prompt it is handed to a file, then emits a minimal valid stream-json result event, so we can
 # assert on EXACTLY what the reviewer was fed without a real model.
 set -euo pipefail
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
 done
 printf '%s' "$prompt" > "${CAPTURE:?CAPTURE required}"
 # minimal valid stream-json result the reviewers parse via: grep result | jq -r .result
-printf '{"type":"result","subtype":"success","result":"- govern-improve.sh: noted — because.\\n"}\n'
+printf '{"type":"result","subtype":"success","result":"- spawn-worker.sh: noted, because.\\n"}\n'
 EOF
 chmod +x "$MOCK"
 
@@ -37,49 +37,8 @@ chmod +x "$MOCK"
 mk_ws_stub "$ROOT/ws"; mkdir -p "$GOVERN_WS_ROOT/governor"
 export GOVERN_TICKETS_FILE="$ROOT/tickets.md"
 export GOVERN_ESCALATIONS_FILE="$GOVERN_WS_ROOT/governor/escalations.md"
-export GOVERN_IMPROVEMENTS_FILE="$ROOT/improvements.md"
 export GOVERN_CLAUDE_BIN="$MOCK"
 printf '# escalations\n\n## Open\n' > "$GOVERN_ESCALATIONS_FILE"
-
-# ── A. govern-improve.sh: parked escalation + failed head are threaded into the prompt ──
-RUN="$ROOT/run-A"; mkdir -p "$RUN/ticket-7" "$RUN/ticket-9"
-# state.jsonl: a FAILED #7 and a PARKED #9 (status is all state.jsonl carries — not the WHY).
-{
-  printf '{"ticket":7,"status":"failed","note":"see worker.jsonl"}\n'
-  printf '{"ticket":9,"status":"parked","note":"escalated"}\n'
-} > "$RUN/state.jsonl"
-# #7 worker.jsonl — opening events (what it attempted) + NO result event (crashed mid-run).
-{
-  printf '%s\n' '{"type":"system","subtype":"hook_started"}'
-  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"SENTINEL_ATTEMPT exploring the queue code"}]}}'
-  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}'
-} > "$RUN/ticket-7/worker.jsonl"
-# #9 report.json — the worker's PARKED report with a concrete escalation.
-cat > "$RUN/ticket-9/report.json" <<'EOF'
-{"status":"parked","pr":null,"lessonPatch":null,"newTickets":[],"crossRefs":{},
- "escalation":{"title":"prod secret rotation needed","reason":"SENTINEL_PARK_REASON needs a live prod secret","question":"rotate the secret then re-run?","options":["rotate-now","defer"]}}
-EOF
-
-OUT_A="$(bash "$DIR/../govern-improve.sh" "$RUN" 2>/dev/null || true)"
-CAP_A="$ROOT/cap-A"; CAPTURE="$CAP_A" bash "$DIR/../govern-improve.sh" "$RUN" >/dev/null 2>&1 || true
-PROMPT_A="$(cat "$CAP_A" 2>/dev/null || true)"
-
-assert_contains "$PROMPT_A" "Why the parked tickets stopped" "A: prompt has a parked-context section"
-assert_contains "$PROMPT_A" "SENTINEL_PARK_REASON" "A: parked #9 escalation reason is fed in (from report.json)"
-assert_contains "$PROMPT_A" "rotate the secret then re-run" "A: parked #9 escalation question is fed in"
-assert_contains "$PROMPT_A" "first events (what it attempted)" "A: failed-ticket head excerpt section present"
-assert_contains "$PROMPT_A" "SENTINEL_ATTEMPT" "A: failed #7 worker-log HEAD is fed in (not just final result)"
-
-# Regression: the harness listing MUST include lib/common.sh. A bare `ls "$DIR"/*.sh` misses lib/
-# and the reviewer never sees the ONE file most improvement proposals need to touch — proposals
-# then reference non-existent paths or duplicate helpers instead of extending common.sh.
-assert_contains "$PROMPT_A" "lib/common.sh" "A: harness listing includes lib/common.sh (self-improve reviewer needs it)"
-
-# A parked ticket whose report.json never got written must degrade gracefully (no crash).
-RUN_B="$ROOT/run-B"; mkdir -p "$RUN_B/ticket-3"
-printf '{"ticket":3,"status":"parked","note":"escalated"}\n' > "$RUN_B/state.jsonl"
-CAP_B="$ROOT/cap-B"; CAPTURE="$CAP_B" bash "$DIR/../govern-improve.sh" "$RUN_B" >/dev/null 2>&1 || true
-assert_contains "$(cat "$CAP_B" 2>/dev/null || true)" "no report.json" "A: missing report.json degrades to a clear note (no crash)"
 
 # ── B. govern-supervise.sh: ticket-bodies window is configurable + defaults to 500 ──
 # Build a backlog of 45 tickets (10 lines each ⇒ 450 lines). With the old head -260 the LAST

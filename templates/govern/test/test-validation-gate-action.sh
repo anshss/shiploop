@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unit proof for govern::validation_gate_action (#67 + #73): the pure gate-decision helper that
-# run-loop.sh uses to decide whether a validation-type resolved report auto-resolves, parks for a
+# resolve-ticket.sh uses to decide whether a validation-type resolved report auto-resolves, parks for a
 # missing test (#67), or parks+escalates a gate-FAILED (measured-negative) result (#73).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

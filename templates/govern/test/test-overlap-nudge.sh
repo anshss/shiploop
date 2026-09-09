@@ -14,6 +14,9 @@
 #   (F) a directory-only overlap (depth >= 2, no exact file) is labeled distinctly (`[overlap-dir]`)
 #       and never conflated with an exact-file (`[overlap]`) nudge.
 #   (G) `file:line` in a queued ticket's body counts as its file.
+#   (H) WIRING: the nudge is actually CALLED at dispatch time. It used to fire from the autonomous
+#       loop; with that loop retired, pre-dispatch-check.sh is the one script a session runs before
+#       spawning, so the call has to live there or the whole feature is dead code.
 # Sandboxed: temp tickets.md, hermetic workspace stub, GOVERN_SCOUT=0 (assert.sh default) so path
 # extraction is 100% the backticked/body fallback - no model call anywhere in this test.
 set -euo pipefail
@@ -31,12 +34,12 @@ cat > "$TF" <<'EOF'
 ## #61 - primary named ticket
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 ## #72 - queued, references the same file in prose with a line number
 **Severity:** Medium
 
-References `templates/govern/run-loop.sh:1027` for the fix.
+References `templates/govern/spawn-worker.sh:1027` for the fix.
 ---
 ## #90 - queued, shares nothing
 **Severity:** Low
@@ -46,9 +49,9 @@ Touches `README.md` only.
 EOF
 
 out="$(GOVERN_OVERLAP_NUDGE=1 govern::overlap_nudge "61" "$TF")"
-assert_contains "$out" "[overlap] queued #72 references templates/govern/run-loop.sh, also targeted by #61" \
+assert_contains "$out" "[overlap] queued #72 references templates/govern/spawn-worker.sh, also targeted by #61" \
   "A1: exact shared file (via file:line) between queued #72 and named #61 is nudged"
-assert_contains "$out" "npm run govern -- 61 72" "A2: the nudge names the batch command"
+assert_contains "$out" "scripts/govern/spawn-worker.sh 61 72" "A2: the nudge names the batch command"
 if printf '%s\n' "$out" | grep -q '#90'; then f=1; else f=0; fi
 assert_eq "$f" "0" "B1: #90 (no shared path at all) produces no nudge line"
 
@@ -57,12 +60,12 @@ cat > "$TF" <<'EOF'
 ## #61 - primary named ticket
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 ## #62 - ALSO named this dispatch, shares the same file
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 EOF
 out="$(GOVERN_OVERLAP_NUDGE=1 govern::overlap_nudge "61,62" "$TF")"
@@ -74,7 +77,7 @@ assert_eq "$(printf '%s' "$out" | wc -l | tr -d ' ')" "0" "C1: a ticket in the c
 ## #1 - primary named ticket
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 EOF
   for i in 2 3 4 5 6 7 8; do
@@ -82,7 +85,7 @@ EOF
 ## #$i - queued, shares the same file
 **Severity:** Medium
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 EOF
   done
@@ -100,7 +103,7 @@ cat > "$TF" <<'EOF'
 ## #61 - primary named ticket
 **Severity:** High
 
-**Files:** templates/govern/run-loop.sh
+**Files:** templates/govern/spawn-worker.sh
 ---
 ## #80 - queued, same directory, different file
 **Severity:** Medium
@@ -114,5 +117,13 @@ if printf '%s\n' "$out" | grep -q '^\[overlap\] '; then f=1; else f=0; fi
 assert_eq "$f" "0" "F2: a directory-only overlap is never printed as an exact-file [overlap] line"
 assert_contains "$out" "#80" "F3: the queued ticket number is named"
 assert_contains "$out" "#61" "F4: the named ticket it overlaps is named"
+
+# ── (H) wiring: the surviving dispatch-time caller ───────────────────────────────────────────────
+PDC="$DIR/../pre-dispatch-check.sh"
+assert_contains "$(cat "$PDC")" 'govern::overlap_nudge "$N" "$TICKETS_FILE"' \
+  "H1: pre-dispatch-check.sh calls the nudge before it verdicts proceed"
+# It must never change the verdict: the verdict is exactly one line on STDOUT, the nudge is stderr.
+assert_contains "$(cat "$PDC")" 'GOVERN_OVERLAP_NUDGE=0 silences it' \
+  "H2: and documents the kill switch at the call site"
 
 assert_done

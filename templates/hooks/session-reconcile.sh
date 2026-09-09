@@ -5,8 +5,8 @@
 # escalations-apply-answers.sh (un-park / migrate-to-parked / mitigated / kill / rules an answered
 # escalation, commits + pushes) and escalations-emit-pending.sh (regenerate
 # governor/pending-escalations.json against the current escalations.md ## Open) used to run only
-# at run-start/run-end inside the autonomous loop (run-loop.sh:856-857,862-863,2008-2011). A plain
-# session that never touched `npm run govern` never saw an operator's recorded answer take effect,
+# at run-start/run-end inside the autonomous dispatch loop (since retired). A plain interactive
+# session that never touched that loop never saw an operator's recorded answer take effect,
 # and never got a fresh pending-escalations.json either. Both are durable-file operations with
 # nothing loop-specific about them — wiring them here just runs them at the moment a session
 # actually exists to read the result.

@@ -28,7 +28,7 @@ cat > "$ROOT/tickets.md" <<'EOF'
 
 **Depends on:** #16
 
-Depends on the `budget-exceeded` outcome introduced by the token-budget ticket, which is what distinguishes "ran out of room while exploring" from other failures. Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (GOVERN_FIX_CI is set by run-loop.sh:275 but never read by spawn-worker.sh).
+Depends on the `budget-exceeded` outcome introduced by the token-budget ticket, which is what distinguishes "ran out of room while exploring" from other failures. Coordinate with ticket #13 (CI-log injection on retry) and ticket #10 (GOVERN_FIX_CI is set by spawn-worker.sh:275 but never read by spawn-worker.sh).
 ---
 ## #16 — the real dependency
 body
