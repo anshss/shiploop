@@ -85,9 +85,16 @@ fi
 # a real corruption path, worse now that the model is many concurrent interactive sessions on one
 # workspace rather than one loop. mkdir-mutex; reclaim a crashed holder's lock after 5min. Non-fatal
 # if busy >60s: proceed degraded, same as every other caller.
+#
+# Reentrant like govern::next_ticket_number / govern::cas_edit: escalations-apply-answers.sh's
+# approve-all and move-back dispositions already call this script with GOVERN_BOOKKEEP_LOCK_HELD=1
+# because IT holds the lock across its own read-modify-write. Acquiring again here (a non-reentrant
+# mkdir mutex) would self-deadlock that caller for the full 60s timeout on every disposition.
 BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
-govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "externalize-low-tickets: bookkeep lock busy >60s, proceeding (degraded)"
-trap 'govern::lock_release "$BK_LOCK"' EXIT
+if [[ "${GOVERN_BOOKKEEP_LOCK_HELD:-0}" != "1" ]]; then
+  govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "externalize-low-tickets: bookkeep lock busy >60s, proceeding (degraded)"
+  trap 'govern::lock_release "$BK_LOCK"' EXIT
+fi
 
 # ── shared: commit queue edits to main (CAS-with-retry, mirrors land-resolution.sh). A no-op in DRY mode,
 # and — when invoked from escalations-apply-answers.sh (GOVERN_EXTERNALIZE_NO_COMMIT=1) — deferred so

@@ -300,6 +300,7 @@ component_core_scripts() {
   cp "$T/hooks/rules-on-touch.sh" scripts/
   cp "$T/hooks/validations-pending-hook.sh" scripts/
   cp "$T/hooks/learnings-digest.sh" scripts/
+  cp "$T/hooks/session-reconcile.sh" scripts/
   chmod +x scripts/*.sh
   # sourced libs (no +x needed but harmless)
   cp "$T/lib/session-state.sh" scripts/lib/
@@ -508,13 +509,15 @@ next run is smarter and cheaper.
 \`\`\`text
 Just say what you want worked, in plain language:
 
-  "work on 42"                         one ticket, sequential and unbatched
-  "work on 42 51 63"                   that exact set, grouped by file locality
-  "work on 42 51 63 while I'm out"     the same set, unattended and fanned out
+  "work on 42"                         dispatch a worker on that ticket
+  "work on 42 51 63"                   dispatch a worker per ticket, one at a time
+  "work on 42 51 63 while I'm out"     the same set, unattended (npm run govern)
 \`\`\`
 
-That maps onto \`scripts/govern/run-loop.sh\` — the loop, worktrees, claim locks and reaping are
-unchanged, so a later session can reap workers an earlier one launched.
+That maps onto \`scripts/govern/pre-dispatch-check.sh <N>\` (the pre-spawn gates: staleness,
+dependencies, upstream drift, ...), a worker (\`Agent(subagent_type: "worker")\` interactively, or
+\`scripts/govern/spawn-worker.sh\` headlessly), then \`scripts/govern/resolve-ticket.sh <N>\` once
+the worker's PR is open — it awaits CI, merges, and lands the resolution.
 
 Everyday commands:
 
@@ -620,6 +623,10 @@ $(printf "$dev_lines" | sed '/^$/d')
     "worktree:status": "bash scripts/worktree/status.sh",
     "worktree:exec": "bash scripts/worktree/exec.sh",
     "govern": "bash scripts/govern/run-loop.sh",
+    "govern:resolve": "bash scripts/govern/resolve-ticket.sh",
+    "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
+    "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
+    "govern:escalations-emit": "bash scripts/govern/escalations-emit-pending.sh",
     "govern:health": "bash scripts/govern/govern-health.sh",
     "govern:dry-run": "bash scripts/govern/dry-run.sh",
     "govern:status": "bash scripts/govern/status.sh",
@@ -677,7 +684,10 @@ component_package_json_merge() {
     "worktree:reap":      "bash scripts/worktree/reap.sh",
     "worktree:status":    "bash scripts/worktree/status.sh",
     "worktree:exec":      "bash scripts/worktree/exec.sh",
-    "govern":             "bash scripts/govern/run-loop.sh",
+    "govern:resolve":     "bash scripts/govern/resolve-ticket.sh",
+    "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
+    "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
+    "govern:escalations-emit":  "bash scripts/govern/escalations-emit-pending.sh",
     "govern:health":      "bash scripts/govern/govern-health.sh",
     "govern:dry-run":     "bash scripts/govern/dry-run.sh",
     "govern:status":      "bash scripts/govern/status.sh",
@@ -792,7 +802,8 @@ component_settings() {
       { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
       { "type": "command", "command": "bash $root/scripts/learnings-digest.sh 2>/dev/null || true", "timeout": 10 },
       { "type": "command", "command": "bash $root/scripts/check-main-on-main.sh 2>/dev/null || true", "timeout": 10 },
-      { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
+      { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 },
+      { "type": "command", "command": "bash $root/scripts/session-reconcile.sh 2>/dev/null || true", "timeout": 15 }
     ]}],
     "UserPromptSubmit": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
@@ -846,7 +857,7 @@ component_settings_merge() {
   # introduced hook (e.g. validations-pending-hook.sh added after an install already had
   # session-snapshot.sh) never got appended to an existing settings.json. Per-hook checking fixes that:
   # a hook lands iff its own marker is absent, and re-running is idempotent (all markers then present).
-  local ss_snap ss_learn ss_main ss_val up_reminder pt_guard pt_rules stop_hook se_cleanup
+  local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules stop_hook se_cleanup
   ss_snap=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 }
 EOF
@@ -861,6 +872,10 @@ EOF
 )
   ss_val=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/validations-pending-hook.sh 2>/dev/null || true", "timeout": 15 }
+EOF
+)
+  ss_reconcile=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/session-reconcile.sh 2>/dev/null || true", "timeout": 15 }
 EOF
 )
   up_reminder=$(cat <<EOF
@@ -890,7 +905,7 @@ EOF
   local spec
   spec=$(jq -n \
     --argjson ss_snap "$ss_snap" --argjson ss_learn "$ss_learn" \
-    --argjson ss_main "$ss_main" --argjson ss_val "$ss_val" \
+    --argjson ss_main "$ss_main" --argjson ss_val "$ss_val" --argjson ss_rec "$ss_reconcile" \
     --argjson up "$up_reminder" --argjson pt "$pt_guard" --argjson ptr "$pt_rules" \
     --argjson sp "$stop_hook" --argjson se "$se_cleanup" \
     '[
@@ -898,7 +913,8 @@ EOF
         {marker:"session-snapshot\\.sh",         hook:$ss_snap},
         {marker:"learnings-digest\\.sh",         hook:$ss_learn},
         {marker:"check-main-on-main\\.sh",       hook:$ss_main},
-        {marker:"validations-pending-hook\\.sh", hook:$ss_val}
+        {marker:"validations-pending-hook\\.sh", hook:$ss_val},
+        {marker:"session-reconcile\\.sh",        hook:$ss_rec}
       ]},
       {event:"UserPromptSubmit", matcher:"*",         items:[{marker:"router-posture-reminder\\.sh", hook:$up}]},
       {event:"PreToolUse",       matcher:"Read|Bash|Agent", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
@@ -998,7 +1014,7 @@ probe_files() {
       for s in doctor dev sync tail; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks install-semaphore; do
@@ -1203,7 +1219,8 @@ config_drift_report() {
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
-         "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:audit",
+         "worktree:exec","govern:resolve","govern:pre-dispatch","govern:escalations-apply","govern:escalations-emit",
+         "govern:health","govern:dry-run","govern:status","govern:audit",
          "govern:context-budgets","govern:trim","govern:externalize","govern:validations",
          "validation:record","preflight:base-ci","preflight:main","vf"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
