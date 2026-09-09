@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Standalone validation-evidence sink writer (#252, generalized). From govern-bookkeep.sh:14:
+# Standalone validation-evidence sink writer (#252, generalized). From context-budgets.sh:7:
 # "Budgets are a property of the FILES, not of the run." Generalized: recording a validated
 # ticket's evidence is a property of the WORKSPACE, not of a governor resolve. This block used to be
-# INLINED in govern-bookkeep.sh, reachable only from the governor resolve path: a plain interactive
-# session that live-tests a ticket by hand recorded nothing durable. Extracted here so
-# govern-bookkeep.sh (the governor resolve path) and /validated (an interactive session) are
-# two callers of ONE writer instead of one caller owning the only door.
+# INLINED in govern-bookkeep.sh (since split; the resolve path now lives in land-resolution.sh),
+# reachable only from the governor resolve path: a plain interactive session that live-tests a
+# ticket by hand recorded nothing durable. Extracted here so land-resolution.sh (the governor
+# resolve path) and /validated (an interactive session) are two callers of ONE writer instead of one
+# caller owning the only door.
 #
 # Usage:
 #   validation-record.sh --ticket <N> --title <str> (--evidence <str> | --evidence-file <path>) \
@@ -27,9 +28,9 @@
 #                       instead of always claiming "the governor"
 #   --print-path-only  compute and print the target path without writing anything (dry preview)
 #
-# Resolves the meta root the same way govern-bookkeep.sh does (govern::meta_root) and writes
+# Resolves the meta root the same way land-resolution.sh does (govern::meta_root) and writes
 # <meta-root>/.claude/shiploop/validation/ticket-<N>-<slug>.md. The slug rule is an EXACT match to
-# govern-bookkeep.sh's pre-existing #252 promotion: lowercase, non-alphanumerics -> '-', collapse +
+# land-resolution.sh's pre-existing #252 promotion: lowercase, non-alphanumerics -> '-', collapse +
 # trim, cut to 60 chars, fall back to "validation" when that leaves nothing, so a ticket promoted by
 # either caller lands at the identical path.
 #
@@ -86,7 +87,7 @@ vr_meta_root="$(govern::meta_root)"
 vr_dir="$vr_meta_root/.claude/shiploop/validation"
 
 # slugify the title: lowercase, non-alphanumerics -> '-', collapse + trim, cap to 60 chars. EXACT
-# match to govern-bookkeep.sh's pre-existing #252 slug rule (do not drift the two apart).
+# match to land-resolution.sh's pre-existing #252 slug rule (do not drift the two apart).
 vr_slug="$(printf '%s' "$vr_title" \
   | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed -E 's/^-+//; s/-+$//' | cut -c1-60)"
 [[ -n "$vr_slug" ]] || vr_slug="validation"

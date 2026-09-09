@@ -79,7 +79,17 @@ if [[ "$OP" == "approve" && "$DRY" -ne 1 ]] && ! command -v gh >/dev/null 2>&1; 
   exit 0
 fi
 
-# ── shared: commit queue edits to main (CAS-with-retry, mirrors govern-bookkeep). A no-op in DRY mode,
+# Take the SAME bookkeep lock every other tickets.md writer takes (land-resolution.sh, file-ticket.sh,
+# escalations-apply-answers.sh) before touching tickets.md / the review queue / the externalized
+# ledger. Without this, this lane could race one of those writers' read-modify-write of tickets.md,
+# a real corruption path, worse now that the model is many concurrent interactive sessions on one
+# workspace rather than one loop. mkdir-mutex; reclaim a crashed holder's lock after 5min. Non-fatal
+# if busy >60s: proceed degraded, same as every other caller.
+BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
+govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "externalize-low-tickets: bookkeep lock busy >60s, proceeding (degraded)"
+trap 'govern::lock_release "$BK_LOCK"' EXIT
+
+# ── shared: commit queue edits to main (CAS-with-retry, mirrors land-resolution.sh). A no-op in DRY mode,
 # and — when invoked from escalations-apply-answers.sh (GOVERN_EXTERNALIZE_NO_COMMIT=1) — deferred so
 # that caller's own step-5 commit publishes the queue edits atomically with the escalation resolution.
 commit_queue() { # <commit-subject> <file> [file...]

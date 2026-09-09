@@ -624,7 +624,7 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern:dry-run": "bash scripts/govern/dry-run.sh",
     "govern:status": "bash scripts/govern/status.sh",
     "govern:audit": "bash scripts/govern/govern-supervise.sh",
-    "govern:budgets": "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
+    "govern:context-budgets": "bash scripts/govern/context-budgets.sh",
     "govern:trim": "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh",
@@ -682,7 +682,7 @@ component_package_json_merge() {
     "govern:dry-run":     "bash scripts/govern/dry-run.sh",
     "govern:status":      "bash scripts/govern/status.sh",
     "govern:audit":       "bash scripts/govern/govern-supervise.sh",
-    "govern:budgets":     "bash scripts/govern/govern-bookkeep.sh --enforce-budgets",
+    "govern:context-budgets": "bash scripts/govern/context-budgets.sh",
     "govern:trim":        "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh",
@@ -1204,7 +1204,7 @@ config_drift_report() {
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
          "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:audit",
-         "govern:budgets","govern:trim","govern:externalize","govern:validations",
+         "govern:context-budgets","govern:trim","govern:externalize","govern:validations",
          "validation:record","preflight:base-ci","preflight:main","vf"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
     ' package.json 2>/dev/null)"

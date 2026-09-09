@@ -274,7 +274,7 @@ if [ -f "$ROOT/CLAUDE.md" ]; then
     ok "CLAUDE.md $_cb_size/$_cb_budget chars"
   fi
   if [ -f "$ROOT/learnings.md" ] && [ "${SHIPLOOP_LEARNINGS_TTL:-0}" = "1" ]; then
-    ok "learnings TTL enforcement is on (SHIPLOOP_LEARNINGS_TTL=1) — 'govern:budgets' archives entries past the window"
+    ok "learnings TTL enforcement is on (SHIPLOOP_LEARNINGS_TTL=1) — 'govern:context-budgets' archives entries past the window"
   fi
 fi
 

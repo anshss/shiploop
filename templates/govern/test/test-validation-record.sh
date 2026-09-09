@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # validation-record.sh: the standalone validation-evidence sink writer (#252, generalized). Proves:
 #   1. writes .claude/shiploop/validation/ticket-<N>-<slug>.md, with the PR(s) and evidence in it.
-#   2. the slug rule EXACTLY matches govern-bookkeep.sh's #252 promotion (lowercase,
+#   2. the slug rule EXACTLY matches land-resolution.sh's #252 promotion (lowercase,
 #      non-alphanumerics -> '-', collapse + trim, cap 60 chars, "validation" fallback).
 #   3. NEVER clobbers an existing file: a second call with different evidence leaves it untouched,
 #      but still prints the (unchanged) path.
