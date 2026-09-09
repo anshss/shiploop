@@ -68,20 +68,28 @@ Published Anthropic list rates, USD per million tokens. Nothing here is fitted t
 
 | Tier | Input | Output | Cache read | Cache write (1h) | Cache write (5m) |
 |---|---|---|---|---|---|
-| Fable | $10 | $50 | $1.00 | $20 | $12.50 |
+| Fable 5.1 / Mythos 5.1 | $10 | $50 | $0.25 | $20 | $12.50 |
+| Fable 5 / Mythos 5 | $10 | $50 | $1.00 | $20 | $12.50 |
 | Opus | $5 | $25 | $0.50 | $10 | $6.25 |
 | Sonnet | $2 | $10 | $0.20 | $4 | $2.50 |
 | Haiku | $1 | $5 | $0.10 | $2 | $1.25 |
 
 Fable's own pricing page confirms it uses the same 0.1x/2x/1.25x multipliers as the rest of this
-table (the 2.5% cache-read cut published for Fable 5.1 and Mythos 5.1 does not apply to plain
-Fable 5, which is the only Fable id this table prices).
+table. The one exception is the cache-read column on Fable 5.1 and Mythos 5.1: the dedicated
+pricing page (`about-claude/pricing.md`) prices their cache hits at 0.025x input ($0.25/MTok)
+instead of the standard 0.1x, base input/output/write rates unchanged. `tierOf()` resolves this to
+a distinct `fable-5-1` tier (checked before the plain `fable` substring match, since a 5.1 model id
+also contains `fable`) purely so the cache-read rate can differ; every other number is identical to
+plain Fable and is never edited in one place without the other. Mythos shares Fable's specs and
+pricing exactly (its own pricing page says so) and resolves to the same tier as Fable rather than a
+separate entry.
 
-Cache read is 0.1x input, cache write is 2x input at the 1-hour TTL and 1.25x at 5 minutes. Tier is
-resolved from the model name; a session's `modelUsage` map is used when present, so a session that
-escalated from Haiku to Opus is priced per model rather than at one blended rate. Models whose tier
-is unrecognized are priced as Opus (`unknownModels` in the JSON, printed as a report line naming
-each distinct unrecognized model string, labelled a FALLBACK ESTIMATE rather than a priced rate).
+Cache read is 0.1x input (0.025x on Fable 5.1 / Mythos 5.1 only), cache write is 2x input at the
+1-hour TTL and 1.25x at 5 minutes for every tier including those two. Tier is resolved from the
+model name; a session's `modelUsage` map is used when present, so a session that escalated from
+Haiku to Opus is priced per model rather than at one blended rate. Models whose tier is unrecognized
+are priced as Opus (`unknownModels` in the JSON, printed as a report line naming each distinct
+unrecognized model string, labelled a FALLBACK ESTIMATE rather than a priced rate).
 
 Every cache write observed so far is `ephemeral_1h_input_tokens`: of the sessions whose result
 events carry the split, all of the write volume sat at the 1-hour TTL and none at 5 minutes (the

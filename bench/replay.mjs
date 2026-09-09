@@ -15,13 +15,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ── published Anthropic rates, USD per million tokens ────────────────────────
-// Cache read is 0.1x input. Cache write is 2x input at the 1-hour TTL, 1.25x at 5 minutes. Fable
-// uses the same multipliers as the rest of the table (verified against its own pricing block,
-// not just the ratio): $1 cache read, $20 1h write, $12.50 5m write, all exactly 0.1x/2x/1.25x of
-// its $10 input rate. (Fable 5.1 and Mythos 5.1 cut cache reads to 2.5%, but that is a later
-// model this table does not carry yet.)
+// Cache write is 2x input at the 1-hour TTL, 1.25x at 5 minutes, for every tier including Fable
+// 5.1 and Mythos 5.1 -- those two change ONLY the cache-READ multiplier (see cacheReadMult()
+// below), their input/output/write rates are the same $10/$50/$12.50/$20 as plain Fable 5. Fable
+// (and Mythos, which the same pricing page confirms shares Fable's specs and pricing exactly)
+// uses the same multipliers as the rest of the table for the non-5.1 rows (verified against its
+// own pricing block, not just the ratio): $1 cache read, $20 1h write, $12.50 5m write, all
+// exactly 0.1x/2x/1.25x of the $10 input rate. Fable 5.1 and Mythos 5.1 cut cache reads to
+// 0.025x ($0.25/MTok) instead: https://platform.claude.com/docs/en/about-claude/pricing.md,
+// "Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the
+// base input price. All other models use the standard 0.1x multiplier."
 // These are list rates, not fitted. The reconciliation ratio in the report is the check.
 const RATES = {
+  // Fable 5.1 / Mythos 5.1 need their own tier key, distinct from plain Fable/Mythos, purely so
+  // tierOf() can tell cacheReadMult() which cache-read rate applies -- the base numbers below are
+  // identical to 'fable' on purpose, never edit one without the other.
+  'fable-5-1': { input: 10, output: 50 },
   fable: { input: 10, output: 50 },
   opus: { input: 5, output: 25 },
   sonnet: { input: 2, output: 10 },
@@ -30,6 +39,14 @@ const RATES = {
 const CACHE_READ_MULT = 0.1;
 const CACHE_WRITE_1H_MULT = 2.0;
 const CACHE_WRITE_5M_MULT = 1.25;
+
+// Cache read is 0.1x input for every tier except Fable 5.1 / Mythos 5.1, which price it at 0.025x
+// (source above). Takes an already-RESOLVED tier (tierOf()'s return value, e.g. from a per-row
+// tier, a resolved driverTier, or an event's own tier), not a raw model string, so every call
+// site that already has a tier in hand can look the rate up directly without re-parsing anything.
+function cacheReadMult(tier) {
+  return tier === 'fable-5-1' ? 0.025 : CACHE_READ_MULT;
+}
 
 const ARMS = {
   '200k': { window: 200_000, label: 'a 200k-context session with compaction' },
@@ -57,8 +74,13 @@ const DEFAULT_BASELINE = 'driver-tier';
 // subscription-plan framing of the routing credit: a plan meters capacity, not dollars, and an
 // opus token eats five haiku tokens' worth of it. Printed in the report header, never mixed with
 // raw token counts.
-const QUOTA_WEIGHTS = { fable: 10, opus: 5, sonnet: 2, haiku: 1 };
-const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3, fable: 4 };
+const QUOTA_WEIGHTS = { 'fable-5-1': 10, fable: 10, opus: 5, sonnet: 2, haiku: 1 };
+// Same rank as 'fable': identical $ cost, so a run that somehow mixes plain Fable/Mythos with
+// the 5.1 variant and falls back to the highest-tier heuristic keeps whichever is encountered
+// first (TIER_RANK[t] > TIER_RANK[best] is strict, so a tie never overwrites) -- harmless for
+// dollars, since both price identically; it only affects which cache-read rate that one
+// fallback-resolved driverTier gets, an edge case this file does not attempt to resolve further.
+const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3, fable: 4, 'fable-5-1': 4 };
 
 // Distinct model strings `tierOf()` could not classify: model name -> number of costed rows
 // (`costParts()` entries) priced at the Opus fallback because of it. Populated once, in `main()`,
@@ -139,7 +161,14 @@ const ABSORBED_LEVERS = [
 
 function tierOf(model) {
   const m = String(model || '').toLowerCase();
-  if (m.includes('fable')) return 'fable';
+  // The '-5-1' check MUST run before the plain 'fable'/'mythos' check: 'claude-fable-5-1'.includes
+  // ('fable') is also true, so checking the shorter substring first would silently collapse the
+  // 5.1 id into the 'fable' tier and lose the cache-read-rate distinction that ONLY the 5.1 rows
+  // carry (cacheReadMult() keys off this return value). Mythos shares Fable's specs and pricing
+  // exactly (its own pricing page says so), so both names resolve to the same tier rather than a
+  // separate 'mythos' entry duplicating identical numbers.
+  if (m.includes('fable-5-1') || m.includes('mythos-5-1')) return 'fable-5-1';
+  if (m.includes('fable') || m.includes('mythos')) return 'fable';
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';
@@ -466,7 +495,7 @@ function sessionCost(sess, forceTier) {
     usd +=
       (p.input * r.input +
         p.output * r.output +
-        p.cacheRead * r.input * CACHE_READ_MULT +
+        p.cacheRead * r.input * cacheReadMult(tier) +
         p.cacheCreation * r.input * writeMult) /
       1e6;
   }
@@ -537,6 +566,26 @@ function sessionQuotaRate(sess) {
   }
   if (tokens > 0) return weighted / tokens;
   return QUOTA_WEIGHTS[tierOf(fallbackModel(sess)) || 'opus'];
+}
+
+// Per-session cache-READ rate (dollars per million tokens), blended like sessionInputRate() above
+// but folding each part's OWN cacheReadMult() in before blending rather than after. Fable 5.1 and
+// Mythos 5.1 read cache at 0.025x where every other tier reads at 0.1x, so a session that mixes a
+// 5.1 part with a non-5.1 part has no single multiplier to apply to the already-blended input
+// rate; blending `input x its own multiplier` per part is the only order that is still correct.
+function sessionCacheReadRate(sess) {
+  let weighted = 0;
+  let tokens = 0;
+  for (const p of costParts(sess)) {
+    const t = tierOf(p.model);
+    const n = p.input + p.cacheRead + p.cacheCreation;
+    if (!t || n <= 0) continue;
+    weighted += n * RATES[t].input * cacheReadMult(t);
+    tokens += n;
+  }
+  if (tokens > 0) return weighted / tokens;
+  const ft = tierOf(fallbackModel(sess)) || 'opus';
+  return RATES[ft].input * cacheReadMult(ft);
 }
 
 // The highest tier any session in the run touched: the fallback driver tier when nothing recorded
@@ -862,7 +911,7 @@ function replayRun(allTicketsInOrder, window, includePartial, driverTier) {
   const ticketsInOrder = includePartial
     ? allTicketsInOrder
     : allTicketsInOrder.filter((t) => t.sessions.some((x) => !x.partial));
-  const driverRead = (RATES[driverTier].input * CACHE_READ_MULT) / 1e6;
+  const driverRead = (RATES[driverTier].input * cacheReadMult(driverTier)) / 1e6;
   const driverWrite = (RATES[driverTier].input * CACHE_WRITE_1H_MULT) / 1e6;
   let carry = 0;
   const rows = [];
@@ -903,7 +952,12 @@ function replayRun(allTicketsInOrder, window, includePartial, driverTier) {
       }
 
       const rate = sessionInputRate(sess);
-      const readRate = (rate * CACHE_READ_MULT) / 1e6;
+      // NOT `(rate * cacheReadMult(...)) / 1e6`: rate is already blended ACROSS the session's own
+      // tiers, and Fable 5.1 / Mythos 5.1 read at a different multiplier than everything else, so
+      // blend-then-multiply and multiply-then-blend stop being the same number once a session can
+      // mix a 5.1 part with a non-5.1 part. sessionCacheReadRate() folds each part's own multiplier
+      // in before blending, the way sessionInputRate() blends dollars rather than tokens.
+      const readRate = sessionCacheReadRate(sess) / 1e6;
       const writeRate = (rate * CACHE_WRITE_1H_MULT) / 1e6;
       const qRate = sessionQuotaRate(sess);
 
@@ -998,7 +1052,7 @@ function leversFromEvents(events, window, driverTier) {
     'output-suppression': zero(),
   };
   const unknownClasses = new Map();
-  const readRate = (tier) => (RATES[tier].input * CACHE_READ_MULT) / 1e6;
+  const readRate = (tier) => (RATES[tier].input * cacheReadMult(tier)) / 1e6;
 
   for (const ev of events) {
     const tier = tierOf(ev.tier) || driverTier;

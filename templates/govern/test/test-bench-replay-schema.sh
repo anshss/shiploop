@@ -68,7 +68,7 @@ assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].medianTicketsPerRun')" "4" \
 assert_eq "$(printf '%s' "$j" | jq -r '.baseline')" "same-mix" "the JSON names the baseline it was computed under"
 assert_eq "$(printf '%s' "$j" | jq -r '.partials')" "drop" "and the partial-session mode"
 assert_eq "$(printf '%s' "$j" | jq -r '.quotaWeights | to_entries | map("\(.key)=\(.value)") | join(",")')" \
-  "fable=10,opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
+  "fable-5-1=10,fable=10,opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers | keys | join(",")')" \
   "cache-prefix,carry,escalation-correction,harness-overhead,output-suppression,resume-not-restart,routing,skip-the-model,watchdog" \
   "every lever is named in every report, including the ones worth nothing here"
