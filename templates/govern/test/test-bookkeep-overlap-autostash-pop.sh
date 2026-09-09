@@ -18,7 +18,7 @@
 # (never hand-merging someone else's code). A GENUINE content conflict on a meta file (rebase itself
 # fails, rc ≠ 0) still aborts + fails closed, unchanged.
 #
-# Part A — end-to-end through the REAL govern-bookkeep.sh: origin advances script.sh's line2 while a
+# Part A — end-to-end through the REAL land-resolution.sh: origin advances script.sh's line2 while a
 # co-tenant holds conflicting uncommitted WIP on that SAME line2; local main is also diverged (one
 # unpushed commit) to force the pre-edit sync (step 0) down the autostash rebase branch. Asserts the
 # ticket-block push STILL lands on origin/main, the shared index is NOT wedged (a follow-up commit
@@ -31,7 +31,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
 
@@ -40,13 +40,13 @@ gitcfg() { git -C "$1" config user.email t@t; git -C "$1" config user.name t; }
 # Part B calls govern::pull_rebase_autostash DIRECTLY (in-process), so source common.sh once here.
 # common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh" on load, so seed a stub first (#255);
 # later per-part mk_ws_stub calls just re-point GOVERN_WS_ROOT — the function stays defined. Part A
-# runs the REAL govern-bookkeep.sh as a subprocess (it sources common.sh itself), so this is inert
+# runs the REAL land-resolution.sh as a subprocess (it sources common.sh itself), so this is inert
 # for Part A. (Part A passes GOVERN_WS_ROOT explicitly to that subprocess.)
 mk_ws_stub "$ROOT"
 source "$DIR/../lib/common.sh"
 
 # ═════════════════════════════════════════════════════════════════════════
-# Part A — real govern-bookkeep.sh run: origin advances the SAME script line a co-tenant is editing
+# Part A — real land-resolution.sh run: origin advances the SAME script line a co-tenant is editing
 # ═════════════════════════════════════════════════════════════════════════
 A="$ROOT/a"; mkdir -p "$A"
 ORIGIN="$A/origin.git"; LC="$A/local"

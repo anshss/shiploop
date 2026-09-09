@@ -51,3 +51,9 @@ scripts/lib/doctor-extra.sh.example
 # directly onto scripts/govern/run-loop.sh (see SKILL.md) — the workspace-local /govern
 # twin command is retired.
 .claude/commands/govern.md
+
+# v1.19.3: govern-bookkeep.sh split into two scripts that share nothing but a filename:
+# land-resolution.sh (the resolve path) and context-budgets.sh (the --enforce-budgets path,
+# now its own entry point with no flag needed). No shim; every call site (run-loop.sh,
+# package.json, scaffold.sh) points at the new names.
+scripts/govern/govern-bookkeep.sh

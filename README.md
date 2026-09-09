@@ -41,7 +41,7 @@ One goal: minimize tokens per shipped work. These are the levers that materially
 
 - **A worker fleet naturally turns prompt caching into a repeated cold-start tax.** Claude Code puts per-session details such as the working directory, git-status snapshot, and memory paths near the start of each worker’s system prompt. Two workers on different jobs therefore diverge within the first few hundred bytes, sharing no cacheable prefix; each pays the full cache-write cost for the whole prompt and its tool schemas on turn one. Across dozens of workers, retries, and escalations, that cost multiplies by every spawn instead of being paid once in a long-lived session. Shiploop keep the shared system prompt byte-identical, move worker-specific context into the first user message, and keep trims static so later workers can reuse the expensive cached prefix rather than rewrite it.
 
-- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no slash commands, personal settings, MCP servers, or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7%.
+- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no MCP servers or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7%.
 
 - **Related work can share exploration.** A worker can handle tickets whose scout-measured file paths overlap, exploring an area once instead of once per ticket. A five-ticket batch is therefore far cheaper than five separate workers.
 
@@ -134,7 +134,7 @@ The runner is a pure-Bash driver (`scripts/govern/run-loop.sh <N> ...`): you nam
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
 | `/shiploop:push` | Port local mechanism improvements back to the hub as a human-reviewed PR (never auto-merges) |
 | `npm run govern:audit` | Manual audit: review a run's state on demand, zero model spend unless invoked |
-| `npm run govern:budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` (`--dry` to preview) |
+| `npm run govern:context-budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` (`--dry` to preview) |
 | `npm run govern:trim` | Evidence-based CLAUDE.md compression detector on its own: classifies every over-budget block and writes ranked candidates, never edits the file (`--apply <hash>`, `--still-true <hash>`, `--dry-run`) |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (opt-in, off until `GOVERN_EXTERNALIZE_REPO` is set) |
 

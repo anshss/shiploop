@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# #95 - run-loop.sh flushes `govern-bookkeep.sh --enforce-budgets` at run-end, after every worker
-# is reaped, instead of never (it used to run only by hand: `npm run govern:budgets`, or a human
+# #95 - run-loop.sh flushes `context-budgets.sh` at run-end, after every worker
+# is reaped, instead of never (it used to run only by hand: `npm run govern:context-budgets`, or a human
 # heeding doctor.sh's failing check). Gated by GOVERN_AUTO_BUDGETS (default on; assert.sh forces it
 # off for the whole suite the same way it forces GOVERN_OVERLAP_NUDGE off, so a test that wants the
 # real default must opt back in explicitly). Proves:
-# `--enforce-budgets` is REPORT ONLY for CLAUDE.md on every call, bare or from this flush: it
+# context-budgets.sh is REPORT ONLY for CLAUDE.md on every call, bare or from this flush: it
 # measures CLAUDE.md, classifies compression candidates and points at /shiploop:compress, and never
 # edits CLAUDE.md. Proves:
 #   1. GOVERN_AUTO_BUDGETS=1, two tickets dispatched: the check runs EXACTLY ONCE for the whole run,
@@ -95,7 +95,7 @@ assert_contains "$out1" "DONE" "on: the run completed"
 hits1="$(grep -c "$MARK" <<<"$out1" || true)"
 assert_eq "$hits1" "1" "on: the budget check ran EXACTLY ONCE across a 2-ticket dispatch, not per-ticket"
 assert_contains "$out1" "nothing to enforce" \
-  "on: the real govern-bookkeep.sh --enforce-budgets ran (no CLAUDE.md yet -> its own no-op message)"
+  "on: the real context-budgets.sh ran (no CLAUDE.md yet -> its own no-op message)"
 
 # ── 2. GOVERN_AUTO_BUDGETS=0: never invoked ───────────────────────────────────────────────────────
 T2="$(mktemp -d)"; trap 'rm -rf "$T1" "$T2"' EXIT
@@ -111,11 +111,11 @@ T3="$(mktemp -d)"; trap 'rm -rf "$T1" "$T2" "$T3"' EXIT
 setup_ws "$T3" 1
 mk_ws_stub "$T3"
 # CLAUDE.md over budget -> the report path measures it, finds nothing mechanical to suggest, and the
-# size check exits 3 (govern-bookkeep.sh's own documented alarm path). Nothing is ever edited.
+# size check exits 3 (context-budgets.sh's own documented alarm path). Nothing is ever edited.
 printf '# over budget\n%s\n' "$(head -c 200 /dev/zero | tr '\0' x)" > "$T3/CLAUDE.md"
 pre3="$(cat "$T3/CLAUDE.md")"
 out3="$(run_governor "$T3" 1 -- GOVERN_AUTO_BUDGETS=1 GOVERN_LESSON_BUDGET_CHARS=10)" && rc3=0 || rc3=$?
-assert_eq "$rc3" "0" "alarm: exit-3 from --enforce-budgets does not change the DRIVER's own exit status"
+assert_eq "$rc3" "0" "alarm: exit-3 from context-budgets.sh does not change the DRIVER's own exit status"
 assert_contains "$out3" "DONE" "alarm: the run still completes normally"
 assert_contains "$out3" "SUGGESTED, not performed" "alarm: the outcome is logged as a suggestion, not an enforcement"
 assert_contains "$out3" "/shiploop:compress" "alarm: and names the operator playbook"

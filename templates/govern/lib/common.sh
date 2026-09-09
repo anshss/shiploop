@@ -18,8 +18,9 @@ export META_ROOT="$WS_ROOT"
 # shellcheck source=../../lib/workspace.sh
 source "$WS_ROOT/scripts/lib/workspace.sh"
 
-# Flow-registry substrate (validations feature). Sourced here so every govern:: consumer (bookkeep,
-# run-loop, file-ticket, spawn-worker, lint) inherits the flow parser + cas_edit + lint helpers.
+# Flow-registry substrate (validations feature). Sourced here so every govern:: consumer
+# (land-resolution, run-loop, file-ticket, spawn-worker, lint) inherits the flow parser + cas_edit +
+# lint helpers.
 # Guarded on existence so a workspace scaffolded before this module shipped simply runs without it.
 [[ -f "$GOVERN_LIB_DIR/flows.sh" ]] && source "$GOVERN_LIB_DIR/flows.sh"
 
@@ -280,7 +281,7 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
 # Fail CLOSED if a commit dir didn't resolve to a real git work-tree (#28). A commit dir is derived as
 # `$(cd "$(dirname "$TICKETS_FILE")" && pwd)`; when that directory is MISSING the substitution yields an
 # EMPTY string, and a later `cd "$commit_dir"` becomes `cd ""` — a no-op that leaves git running against
-# the CURRENT working directory, so bookkeep could commit/push into the WRONG repo. Call this right after
+# the CURRENT working directory, so land-resolution.sh could commit/push into the WRONG repo. Call this right after
 # deriving any such commit dir, BEFORE any `cd`/git on it.
 govern::assert_commit_dir() { # <dir>
   local d="${1:-}"
@@ -623,7 +624,7 @@ govern::otel_attrs() { # <instance-label> -> "k=v,k=v,..."
 
 # ── monotonic ticket numbering (#54, #73) ───────────────────────────────────
 # THE single source of truth for "what's the next tickets.md number". Both the governor's
-# auto-filing (govern-bookkeep) AND any manual filing (operator/relay sessions, /resolve sweeps,
+# auto-filing (land-resolution.sh) AND any manual filing (operator/relay sessions, /resolve sweeps,
 # scripts/govern/file-ticket.sh) MUST route through here so a number is never silently reused.
 #
 # govern::ticket_filemax — highest `## #N` heading number in a file (0 if none). Scans ONE file:
@@ -639,9 +640,16 @@ govern::ticket_filemax() { # [tickets-file] -> N
 # therefore NEVER reused — not after the highest ticket is resolved+deleted (#54), and not by a
 # manual filing that never read/bumped the seq (#73). The read+bump is serialized under the bookkeep
 # lock so two concurrent filers (a govern driver and an operator sweep) can't read the same max and
-# collide on one number. Reentrant: a caller already holding the bookkeep lock (govern-bookkeep does)
-# sets GOVERN_BOOKKEEP_LOCK_HELD=1 to skip re-acquiring (the mkdir mutex is NOT reentrant — a second
-# acquire from the same process would spin to timeout). Prints the allocated number to stdout.
+# collide on one number. Reentrant: a caller already holding the bookkeep lock (land-resolution.sh
+# does) sets GOVERN_BOOKKEEP_LOCK_HELD=1 to skip re-acquiring (the mkdir mutex is NOT reentrant — a
+# second acquire from the same process would spin to timeout). Prints the allocated number to stdout.
+#
+# GOVERN_SEQ_PEEK=1: READ-ONLY mode (the config-check health-probe fix). Compute and print the
+# same number WITHOUT bumping .ticket-seq. config-check.sh's smoke probe used to call this function
+# for real, so every health check silently advanced the high-water mark in the operator's git tree.
+# Peek still takes the lock (a consistent read against a concurrent real allocation), it just skips
+# the write. Every real caller (file-ticket.sh, land-resolution.sh, govern-self-apply.sh,
+# sync-port.sh, lib/valpending.sh) leaves GOVERN_SEQ_PEEK unset and keeps writing as before.
 govern::next_ticket_number() { # [tickets-file] -> N
   local tickets_file="${1:-$TICKETS_FILE}"
   local seq_file="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
@@ -656,7 +664,9 @@ govern::next_ticket_number() { # [tickets-file] -> N
   filemax="$(govern::ticket_filemax "$tickets_file")"
   maxn=$(( hwm > filemax ? hwm : filemax ))
   maxn=$((maxn+1))
-  printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
+  if [[ "${GOVERN_SEQ_PEEK:-0}" != "1" ]]; then
+    printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
+  fi
   [[ "$got_lock" == "1" ]] && govern::lock_release "$lock"
   printf '%s\n' "$maxn"
 }
@@ -690,8 +700,8 @@ govern::duplicate_ticket_headings() { # [tickets-file]
 # bold span STARTS with the marker phrase. Reads $1 (defaults to TICKETS_FILE).
 # ── shared ticket-block parser (single source of truth) ─────────────────────
 # Historically each caller re-parsed tickets.md block boundaries differently: spawn-worker /
-# govern-bookkeep bounded at the FIRST `^---$` (which a bare `---` inside a ticket body truncates
-# — worker prompt gets a short block, bookkeep delete leaves orphaned body lines); select-ticket /
+# land-resolution bounded at the FIRST `^---$` (which a bare `---` inside a ticket body truncates
+# — worker prompt gets a short block, the resolve delete leaves orphaned body lines); select-ticket /
 # not_automatable / ticket_deps bounded at the next `## #` heading, but the heading regex requires
 # an exact `## #N ` (single space), so `##  #N` (double-space) or `## #N—Title` (em-dash, no space)
 # breaks recognition. These helpers are the SINGLE source of truth: block boundary = next tolerant
@@ -948,7 +958,7 @@ govern::out_of_scope_tickets() { # [tickets-file] -> "N\twhere" lines
 #      the harness and that sub-repo interact, not a pure sub-repo-internal fact.
 # Every other case (zero path signals, 2+ repos referenced, or a cross-cutting word) stays at root.
 # Pure function — prints "<repo>\t<reason>" (redirect) or "\t<reason>" (stay at root); always exit 0.
-# The caller (govern-bookkeep.sh) logs the reason either way, so every decision is auditable (#83).
+# The caller (land-resolution.sh) logs the reason either way, so every decision is auditable (#83).
 GOVERN_LESSON_CROSSCUT_RE='(^|[^A-Za-z0-9_-])(meta-repo|root claude\.md|governor|workspace\.sh|claude\.md|queue/tickets\.md|cross-repo|harness)([^A-Za-z0-9_-]|$)'
 govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
   local text="$1" r
@@ -992,7 +1002,7 @@ govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
 }
 
 # Insert lesson TEXT into FILE: after ANCHOR's line if ANCHOR is non-empty and present in FILE,
-# else appended at EOF. Shared by the root and sub-repo lesson-insert paths in govern-bookkeep.sh
+# else appended at EOF. Shared by the root and sub-repo lesson-insert paths in land-resolution.sh
 # so the two never drift. Pass TEXT via a FILE read with getline — NEVER `awk -v t="$text"`: awk's
 # -v cannot hold literal newlines, so multi-line lesson text dies with "awk: newline in string".
 govern::insert_lesson() { # <file> <anchor> <text>
@@ -2498,7 +2508,7 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
 
 # ── autostash-pop-safe `pull --rebase` for the shared main checkout (#377) ──────────────────────
 # Three call sites run `git -c rebase.autoStash=true pull --rebase origin main` in the SHARED main
-# checkout: govern-bookkeep.sh's pre-edit origin sync (step 0) and its push-CAS retry loop (step 4),
+# checkout: land-resolution.sh's pre-edit origin sync (step 0) and its push-CAS retry loop (step 4),
 # plus commit_meta_to_main's push loop. #370 added autostash so a co-tenant Claude session's UNRELATED
 # dirty tracked files (e.g. .claude/context/** WIP) never block the rebase. That handles a
 # NON-overlapping dirty tree. But when origin/main advances a file the co-tenant is CONCURRENTLY
@@ -2561,8 +2571,8 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
 # changes), and publish to origin/main, keeping local main == origin/main. Used by the WRITER of a
 # tracked governor runtime artifact (govern-improve.sh's governor/improvements.md) so it never lingers
 # UNCOMMITTED — an uncommitted tracked file makes a later `git pull --rebase` on the main checkout
-# (e.g. govern-bookkeep.sh's pre-edit origin sync, step 0) abort with "cannot pull with rebase: You
-# have unstaged changes", a failure easily misread as a merge conflict. Mirrors bookkeep's commit+CAS-
+# (e.g. land-resolution.sh's pre-edit origin sync, step 0) abort with "cannot pull with rebase: You
+# have unstaged changes", a failure easily misread as a merge conflict. Mirrors land-resolution's commit+CAS-
 # push: if origin advanced under us, rebase our append-only commit and retry; NEVER force-push (the
 # #105 ff-only/no-force invariant that test-no-force-push.sh locks). Guarded + non-fatal — no-op
 # outside a git repo or when there's nothing to commit; commits locally but skips the push under

@@ -101,6 +101,69 @@ Only blocker."
   fi
 fi
 
+# --- BLOCKING: a validation-shaped ticket resolved by hand, without a validation record (shiploop
+# 1.19.3, the loop purge — B2b). Read this comment before touching the logic below: the OBVIOUS
+# implementation ("any open validation-shaped ticket with no evidence file blocks") is wrong — that
+# is the existing advisory nudge below (validation_note), and making IT blocking would refuse every
+# session in a workspace that has any unvalidated validation ticket, forever, whether or not this
+# session ever touched it.
+#
+# Block ONLY on RESOLUTION WITHOUT A RECORD: a validation-shaped `## #N` block that is present in
+# origin/main (or HEAD if there is no remote / the fetch fails) but ABSENT from the working-tree
+# tickets.md — i.e. THIS session removed it — with no matching
+# .claude/shiploop/validation/ticket-<N>-*.md evidence file. A session that never touched the
+# ticket is unaffected (the block is present on both sides, so no diff). A ticket resolved through
+# resolve-ticket.sh already ran the same gate at land time and (on the happy path) already wrote
+# the evidence file, so this never re-fires for that path — it exists for a HAND edit to
+# tickets.md that deletes a validation ticket's block outside resolve-ticket.sh entirely.
+#
+# Escape hatch for a ticket deleted for a reason OTHER than validation (an operator decision to
+# drop it, not a resolve): GOVERN_VALIDATION_GATE=0, named in the block message so it is
+# discoverable at the moment it is needed. UNgated by the once-per-session marker below (like the
+# two blocking checks above) so it re-fires on every Stop attempt until the record exists, the
+# ticket comes back, or the kill switch is set.
+if [ "${GOVERN_VALIDATION_GATE:-1}" != "0" ] && [ -f "$MAIN/queue/tickets.md" ]; then
+  gate_out="$(
+    GOVERN_WS_ROOT="$MAIN" GOVERN_TICKETS_FILE="$MAIN/queue/tickets.md"
+    export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::is_validation_ticket >/dev/null 2>&1 || exit 0
+    command -v govern::ticket_block >/dev/null 2>&1 || exit 0
+    base_ref="HEAD"
+    if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
+       && git -C "$MAIN" fetch -q origin main 2>/dev/null; then
+      base_ref="origin/main"
+    fi
+    base_content="$(git -C "$MAIN" show "${base_ref}:queue/tickets.md" 2>/dev/null || true)"
+    [ -n "$base_content" ] || exit 0
+    base_tmp="$(mktemp)"
+    printf '%s\n' "$base_content" > "$base_tmp"
+    trap 'rm -f "$base_tmp"' EXIT
+    base_ns="$(grep -oE '^##[[:space:]]+#[0-9]+' "$base_tmp" 2>/dev/null | grep -oE '[0-9]+' || true)"
+    for n in $base_ns; do
+      # Still present in the working tree → not something this session removed.
+      grep -qE "^##[[:space:]]+#${n}([^0-9]|\$)" "$MAIN/queue/tickets.md" 2>/dev/null && continue
+      block="$(govern::ticket_block "$n" "$base_tmp" 2>/dev/null || true)"
+      govern::is_validation_ticket "$block" || continue
+      compgen -G "$MAIN/.claude/shiploop/validation/ticket-$n-"'*.md' >/dev/null 2>&1 && continue
+      printf '%s\n' "$n"
+    done
+  )"
+  if [ -n "${gate_out:-}" ]; then
+    gate_ids="$(printf '%s' "$gate_out" | tr '\n' ' ' | sed -E 's/ +$//')"
+    reason="VALIDATION RECORD REQUIRED: ticket(s) #$(printf '%s' "$gate_ids" | sed 's/ /, #/g') \
+looked like validation/spike tickets and were REMOVED from tickets.md this session, but no \
+.claude/shiploop/validation/ticket-<N>-*.md record exists for them. Run /validated <N> for each to \
+record the evidence, then stop. If this ticket was deleted for a reason OTHER than validation (an \
+operator decision to drop it, not a resolve), set GOVERN_VALIDATION_GATE=0 for this session to skip \
+this check. Only blocker — do not start other work."
+    esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"decision":"block","reason":"%s"}\n' "$esc"
+    exit 0
+  fi
+fi
+
 # --- once-per-session marker ---
 marker="${TMPDIR:-/tmp}/metarepo-ticket-sweep-${session_id}"
 [ -e "$marker" ] && exit 0

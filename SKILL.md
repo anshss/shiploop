@@ -60,7 +60,7 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
-| `npm run govern:budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` |
+| `npm run govern:context-budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` |
 | `npm run govern:trim` | Evidence-based CLAUDE.md compression detector alone: classifies every over-budget block, never edits the file |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (no-op until `GOVERN_EXTERNALIZE_REPO` is set) |
 | `npm run govern:validations` | Run the governor validation suite |
@@ -112,7 +112,7 @@ A durable, file-based backlog the whole harness reads.
   number only for independently dispatchable work).
 - **Placement gate on `lessonPatch` (#83)** — root `CLAUDE.md` is re-sent every turn of every
   session, so a lesson that is really one sub-repo's internals permanently taxes sessions that never
-  touch that sub-repo. `govern-bookkeep.sh` doesn't trust the reporting worker's placement claim: it
+  touch that sub-repo. `land-resolution.sh` doesn't trust the reporting worker's placement claim: it
   re-derives scope from the lesson text itself (`govern::lesson_placement` in `lib/common.sh`) and
   redirects — committing straight into `<sub-repo>/CLAUDE.md` — ONLY when exactly one sub-repo is
   referenced as a path, no second sub-repo is named anywhere in the text, and no cross-cutting signal
@@ -314,7 +314,7 @@ here on purpose (each easy to port the day you hit its failure mode):
 
 | Feature | Reference harness has | The baseline does instead | Why safe to omit at first |
 |---|---|---|---|
-| **Monotonic ticket numbering** (#54) | `govern-bookkeep` allocates new numbers above a persisted high-water mark — deleting the top ticket then filing a new one leaves a gap | `this-file max + 1` — reuses a number if the previous top ticket was just deleted | Id reuse only bites when an in-flight PR references a now-recycled number; rare below high churn |
+| **Monotonic ticket numbering** (#54) | `land-resolution.sh` allocates new numbers above a persisted high-water mark — deleting the top ticket then filing a new one leaves a gap | `this-file max + 1` — reuses a number if the previous top ticket was just deleted | Id reuse only bites when an in-flight PR references a now-recycled number; rare below high churn |
 | **Tolerant PR-head matching + same-run adoption** (#55) | `find_pr` tries exact `ticket-N` head, falls back to a tolerant regex, adopts a PR opened earlier in the same run | exact-head only (`--head "ticket-N"`) | A worker naming its branch exactly `ticket-<N>` (required) is always found by exact match |
 | **Tolerant worker-report extraction** (#66) | pulls the last balanced `{…}` object carrying `status` out of arbitrary text | whole final message must `jq`-parse as one object | A compliant worker emits only the JSON object; tolerance only rescues a drifting worker |
 | **Run-start preflight-main reconcile** (#71) | `preflight-main.sh` reconciles every repo onto clean `main` before a run | no preflight; trusts the checkout is on `main` | main-on-main SessionStart hook already warns on drift |

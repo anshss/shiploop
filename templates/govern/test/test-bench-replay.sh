@@ -162,6 +162,69 @@ assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback.measuredSessions')" "0" \
 assert_contains "$(run_replay --arm 1m)" "tier fallback: none" \
   "and the report says so in words rather than printing the word unknown"
 
+# ── an unrecognized model name is priced conservatively AND named, not silently opus'd ───────────
+# fixtures/replay-unknown-model-fleet holds one session whose modelUsage mixes a real tier
+# (claude-sonnet-5) with a model name no tier substring matches (claude-ghostwriter-1). The
+# session-level tierFallback audit alone would miss this: the session also names a real model, so
+# it is "named" and never falls into that bucket. The per-row unknownModels audit must catch the
+# unrecognized part anyway. Cost: sonnet part 1,000 in x $2 + 500 out x $10 = $0.007; ghostwriter
+# part priced at the Opus fallback ($5/$25): 2,000 x $5 + 1,000 x $25 = $0.035. Total $0.042, which
+# the fixture's total_cost_usd is set to exactly, so it reconciles too.
+run_unknown() { node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-unknown-model-fleet" \
+  --arm 1m --baseline same-mix --partials drop "$@" 2>&1; }
+uflt="$(run_unknown --json)"
+assert_eq "$?" "0" "the unknown-model fleet replays rather than crashing on the unrecognized name"
+assert_eq "$(printf '%s' "$uflt" | jq -r '.tierFallback.sessions')" "0" \
+  "the session names a real model too, so it is not a tier-fallback session"
+assert_eq "$(printf '%s' "$uflt" | jq -cr '.unknownModels')" '{"claude-ghostwriter-1":1}' \
+  "the unrecognized model is named and counted exactly once, not once per arm x baseline recompute"
+assert_eq "$(printf '%s' "$uflt" | jq -r '(.arms["1m"].shiploopCostUsd * 1000 | round)')" "42" \
+  "the unrecognized part is priced at the conservative Opus fallback rather than crashing or inflating"
+assert_eq "$(printf '%s' "$uflt" | jq -r '.reconciliation.medianComputedOverReported')" "1" \
+  "which reconciles against the fixture's reported cost"
+assert_contains "$(run_unknown)" "claude-ghostwriter-1 x1" \
+  "the human report names the unrecognized model by string, not just a count"
+assert_contains "$(run_unknown)" "FALLBACK ESTIMATE" \
+  "and says plainly that the figure is a fallback estimate, not a priced rate"
+
+# ── Mythos prices at Fable's rate, not the Opus fallback ─────────────────────
+# fixtures/replay-fable-family-fleet ticket 604 uses model claude-mythos-5, with no cache activity
+# so its own turn (usage all zero) is dropped as a synthetic non-billed message and it never
+# touches the carry/overhead chain -- an isolated check of modelUsage pricing alone. Cost:
+# 1,000 in x $10 + 1,000 out x $50 = $0.06, which the fixture's total_cost_usd is set to exactly.
+fam="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-fable-family-fleet" \
+  --arm 1m --baseline same-mix --partials drop --json 2>&1)"
+assert_eq "$?" "0" "the fable/mythos family fleet replays"
+assert_eq "$(printf '%s' "$fam" | jq -cr '.unknownModels')" "{}" \
+  "mythos and Fable 5.1 both resolve, so nothing lands in unknownModels"
+assert_eq "$(printf '%s' "$fam" | jq -r '.tierFallback.sessions')" "0" \
+  "and nothing falls back to the Opus tier either"
+assert_eq "$(printf '%s' "$fam" | jq -r '.reconciliation.medianComputedOverReported')" "1" \
+  "the mythos ticket's cost reconciles against its own reported total_cost_usd"
+
+# ── Fable 5.1 / Mythos 5.1 read cache at 0.025x, plain Fable/Mythos still read at 0.1x ────────────
+# Same fleet, tickets 601-603: 601 (claude-haiku-4-5, 2 turns, context grows 10,000 -> 100,000)
+# builds carry of 80,000 tokens and pays no overhead itself (nothing carried into ticket 1). 602
+# (claude-fable-5-1) and 603 (claude-fable-5) each re-read that SAME 80,000-token carry in a single
+# turn -- 602's own turn contributes 0 further carry growth (one turn, ctx unchanged), so 603 faces
+# the identical 80,000 figure, isolating the rate as the only variable between them.
+#   602 overhead: 80,000 x ($10 x 0.025) / 1e6 = $0.02   -> vanillaCostUsd = shipCost($0.175) + $0.02 = $0.195
+#   603 overhead: 80,000 x ($10 x 0.1)   / 1e6 = $0.08   -> vanillaCostUsd = shipCost($0.175) + $0.08 = $0.255
+# shipCost is identical ($0.175, both 15,000 in x $10 + 500 out x $50) because base rates do not
+# change between Fable 5 and Fable 5.1 -- only the cache-read multiplier does, so the full $0.06
+# spread between the two rows is exactly the multiplier difference, a clean 4x on that one term.
+rows="$(node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-fable-family-fleet" \
+  --arm 1m --baseline same-mix --partials drop --rows 2>&1 | jq -s .)"
+row_at() { printf '%s' "$rows" | jq -r ".[] | select(.position == $1) | $2"; }
+assert_eq "$(row_at 2 .shipCostUsd)" "0.175" "602 (Fable 5.1): shipCost is unaffected by the cache-read rate"
+assert_eq "$(row_at 3 .shipCostUsd)" "0.175" "603 (Fable 5): shipCost is identical to 602's"
+assert_eq "$(printf '%s' "$rows" | jq -r '(.[] | select(.position == 2) | .vanillaCostUsd * 10000 | round)')" "1950" \
+  "602 (Fable 5.1): the 80,000-token carry re-read at 0.025x input adds exactly \$0.02 of overhead"
+assert_eq "$(printf '%s' "$rows" | jq -r '(.[] | select(.position == 3) | .vanillaCostUsd * 10000 | round)')" "2550" \
+  "603 (Fable 5): the SAME 80,000-token carry re-read at 0.1x input adds \$0.08, 4x 602's overhead"
+assert_eq "$(row_at 2 .vanillaTokens)" "$(row_at 3 .vanillaTokens)" \
+  "602 and 603 carry the identical TOKEN count (95,500) -- this is purely a dollar-rate difference"
+
 # ── recovering the sessions that were killed before a result event ───────────
 # Ticket 105 was killed mid-session. Its OUTPUT is unrecoverable, but its input side is exact:
 # 10,000 input + 12,000 cache write + 28,000 cache read = 50,000 tokens. Dropping it makes OUR arm
