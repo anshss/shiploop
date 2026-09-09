@@ -583,7 +583,7 @@ if [[ "$ranlive" == "true" && -n "$evidence" ]]; then
   # must never cost the operator the resolve itself, so failure is logged and swallowed here.
   vdoc_rel="$(bash "$DIR/validation-record.sh" \
     --ticket "$N" --title "${ticket_title:-validation}" --evidence "$evidence" \
-    --source "governor resolve (run $(basename "${GOVERN_RUN_DIR:-manual}"))" \
+    --source "governor resolve (run $(basename "${GOVERN_RUN_DIR:-manual}"))" --gating machine \
     ${vr_pr_args[@]+"${vr_pr_args[@]}"})" \
     || { govern::log "bookkeep #$N: validation-record.sh failed, continuing the resolve without a sink record (#252)"; vdoc_rel=""; }
   if [[ -n "$vdoc_rel" ]]; then vdoc="$meta_root/$vdoc_rel"; fi

@@ -9,7 +9,7 @@
 #
 # Usage:
 #   validation-record.sh --ticket <N> --title <str> (--evidence <str> | --evidence-file <path>) \
-#     [--pr <repo#num> ...] [--source <label>] [--print-path-only]
+#     --source <label> --gating <machine|self> [--pr <repo#num> ...] [--print-path-only]
 #
 #   --ticket           the ticket number N (digits only)
 #   --title            the ticket title, used for the heading AND the slug
@@ -17,7 +17,12 @@
 #                       code-reading verdict); mutually exclusive with --evidence-file
 #   --evidence-file    read the evidence text from a file instead of an argv string
 #   --pr               a "repo#number" pair naming a PR this validation rode in on; repeatable
-#   --source           who is calling this, e.g. "governor resolve (run 2026-09-09T...)" or
+#   --gating           REQUIRED. `machine` when a structured report gated this record on a real live
+#                       test (the resolve path checks validation.ranLiveTest), `self` when a session
+#                       attested to its own evidence with nothing mechanical checking it. Recorded in
+#                       the file so a later reader can weigh the record instead of trusting all of
+#                       them equally.
+#   --source           REQUIRED. who is calling this, e.g. "governor resolve (run 2026-09-09T...)" or
 #                       "interactive session": names the CALLER in the file's provenance line
 #                       instead of always claiming "the governor"
 #   --print-path-only  compute and print the target path without writing anything (dry preview)
@@ -42,7 +47,7 @@ if [[ "${GOVERN_VALIDATION_RECORD:-1}" == "0" ]]; then
   exit 0
 fi
 
-vr_ticket="" vr_title="" vr_evidence="" vr_evidence_file="" vr_source="" vr_print_only=0
+vr_ticket="" vr_title="" vr_evidence="" vr_evidence_file="" vr_source="" vr_gating="" vr_print_only=0
 declare -a vr_prs=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --evidence-file)   vr_evidence_file="${2:?--evidence-file requires a value}"; shift 2 ;;
     --pr)              vr_prs+=("${2:?--pr requires a value}"); shift 2 ;;
     --source)          vr_source="${2:?--source requires a value}"; shift 2 ;;
+    --gating)          vr_gating="${2:?--gating requires a value}"; shift 2 ;;
     --print-path-only) vr_print_only=1; shift ;;
     -h|--help) sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) govern::die "validation-record.sh: unknown argument: $1 (try --help)" ;;
@@ -69,6 +75,12 @@ if [[ -n "$vr_evidence_file" ]]; then
   vr_evidence="$(cat "$vr_evidence_file")"
 fi
 [[ -n "$vr_evidence" ]] || govern::die "validation-record.sh: --evidence (or --evidence-file, non-empty) is required: reading source is not evidence"
+[[ -n "$vr_source" ]] || govern::die "validation-record.sh: --source <label> is required: an unattributed record cannot be weighed"
+case "${vr_gating:-}" in
+  machine|self) : ;;
+  "") govern::die "validation-record.sh: --gating <machine|self> is required" ;;
+  *)  govern::die "validation-record.sh: --gating must be 'machine' or 'self', got '$vr_gating'" ;;
+esac
 
 vr_meta_root="$(govern::meta_root)"
 vr_dir="$vr_meta_root/.claude/shiploop/validation"
@@ -102,11 +114,22 @@ for vr_pr in ${vr_prs[@]+"${vr_prs[@]}"}; do
 done
 [[ -n "$vr_pr_lines" ]] || vr_pr_lines="- (none recorded)"$'\n'
 
-vr_src_label="${vr_source:-an unspecified caller}"
+vr_src_label="$vr_source"
+# How the claim was gated decides how much a later reader should trust it. `machine` means a
+# structured report asserted a real live test and the writer could not be reached without it
+# (the governor resolve path checks validation.ranLiveTest). `self` means a session attested to its
+# own evidence with nothing mechanical checking it. Both are worth storing; conflating them is not,
+# because a self-attested record produced by reading source looks identical to a measured one.
+case "$vr_gating" in
+  machine) vr_gate_label="machine-checked (a structured report asserted a real live test)" ;;
+  self)    vr_gate_label="self-attested (a session recorded its own evidence, nothing mechanical checked it)" ;;
+esac
 
 {
   printf '# Ticket #%s - %s - VALIDATION RESULT\n\n' "$vr_ticket" "$vr_title"
-  printf '**Promoted by %s.** This is the durable, git-tracked evidence summary for a validated\n' "$vr_src_label"
+  printf '**Promoted by %s.**\n' "$vr_src_label"
+  printf '**Gating: %s.**\n\n' "$vr_gate_label"
+  printf 'This is the durable, git-tracked evidence summary for a validated\n' 
   printf 'ticket, the committed sink that founder-os context (`features.md` / `direction.md` /\n'
   printf '`product.md`) may cite as proof. When this ran through the governor, the raw artifacts\n'
   printf '(screenshots, ground-truth, `report.json`, `worker.jsonl`) live in the **gitignored**\n'
