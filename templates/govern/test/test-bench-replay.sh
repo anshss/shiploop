@@ -162,6 +162,31 @@ assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback.measuredSessions')" "0" \
 assert_contains "$(run_replay --arm 1m)" "tier fallback: none" \
   "and the report says so in words rather than printing the word unknown"
 
+# ── an unrecognized model name is priced conservatively AND named, not silently opus'd ───────────
+# fixtures/replay-unknown-model-fleet holds one session whose modelUsage mixes a real tier
+# (claude-sonnet-5) with a model name no tier substring matches (claude-ghostwriter-1). The
+# session-level tierFallback audit alone would miss this: the session also names a real model, so
+# it is "named" and never falls into that bucket. The per-row unknownModels audit must catch the
+# unrecognized part anyway. Cost: sonnet part 1,000 in x $2 + 500 out x $10 = $0.007; ghostwriter
+# part priced at the Opus fallback ($5/$25): 2,000 x $5 + 1,000 x $25 = $0.035. Total $0.042, which
+# the fixture's total_cost_usd is set to exactly, so it reconciles too.
+run_unknown() { node "$HUB/bench/replay.mjs" --fleet "$HUB/bench/fixtures/replay-unknown-model-fleet" \
+  --arm 1m --baseline same-mix --partials drop "$@" 2>&1; }
+uflt="$(run_unknown --json)"
+assert_eq "$?" "0" "the unknown-model fleet replays rather than crashing on the unrecognized name"
+assert_eq "$(printf '%s' "$uflt" | jq -r '.tierFallback.sessions')" "0" \
+  "the session names a real model too, so it is not a tier-fallback session"
+assert_eq "$(printf '%s' "$uflt" | jq -cr '.unknownModels')" '{"claude-ghostwriter-1":1}' \
+  "the unrecognized model is named and counted exactly once, not once per arm x baseline recompute"
+assert_eq "$(printf '%s' "$uflt" | jq -r '(.arms["1m"].shiploopCostUsd * 1000 | round)')" "42" \
+  "the unrecognized part is priced at the conservative Opus fallback rather than crashing or inflating"
+assert_eq "$(printf '%s' "$uflt" | jq -r '.reconciliation.medianComputedOverReported')" "1" \
+  "which reconciles against the fixture's reported cost"
+assert_contains "$(run_unknown)" "claude-ghostwriter-1 x1" \
+  "the human report names the unrecognized model by string, not just a count"
+assert_contains "$(run_unknown)" "FALLBACK ESTIMATE" \
+  "and says plainly that the figure is a fallback estimate, not a priced rate"
+
 # ── recovering the sessions that were killed before a result event ───────────
 # Ticket 105 was killed mid-session. Its OUTPUT is unrecoverable, but its input side is exact:
 # 10,000 input + 12,000 cache write + 28,000 cache read = 50,000 tokens. Dropping it makes OUR arm

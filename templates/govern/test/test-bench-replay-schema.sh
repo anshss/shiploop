@@ -26,7 +26,7 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unmeasuredLevers" \
+  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unknownModels,unmeasuredLevers" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
@@ -68,7 +68,7 @@ assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].medianTicketsPerRun')" "4" \
 assert_eq "$(printf '%s' "$j" | jq -r '.baseline')" "same-mix" "the JSON names the baseline it was computed under"
 assert_eq "$(printf '%s' "$j" | jq -r '.partials')" "drop" "and the partial-session mode"
 assert_eq "$(printf '%s' "$j" | jq -r '.quotaWeights | to_entries | map("\(.key)=\(.value)") | join(",")')" \
-  "opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
+  "fable=10,opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers | keys | join(",")')" \
   "cache-prefix,carry,escalation-correction,harness-overhead,output-suppression,resume-not-restart,routing,skip-the-model,watchdog" \
   "every lever is named in every report, including the ones worth nothing here"
@@ -145,6 +145,8 @@ assert_eq "$(printf '%s' "$j" | jq -r '.sessionsExcludedNoResultEvent')" "1" \
   "exclusions are reported as a count, never dropped silently"
 assert_eq "$(printf '%s' "$j" | jq -r '.tierFallback.sessions')" "0" \
   "no fixture session falls outside the rate table"
+assert_eq "$(printf '%s' "$j" | jq -r '.unknownModels')" "{}" \
+  "no fixture session names an unrecognized model, so the unknown-model report is empty"
 assert_eq "$(printf '%s' "$j" | jq -r '.partialRecovery | keys | join(",")')" \
   "outputRecoverable,recoverableInputSideTokens,sessions" "the recovery audit has a fixed shape"
 assert_eq "$(printf '%s' "$j" | jq -r '[.arms[].sensitivityWithRecoveredPartials | keys | join(",")] | unique | join(" | ")')" \

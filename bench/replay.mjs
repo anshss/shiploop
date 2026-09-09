@@ -15,9 +15,14 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ── published Anthropic rates, USD per million tokens ────────────────────────
-// Cache read is 0.1x input. Cache write is 2x input at the 1-hour TTL, 1.25x at 5 minutes.
+// Cache read is 0.1x input. Cache write is 2x input at the 1-hour TTL, 1.25x at 5 minutes. Fable
+// uses the same multipliers as the rest of the table (verified against its own pricing block,
+// not just the ratio): $1 cache read, $20 1h write, $12.50 5m write, all exactly 0.1x/2x/1.25x of
+// its $10 input rate. (Fable 5.1 and Mythos 5.1 cut cache reads to 2.5%, but that is a later
+// model this table does not carry yet.)
 // These are list rates, not fitted. The reconciliation ratio in the report is the check.
 const RATES = {
+  fable: { input: 10, output: 50 },
   opus: { input: 5, output: 25 },
   sonnet: { input: 2, output: 10 },
   haiku: { input: 1, output: 5 },
@@ -52,8 +57,14 @@ const DEFAULT_BASELINE = 'driver-tier';
 // subscription-plan framing of the routing credit: a plan meters capacity, not dollars, and an
 // opus token eats five haiku tokens' worth of it. Printed in the report header, never mixed with
 // raw token counts.
-const QUOTA_WEIGHTS = { opus: 5, sonnet: 2, haiku: 1 };
-const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3 };
+const QUOTA_WEIGHTS = { fable: 10, opus: 5, sonnet: 2, haiku: 1 };
+const TIER_RANK = { haiku: 1, sonnet: 2, opus: 3, fable: 4 };
+
+// Distinct model strings `tierOf()` could not classify: model name -> number of costed rows
+// (`costParts()` entries) priced at the Opus fallback because of it. Populated once, in `main()`,
+// beside the `tierFallback` audit -- see that loop's own comment for why "once" matters here. A
+// single process per invocation, so this needs no reset between runs.
+const UNKNOWN_MODELS = new Map();
 
 // Per-class estimate of the model work a `scripted-action` event replaced, in tokens. The keys are
 // the scout's `DET_KIND` values, which is what `deterministic-apply.sh` puts on the wire, and the
@@ -128,6 +139,7 @@ const ABSORBED_LEVERS = [
 
 function tierOf(model) {
   const m = String(model || '').toLowerCase();
+  if (m.includes('fable')) return 'fable';
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';
@@ -433,13 +445,22 @@ function writeMultOf(sess) {
 // `forceTier` prices every part of the session at one tier, which is what the `driver-tier`
 // baseline does to the vanilla arm: the same tokens, on the model the driver was already running.
 // Passing null keeps each model's own rate, which is what the measured arm always uses.
-function sessionCost(sess, fb, forceTier) {
+//
+// A model `tierOf()` cannot classify is still priced here -- `RATES[tier || 'opus']` is a
+// conservative FALLBACK ESTIMATE, never a priced rate, and the replay must not crash mid-run over
+// it. This function is called once per session PER ARM x BASELINE x PARTIALS COMBINATION it is
+// replayed under, so it is the wrong place to also COUNT unknown models: a tally kept here would
+// multiply the same session's one unresolved row by however many times the run happens to reprice
+// it, and report a name as `xN` for an N with no relationship to how many rows actually used it.
+// `main()` names the unrecognized model in the report from a single pass over the session list
+// instead (`unknownModels`, built beside `tierFallback`), which is computed exactly once for the
+// same reason `tierFallback` itself is.
+function sessionCost(sess, forceTier) {
   const writeMult = writeMultOf(sess);
   let usd = 0;
   let outputUsd = 0;
   for (const p of costParts(sess)) {
     const tier = forceTier || tierOf(p.model);
-    if (!forceTier && !tierOf(p.model) && fb) fb.models.add(p.model);
     const r = RATES[tier || 'opus'];
     outputUsd += (p.output * r.output) / 1e6;
     usd +=
@@ -870,9 +891,9 @@ function replayRun(allTicketsInOrder, window, includePartial, driverTier) {
       shipParts.cacheRead += b.cacheRead;
       shipParts.cacheCreation += b.cacheCreation;
       if (sess.partial) partials++;
-      const c = sessionCost(sess, null);
+      const c = sessionCost(sess);
       own.shipCost += c.usd;
-      drv.shipCost += sessionCost(sess, null, driverTier).usd;
+      drv.shipCost += sessionCost(sess, driverTier).usd;
       own.shipQuota += sessionQuota(sess, null);
       drv.shipQuota += sessionQuota(sess, driverTier);
       outputCost += c.outputUsd;
@@ -1302,7 +1323,7 @@ function main() {
     for (const sess of c.orch) {
       overhead.sessions++;
       overhead.tokens += sessionTokens(sess);
-      overhead.costUsd += sessionCost(sess, null).usd;
+      overhead.costUsd += sessionCost(sess).usd;
       overhead.quota += sessionQuota(sess, null);
     }
   }
@@ -1352,7 +1373,7 @@ function main() {
         for (const sess of c.orch) {
           ov.sessions++;
           ov.tokens += sessionTokens(sess);
-          ov.costUsd += sessionCost(sess, null).usd;
+          ov.costUsd += sessionCost(sess).usd;
           ov.quota += sessionQuota(sess, null);
           orchParts.input += sess.billed.input;
           orchParts.output += sess.billed.output;
@@ -1659,20 +1680,33 @@ function main() {
   // Tier resolution audit, computed once over the session list rather than inside the arm loop.
   // A session is resolvable when modelUsage names a known tier, or any assistant turn does, or the
   // init event does. Anything left is priced at the Opus rate, which inflates BOTH arms.
+  //
+  // The same pass also fills UNKNOWN_MODELS, from `costParts()` -- the exact per-row list
+  // `sessionCost()` prices -- rather than from the session-level `named` flag above: a session can
+  // mix a resolvable model with an unrecognized one in the same `modelUsage`, and `named` alone
+  // would miss the unrecognized one. 'unresolved' is `fallbackModel()`'s own sentinel for "no
+  // model named anywhere in this session" and is excluded: that case is already the tierFallback
+  // row above, with its own clearer message, and is not a real model name to warn about.
   const tierFallback = { sessions: 0, tokens: 0, measuredSessions: 0, measuredTokens: 0 };
   for (const arr of runs.values()) {
     for (const t of arr) {
       for (const sess of t.sessions) {
         const named =
           (sess.modelUsage && Object.keys(sess.modelUsage).some(tierOf)) || tierOf(fallbackModel(sess));
-        if (named) continue;
-        const b = sess.billed;
-        const tk = b.input + b.output + b.cacheRead + b.cacheCreation;
-        tierFallback.sessions++;
-        tierFallback.tokens += tk;
-        if (!sess.partial) {
-          tierFallback.measuredSessions++;
-          tierFallback.measuredTokens += tk;
+        if (!named) {
+          const b = sess.billed;
+          const tk = b.input + b.output + b.cacheRead + b.cacheCreation;
+          tierFallback.sessions++;
+          tierFallback.tokens += tk;
+          if (!sess.partial) {
+            tierFallback.measuredSessions++;
+            tierFallback.measuredTokens += tk;
+          }
+        }
+        for (const p of costParts(sess)) {
+          if (p.model !== 'unresolved' && !tierOf(p.model)) {
+            UNKNOWN_MODELS.set(p.model, (UNKNOWN_MODELS.get(p.model) || 0) + 1);
+          }
         }
       }
     }
@@ -1699,7 +1733,7 @@ function main() {
     for (const t of arr) {
       for (const sess of t.sessions) {
         if (sess.reportedCostUsd == null || sess.reportedCostUsd <= 0) continue;
-        ratios.push(sessionCost(sess, null).usd / sess.reportedCostUsd);
+        ratios.push(sessionCost(sess).usd / sess.reportedCostUsd);
       }
     }
   }
@@ -1731,6 +1765,7 @@ function main() {
     absorbedLevers: ABSORBED_LEVERS,
     partialRecovery,
     tierFallback,
+    unknownModels: Object.fromEntries(UNKNOWN_MODELS),
     reconciliation: recon,
     arms: armResults,
     baselines: baselineResults,
@@ -2005,6 +2040,15 @@ function render(out) {
       `                 name no model anywhere, holding ${tf.tokens.toLocaleString('en-US')} tokens = ${share.toFixed(3)}% of the corpus.`,
     );
     L.push('                 Priced at the Opus rate, which inflates both arms and very nearly cancels.');
+  }
+  if (Object.keys(out.unknownModels || {}).length) {
+    L.push(
+      `  unrecognized model name(s), priced as a conservative Opus-rate FALLBACK ESTIMATE (not a ` +
+        `published rate for that model): ` +
+        Object.entries(out.unknownModels)
+          .map(([name, n]) => `${name} x${n}`)
+          .join(', '),
+    );
   }
   L.push('');
   L.push('  Ticket 1 saves 0% at the median: there is nothing carried yet. The saving is entirely');

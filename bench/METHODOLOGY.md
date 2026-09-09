@@ -68,14 +68,20 @@ Published Anthropic list rates, USD per million tokens. Nothing here is fitted t
 
 | Tier | Input | Output | Cache read | Cache write (1h) | Cache write (5m) |
 |---|---|---|---|---|---|
+| Fable | $10 | $50 | $1.00 | $20 | $12.50 |
 | Opus | $5 | $25 | $0.50 | $10 | $6.25 |
 | Sonnet | $2 | $10 | $0.20 | $4 | $2.50 |
 | Haiku | $1 | $5 | $0.10 | $2 | $1.25 |
 
+Fable's own pricing page confirms it uses the same 0.1x/2x/1.25x multipliers as the rest of this
+table (the 2.5% cache-read cut published for Fable 5.1 and Mythos 5.1 does not apply to plain
+Fable 5, which is the only Fable id this table prices).
+
 Cache read is 0.1x input, cache write is 2x input at the 1-hour TTL and 1.25x at 5 minutes. Tier is
 resolved from the model name; a session's `modelUsage` map is used when present, so a session that
 escalated from Haiku to Opus is priced per model rather than at one blended rate. Models whose tier
-is unrecognized are priced as Opus and listed by name in the report.
+is unrecognized are priced as Opus (`unknownModels` in the JSON, printed as a report line naming
+each distinct unrecognized model string, labelled a FALLBACK ESTIMATE rather than a priced rate).
 
 Every cache write observed so far is `ephemeral_1h_input_tokens`: of the sessions whose result
 events carry the split, all of the write volume sat at the 1-hour TTL and none at 5 minutes (the
@@ -167,7 +173,7 @@ used it (`driverTierAudit.fromFallbackHighestTier`) rather than hiding it inside
 |---|---|---|
 | tokens | context carried, work avoided | **routing.** A token is a token; moving work to a cheaper model cannot change this column, and the report says so where it prints it |
 | cost (USD) | everything, at API list rates | nothing, which is why it is the most fragile of the three |
-| quota-weighted tokens | tokens x the tier's input-rate ratio (opus 5x, sonnet 2x, haiku 1x) | the dollar rate table's absolute level |
+| quota-weighted tokens | tokens x the tier's input-rate ratio (fable 10x, opus 5x, sonnet 2x, haiku 1x) | the dollar rate table's absolute level |
 
 Quota-weighted tokens are the subscription framing of the routing credit: a plan meters capacity,
 not dollars, and an opus token eats five haiku tokens' worth of it. The weights are the published
