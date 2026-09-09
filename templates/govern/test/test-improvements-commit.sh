@@ -4,8 +4,8 @@
 #
 # The fix: the self-improvement step (govern-improve.sh) APPENDS to the tracked
 # governor/improvements.md but must not leave it UNCOMMITTED. Its WRITER commits it via
-# govern::commit_meta_to_main — exactly as govern-bookkeep.sh commits tickets.md. Left dirty, a
-# tracked artifact makes a later `git pull --rebase` on the main checkout (e.g. govern-bookkeep.sh's
+# govern::commit_meta_to_main — exactly as land-resolution.sh commits tickets.md. Left dirty, a
+# tracked artifact makes a later `git pull --rebase` on the main checkout (e.g. land-resolution.sh's
 # pre-edit origin sync, step 0) abort with "cannot pull with rebase: You have unstaged changes" — a
 # failure easily misread as a merge conflict that wedges the next run.
 #

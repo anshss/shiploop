@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Regression for ticket #73: ticket numbering must be collision-safe across the GOVERNOR path
-# (govern-bookkeep) AND any MANUAL filing (file-ticket.sh / govern::next_ticket_number). The bug:
+# (land-resolution.sh) AND any MANUAL filing (file-ticket.sh / govern::next_ticket_number). The bug:
 # a manual append read a stale .ticket-seq (which only bookkeep ever bumped), didn't read the live
 # tickets.md max, didn't bump the seq, and wasn't serialized — so two sessions reused #67.
 # This proves: (1) next_ticket_number = max(filemax, seq)+1 and bumps seq; (2) file-ticket.sh files
-# through it; (3) govern-bookkeep routes through it; (4) the duplicate-heading detector + lint catch
+# through it; (3) land-resolution.sh routes through it; (4) the duplicate-heading detector + lint catch
 # a collision; (5) deleting the highest ticket leaves a GAP (monotonic, never reused).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 FILE_TICKET="$DIR/../file-ticket.sh"
 LINT="$DIR/../lint-tickets.sh"
 
@@ -68,7 +68,7 @@ assert_eq "$(cat "$T/governor/.ticket-seq")" "14" "file-ticket.sh: bumped .ticke
 got2="$(printf 'body\n' | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" bash "$FILE_TICKET" "second" Low)"
 assert_eq "$got2" "15" "file-ticket.sh: second manual filing -> #15 (no reuse)"
 
-# ── 3. govern-bookkeep numbers newTickets through the SAME helper (no reuse) ──
+# ── 3. land-resolution.sh numbers newTickets through the SAME helper (no reuse) ──
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 mk_tickets
 printf '30\n' > "$T/governor/.ticket-seq"   # seq=30, filemax=5 → bookkeep must allocate 31,32

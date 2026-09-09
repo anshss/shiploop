@@ -8,7 +8,7 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 REPO="$(cd "$DIR/../../.." && pwd)"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 RL="$DIR/../run-loop.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

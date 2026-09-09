@@ -61,7 +61,7 @@ scripts/govern/flows-list.sh --sweep    # first RECORD the STALE degrades (persi
 ```
 Grouped proven → measuring → untested → stale → failed → blocked → tombstoned. BLOCKED flows show their
 named blocker; MEASURING flows show their gate/sample window. Use `--sweep` when you want the staleness
-actually written to the registry (it commits + pushes via the same CAS path as bookkeep).
+actually written to the registry (it commits + pushes via the same CAS path as land-resolution.sh).
 
 ## `file` — queue validations (the spend gate)
 
@@ -99,7 +99,7 @@ An INEFFECTIVE flow (measured worthless) is a **deletion candidate, not a fix ca
 validation parks gate-failed, the governor raises a disposition escalation whose options include
 **`kill`**. Answer it `kill` (via the escalation answer flow) and at the next run-start
 `escalations-apply-answers.sh` marks the flow kill-pending and files a normal removal ticket; when that
-ticket's PR opens, bookkeep **tombstones** the flow (history survives — a revived feature starts from its
+ticket's PR opens, land-resolution.sh **tombstones** the flow (history survives — a revived feature starts from its
 record, re-extraction can't resurrect it as new). A pending kill whose flow goes STALE first is
 auto-withdrawn by the sweep — a stale negative must not be acted on.
 

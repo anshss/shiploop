@@ -90,11 +90,11 @@ if [[ "${#REPOS[@]}" -gt 0 ]]; then
   if wsp_is_local_first_repo "$probe" 2>/dev/null; then h_islocal=yes; else h_islocal=no; fi
 fi
 
-# next_ticket_number is a real bookkeep call — it reads tickets.md if present.
-# We call it with the workspace's tickets file (harmless read); on any error
-# capture and continue.
+# next_ticket_number is a real allocator call, so this health probe uses GOVERN_SEQ_PEEK=1 to read
+# it WITHOUT bumping governor/.ticket-seq (a health check must never mutate the operator's git tree).
+# We call it with the workspace's tickets file (harmless read); on any error capture and continue.
 if [[ -f "${TICKETS_FILE:-}" ]]; then
-  h_next_ticket="$(govern::next_ticket_number 2>&1)" || problems+=("next_ticket_number errored: $h_next_ticket")
+  h_next_ticket="$(GOVERN_SEQ_PEEK=1 govern::next_ticket_number 2>&1)" || problems+=("next_ticket_number errored: $h_next_ticket")
 else
   warn_only+=("tickets file missing at ${TICKETS_FILE:-<unset>} — skipped next_ticket_number probe")
 fi

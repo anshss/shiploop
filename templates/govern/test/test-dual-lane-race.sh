@@ -12,7 +12,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 

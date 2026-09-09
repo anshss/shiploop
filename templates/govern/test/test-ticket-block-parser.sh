@@ -4,7 +4,7 @@
 # for three collapsed bugs (parser bug batch):
 #   (1) A bare `---` inside a ticket BODY (a legit markdown divider) no longer truncates the
 #       worker prompt (spawn-worker.sh) or leaves orphaned body lines under the next heading
-#       when the block is deleted (govern-bookkeep.sh).
+#       when the block is deleted (land-resolution.sh).
 #   (2) The block delete consumes the block's trailing `---` separator so tickets.md never
 #       accumulates doubled separators after a resolved delete.
 #   (3) The block delete on a heading that isn't present is a silent no-op.

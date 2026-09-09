@@ -43,7 +43,7 @@ Body prose mentioning some/other/path.ts that must not enter the measured set.
 ## #2 — bookkeep field
 **Severity:** High
 
-**Files:** templates/govern/lib/common.sh templates/govern/govern-bookkeep.sh
+**Files:** templates/govern/lib/common.sh templates/govern/land-resolution.sh
 ---
 ## #3 — spawn-worker retry
 **Severity:** Medium
@@ -77,7 +77,7 @@ Where: templates/govern/run-loop.sh and templates/govern/lib/common.sh
 
 **Blocks:** #2
 
-**Files:** templates/govern/govern-bookkeep.sh
+**Files:** templates/govern/land-resolution.sh
 ---
 EOF
 

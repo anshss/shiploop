@@ -28,7 +28,7 @@ if command -v gh >/dev/null; then
   if gh auth status >/dev/null 2>&1; then ok "gh authenticated"; else warn "gh installed but not authenticated (run 'gh auth login')"; fi
 else fail "gh missing (brew install gh / https://cli.github.com)"; fi
 command -v curl >/dev/null && ok "curl" || fail "curl missing"
-command -v jq   >/dev/null && ok "jq"   || warn "jq missing — hard-required by the governor (run-loop.sh fails closed at startup); also used by the worktree registry"
+command -v jq   >/dev/null && ok "jq"   || warn "jq missing — hard-required by every govern script (resolve-ticket.sh, pre-dispatch-check.sh, spawn-worker.sh, ... fail closed at startup); also used by the worktree registry"
 
 # Root package manager
 case "$ROOT_PM" in
@@ -274,7 +274,7 @@ if [ -f "$ROOT/CLAUDE.md" ]; then
     ok "CLAUDE.md $_cb_size/$_cb_budget chars"
   fi
   if [ -f "$ROOT/learnings.md" ] && [ "${SHIPLOOP_LEARNINGS_TTL:-0}" = "1" ]; then
-    ok "learnings TTL enforcement is on (SHIPLOOP_LEARNINGS_TTL=1) — 'govern:budgets' archives entries past the window"
+    ok "learnings TTL enforcement is on (SHIPLOOP_LEARNINGS_TTL=1) — 'govern:context-budgets' archives entries past the window"
   fi
 fi
 

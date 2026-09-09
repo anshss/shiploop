@@ -11,7 +11,7 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 VLINT="$DIR/../lint-validation-refs.sh"
 # Stop hook lives at templates/hooks/ (template) or <root>/scripts/ (scaffolded workspace).
 # Use assert.sh's GOVERN_HOOKS_DIR resolver so this test is layout-agnostic.

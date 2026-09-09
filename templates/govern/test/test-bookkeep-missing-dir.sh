@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regression for #28: govern-bookkeep must FAIL CLOSED when TICKETS_FILE's directory is MISSING.
+# Regression for #28: land-resolution.sh must FAIL CLOSED when TICKETS_FILE's directory is MISSING.
 # Otherwise commit_dir resolves to "" and the later `cd "$commit_dir"` (= `cd ""`, a no-op) leaves git
 # running against the CURRENT working directory — so bookkeep could commit/push into the WRONG repo
 # (it actually did, twice, during the queue/ refactor). The guard must abort and touch NO repo.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../land-resolution.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"   # GOVERN_WS_ROOT=$T + a stub workspace.sh so common.sh sources cleanly

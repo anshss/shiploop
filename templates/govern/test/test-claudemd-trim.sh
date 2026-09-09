@@ -19,7 +19,7 @@
 #   G. A corrupt verdicts file reads as unstamped, never as an error.
 #   H. The suggestion line carries the candidate count when candidates exist, is absent when there
 #      are none, and GOVERN_CLAUDEMD_SUGGEST=0 silences it.
-#   I. `govern-bookkeep.sh --enforce-budgets` never edits CLAUDE.md, bare OR with a per-entry cap low
+#   I. `context-budgets.sh` never edits CLAUDE.md, bare OR with a per-entry cap low
 #      enough that the old (retired) demotion lane would have fired.
 #   J. A `<placeholder>` segment and a git refspec (`origin/main`) are unproven, never dead.
 #   K. A bare basename citation resolves LIVE via the suffix fallback, not just a templates/ path.
@@ -27,7 +27,7 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 CT="$DIR/../claudemd-trim.sh"
-BK="$DIR/../govern-bookkeep.sh"
+BK="$DIR/../context-budgets.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
@@ -267,16 +267,16 @@ if [[ -f "$T/governor/claudemd-trim-proposals.md" ]]; then f=1; else f=0; fi
 assert_eq "$f" "0" "H11: and no empty candidates file is left behind"
 rm -rf "$T"
 
-# ── I: govern-bookkeep --enforce-budgets never edits CLAUDE.md ─────────────────────────────────
+# ── I: context-budgets.sh never edits CLAUDE.md ─────────────────────────────────────────────────
 T="$(mktemp -d)"; mk_ws "$T"
 mkdir -p "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 printf '## #1 : a\n**Severity:** High\n' > "$T/queue/tickets.md"
 write_claude "$T"
 pre="$(cat "$T/CLAUDE.md")"; preap="$(cat "$T/CLAUDE-APPENDIX.md")"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=100 GOVERN_LESSON_MAX_CHARS=100000 bash "$BK" --enforce-budgets 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=100 GOVERN_LESSON_MAX_CHARS=100000 bash "$BK" 2>&1)" || rc=$?
 assert_eq "$rc" "3" "I1: the budget alarm still fires when the file stays over"
-assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "I2: bookkeep's trim call left CLAUDE.md byte-identical"
+assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "I2: context-budgets.sh's trim call left CLAUDE.md byte-identical"
 assert_eq "$(cat "$T/CLAUDE-APPENDIX.md")" "$preap" "I3: and the appendix untouched"
 if [[ -f "$T/governor/claudemd-trim-proposals.md" ]]; then f=1; else f=0; fi
 assert_eq "$f" "1" "I4: it wrote classified candidates instead"
@@ -284,10 +284,10 @@ assert_contains "$out" "/shiploop:compress" "I5: the STILL OVER message points a
 assert_contains "$(cat "$T/CLAUDE.md")" "no citations here" "I6: no blind eviction: every block stayed put"
 # A per-entry cap low enough that the RETIRED demotion lane would have fired: this is the loophole a
 # prior attempt at #110 left open (it gated the demote behind a --report flag that only run-loop.sh's
-# call passed, so a bare `npm run govern:budgets` still silently demoted). There is no writer left
+# call passed, so a bare `npm run govern:context-budgets` still silently demoted). There is no writer left
 # here at all now, bare or not.
 rm -f "$T/governor/claudemd-trim-proposals.md"
-rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=100 GOVERN_LESSON_MAX_CHARS=10 bash "$BK" --enforce-budgets 2>&1)" || rc=$?
+rc=0; out="$(GOVERN_WS_ROOT="$T" GOVERN_LESSON_BUDGET_CHARS=100 GOVERN_LESSON_MAX_CHARS=10 bash "$BK" 2>&1)" || rc=$?
 assert_eq "$rc" "3" "I7: a bare call with a tiny per-entry cap still raises the over-budget alarm"
 assert_eq "$(cat "$T/CLAUDE.md")" "$pre" "I8: BARE (no flag) leaves CLAUDE.md byte-identical even with the lesson cap at 10 chars"
 assert_eq "$(cat "$T/CLAUDE-APPENDIX.md")" "$preap" "I9: and demotes nothing into the appendix"

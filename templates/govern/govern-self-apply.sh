@@ -5,8 +5,9 @@
 #   - the agent runs --permission-mode acceptEdits → it can edit files but CANNOT run bash
 #     (git/rm/deploy would prompt → fail in headless), so it is contained to file edits.
 #   - STRICT ALLOWLIST: only the core mechanism scripts may change. Any other changed path →
-#     revert. (govern-bookkeep / govern-supervise / govern-improve / govern-self-apply itself /
-#     lib/common.sh are deliberately OUT — they encode policy/bookkeeping the agent must not touch.)
+#     revert. (land-resolution / context-budgets / govern-supervise / govern-improve /
+#     govern-self-apply itself / lib/common.sh are deliberately OUT — they encode policy/bookkeeping
+#     the agent must not touch.)
 #   - PROTECTED PATTERNS: a diff line touching a safety knob (hard-stops, bounds, permission mode,
 #     merge allowlist) → revert, even within an allowed file.
 #   - TEST-GATE: the full govern test suite must pass → else revert.

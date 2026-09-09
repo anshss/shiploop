@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Flow verdict pipeline end-to-end (validations Phase 2): file-ticket --flow emits the Flow: field →
-# ticket_flow_ids reads it → spawn-worker injects the flow block(s) → govern-bookkeep pre-captures the
+# ticket_flow_ids reads it → spawn-worker injects the flow block(s) → land-resolution.sh pre-captures the
 # Flow field and stamps the registry on resolve.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,7 +75,7 @@ assert_contains "$seen" "Flow(s) this ticket validates" "spawn-worker: injects t
 assert_contains "$seen" "## deploy.correctness" "spawn-worker: injects the full flow block"
 assert_contains "$seen" "(echo: deploy.correctness)" "spawn-worker: reminds the worker to echo flowIds"
 
-# ── govern-bookkeep: pre-captures Flow + stamps the registry PASS on resolve, and deletes the ticket.
+# ── land-resolution.sh: pre-captures Flow + stamps the registry PASS on resolve, and deletes the ticket.
 M="$T/m"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/backend"
 git init -q "$M"; git -C "$M" config user.email ci@test; git -C "$M" config user.name ci
 git init -q "$M/backend"; git -C "$M/backend" config user.email ci@test; git -C "$M/backend" config user.name ci
@@ -99,7 +99,7 @@ EOF
 git -C "$M" add -A; git -C "$M" commit -q -m seed
 rep="$(jq -nc --arg s "$BSHA" '{status:"resolved",pr:{repo:"backend",number:3,url:"https://github.com/acme/backend/pull/3"},newTickets:[],validation:{ranLiveTest:true,evidence:"drove real deploy; PASS",environment:"prod",validatedShas:{backend:$s}}}')"
 printf '%s' "$rep" | GOVERN_TICKETS_FILE="$M/queue/tickets.md" GOVERN_GOVERNOR_DIR="$M/governor" \
-  GOVERNOR_DIR="$M/governor" "$DIR/../govern-bookkeep.sh" 12 >/dev/null 2>&1
+  GOVERNOR_DIR="$M/governor" "$DIR/../land-resolution.sh" 12 >/dev/null 2>&1
 assert_eq "$(govern::flow_field deploy.correctness Status "$M/.claude/shiploop/validation/flows.md")" "PASS" "bookkeep: stamped the flow PASS on resolve"
 assert_contains "$(govern::flow_field deploy.correctness Validated "$M/.claude/shiploop/validation/flows.md")" "backend@${BSHA:0:7}" "bookkeep: pinned the validated SHA"
 if grep -q "^## #12" "$M/queue/tickets.md"; then del=1; else del=0; fi

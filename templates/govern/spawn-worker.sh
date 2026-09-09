@@ -555,7 +555,7 @@ $(cat "$PREFERENCES_FILE")"
 
 # #23: batch addendum. Appended AFTER the template and the doctrine so it overrides their "resolve
 # EXACTLY ONE ticket" / single-object report contract (last instruction wins). The per-ticket
-# `tickets` array is load-bearing: the governor bookkeeps (and DELETES) a batched ticket ONLY when
+# `tickets` array is load-bearing: the governor's land-resolution.sh resolves (and DELETES) a batched ticket ONLY when
 # this array explicitly says that ticket resolved. Anything else — a different status, or the ticket
 # missing from the array — leaves it in the queue for a later run. That fail-closed default is why a
 # partially-failed group can never mark unfixed tickets resolved.
@@ -977,7 +977,7 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 # unrecoverable, exactly as bench/LEVER-EVENTS.md warns.
 #   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
 #                        in bytes over the codebase's own ~4-bytes-per-token estimate (see
-#                        govern-bookkeep.sh's lesson-entry sizing note for the same constant).
+#                        land-resolution.sh's lesson-entry sizing note for the same constant).
 #   freshStartTokens  = the PRIOR (failed) attempt's context-reconstruction spend ONLY: its
 #                        input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens
 #                        (a retry redoes the actual work either way, so the failed attempt's

@@ -68,7 +68,7 @@ write_tickets() {
 ## #2 — same area, worker resolves it
 **Severity:** High — y.
 
-**Files:** scripts/govern/lib/common.sh scripts/govern/govern-bookkeep.sh
+**Files:** scripts/govern/lib/common.sh scripts/govern/land-resolution.sh
 ---
 ## #3 — same area, worker does NOT finish it
 **Severity:** Medium — z.

@@ -3,7 +3,7 @@
 # `kill` becomes a removal ticket that TOMBSTONES the flow on its PR. Covers: norm_disposition learns
 # `kill`; file-ticket --flow-op remove emits the Flow-op field; ticket_flow_op parses it; flows_tombstone
 # (Status→TOMBSTONED, history preserved); flows_mark_kill_pending + the Phase-3 sweep auto-withdrawal on
-# a freshly-STALE flow; govern-bookkeep tombstones a Flow-op:remove ticket on resolve; and
+# a freshly-STALE flow; land-resolution.sh tombstones a Flow-op:remove ticket on resolve; and
 # escalations-apply-answers acts on `kill` (marks kill-pending + files the removal ticket + closes the
 # validation ticket).
 set -euo pipefail
@@ -85,7 +85,7 @@ GOVERN_FLOWS_SWEEP_META="$M" govern::flows_sweep_file "$FL"
 assert_eq "$(govern::flow_field opt.dead Status "$FL")" "STALE" "sweep: freshly-changed path degrades the kill-pending flow to STALE"
 assert_contains "$(govern::flow_field opt.dead Disposition "$FL")" "withdrawn" "sweep: pending kill auto-withdrawn on a stale negative"
 
-# ── govern-bookkeep: a Flow-op:remove ticket TOMBSTONES its flow on resolve (not a fresh verdict). ──
+# ── land-resolution.sh: a Flow-op:remove ticket TOMBSTONES its flow on resolve (not a fresh verdict). ──
 cat > "$FL" <<EOF
 ## opt.dead
 - **Kind:** effectiveness
@@ -109,7 +109,7 @@ EOF
 git -C "$M" add -A; git -C "$M" commit -q -m "seed removal ticket"
 rep="$(jq -nc '{status:"resolved",pr:{repo:"backend",number:20,url:"https://github.com/acme/backend/pull/20"},newTickets:[],validation:{}}')"
 printf '%s' "$rep" | GOVERN_TICKETS_FILE="$M/queue/tickets.md" GOVERN_GOVERNOR_DIR="$M/governor" \
-  GOVERNOR_DIR="$M/governor" "$DIR/../govern-bookkeep.sh" 12 >/dev/null 2>&1
+  GOVERNOR_DIR="$M/governor" "$DIR/../land-resolution.sh" 12 >/dev/null 2>&1
 assert_eq "$(govern::flow_field opt.dead Status "$FL")" "TOMBSTONED" "bookkeep: Flow-op:remove ticket → flow TOMBSTONED on resolve"
 assert_contains "$(govern::flow_field opt.dead Validated "$FL")" "PR https://x/8" "bookkeep tombstone: did NOT overwrite the verdict history with a fresh stamp"
 assert_eq "$(grep -c '^## #12' "$M/queue/tickets.md" || true)" "0" "bookkeep: removal ticket block deleted on resolve"

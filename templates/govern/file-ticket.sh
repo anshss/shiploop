@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Append ONE ticket to tickets.md with a collision-safe number (#73) AND persist it atomically —
-# commit + CAS-push to origin/main under the SAME bookkeep lock the governor's govern-bookkeep uses
+# commit + CAS-push to origin/main under the SAME bookkeep lock the governor's land-resolution.sh uses
 # (#240). The number comes from the LIVE max via govern::next_ticket_number — max(tickets.md's
 # highest `## #N`, governor/.ticket-seq) + 1, allocated under the bookkeep lock and persisted to
 # .ticket-seq — so a manual filing can never silently reuse a number a concurrent session (or the
@@ -8,11 +8,12 @@
 # guessed/hardcoded number, and never let two sessions append to tickets.md unserialized.
 #
 # #240 — atomic persist: the append used to be left UNCOMMITTED for the caller to stage, which made
-# it trivial to lose. While a governor run is active, a concurrent driver's bookkeep rewrites and
-# pushes tickets.md on its OWN base; an uncommitted manual append was silently clobbered by that
-# rewrite. Now file-ticket.sh holds the bookkeep lock for the whole allocate→append→commit→push,
-# syncs onto the freshest origin/main before appending, and CAS-pushes its append-only commit with
-# rebase-retry — exactly like bookkeep — so the filed ticket is published before the lock is released
+# it trivial to lose. While a governor run is active, a concurrent driver's land-resolution.sh
+# rewrites and pushes tickets.md on its OWN base; an uncommitted manual append was silently
+# clobbered by that rewrite. Now file-ticket.sh holds the bookkeep lock for the whole
+# allocate→append→commit→push, syncs onto the freshest origin/main before appending, and CAS-pushes
+# its append-only commit with rebase-retry — exactly like land-resolution.sh — so the filed ticket is
+# published before the lock is released
 # and can never be clobbered.
 #
 # Usage:
@@ -41,9 +42,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 flow_field=""
 flow_op_field=""
 # --flow, --flow-op may appear in any order before the title. --flow <id[,id…]> tags this ticket as
-# a flow-registry validation; spawn-worker injects the flow block(s) and bookkeep stamps the
-# registry. --flow-op remove marks it a KILL removal ticket (bookkeep tombstones the flow on
-# resolve). --model/--effort are accepted-and-ignored (see the header).
+# a flow-registry validation; spawn-worker injects the flow block(s) and land-resolution.sh stamps
+# the registry. --flow-op remove marks it a KILL removal ticket (land-resolution.sh tombstones the
+# flow on resolve). --model/--effort are accepted-and-ignored (see the header).
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --model|--effort)
@@ -82,7 +83,7 @@ if [[ -n "$flow_field" ]]; then
 "
 fi
 # Flow-op: field (only emitted for a non-default "remove" — a KILL removal ticket). Sits in the same
-# leading field block so spawn-worker's anchored latch + bookkeep's pre-capture read it.
+# leading field block so spawn-worker's anchored latch + land-resolution.sh's pre-capture read it.
 if [[ -n "$flow_op_field" ]]; then
   flow_block="${flow_block}**Flow-op:** $flow_op_field
 "
@@ -102,9 +103,10 @@ if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Hold the bookkeep lock across the ENTIRE allocate→append→commit→push so a concurrent driver's
-# bookkeep can't read tickets.md on a stale base and clobber our append (#240). mkdir-mutex; reclaim
-# a crashed holder's lock after 5min. Non-fatal if busy >60s — proceed degraded, same as bookkeep.
+# Hold the bookkeep lock across the ENTIRE allocate→append→commit→push so a concurrent
+# land-resolution.sh run can't read tickets.md on a stale base and clobber our append (#240).
+# mkdir-mutex; reclaim a crashed holder's lock after 5min. Non-fatal if busy >60s — proceed degraded,
+# same as land-resolution.sh.
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "file-ticket: bookkeep lock busy >60s — proceeding (degraded)"
 trap 'govern::lock_release "$BK_LOCK"' EXIT
 
@@ -114,12 +116,12 @@ RUN_LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"
 if [[ -d "$RUN_LOCK" ]]; then
   _hpid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' "$RUN_LOCK/holder" 2>/dev/null || true)"
   if [[ -n "$_hpid" ]] && kill -0 "$_hpid" 2>/dev/null; then
-    govern::log "file-ticket: a live governor run holds $RUN_LOCK (pid $_hpid) — filing under the bookkeep lock and committing+pushing atomically so the new ticket survives its bookkeep (#240)"
+    govern::log "file-ticket: a live governor run holds $RUN_LOCK (pid $_hpid) — filing under the bookkeep lock and committing+pushing atomically so the new ticket survives its resolve (#240)"
   fi
 fi
 
 # Pre-edit sync: rebase local main onto origin/main BEFORE appending so the new block is computed
-# against the FRESHEST origin/main and the CAS-push below replays cleanly (mirrors bookkeep step 0).
+# against the FRESHEST origin/main and the CAS-push below replays cleanly (mirrors land-resolution.sh step 0).
 # Guarded + non-fatal: skipped in a remoteless test repo and under GOVERN_NO_PUSH=1.
 if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$commit_dir" remote get-url origin >/dev/null 2>&1; then
   git -C "$commit_dir" pull --ff-only origin main >/dev/null 2>&1 \
@@ -168,8 +170,8 @@ fi
 printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
-# can never be left uncommitted (and thus clobbered by a concurrent bookkeep). Mirrors bookkeep's
-# step-4/5. pathspec-scoped commit — never sweeps up unrelated staged changes. Guarded + non-fatal:
+# can never be left uncommitted (and thus clobbered by a concurrent land-resolution.sh run). Mirrors
+# land-resolution.sh's step-4/5. pathspec-scoped commit — never sweeps up unrelated staged changes. Guarded + non-fatal:
 # no-op outside a git repo (tests/offline; append stays on disk), commits locally but skips the push
 # under GOVERN_NO_PUSH=1 / no origin.
 if git -C "$commit_dir" rev-parse --git-dir >/dev/null 2>&1; then
@@ -178,7 +180,7 @@ if git -C "$commit_dir" rev-parse --git-dir >/dev/null 2>&1; then
     git add -- "$SEQ_FILE" >/dev/null 2>&1 || true   # absolute path; no-op if outside the repo (tests)
     git commit -q -m "docs(tickets): file #$n — $title" -- "$(basename "$TICKETS_FILE")" "$SEQ_FILE" >/dev/null 2>&1 || true
     if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
-      # CAS-with-retry: if origin advanced under us (a concurrent driver's bookkeep / another filing
+      # CAS-with-retry: if origin advanced under us (a concurrent driver's land-resolution.sh run / another filing
       # pushed), rebase our append-only commit onto the new origin/main and retry — a LOOP, not a
       # single try, so two+ racers can't exhaust one retry and leave our append unpushed. The append
       # is at end-of-file and the seq bump is monotonic, so the rebase replays cleanly. NEVER

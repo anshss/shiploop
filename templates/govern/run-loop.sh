@@ -41,7 +41,7 @@
 #
 # GOVERN_ALLOW_CONCURRENT=1 → run alongside another driver (parallel sessions on disjoint
 #   tickets, #41): skips the single-run lock; safety comes from the per-ticket claim lock
-#   (governor/.locks/ticket-N) + the bookkeep lock in govern-bookkeep.sh.
+#   (governor/.locks/ticket-N) + the bookkeep lock in land-resolution.sh.
 #
 # GATES, all of which run on EVERY named dispatch (they used to be skipped whenever a ticket was
 # named, which left the operator's real path the unprotected one):
@@ -107,7 +107,7 @@ dispatched ticket gets done at the least spend, with every gate on.
   run-loop.sh --dry-run 42       plan-mode worker; no merge, no bookkeep
 
   govern:audit                   manual supervisor review (zero spend unless invoked)
-  govern:budgets                 enforce the CLAUDE.md / lessons / learnings budgets
+  govern:context-budgets         enforce the CLAUDE.md / lessons / learnings budgets
   govern:trim                    evidence-based CLAUDE.md trim (auto-moves proven-dead blocks, proposes the rest)
 USAGE
   exit 2
@@ -218,7 +218,7 @@ export GOVERN_RUN_DIR="$RUNDIR"
 # --- run lock. Default: single-run (one exclusive driver). GOVERN_ALLOW_CONCURRENT=1 opts into
 # parallel drivers on disjoint tickets (#41): the global lock is skipped, and safety comes from
 # the per-ticket CLAIM lock (no two drivers work the same ticket) + the bookkeep lock in
-# govern-bookkeep.sh (no two drivers race tickets.md). Use --exclude to partition the named set.
+# land-resolution.sh (no two drivers race tickets.md). Use --exclude to partition the named set.
 #
 # #183: the lock is SELF-VALIDATING. The holder's run id + pid are recorded INSIDE the lock dir, so a
 # second starter that finds the lock occupied checks whether that pid is still ALIVE before deciding:
@@ -1684,7 +1684,7 @@ for _grp in ${DISPATCH_GROUPS[@]+"${DISPATCH_GROUPS[@]}"}; do
   case "$status" in
     resolved)
       if [[ "$MODE" == "dry" ]]; then govern::log "[dry] would bookkeep #$N"
-      else printf '%s' "$report" | "$DIR/govern-bookkeep.sh" "$N" >&2 || govern::log "bookkeep failed #$N"; fi
+      else printf '%s' "$report" | "$DIR/land-resolution.sh" "$N" >&2 || govern::log "bookkeep failed #$N"; fi
       # #129: record EVERY PR + its disposition (merged / frontend-left-open) so the session summary
       # lists them all — no sibling PR silently dropped. Fall back to the single .pr.url for an
       # ordinary one-PR ticket.
@@ -1898,7 +1898,7 @@ for _grp in ${DISPATCH_GROUPS[@]+"${DISPATCH_GROUPS[@]}"}; do
     case "$bstat" in
       resolved)
         if [[ "$MODE" == "dry" ]]; then govern::log "[dry] would bookkeep batched #$bt"
-        else printf '%s' "$report" | "$DIR/govern-bookkeep.sh" "$bt" >&2 || govern::log "bookkeep failed #$bt"; fi
+        else printf '%s' "$report" | "$DIR/land-resolution.sh" "$bt" >&2 || govern::log "bookkeep failed #$bt"; fi
         record "$bt" resolved "batched with #$N${RESOLVED_PR_SUMMARY:+ — PRs:$RESOLVED_PR_SUMMARY}${bnote:+ — $bnote}"
         govern::log "#$bt RESOLVED (batched with #$N)"
         nres=$((nres+1)); done_count=$((done_count+1))
@@ -2031,7 +2031,7 @@ govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout
 [[ "$npark" -gt 0 || "$nfail" -gt 0 ]] && govern::log "preserved worktrees for parked/failed tickets remain under $WORKTREE_BASE/ — review then '${ROOT_PM:-npm} run worktree:rm -- ticket-<N>'"
 
 # ── auto budget CHECK at run-end (#95) ────────────────────────────────────────────────────────────
-# The context-budget check used to run ONLY when a human ran it (`npm run govern:budgets`) or heeded
+# The context-budget check used to run ONLY when a human ran it (`npm run govern:context-budgets`) or heeded
 # doctor.sh's failing check, so a fleet that never runs either never measures its own context
 # budgets. Flush the CHECK here instead: ONCE per dispatch, at run-end, AFTER every worker
 # is reaped (RUN_END is 1 only in the orchestrator / the sequential driver that IS the orchestrator,
@@ -2039,7 +2039,7 @@ govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout
 # across an N-way fan-out overfires ~N× (workspace CLAUDE.md rule 15); a single end-of-run flush
 # keeps the check rate constant regardless of --parallel width.
 #
-# CLAUDE.md is REPORT ONLY on every call, automatic or manual (govern-bookkeep.sh's own header): it
+# CLAUDE.md is REPORT ONLY on every call, automatic or manual (context-budgets.sh's own header): it
 # never demotes a section, and the trim it calls never edits CLAUDE.md either. It measures the file,
 # classifies compression candidates and points at /shiploop:compress. An automatic editor that is
 # confidently wrong about one block silently costs the workspace a rule it needed, and on 2026-09-08
@@ -2049,7 +2049,7 @@ govern::event run_done "resolved=$nres" "parked=$npark" "failed=$nfail" "timeout
 # GOVERN_AUTO_BUDGETS=0 disables this entirely (default on; mirrors how GOVERN_OVERLAP_NUDGE (#139)
 # is structured).
 if [[ "$RUN_END" -eq 1 && "$MODE" == "live" && "${GOVERN_AUTO_BUDGETS:-1}" == "1" ]]; then
-  eb_out="$("$DIR/govern-bookkeep.sh" --enforce-budgets 2>&1)" && eb_rc=0 || eb_rc=$?
+  eb_out="$("$DIR/context-budgets.sh" 2>&1)" && eb_rc=0 || eb_rc=$?
   [[ -n "${eb_out:-}" ]] && printf '%s\n' "$eb_out" | while IFS= read -r _bl; do govern::log "budgets | $_bl"; done
   case "$eb_rc" in
     0) govern::log "budgets: checked at run-end (GOVERN_AUTO_BUDGETS=1): OK, CLAUDE.md is under budget. Nothing was edited." ;;
