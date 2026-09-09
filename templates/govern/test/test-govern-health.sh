@@ -3,7 +3,7 @@
 # classification + tokens-per-ticket from ticket-history.jsonl, and resolve-ticket.sh's
 # rt_history_enrich() (the loop purge moved run-loop's record()/history_enrich() here) ENRICHES each
 # history entry with token spend (from the worker's log stream) + a churn flag (from the report's PR
-# repos). Two parts: (A) the health computation over a synthetic history — UNCHANGED; (B) a proof
+# repos). Two parts: (A) the health computation over a synthetic history, UNCHANGED; (B) a proof
 # that a real resolve-ticket.sh pass writes an enriched history row (tokens/costUsd/churn). Hermetic
 # + generic (mk_ws_stub seeds a throwaway workspace; churn set pinned via GOVERN_SELFREF_REPOS).
 set -euo pipefail
@@ -70,7 +70,7 @@ assert_contains "$htxt" "per ticket"       "human output surfaces tokens-per-tic
 assert_contains "$(GOVERN_HISTORY_FILE="$T/none.jsonl" bash "$HEALTH")" "no history yet" "missing history degrades cleanly"
 
 # ── Part B: resolve-ticket.sh's rt_history_enrich() writes tokens/costUsd/churn on a green pass ──
-# resolve-ticket.sh no longer spawns a worker itself — it lands a worker's ALREADY-PRODUCED report —
+# resolve-ticket.sh no longer spawns a worker itself, it lands a worker's ALREADY-PRODUCED report
 # so this seeds the worker's log stream directly (govern::worker_logdir's fallback: a `worker.jsonl`
 # result event, read via govern::stream_usage) rather than driving a stubbed `claude` through a whole
 # dispatch. #1's PR targets `harness`, pinned self-referential via GOVERN_SELFREF_REPOS below.
@@ -111,7 +111,7 @@ landed_count() { [[ -f "$ELANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$E
 cat > "$E/queue/tickets.md" <<'TIX'
 # Tickets
 
-## #1 — self-referential one
+## #1, self-referential one
 
 **Severity:** High
 
@@ -121,7 +121,7 @@ Done when: x.
 TIX
 ( cd "$E" && git add -A && git commit -qm init )
 
-# a result event carrying token usage + cost — what govern::stream_usage / rt_history_enrich reads
+# a result event carrying token usage + cost, what govern::stream_usage / rt_history_enrich reads
 printf '{"type":"result","subtype":"success","total_cost_usd":2.5,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700}}\n' \
   > "$E/logs/ticket-1/worker.jsonl"
 

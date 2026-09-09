@@ -22,8 +22,9 @@
 #
 # Eligibility = govern::externalize_candidates (Severity: Low AND Where → OSS sub-repo, EXCLUDING sibling
 # repos whose name merely contains the OSS name as a substring, AND EXCLUDING any ticket carrying
-# `**Externalize:** never`). Gated by GOVERN_EXTERNALIZE_LANE (default 1) at the CALL SITE (run-loop.sh)
-# and re-checked here (defense in depth).
+# `**Externalize:** never`). Gated by GOVERN_EXTERNALIZE_LANE (default 1), checked here. This lane
+# is operator-invoked (`npm run govern:externalize`); nothing calls it automatically since the
+# dispatch loop's run-start block went away.
 #
 # Honors --dry (or MODE=dry / GOVERN_ECHO=1): logs what WOULD happen, makes NO gh call, NO edit, NO
 # commit. Idempotent: a ticket already in externalized.md is never re-filed — if a prior run created the

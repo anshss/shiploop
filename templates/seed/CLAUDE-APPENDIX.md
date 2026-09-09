@@ -83,10 +83,10 @@ PR. There are two ways to start one, and both run the same doctrine file,
   right-sizing is not left to judgment) and points at the canonical doctrine rather than restating
   it. The run shows up in the session UI with live token counts and an openable transcript, and its
   structured report comes back to the driver.
-- **Headless lane:** `bash scripts/govern/spawn-worker.sh <N>` with no session open — gated first by
+- **Headless lane:** `bash scripts/govern/spawn-worker.sh <N>` with no session open, gated first by
   `npm run govern:pre-dispatch -- <N>` (NA-marker skip, already-a-public-issue, still-on-origin/main
   re-verify, dependency ordering, staleness, the per-ticket failure-streak breaker, upstream drift)
-  — or just say "work on 42 51" and let the session run those same steps for you, one ticket at a
+ , or just say "work on 42 51" and let the session run those same steps for you, one ticket at a
   time. Merge and queue bookkeeping are a separate last step either lane shares:
   `npm run govern:resolve -- <N>`, fed the worker's report.
 
@@ -192,7 +192,7 @@ Rules that are both rare and mechanically caught belong here.
 ## Fleet visibility — seeing what the governor is actually doing
 
 A worker is a detached `claude -p` process `spawn-worker.sh` runs to completion, and structured
-state is written only when it finishes — so while one or more are in flight nothing on disk says
+state is written only when it finishes, so while one or more are in flight nothing on disk says
 "running" on its own. Claude's own subagent panel cannot help: it renders Task-tool children of
 *this* session, and there is no way to inject a row into it from outside.
 

@@ -24,7 +24,7 @@
 # ever short-circuits dispatch.
 #
 # Gates, in the same order the loop ran them, same helper functions, same env vars:
-#   0. disk pre-flight           (GOVERN_MIN_FREE_GB, default 5GB) — a full disk must not
+#   0. disk pre-flight           (GOVERN_MIN_FREE_GB, default 5GB), a full disk must not
 #                                 masquerade as a worker failure
 #   1. NA-marker auto-skip       (govern::not_automatable_tickets), plus the #120 chronic-skip
 #                                 streak bump and its one-time permanent-park escalation
@@ -63,7 +63,7 @@ fi
 if [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
   _free_gb="$(df -k "$HOME" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}')"
   if [[ "${_free_gb:-99}" -lt "${GOVERN_MIN_FREE_GB:-5}" ]]; then
-    echo "skip: disk low (${_free_gb}GB < ${GOVERN_MIN_FREE_GB:-5}GB) — free space or resolve escalations to reclaim parked worktrees, then dispatch again (#48)"
+    echo "skip: disk low (${_free_gb}GB < ${GOVERN_MIN_FREE_GB:-5}GB). Free space or resolve escalations to reclaim parked worktrees, then dispatch again (#48)"
     exit 0
   fi
 fi
@@ -90,15 +90,15 @@ if [[ -n "$_na_hit" ]]; then
   if [[ "${GOVERN_MODE:-live}" == "live" ]]; then
     _na_count="$(govern::na_skip_bump "$N" 2>/dev/null || echo 0)"
     if [[ "${_na_count:-0}" -ge "${GOVERN_NA_NUDGE_AFTER:-3}" ]] && ! govern::has_open_escalation "$N"; then
-      govern::log "#$N auto-skipped ${_na_count} consecutive dispatches ('$_na_hit_reason') — filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
+      govern::log "#$N auto-skipped ${_na_count} consecutive dispatches ('$_na_hit_reason'), filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
       govern::file_open_escalation "$N" \
         "permanently park chronically-skipped '$_na_hit_reason' ticket" \
-        "auto-skipped as '$_na_hit_reason' for ${_na_count} consecutive govern dispatches — it can't be resolved headlessly and is churning a skip note every time instead of leaving the live queue (#120)" \
+        "auto-skipped as '$_na_hit_reason' for ${_na_count} consecutive govern dispatches, it can't be resolved headlessly and is churning a skip note every time instead of leaving the live queue (#120)" \
         "remove it from the live queue: answer Disposition 'defer' to migrate it to tickets-parked.md (or 'do-the-work' to keep retrying it, 'keep-open' to leave it in the live queue)" \
         "defer (recommended) / do-the-work / keep-open"
     fi
   fi
-  echo "skip: body marked '$_na_hit_reason' (not govern-automatable; handle interactively) — no worker burned (#92)"
+  echo "skip: body marked '$_na_hit_reason' (not govern-automatable; handle interactively): no worker burned (#92)"
   exit 0
 fi
 
@@ -167,12 +167,12 @@ if [[ "${_cf:-0}" -ge "${GOVERN_MAX_TICKET_FAILS:-2}" ]]; then
   # retry. One escalation only, guarded the same way the #120 nudge is.
   if [[ "${GOVERN_MODE:-live}" == "live" ]] && ! govern::has_open_escalation "$N"; then
     govern::file_open_escalation "$N" \
-      "systemic blocker — ${_cf} consecutive failed dispatches" \
-      "systemic blocker — failed ${_cf} consecutive dispatches; needs operator / root-cause, not another auto-retry (#60)" \
+      "systemic blocker: ${_cf} consecutive failed dispatches" \
+      "systemic blocker: failed ${_cf} consecutive dispatches. Needs operator / root-cause, not another auto-retry (#60)" \
       "inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)" \
       ""
   fi
-  echo "skip: #$N failed ${_cf} consecutive dispatches (GOVERN_MAX_TICKET_FAILS=${GOVERN_MAX_TICKET_FAILS:-2}) — auto-escalated as a systemic blocker; not re-spawning (#60)"
+  echo "skip: #$N failed ${_cf} consecutive dispatches (GOVERN_MAX_TICKET_FAILS=${GOVERN_MAX_TICKET_FAILS:-2}): auto-escalated as a systemic blocker, not re-spawning (#60)"
   exit 0
 fi
 

@@ -71,13 +71,13 @@ assert_eq "$na" "$(printf '5\tNOT govern-automatable')" "helper flags only the b
 # basename mention does NOT collide — and a RESOLVED sync-port escalation does NOT exclude.
 cat > "$TMP/sp-tickets.md" <<'EOF'
 ## #20 — high, edits a file with an OPEN sync-port port
-**Severity:** High — refactor `scripts/govern/spawn-worker.sh` heartbeat.
+**Severity:** High, refactor `scripts/govern/spawn-worker.sh` heartbeat.
 ---
 ## #21 — medium, untouched by any sync-port escalation
 **Severity:** Medium — tweak the docs.
 ---
 ## #22 — low, only names a bare basename (not the full path)
-**Severity:** Low — spawn-worker.sh logging polish.
+**Severity:** Low, spawn-worker.sh logging polish.
 ---
 EOF
 cat > "$TMP/sp-esc-open.md" <<'EOF'

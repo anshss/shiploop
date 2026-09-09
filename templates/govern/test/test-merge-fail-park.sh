@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Regression for ticket #42, re-targeted at resolve-ticket.sh (the loop purge moved this step here):
-# when a PR's merge FAILS (conflict / failing required check — merge-pr.sh returns rc=3), resolve-
-# ticket.sh must refuse to land — keep the tickets.md block untouched, leave the PR open, and exit
-# non-zero — NOT bookkeep it as "resolved" (which would delete the block while the PR sits unmerged).
-# Hermetic — resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
+# when a PR's merge FAILS (conflict / failing required check, merge-pr.sh returns rc=3), resolve-
+# ticket.sh must refuse to land, keep the tickets.md block untouched, leave the PR open, and exit
+# non-zero, NOT bookkeep it as "resolved" (which would delete the block while the PR sits unmerged).
+# Hermetic, resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
 # land-resolution.sh, no network, no gh, no real push.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +35,7 @@ cat > "$T/bin/await-ci.sh" <<'STUB'
 printf 'green\n'
 exit 0
 STUB
-# rc=3 — merge-pr.sh's own "CI is red or still pending" / merge-failed exit.
+# rc=3, merge-pr.sh's own "CI is red or still pending" / merge-failed exit.
 cat > "$T/bin/merge-pr.sh" <<'STUB'
 #!/usr/bin/env bash
 exit 3
@@ -62,8 +62,8 @@ report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/
 out="$( cd "$T" && printf '%s' "$report" | bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
 rc=$?
 
-assert_eq "$rc" "5" "a merge failure (merge-pr rc=3) is a refusal — resolve-ticket exits 5 (#42)"
-assert_eq "$(landed_count)" "0" "merge failure does not land — land-resolution.sh was never reached"
+assert_eq "$rc" "5" "a merge failure (merge-pr rc=3) is a refusal, resolve-ticket exits 5 (#42)"
+assert_eq "$(landed_count)" "0" "merge failure does not land, land-resolution.sh was never reached"
 assert_contains "$out" "CI is red or still pending" "resolve-ticket's own red/pending wording is surfaced"
 remaining="$(grep -c '^## #' "$T/queue/tickets.md" || true)"
 assert_eq "$remaining" "1" "ticket #1 block SURVIVES a failed merge (not deleted while the PR sits unmerged)"

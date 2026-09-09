@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Proof for #72, re-targeted at resolve-ticket.sh (the loop purge moved this step here): on a
 # LOCAL-FIRST repo an ADDITIVE migration ships as auto-applying code (no deployed prod DB), so the
-# governor must NOT park it "apply migration to prod manually" — it lands normally. A DESTRUCTIVE
-# migration on the same repo STILL escalates. Hermetic — resolve-ticket.sh sandboxed next to stubs of
+# governor must NOT park it "apply migration to prod manually", it lands normally. A DESTRUCTIVE
+# migration on the same repo STILL escalates. Hermetic, resolve-ticket.sh sandboxed next to stubs of
 # merge-pr.sh / await-ci.sh / land-resolution.sh, no network, no gh, no real push.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,12 +35,12 @@ exit 0
 STUB
   cat > "$root/bin/merge-pr.sh" <<'STUB'
 #!/usr/bin/env bash
-# web is PR-only in this fixture (mk_ws_stub with an empty merge-csv) — a real merge-pr.sh would
+# web is PR-only in this fixture (mk_ws_stub with an empty merge-csv), a real merge-pr.sh would
 # refuse with rc=2. Model that exactly so resolve-ticket sees the same "left open" shape it would live.
 exit 2
 STUB
   chmod +x "$root/bin"/*.sh
-  printf '# Tickets\n\n## #1 — add a table for annotations\n\n**Severity:** Medium\n\nbody\n\n---\n' > "$root/queue/tickets.md"
+  printf '# Tickets\n\n## #1, add a table for annotations\n\n**Severity:** Medium\n\nbody\n\n---\n' > "$root/queue/tickets.md"
   ( cd "$root" && git add -A && git commit -qm init )
 }
 landed_count() { local f="$1"; [[ -f "$f" ]] || { echo 0; return 0; }; tr -cd '\n' < "$f" | wc -c | tr -d ' '; }

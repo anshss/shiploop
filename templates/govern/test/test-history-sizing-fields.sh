@@ -162,10 +162,10 @@ assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt
   && printf 'ok   - %s\n' "attempt 1's stream is rotated aside, not clobbered" \
   || { printf 'FAIL - %s\n' "attempt 1's stream is rotated aside, not clobbered"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
-# ── Part 3 — resolve-ticket.sh: ticket-history rows carry sizing fields, + govern-health ─────────
+# ── Part 3, resolve-ticket.sh: ticket-history rows carry sizing fields, + govern-health ─────────
 # rt_history_enrich() prefers a per-attempt ledger (attempts.jsonl) in the worker log dir when one
 # exists over the govern::stream_usage fallback over worker.jsonl (that fallback is Part 1's own
-# subject) — seed attempts.jsonl directly here, the same shape spawn-worker.sh's Part-2 ledger writes.
+# subject), seed attempts.jsonl directly here, the same shape spawn-worker.sh's Part-2 ledger writes.
 RT="$DIR/../resolve-ticket.sh"
 [[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 

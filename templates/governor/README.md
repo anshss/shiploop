@@ -17,14 +17,14 @@ There is no backlog sweep and no grind-until-empty loop.
 ```
 Or directly: `scripts/govern/pre-dispatch-check.sh <N>`, then `scripts/govern/spawn-worker.sh <N>`,
 then pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`.
-Naming several tickets works them one at a time through the same three steps — there is no fan-out
+Naming several tickets works them one at a time through the same three steps, there is no fan-out
 and no automatic grouping. `pre-dispatch-check.sh` nudges you to batch two OPEN tickets sharing a
 measured file into one worker (`spawn-worker.sh <N> <other>`), but that is always a call you make,
 never an automatic partition.
 
 The trigger changed, and so did the substrate under it. Detached workers, verdict files, resumable
-worktrees and reaping are still what survive a closed laptop — a later session can reap a worker an
-earlier one launched — but there is no more single-run lock, per-ticket claim lock, or run-level
+worktrees and reaping are still what survive a closed laptop, a later session can reap a worker an
+earlier one launched, but there is no more single-run lock, per-ticket claim lock, or run-level
 ceiling (`GOVERN_MAX_TICKETS` is retired along with it): each of the three scripts is a fresh,
 short-lived invocation, and the operator naming tickets is the only ceiling on how many get worked in
 one sitting.
@@ -43,7 +43,7 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
   entries (regenerated every run-end; gitignored runtime state).
 - `worker-prompt.md` / `supervisor-prompt.md`: the templates workers run / the manual audit
   (`npm run govern:audit`) runs.
-- `improvements.md` — operator-maintained notes on harness friction (no automated pipeline writes to
+- `improvements.md`, operator-maintained notes on harness friction (no automated pipeline writes to
   it any more; the retired self-improvement lane used to).
 - `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
   a recurring decision here graduates into a `preferences.md` rule.
@@ -56,22 +56,22 @@ unless you deliberately want the API-key fallback (it overrides the OAuth creden
 - `claudemd-verdicts.json`: your recorded still-true verdicts, keyed by block content hash (input;
   tracked, see "CLAUDE.md trimming" below).
 
-## Escalation lifecycle (#62 — answers feed back automatically)
+## Escalation lifecycle (#62, answers feed back automatically)
 Parked decisions used to be **write-only**: a worker appended a `## Open` entry and nothing ever
 asked the operator, so they sat unanswered indefinitely. Now it closes itself, at SessionStart:
 - **Every SessionStart (`session-reconcile.sh`):** applies any answered escalations
   (`escalations-apply-answers.sh`) and regenerates `pending-escalations.json` from the current
-  unanswered `## Open` entries (`escalations-emit-pending.sh`) — both runnable by hand too, and
+  unanswered `## Open` entries (`escalations-emit-pending.sh`), both runnable by hand too, and
   `GOVERN_NOTIFY_CMD` still fires if set, so an unattended headless dispatch still signals you.
 - **Relay (the dispatching session):** presents all pending escalations in a **single batched
   `AskUserQuestion`** (#89 — ≤4 questions per prompt; chunk if >4, never one prompt per ticket) and
   records each operator's **Answer** + a canonical **Disposition** (`do-the-work` | `defer` |
   `mitigated` | `keep-open`) back into `escalations.md` (plus an optional "Make this a rule?" sentence).
 - **Applying an answer (`escalations-apply-answers.sh`, at the next SessionStart or run by hand):**
-  acts on each recorded answer — `do-the-work` un-parks (the ticket is dispatchable again), `defer`
+  acts on each recorded answer, `do-the-work` un-parks (the ticket is dispatchable again), `defer`
   auto-migrates the ticket to `queue/tickets-parked.md` (renumbered, still TODO) and resolves the
   escalation, `mitigated` removes the ticket from `queue/tickets.md` and closes it as
-  accepted-current-state (harm already zero — NOT parked as still-todo), and a rule sentence is
+  accepted-current-state (harm already zero, NOT parked as still-todo), and a rule sentence is
   appended to `preferences.md`. Idempotent and committed the same way `land-resolution.sh` commits.
 
 `GOVERN_NOTIFY_CMD` (optional): a command fed the alert message on stdin when pending escalations
@@ -195,8 +195,8 @@ files an escalation and stops re-spawning that ONE ticket rather than retrying i
   preserved and a re-run resumes it, exactly like a timeout.
 - No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
   (`npm run govern:audit -- <run-dir>`) that reads `<run-dir>/state.jsonl`; it costs zero model spend
-  otherwise. Nothing in the session lane writes `state.jsonl` any more — that was the retired
-  run-level driver's own bookkeeping — so this audit currently has no live input to read. Treat it as
+  otherwise. Nothing in the session lane writes `state.jsonl` any more, that was the retired
+  run-level driver's own bookkeeping, so this audit currently has no live input to read. Treat it as
   not wired up until its input is replaced with something the session lane still writes (`ticket-history.jsonl`,
   `governor/events.jsonl`).
 
@@ -232,19 +232,19 @@ without fixing it is far worse than a missed opportunity, and no narrow, safe de
 
 Exploration is the dominant cost of a resolved ticket (~98% cacheRead): two tickets that touch the
 same code paying full discovery cost twice is real waste. There is no more automatic locality
-grouping of a named set — `GOVERN_BATCH_MAX` and the partitioner it fed are retired along with the
+grouping of a named set, `GOVERN_BATCH_MAX` and the partitioner it fed are retired along with the
 run-level driver. What survives is manual, and MEASURED-overlap only:
 
 - `pre-dispatch-check.sh` prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when some OTHER
   open ticket shares a measured file (or, weaker, a directory) with the one you named
   (`GOVERN_OVERLAP_NUDGE`, on by default).
 - Acting on it is `scripts/govern/spawn-worker.sh <N> <other...>`: extra ticket numbers share `#N`'s
-  worktree, branch and PR — **one worker → one branch → one PR**, with per-ticket commits. The
+  worktree, branch and PR, **one worker → one branch → one PR**, with per-ticket commits. The
   worker still returns a `tickets` array of `{ticket,status,note}`, so a batched ticket is bookkept
-  **only** on an explicit `resolved` entry — any other status, a missing entry, or an unparseable
+  **only** on an explicit `resolved` entry, any other status, a missing entry, or an unparseable
   report leaves it in `tickets.md` for later. A group's verdict can never mark an unfixed ticket
   resolved.
-- Nothing checks a dependency relation before a manual batch — that guard lived in the retired
+- Nothing checks a dependency relation before a manual batch, that guard lived in the retired
   partitioner. Don't hand-batch two tickets you know are in a `**Depends on:**` relation.
 
 ## Progress preservation (acts like a human reopening sessions)
@@ -254,10 +254,10 @@ run-level driver. What survives is manual, and MEASURED-overlap only:
 - **Resume reuses the preserved worktree, it doesn't adopt the PR.** `spawn-worker.sh` re-enters a
   ticket's PRESERVED worktree/branch from a prior attempt instead of recreating it, and the worker
   continues from there. There is no more shortcut that detects an already-open PR and skips straight
-  to CI→merge without running a worker at all — that adoption was loop-only machinery and is retired.
+  to CI→merge without running a worker at all, that adoption was loop-only machinery and is retired.
 - A clean interrupt (Ctrl-C / SIGTERM / sleep) leaves the in-flight ticket + worktree; re-running
   continues (resolved → gone from `queue/tickets.md`; parked → skipped via `escalations.md`).
-- There is no more run-end summary file — that was written by the retired run-level driver. A
+- There is no more run-end summary file, that was written by the retired run-level driver. A
   worker's own outcome is the JSON report it returns, and `govern-health.sh` / `npm run govern:status`
   read the durable history and event log instead of a per-run summary.
 
@@ -287,7 +287,7 @@ real runs. Mechanics:
   resolved model/effort **and where each came from** (a brain-decided ticket field vs the workspace
   fallback vs a retry escalation), plus that attempt's measured usage. `resolve-ticket.sh` reads the
   ledger and writes `ticket-history.jsonl` (mirroring the retired loop's own `record()`/
-  `history_enrich()` exactly, so `govern-health.sh` — which reads only that file — keeps an input now
+  `history_enrich()` exactly, so `govern-health.sh`, which reads only that file, keeps an input now
   that the loop no longer writes it): spend is **summed across the ticket's attempts** (an earlier
   re-dispatch's tokens belong to the ticket
   too), while the decision fields come from the **last** attempt — the one that produced the outcome.
@@ -309,7 +309,7 @@ real runs. Mechanics:
   `worker.attempt<K>.jsonl` so a fresh inode makes the corruption unreachable in the first place.
 
 - **Land-time safety, not dispatch-time locking.** There is no more per-ticket claim lock,
-  sibling-driver exclude list, or `--orchestrated` coordination — that was run-loop-only machinery,
+  sibling-driver exclude list, or `--orchestrated` coordination, that was run-loop-only machinery,
   retired with it. Two concurrent `spawn-worker.sh #N` calls on the SAME ticket are not prevented
   before they start; what still holds is that only one resolution ever lands: `resolve-ticket.sh` →
   `land-resolution.sh` serializes the `tickets.md` edit and the history append under the bookkeep
@@ -374,7 +374,7 @@ fleet-wide), the Stop ticket-sweep reminder (clobbers the worker's final stdout)
 flood. The worker still gets user-level config, auth, CLAUDE.md, and skills. The report is read from a
 file, so even a stray Stop hook can't corrupt it — belt and suspenders.
 
-## Self-improvement (retired — now operator-maintained notes)
+## Self-improvement (retired, now operator-maintained notes)
 The automated observe → propose → triage → guarded-auto-apply pipeline (`govern-improve.sh` /
 `govern-improve-triage.sh` / `govern-self-apply.sh`) was retired along with the run-level driver that
 fired it once per run. `governor/improvements.md` is now plain operator-maintained notes on harness

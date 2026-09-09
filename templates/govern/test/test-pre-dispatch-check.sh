@@ -56,7 +56,7 @@ Done when: rotated.
 
 ---
 
-## #52 — frontend: use the new retry ladder
+## #52, frontend: use the new retry ladder
 
 **Severity:** Low
 
@@ -149,7 +149,7 @@ mkdir -p "$X/ws/queue"
 ( cd "$X/ws" && git init -q && git config user.email t@t && git config user.name t
   printf '# Tickets
 
-## #60 — only on this checkout
+## #60, only on this checkout
 
 **Severity:** Low
 
@@ -166,7 +166,7 @@ Done when: done.
   # Put the item BACK in the working checkout only, so local says "open" and origin says "gone".
   printf '# Tickets
 
-## #60 — only on this checkout
+## #60, only on this checkout
 
 **Severity:** Low
 

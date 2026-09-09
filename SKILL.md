@@ -128,18 +128,18 @@ Learnings routing (queue vs CLAUDE.md vs learnings.md vs project memory) follows
 root `CLAUDE.md` — that file auto-loads every session; this skill doesn't restate its table. Bar
 either way: would knowing this save a future session 5+ min?
 
-## Dispatch — natural language onto the session lane
+## Dispatch, natural language onto the session lane
 
 There is no `/govern` command, and there is no always-on loop behind it either. Dispatch is three
 deterministic Bash scripts, run in order for ONE ticket at a time, near-zero Claude context
 throughout:
 
-1. `scripts/govern/pre-dispatch-check.sh <N>` — every pre-spawn gate, one verdict line on stdout:
+1. `scripts/govern/pre-dispatch-check.sh <N>`, every pre-spawn gate, one verdict line on stdout:
    `proceed` / `skip: <reason>` / `refuse: <reason>`.
-2. `scripts/govern/spawn-worker.sh <N>` — spawns the fresh **headless `claude -p` worker**, prints
+2. `scripts/govern/spawn-worker.sh <N>`, spawns the fresh **headless `claude -p` worker**, prints
    its JSON report. (Interactively, `Agent(subagent_type: "worker")` for the same ticket runs the
    same doctrine at the same model floor and the same stopping point instead.)
-3. `scripts/govern/resolve-ticket.sh <N>`, fed the worker's report on stdin — awaits CI, merges, and
+3. `scripts/govern/resolve-ticket.sh <N>`, fed the worker's report on stdin, awaits CI, merges, and
    lands the resolution.
 
 Named dispatch is the only front door: you name the ticket, the pipeline works exactly that one, at
@@ -148,11 +148,11 @@ the least spend, with every gate on. There is no backlog sweep and no grind-unti
 | You say | Run |
 |---|---|
 | "work on 414" | `pre-dispatch-check.sh 414` → `spawn-worker.sh 414` → pipe its report into `resolve-ticket.sh 414` |
-| "work on 414 156 234 235" | the same three steps, once per ticket, in severity order — sequential, there is no fan-out |
-| "dry-run 414" | `scripts/govern/dry-run.sh 414` — worker in PLAN mode, merge echoed, nothing committed |
+| "work on 414 156 234 235" | the same three steps, once per ticket, in severity order, sequential, there is no fan-out |
+| "dry-run 414" | `scripts/govern/dry-run.sh 414`, worker in PLAN mode, merge echoed, nothing committed |
 
-These differ **only in selection and count** — there is no concurrency knob left to reach for.
-**Do not re-implement the pipeline in-context** — driving a worker by hand instead of through these
+These differ **only in selection and count**, there is no concurrency knob left to reach for.
+**Do not re-implement the pipeline in-context**, driving a worker by hand instead of through these
 three scripts is the anti-pattern this design replaces; if `pre-dispatch-check.sh` returns
 `skip`/`refuse`, or `resolve-ticket.sh` exits non-zero, report why, don't take over.
 
@@ -167,7 +167,7 @@ once if it 401s) — `--strict-mcp-config` matches how workers actually launch (
 `scripts/lib/workspace.sh`. A new workspace starts on **pr-only**: workers open normal PRs but
 `resolve-ticket.sh` never merges them. In **observe**, workers push a `ticket-<N>` branch but open
 the PR as **draft**. **auto** needs both `GOVERN_AUTONOMY=auto` (global rung) *and* the repo listed
-in `GOVERN_MERGE_REPOS` (per-repo allowlist, empty by default) — only then does that repo's tickets
+in `GOVERN_MERGE_REPOS` (per-repo allowlist, empty by default), only then does that repo's tickets
 auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTONOMY` resolves to
 `auto` for backward compat.)
 
@@ -201,7 +201,7 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   `governor/improvements.md` is operator-maintained notes on harness friction; nothing proposes or
   applies a fix to it automatically.
 
-**Escalations — surface and answer them whenever `pending-escalations.json` is non-empty.**
+**Escalations, surface and answer them whenever `pending-escalations.json` is non-empty.**
 1. Read `governor/pending-escalations.json` (kept current by `session-reconcile.sh` at every
    SessionStart). `count: 0` → nothing needed, just summarize.
 2. Present **ALL** pending escalations in a **single batched `AskUserQuestion` call** (4 questions per

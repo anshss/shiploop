@@ -13,8 +13,9 @@
 # Usage:  context-budgets.sh [--dry]
 # Exit:   0 = under budget after the pass, 3 = still over (doctor gates on this), 1 = usage error
 #
-# CLAUDE.md is REPORT ONLY, always, whether this runs by hand (`npm run govern:context-budgets`) or
-# from run-loop.sh's run-end flush: this call never demotes a section and the trim it calls (below)
+# CLAUDE.md is REPORT ONLY, always. This is an operator-invoked entry point now
+# (`npm run govern:context-budgets`): nothing flushes it automatically since the dispatch loop's
+# run-end block went away. This call never demotes a section and the trim it calls (below)
 # never edits CLAUDE.md either. An earlier version demoted any section over GOVERN_LESSON_MAX_CHARS
 # whenever a human ran this directly, which is exactly the "auto-editor confidently wrong about one
 # block silently costs a rule the workspace needed" failure #110 exists to close: a per-entry cap is

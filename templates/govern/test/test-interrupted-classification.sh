@@ -2,7 +2,7 @@
 # #34 (b): a per-ticket worker whose `claude -p` stream dies from a TRANSIENT connection drop
 # mid-response (laptop sleep / network suspend) — the worker exits on its OWN (NOT hard-killed by the
 # timeout watchdog) with a result event `is_error:true, result:"API Error: Connection closed
-# mid-response"` — must be classified as the DISTINCT per-worker status `interrupted`, not
+# mid-response"`, must be classified as the DISTINCT per-worker status `interrupted`, not
 # `failed`/`infra`, carrying a non-empty error signature.
 # Hermetic + generic (mk_ws_stub seeds a throwaway workspace).
 set -euo pipefail

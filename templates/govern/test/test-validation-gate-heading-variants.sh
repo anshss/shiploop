@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Proves the #67 VALIDATION-EVIDENCE gate — resolve-ticket.sh's step 2, since the loop purge moved
-# this check here — fires under HEADING WHITESPACE / PUNCTUATION variance. Previously the gate awk
+# Proves the #67 VALIDATION-EVIDENCE gate, resolve-ticket.sh's step 2, since the loop purge moved
+# this check here, fires under HEADING WHITESPACE / PUNCTUATION variance. Previously the gate awk
 # required exactly `## #N ` (single space), so a ticket whose heading was `##  #N` (double-space) or
-# `## #N—Title` (em-dash with no space between `#N` and title) yielded an empty tblock — the
+# `## #N-Title` (em-dash with no space between `#N` and title) yielded an empty tblock, the
 # VALIDATION|SPIKE grep then missed, and a validation ticket auto-resolved on static code analysis
 # with no live-test evidence, defeating the gate. The fix routes the gate through the shared tolerant
 # parser (govern::ticket_block), which resolve-ticket.sh still uses unchanged.
 #
-# Hermetic — resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
+# Hermetic, resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
 # land-resolution.sh, no network, no gh, no real push. Every assertion is on resolve-ticket.sh's own
 # exit code + stderr wording and on the synthetic tickets.md fixture this test writes itself.
 set -euo pipefail
@@ -79,10 +79,12 @@ assert_eq "$rc1" "3" "double-space heading #1 still trips the gate (exit 3)"
 assert_contains "$out1" "no live-test evidence" "double-space heading #1: gate refuses on the no-evidence wording"
 assert_eq "$rc2" "3" "em-dash-glued heading #2 still trips the gate (exit 3)"
 assert_contains "$out2" "no live-test evidence" "em-dash-glued heading #2: gate refuses on the no-evidence wording"
-assert_eq "$(landed_count)" "0" "no resolve landed — no validation ticket slipped past the gate"
+assert_eq "$(landed_count)" "0" "no resolve landed, no validation ticket slipped past the gate"
 
 # Both blocks must SURVIVE in tickets.md (the gate refuses before resolve-ticket ever touches the file).
 h1="$(grep -cE '^##  +#1 ' "$T/queue/tickets.md" || true)"
+# The em dash below is LOAD-BEARING: this whole file exists because a heading with an em dash glued
+# to the number used to yield an empty ticket block. The pattern must match the fixture exactly.
 h2="$(grep -cE '^## #2—' "$T/queue/tickets.md" || true)"
 assert_eq "$h1" "1" "double-space heading #1 remains in tickets.md (gate did NOT skip it)"
 assert_eq "$h2" "1" "em-dash-glued heading #2 remains in tickets.md (gate did NOT skip it)"

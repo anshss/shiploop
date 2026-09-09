@@ -6,4 +6,4 @@ operator-maintained notes on harness friction: a concrete, scoped change worth m
 harness, written here by hand and applied (or filed as a ticket) at your own pace. Safety rails are
 never auto-changed; if one caused friction it's flagged `OPERATOR DECISION`.
 
-_(empty — add a note here when you notice recurring friction)_
+_(empty, add a note here when you notice recurring friction)_

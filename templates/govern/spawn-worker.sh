@@ -13,7 +13,8 @@ shift
 # they share $N's worktree, branch and PR, and their outcomes come back per-ticket in the report's
 # `tickets` array. $N stays the PRIMARY: the worktree slug, the branch, the model/effort/flow latches
 # and the run-scoped log dir are all keyed on it, so a plain single-ticket spawn is byte-identical to
-# before. The run-loop only ever passes extras it already holds the per-ticket CLAIM LOCK for.
+# before. It is the caller's job to only pass extras it is actually about to dispatch together (see
+# govern::overlap_nudge in lib/common.sh, which prints this exact batching suggestion).
 BATCH=()
 for _b in "$@"; do
   _b="${_b//[^0-9]/}"
@@ -24,9 +25,10 @@ slug="ticket-$N"
 # #57: refuse a fixture/stub claude_bin write under the real, unconfigured log root before it can
 # happen — see govern::guard_real_log_write in lib/common.sh.
 govern::guard_real_log_write "${GOVERN_CLAUDE_BIN:-claude}"
-# #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set by run-loop),
-# so a re-run never reads a PRIOR run's worker.jsonl. Standalone invocation falls back to the flat
-# logs/govern/ticket-N/.
+# #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set). Nothing sets
+# it on the session lane, so the flat logs/govern/ticket-N/ fallback is the normal case; a caller
+# that wants run-scoped logs exports GOVERN_RUN_DIR itself (bench/arms.sh does exactly that), and a
+# re-run under a fresh run dir never reads a PRIOR run's worker.jsonl.
 logdir="$(govern::worker_logdir "$N")"; mkdir -p "$logdir"
 jsonl="$logdir/worker.jsonl"
 report_path="$logdir/report.json"; rm -f "$report_path"
@@ -55,8 +57,9 @@ TICKET_MODEL="$(printf '%s' "$block" \
   | sed -n 's/^[[:space:]]*\*\{0,2\}[Mm]odel:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' \
   | head -1)"
 MODEL_IS_RETRY=0
-# Preserved-worktree is the primary retry signal; a flat-log check was removed as inert (run-loop
-# nukes the flat log at line ~20; run-scoped `worker.jsonl` is truncated at spawn anyway).
+# Preserved-worktree is the primary retry signal; a flat-log check was removed as inert (this script
+# truncates the legacy flat log itself above when run-scoped; run-scoped `worker.jsonl` is truncated
+# at spawn anyway).
 [[ -d "$WORKTREE_BASE/$slug" ]] && MODEL_IS_RETRY=1
 [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
 export TICKET_MODEL MODEL_IS_RETRY
@@ -90,14 +93,15 @@ export TICKET_FLOW
 # prompt, so the tier and the brief can never disagree about whether this is an execute-only
 # dispatch. `govern::warm_assertion` (lib/common.sh) reads the per-invocation GOVERN_WARM, which
 # names exactly ONE ticket number — so an assertion can never leak onto a different ticket, and it
-# cannot rot in the queue the way a ticket field does. run-loop owns only the NO-dispatch case (a
-# warm assertion with no stated change), since that decides whether to spawn at all.
+# cannot rot in the queue the way a ticket field does. The caller that sets GOVERN_WARM owns only
+# the NO-dispatch case (a warm assertion with no stated change), since that decides whether to spawn at all.
 # GOVERN_EXECUTE_ONLY_BRIEF may also be set directly by a caller; an explicit value wins.
 if [[ -z "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]] && govern::warm_assertion "$N"; then
   GOVERN_EXECUTE_ONLY_BRIEF="$GOVERN_WARM_TEXT"
 fi
 # A blank/whitespace-only brief is NOT an execute-only dispatch — it is the no-worker case, which
-# run-loop handles before ever reaching here. Normalize so nothing downstream half-takes the branch.
+# the caller decides before ever invoking spawn-worker.sh at all. Normalize so nothing downstream
+# half-takes the branch.
 [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" && -n "${GOVERN_EXECUTE_ONLY_BRIEF//[[:space:]]/}" ]] \
   || GOVERN_EXECUTE_ONLY_BRIEF=""
 
@@ -179,11 +183,11 @@ resolve_sizing_uncapped() {
   # (§5.2: the scout `--verdict` fold-in that used to sit here is GONE — see the header above. The
   # ONLY remaining way for a dispatch to end up above GOVERN_WORKER_MODEL is the retry rail below,
   # or the operator raising the floor itself.)
-  # EXECUTE-ONLY dispatch (GOVERN_EXECUTE_ONLY_BRIEF, set by run-loop when the parent explicitly
-  # asserted it is warm on this ticket): the worker is no longer explore → decide → edit → verify,
-  # it is edit → verify against a change someone already decided. That is a genuinely smaller job,
-  # so it takes the cheapest tier — and this is where the right-sizing question gets answered from
-  # the SHAPE OF THE WORK rather than from a guess.
+  # EXECUTE-ONLY dispatch (GOVERN_EXECUTE_ONLY_BRIEF, set above from a GOVERN_WARM assertion, or
+  # directly by a caller, when the parent explicitly asserted it is warm on this ticket): the worker
+  # is no longer explore → decide → edit → verify, it is edit → verify against a change someone
+  # already decided. That is a genuinely smaller job, so it takes the cheapest tier, and this is
+  # where the right-sizing question gets answered from the SHAPE OF THE WORK rather than a guess.
   #
   # "Cheapest" means the cheapest option in the EXISTING coarse tier set, never a new (model, effort)
   # combination: the prompt cache is per-model and an effort change invalidates the tools+system
@@ -214,7 +218,7 @@ resolve_sizing_uncapped() {
   # ── §5.7 GUARD 2: escalation fires EXACTLY ONCE per ticket ───────────────────────────────────
   # Escalation was purely a function of "a preserved worktree exists" — a BOOLEAN, not a counter —
   # and nothing anywhere recorded that a ticket had already been escalated. In the common path the
-  # once-ness was accidental: run-loop auto-parks a ticket at GOVERN_MAX_TICKET_FAILS (default 2)
+  # once-ness was accidental: pre-dispatch-check.sh auto-parks a ticket at GOVERN_MAX_TICKET_FAILS (default 2)
   # consecutive bad runs, so run 1 buys the floor, run 2 buys the ceiling, run 3 never spawns. That
   # is a CAP ON RUNS, not a cap on escalations — every in-run re-dispatch rail (conflict-fix,
   # CI-fix, infra/interrupted auto-retry) is a separate spawn-worker invocation that independently
@@ -486,9 +490,10 @@ fi
 # 1b. #23: fold each co-batched ticket's block into $block so {{TICKET_BLOCK}} carries the WHOLE group
 # (and the flow-staleness path scan below sees the group's paths too). Done AFTER the Model/Effort/Flow
 # latches so those still read $N's leading field block only, and after the dry-run seam so its output
-# is unchanged. A batched number that is no longer in tickets.md (a concurrent driver resolved it) is
-# dropped here rather than failing the spawn — the run-loop's per-ticket outcome mapping then simply
-# finds no entry for it and leaves it in the queue.
+# is unchanged. A batched number that is no longer in tickets.md (a concurrent session resolved it) is
+# dropped here rather than failing the spawn. The report's `tickets` array then carries no entry for
+# it, and govern::batch_ticket_status (lib/common.sh) returns "" for a missing entry, which a caller
+# must never treat as resolved.
 if [[ "${#BATCH[@]}" -gt 0 ]]; then
   _kept=()
   for _b in "${BATCH[@]}"; do
@@ -642,7 +647,8 @@ End every PR body with EXACTLY this line as the FINAL line (replace any \"🤖 G
 fi
 
 # DEFAULT PR hygiene (every ticket, public or private): `#N` is a LOCAL-queue id — meaningless to
-# anyone reading the repo, and the run-loop's post-hoc scrub can only reach the PR title+body.
+# anyone reading the repo, and resolve-ticket.sh's post-hoc scrub (govern::scrub_pr_ticket_ref) can
+# only reach the PR title+body.
 # COMMIT SUBJECTS are unreachable (rewriting pushed history = force-push = hard stop), so the only
 # control for those is telling the worker up front. The BRANCH keeps the id — the governor links PRs
 # to queue entries by branch. `GOVERN_PR_TICKET_REF=1` opts out (public repos still covered below).
@@ -1079,8 +1085,9 @@ worker_killed=0
 # stream aside — the redirect below then creates a brand-new inode, so a stale fd can never corrupt
 # the live file and the killed attempt's stream survives for forensics, and (c) after the worker exits,
 # append one append-only row carrying this attempt's sizing DECISION (model/effort/attempt) and its
-# MEASURED usage. run-loop's history enrichment reads this ledger, so ticket-history.jsonl records the
-# decision beside the cost and a killed attempt's spend is never silently dropped.
+# MEASURED usage. resolve-ticket.sh's history enrichment (rt_history_enrich) reads this ledger, so
+# ticket-history.jsonl records the decision beside the cost and a killed attempt's spend is never
+# silently dropped.
 attempts_file="$logdir/attempts.jsonl"
 attempt=1
 if [[ -s "$attempts_file" ]]; then
@@ -1292,8 +1299,9 @@ govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 # orphaned `claude -p` (+ any grandchildren it spawned) reparented to init and billing a box. $cpid is
 # launched under `set -m` below → it LEADS its own process group, so govern::kill_tree reaps the whole
 # tree (group kill + pid-walk) in one sweep. The EXIT trap covers a clean return (cpid already gone →
-# fast no-op) and an abrupt one; the INT/TERM trap covers run-loop forwarding a stop signal to us
-# (run-loop SIGTERMs this process on its own stop), so the kill cascades driver → spawn-worker → tree.
+# fast no-op) and an abrupt one; the INT/TERM trap covers whatever spawned this process forwarding a
+# stop signal to us (a session's Ctrl-C, a bench harness's timeout, or an operator's kill), so the
+# kill cascades caller → spawn-worker → tree.
 cpid=""; wd=""; twd=""; ead=""; _spawn_signalled=0
 spawn_worker_cleanup() {
   [[ -n "${wd:-}" ]] && { kill "$wd" 2>/dev/null || true; govern::_kill_tree_walk "$wd" TERM; }
@@ -1320,7 +1328,7 @@ set +e
 # inherit a ticket-sweep Stop hook (clobbers stdout), a SessionEnd cleanup (fleet-wide side
 # effects), or a SessionStart flood. `exec` so $cpid IS the claude process → clean kill.
 #
-# env -u CLAUDE_CODE_*: SCRUB the parent-session runtime markers. If this run-loop was launched
+# env -u CLAUDE_CODE_*: SCRUB the parent-session runtime markers. If this spawn was launched
 # from inside an interactive Claude session (or anything that leaked Claude env), the child
 # `claude -p` inherits CLAUDE_CODE_ENTRYPOINT et al. and then NEVER finalizes — it answers but
 # emits no `result` event and hangs until the watchdog kills it at GOVERN_WORKER_TIMEOUT. From a
@@ -1452,16 +1460,19 @@ fi
 
 # 6. Validate; synthesize a report ONLY if no parseable status-bearing object exists anywhere.
 #    Four distinct no-report outcomes — never conflated, because each needs a different response:
-#      infra   — worker died on an auth/transport outage (#90): NOT the ticket's fault → run halts.
+#      infra   — worker died on an auth/transport outage (#90): NOT the ticket's fault. The caller
+#                decides how to proceed (typically halts rather than counting it as a ticket failure).
 #      usage-error — the CLI rejected the WORKER'S OWN INVOCATION, e.g. an unsupported flag/subcommand
 #                (#56, a harness-vs-installed-CLI version skew): NOT the ticket's fault, and every
-#                subsequent worker would die identically → run halts, distinct from a genuine ticket
-#                failure and from an infra/auth outage (re-auth would not fix a bad flag).
+#                subsequent worker would die identically. The caller decides how to proceed (typically
+#                halts), distinct from a genuine ticket failure and from an infra/auth outage (re-auth
+#                would not fix a bad flag).
 #      timeout — worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its verdict (#241):
 #                NOT a genuine FAIL. The killed worker may have done real, green work and just never
 #                reached the report write — recording that as `failed` masks a working result as broken
 #                (a false launch-blocking signal) and wastes a re-run. So emit a DISTINCT
-#                status:"timeout" (incomplete, worktree preserved) → run-loop re-runs it.
+#                status:"timeout" (incomplete, worktree preserved) so the caller can decide whether to
+#                re-run it.
 #      budget-exceeded — same kill-before-verdict shape, but HARD-KILLED by the GOVERN_WORKER_MAX_TOKENS
 #                watchdog instead of the wall-clock one (#16). Kept DISTINCT from "timeout" so a
 #                future evidence-based escalation can tell "ran out of budget while still exploring"
@@ -1493,7 +1504,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     # #34: a TRANSIENT mid-response connection drop (e.g. the laptop slept mid-run and the OS
     # suspended the process + dropped the network) — the worker exited on its OWN (worker_killed=0),
     # NOT the timeout watchdog. NOT a ticket fault and NOT a persistent infra outage: the worktree is
-    # preserved + resumable, so emit a DISTINCT status:"interrupted" → run-loop auto-retries the SAME
+    # preserved + resumable, so emit a DISTINCT status:"interrupted" so the caller can retry the SAME
     # ticket ONCE instead of burning it as `failed` and mis-attributing a sleep artifact to ticket
     # difficulty. Order matters: infra (halt-class) is checked FIRST, then interrupted, then usage-error,
     # then timeout.
@@ -1502,7 +1513,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
       '{status:"interrupted",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},interrupted:{error:$e},escalation:null}')"
   elif [[ -n "$usage_sig" ]]; then
     # #56: the CLI rejected the invocation itself — a fleet-wide condition (every worker would die
-    # identically), not this ticket's fault. run-loop halts the run on this status instead of
+    # identically), not this ticket's fault. The caller should halt on this status instead of
     # continuing to burn the rest of the backlog as N indistinguishable `failed` tickets.
     govern::log "worker for #$N → USAGE-ERROR (CLI rejected its own invocation, not a ticket fault): $usage_sig"
     report="$(jq -nc --arg e "$usage_sig" --arg wt "$wtpath" \

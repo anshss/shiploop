@@ -21,7 +21,7 @@ The governor reads this file when you DISPATCH a ticket by number, one ticket at
 (`pre-dispatch-check.sh` → `spawn-worker.sh` → `resolve-ticket.sh`, or just say "work on 42"), and
 deletes the entry on resolve. Nothing is selected for you: there is no backlog sweep. Two named
 tickets that touch the same file only ever earn a non-blocking nudge to batch them into one worker
-by hand — never an automatic grouping. Keep entries in the shape below so the parser finds them.
+by hand, never an automatic grouping. Keep entries in the shape below so the parser finds them.
 
 ---
 

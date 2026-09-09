@@ -9,10 +9,10 @@ changing it here first.
 
 `logs/govern/<run>/lever-events.jsonl`: one JSON object per line, append-only.
 
-**Not `state.jsonl`.** That file is a per-ticket outcome log (`{ticket,status,note}`), read raw
-into the review prompt by `govern-improve.sh` and tailed by cursor in `govern-supervise.sh`.
-Interleaving lever events there pollutes the improve prompt and adds rows those consumers must
-learn to skip. A sibling file has no existing consumers.
+**Not `state.jsonl`.** That file is a per-ticket outcome log (`{ticket,status,note}`), tailed by
+cursor in `govern-supervise.sh` and read raw by any reviewer prompt built from a run. Interleaving
+lever events there adds rows those consumers must learn to skip. A sibling file has no existing
+consumers.
 
 ## Common fields (every event)
 

@@ -348,7 +348,7 @@ tractable surfaced, skip — don't invent busywork; tell the operator the queue 
 
 Print "This folder is already a meta-repo workspace — checking what's present vs the latest templates."
 
-### B-pre — cheap version check
+### B-pre, cheap version check
 
 ```bash
 bash "$SCAFFOLD" --version                          # hub VERSION (e.g. 1.2.0)

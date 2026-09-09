@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #120 — a ticket auto-skipped as NOT-govern-automatable for K consecutive DISPATCHES must surface a
+# #120, a ticket auto-skipped as NOT-govern-automatable for K consecutive DISPATCHES must surface a
 # ONE-TIME escalation recommending the operator escalate+defer it permanently (→ tickets-parked.md),
 # instead of churning a skip note every time forever. The streak counter is file-backed
 # (governor/na-skip-counts.json, govern::na_skip_bump), so it survived the deletion of the loop it

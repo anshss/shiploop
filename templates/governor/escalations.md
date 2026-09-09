@@ -19,7 +19,7 @@ gap (they PARK the ticket: clean exit, no PR). Format of an open entry:
 here until answered. Session + relay close the loop automatically:
 
 1. **Surface (every SessionStart).** `session-reconcile.sh` runs `escalations-emit-pending.sh`, which
-   writes `governor/pending-escalations.json` — the still-unanswered `## Open` entries — and fires
+   writes `governor/pending-escalations.json`, the still-unanswered `## Open` entries, and fires
    `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session dispatch still signals that decisions are
    waiting. Runnable by hand too: `npm run govern:escalations-emit`.
 2. **Ask (relay).** The launching session reads that JSON and presents the pending entries
@@ -29,7 +29,7 @@ here until answered. Session + relay close the loop automatically:
    **Answer** + a canonical **Disposition** token back into this file (and "Make this a rule?" if the
    operator wants it added to the doctrine).
 3. **Act (next SessionStart, or run it by hand: `npm run govern:escalations-apply`).**
-   `escalations-apply-answers.sh` reads the recorded answers and DRIVES an action — answers stop
+   `escalations-apply-answers.sh` reads the recorded answers and DRIVES an action, answers stop
    being inert file text:
    - **`do-the-work`** → un-park: the entry moves to `## Resolved` and the ticket (still in
      `tickets.md`) becomes selectable again, so the governor retries it.

@@ -9,7 +9,7 @@
 # Reproduces the observed shape: #1's auto-merge-repo PR merges, then the additive-migration
 # deploy/verify step FAILS. resolve-ticket.sh must:
 #   1. exit 7 (NOT 1, which is what a raw `set -e` abort at the capture line would give);
-#   2. NOT land — land-resolution.sh (stubbed) must never be reached;
+#   2. NOT land, land-resolution.sh (stubbed) must never be reached;
 #   3. classify the failure in stderr (the exact wording resolve-ticket.sh prints);
 #   4. append a `parked` row to ticket-history.jsonl so #1 is surfaced, not silently dropped.
 set -euo pipefail
@@ -56,7 +56,7 @@ landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LA
 cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
 
-## #1 — additive-migration ticket whose post-merge deploy fails
+## #1, additive-migration ticket whose post-merge deploy fails
 
 **Severity:** Medium
 
@@ -79,7 +79,7 @@ out="$( cd "$T" && printf '%s' "$report" \
 rc=$?
 
 assert_eq "$rc" "7" "post-merge migrate/verify failure exits 7 (classify-and-refuse path reached, NOT a set -e abort at the guarded capture)"
-assert_eq "$(landed_count)" "0" "nothing landed — land-resolution.sh was never reached"
+assert_eq "$(landed_count)" "0" "nothing landed, land-resolution.sh was never reached"
 assert_contains "$out" "prod migration/verify FAILED" "the post-merge migrate/verify failure was CLASSIFIED in stderr (not a silent abort)"
 assert_eq "$(jq -r 'select(.ticket==1) | .status' "$HIST" | tail -1)" "parked" "a parked row was appended to ticket-history.jsonl (#1 surfaced, not dropped)"
 

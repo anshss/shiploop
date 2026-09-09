@@ -187,13 +187,13 @@ if [[ "$NO_MERGE" -eq 1 ]]; then
   MERGE_REPO_MERGED=1
 elif [[ -n "$pr_lines" ]]; then
   # Two DIFFERENT non-zero classes, exactly as the loop drew the line (#129, #autonomy):
-  #   LEFT OPEN, still land — rc 2 (frontend/PR-only repo: a different account merges it) and
+  #   LEFT OPEN, still land, rc 2 (frontend/PR-only repo: a different account merges it) and
   #     rc 6 (GOVERN_AUTONOMY observe/pr-only: the governor opens PRs and does not merge them).
   #     Neither is a failure of the resolution: the work is done, the PR is deliberately not ours
   #     to merge, and the loop bookkept the ticket resolved with the PR SURFACED as left-open.
   #     Refusing to land here would strand every multi-repo ticket with a frontend sibling and
   #     every pr-only workspace permanently un-bookkept.
-  #   REFUSAL, do not land — rc 3 (CI red/pending), 4 (CI unverifiable), 5 (external-PR guard) and
+  #   REFUSAL, do not land, rc 3 (CI red/pending), 4 (CI unverifiable), 5 (external-PR guard) and
   #     anything unexpected. Those say "this PR is not known-good", which is exactly the case where
   #     landing edits tickets.md against work that never merged.
   ALL_MERGED=1
@@ -211,11 +211,11 @@ elif [[ -n "$pr_lines" ]]; then
         govern::is_merge_repo "$_mrepo" && MERGE_REPO_MERGED=1
         ;;
       2)
-        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only) [#129] — surfaced, not merged; merge it yourself when ready." >&2
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only) [#129], surfaced, not merged; merge it yourself when ready." >&2
         PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(frontend-left-open)"
         ;;
       6)
-        echo "resolve-ticket #$N: $_mrepo#$_mnum left open — GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open, GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
         PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
         ;;
       3) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2; ALL_MERGED=0 ;;
@@ -225,7 +225,7 @@ elif [[ -n "$pr_lines" ]]; then
     esac
   done <<< "$pr_lines"
   if [[ "$ALL_MERGED" != "1" ]]; then
-    echo "resolve-ticket #$N: a PR is not known-good — NOT landing the resolution. A refusal above is information, not a failure of this script: fix it (or merge by hand), then re-run." >&2
+    echo "resolve-ticket #$N: a PR is not known-good, NOT landing the resolution. A refusal above is information, not a failure of this script: fix it (or merge by hand), then re-run." >&2
     exit 5
   fi
 else

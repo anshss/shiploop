@@ -3,17 +3,17 @@
 # act only on the single reported `report.pr` — so sibling PRs were orphaned unmerged. The fix:
 # collect EVERY PR for the ticket (reported `.pr`/`.prs[]` UNION every open `ticket-<N>` head
 # discovered across all repos), merge every auto-merge-repo PR backend-first on green/none, and leave
-# frontend siblings open but SURFACED in the history note — never silently dropped.
+# frontend siblings open but SURFACED in the history note, never silently dropped.
 #
 # Parts A/B/C are re-targeted at resolve-ticket.sh (the loop purge moved the merge walk here), run
-# hermetically next to stubs of merge-pr.sh / await-ci.sh / land-resolution.sh — no network, no gh,
+# hermetically next to stubs of merge-pr.sh / await-ci.sh / land-resolution.sh, no network, no gh,
 # no real push. Part D is the original UNIT test on govern::collect_ticket_prs itself, unchanged.
 #
 # Hermetic + generic (alpha/api auto-merge, web frontend; org acme). Proves:
-#   A. UNION — the report names api#66 via `.pr` and alpha#281 + web#266 via `.prs[]`; every
+#   A. UNION, the report names api#66 via `.pr` and alpha#281 + web#266 via `.prs[]`; every
 #      auto-merge-repo PR reaches merge-pr.sh and the frontend PR is surfaced as left-open.
-#   B. BACKEND-FIRST — alpha reaches merge-pr.sh before api (merge-repo-first ordering).
-#   C. SURFACED — the resolved history row's note lists every PR with its disposition; the ticket
+#   B. BACKEND-FIRST, alpha reaches merge-pr.sh before api (merge-repo-first ordering).
+#   C. SURFACED, the resolved history row's note lists every PR with its disposition; the ticket
 #      lands EXACTLY once.
 #   D. UNIT — govern::collect_ticket_prs honors the explicit `.prs[]` field, deduped + backend-first.
 set -euo pipefail
@@ -76,7 +76,7 @@ TIX
 
 HIST="$T/history.jsonl"
 # The worker reports api#66 via `.pr` but ALSO names its two siblings via `.prs[]` (a worker that
-# DOES report all its PRs — the discovery-from-gh path is covered by govern::find_all_prs directly,
+# DOES report all its PRs, the discovery-from-gh path is covered by govern::find_all_prs directly,
 # not re-proven here).
 report='{"status":"resolved","pr":{"repo":"api","number":66,"url":"http://pr/66"},"prs":[{"repo":"alpha","number":281,"url":"http://pr/281"},{"repo":"web","number":266,"url":"http://pr/266"}],"lessonPatch":null,"newTickets":[]}'
 
@@ -95,9 +95,9 @@ ipos="$(grep -n '^api#66$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"
 [[ -n "$apos" && -n "$ipos" && "$apos" -lt "$ipos" ]] && bo=ok || bo="alpha=$apos api=$ipos"
 assert_eq "$bo" "ok" "alpha PR merged before api PR (merge-repo-first ordering)"
 
-# C. the ticket lands EXACTLY once, and the "landed — PRs: …" summary line names every PR with its
+# C. the ticket lands EXACTLY once, and the "landed, PRs: …" summary line names every PR with its
 # disposition. NB: rt_record_history's `note` PARAMETER is never merged into the ticket-history.jsonl
-# row (dead parameter — see the PR body / final report for this finding), so the disposition string
+# row (dead parameter, see the PR body / final report for this finding), so the disposition string
 # is asserted on stderr here, not on a `.note` field in $HIST.
 assert_eq "$rc" "0" "multi-repo ticket resolves (exit 0)"
 assert_eq "$(landed_count)" "1" "multi-repo ticket lands EXACTLY once"

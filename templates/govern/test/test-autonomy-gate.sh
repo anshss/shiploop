@@ -3,7 +3,7 @@
 # gate seams the feature touches:
 #   A. merge-pr.sh — auto (and an ABSENT/EMPTY knob, for backward compat) merges; observe/pr-only
 #      refuse with the distinct exit 6 (refused-by-autonomy) and a clear log line. UNCHANGED.
-#   B. resolve-ticket.sh — when merge-pr.sh (stubbed) returns 6, resolve-ticket LANDS the ticket
+#   B. resolve-ticket.sh, when merge-pr.sh (stubbed) returns 6, resolve-ticket LANDS the ticket
 #      anyway: rc 6 is "left open by design" (that PR is deliberately not this governor's to merge),
 #      not a refusal. Refusing to land there would strand every pr-only workspace permanently
 #      un-bookkept. Its stderr names the autonomy mode and carries the `[autonomy]` tag.
@@ -105,8 +105,8 @@ out_b="$( cd "$T" && printf '%s' "$report" \
   | STUB_MERGE_RC=6 GOVERN_AUTONOMY=pr-only bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
 rc_b=$?
 
-assert_eq "$rc_b" "0" "resolve-ticket: merge-pr.sh rc=6 (autonomy-left-open) is NOT a refusal — the script still exits 0"
-assert_eq "$(landed_count)" "1" "resolve-ticket: the ticket LANDS anyway — that PR is deliberately not this governor's to merge"
+assert_eq "$rc_b" "0" "resolve-ticket: merge-pr.sh rc=6 (autonomy-left-open) is NOT a refusal, the script still exits 0"
+assert_eq "$(landed_count)" "1" "resolve-ticket: the ticket LANDS anyway, that PR is deliberately not this governor's to merge"
 assert_contains "$out_b" "left open" "resolve-ticket: stderr says the PR is left open"
 assert_contains "$out_b" "GOVERN_AUTONOMY=pr-only" "resolve-ticket: stderr names the autonomy mode"
 assert_contains "$out_b" "[autonomy]" "resolve-ticket: left-open logged with the [autonomy] tag"

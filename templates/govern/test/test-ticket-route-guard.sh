@@ -107,7 +107,7 @@ not_denied "4b-ii. auditing ticket terminology is read-only, not ticket dispatch
   "Audit the README ticket terminology rules and report back. Do not edit anything."
 not_denied "4b-iii. the identifier GOVERN_MAX_TICKETS is not a ticket reference" \
   "ticketroute-envvar" \
-  "Check whether GOVERN_MAX_TICKETS is respected in run-loop.sh and fix the off-by-one."
+  "Check whether GOVERN_MAX_TICKET_FAILS is respected in pre-dispatch-check.sh and fix the off-by-one."
 not_denied "4b-iv. the branch prefix ticket-<N> is not a ticket reference" \
   "ticketroute-branchprefix" \
   "Rename the ticket-<N> branch prefix docs in CONTRIBUTING.md"
