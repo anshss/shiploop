@@ -61,6 +61,7 @@ FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
   if (rid == "" || typ == "") next
   if (!(rid in seen)) { seen[rid] = 1; order[++nruns] = rid; rstart[rid] = ts }
   rlast[rid] = ts
+  if (ts != "" && ts + 0 > newest) { newest = ts + 0 }
   if (typ == "run_started") { rmode[rid] = jget(line,"mode"); rtarget[rid] = jget(line,"target"); rstart[rid] = ts }
   else if (typ == "run_done") { rdone[rid] = 1
     cnt[rid,"resolved"] = jget(line,"resolved"); cnt[rid,"parked"] = jget(line,"parked")
@@ -109,6 +110,7 @@ END {
     split(kk, p, SUBSEP)
     printf "C\t%s\t%s\t%s\n", p[1], p[2], tally[kk]
   }
+  printf "META\t%s\n", (newest == "" ? 0 : newest)
 }
 AWKMAIN
 )"
@@ -122,6 +124,38 @@ LATEST_RUN="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="RUN"{r=$2} END{print r}')
 RUN_DONE="$(printf '%s\n' "$FOLD" | awk -F'\t' -v r="$LATEST_RUN" '$1=="RUN" && $2==r {print $4}')"
 RUN_MODE="$(printf '%s\n' "$FOLD" | awk -F'\t' -v r="$LATEST_RUN" '$1=="RUN" && $2==r {print $5}')"
 RUN_START="$(printf '%s\n' "$FOLD" | awk -F'\t' -v r="$LATEST_RUN" '$1=="RUN" && $2==r {print $3}')"
+NEWEST_TS="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="META"{print $2}')"
+NEWEST_TS="${NEWEST_TS:-0}"
+
+# ── forever-stale governor state guard ────────────────────────────────────────────────────────
+# events.jsonl's only writers are the dispatch path (run-loop.sh / spawn-worker.sh). A crashed
+# driver never writes run_done, so without this guard the text below never expires: a run from 30
+# days ago reads as "running ... up 30d" forever, a claim about the PRESENT built from a log
+# nothing has touched in a month (and a claimed-live pid surviving that long is far more likely PID
+# reuse than a genuinely month-old worker). If the newest event in the WHOLE log is older than
+# GOVERN_EVENTS_STALE_DAYS, there is no recent dispatch activity: report that explicitly instead of
+# any number computed from the fold. Kill switch: GOVERN_EVENTS_STALE_CHECK=0 restores the old
+# (potentially forever-stale) behavior.
+STALE_DAYS="${GOVERN_EVENTS_STALE_DAYS:-7}"
+LOG_STALE=0
+if [[ "${GOVERN_EVENTS_STALE_CHECK:-1}" != "0" ]] && [[ "$NEWEST_TS" =~ ^[0-9]+$ ]] && [[ "$NEWEST_TS" -gt 0 ]]; then
+  if [[ $(( NOW - NEWEST_TS )) -gt $(( STALE_DAYS * 86400 )) ]]; then
+    LOG_STALE=1
+  fi
+fi
+
+if [[ "$LOG_STALE" -eq 1 ]]; then
+  STALE_AGE_DAYS=$(( (NOW - NEWEST_TS) / 86400 ))
+  if [[ "$JSON" -eq 1 ]]; then
+    printf '{"enabled":true,"log":"%s","now":%s,"runId":"%s","staleLog":true,"newestEventAgeDays":%s,"active":[],"stale":[],"drivers":[],"counts":{}}\n' \
+      "$LOG" "$NOW" "$LATEST_RUN" "$STALE_AGE_DAYS"
+  else
+    printf 'fleet: no recent dispatch activity (newest event %sd ago, over GOVERN_EVENTS_STALE_DAYS=%s)\n' \
+      "$STALE_AGE_DAYS" "$STALE_DAYS"
+    printf '       log: %s (any prior run should be treated as finished, not as still running)\n' "$LOG"
+  fi
+  exit 0
+fi
 
 run_filter() { # reads FOLD on stdin, keeps rows for the run(s) in scope
   if [[ "$ALL_RUNS" -eq 1 ]]; then cat; else awk -F'\t' -v r="$LATEST_RUN" '$2==r'; fi
