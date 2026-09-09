@@ -288,7 +288,12 @@ assert_eq "$(jq -r '.failedTier' <<<"$esc10")" "sonnet" "… failedTier is the f
 assert_eq "$(jq -r '.failedTokens' <<<"$esc10")" "1500" "escalation: failedTokens = the failed attempt's own ledger total (not the live stream sum)"
 
 # ── 11. escalation ABSENT: a driver-declared infra retry re-bets the SAME tier ──────────────────
+# MODEL_IS_RETRY now comes from a RECORDED attempt (attempts.jsonl), not from the worktree
+# directory alone (see spawn-worker.sh): seed a real ledger row for the infra-killed attempt 1 so
+# this dispatch is genuinely detected as a retry, same as case 10 above.
 rm -rf "$T/wt/ticket-7"; mkdir -p "$T/wt/ticket-7" "$T/logs11/ticket-7"
+printf '{"attempt":1,"model":"sonnet","tokens":{"input":100,"output":50,"cacheRead":0,"cacheCreation":0,"total":150},"status":"infra"}\n' \
+  > "$T/logs11/ticket-7/attempts.jsonl"
 cat > "$T/wt/ticket-7/.governor-notes.md" <<'EOF'
 <!-- GOVERN:HANDOFF -->
 ### Handoff: attempt 1 (infra)

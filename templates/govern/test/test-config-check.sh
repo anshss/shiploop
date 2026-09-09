@@ -99,7 +99,32 @@ else
   echo "ok   - 9. no migration notice once GOVERN_MIGRATE_CMD is configured"
 fi
 
-# ── 10. the next_ticket_number probe is READ-ONLY: .ticket-seq is byte-identical before/after ──
+# ── 10. worker model floor == ceiling → HARD failure (the exact no-op regression) ──────────────
+# mk_ws_stub's workspace.sh stub never sets GOVERN_WORKER_MODEL/GOVERN_WORKER_ESCALATION_MODEL, so
+# an exported override survives sourcing untouched, same as the real workspace.sh's `${VAR:-...}`
+# default idiom would let a downstream fleet's env export collapse the two.
+out="$(GOVERN_WORKER_MODEL=opus GOVERN_WORKER_ESCALATION_MODEL=opus bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "10. floor == ceiling (both opus) → exit 1"
+assert_contains "$out" "GOVERN_WORKER_MODEL" "10. problem names the floor variable"
+assert_contains "$out" "GOVERN_WORKER_ESCALATION_MODEL" "10. problem names the ceiling variable"
+assert_contains "$out" "opus" "10. problem names the resolved (colliding) value"
+assert_contains "$out" "no-op" "10. problem states plainly that this makes escalation a no-op"
+assert_contains "$out" "PROBLEMS" "10. surfaces via the hard PROBLEMS section, not a notice"
+
+# ── 11. worker model floor ABOVE ceiling → also a HARD failure (not just equality) ─────────────
+out="$(GOVERN_WORKER_MODEL=opus GOVERN_WORKER_ESCALATION_MODEL=sonnet bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "11. floor (opus) above ceiling (sonnet) → exit 1"
+assert_contains "$out" "GOVERN_WORKER_MODEL='opus'" "11. problem names the floor's resolved value"
+assert_contains "$out" "GOVERN_WORKER_ESCALATION_MODEL='sonnet'" "11. problem names the ceiling's resolved value"
+
+# ── 12. worker model floor strictly below ceiling → passes (both the default and an explicit set)
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "12a. default floor (sonnet) < default ceiling (opus) → exit 0"
+assert_contains "$out" "GOVERN_WORKER_MODEL" "12a. resolved floor/ceiling reported in the human summary"
+out="$(GOVERN_WORKER_MODEL=haiku GOVERN_WORKER_ESCALATION_MODEL=opus bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "12b. explicit floor (haiku) < ceiling (opus) → exit 0"
+
+# ── 13. the next_ticket_number probe is READ-ONLY: .ticket-seq is byte-identical before/after ──
 # Regression: govern::next_ticket_number unconditionally writes the high-water mark
 # (`printf '%s\n' "$maxn" > "$seq_file"`), so a health check calling it for real dirtied
 # governor/.ticket-seq in the operator's git tree on every run. config-check.sh now calls it with
@@ -109,16 +134,16 @@ printf '50\n' > "$ROOT/governor/.ticket-seq"
 seq_before="$(cat "$ROOT/governor/.ticket-seq")"
 out="$(bash "$TOOL" 2>&1)"; rc=$?
 seq_after="$(cat "$ROOT/governor/.ticket-seq")"
-assert_eq "$rc" "0" "10. probe run → exit 0"
-assert_eq "$seq_after" "$seq_before" "10. .ticket-seq is BYTE-IDENTICAL after the health-check probe (no silent write)"
-assert_contains "$out" "next_ticket_number" "10. the probe still ran and reported a value"
+assert_eq "$rc" "0" "13. probe run → exit 0"
+assert_eq "$seq_after" "$seq_before" "13. .ticket-seq is BYTE-IDENTICAL after the health-check probe (no silent write)"
+assert_contains "$out" "next_ticket_number" "13. the probe still ran and reported a value"
 
-# ── 11. same, via --json: the peek value is still correctly computed (hwm 50 + filemax #9 → 51) ──
+# ── 14. same, via --json: the peek value is still correctly computed (hwm 50 + filemax #9 → 51) ──
 out="$(bash "$TOOL" --json 2>&1)"
 seq_after2="$(cat "$ROOT/governor/.ticket-seq")"
-assert_eq "$seq_after2" "$seq_before" "11. --json probe likewise never writes .ticket-seq"
+assert_eq "$seq_after2" "$seq_before" "14. --json probe likewise never writes .ticket-seq"
 printf '%s' "$out" | jq -e '.helpers.next_ticket_number == "51"' >/dev/null 2>&1 && \
-  printf 'ok   - 11. peeked value reflects max(hwm 50, tickets.md #9) + 1 = 51\n' || \
-  { printf 'FAIL - 11. unexpected peeked next_ticket_number\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+  printf 'ok   - 14. peeked value reflects max(hwm 50, tickets.md #9) + 1 = 51\n' || \
+  { printf 'FAIL - 14. unexpected peeked next_ticket_number\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
 assert_done

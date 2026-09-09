@@ -52,10 +52,34 @@ req ROOT_PM      "${ROOT_PM:-}"
 req WORKTREE_BASE "${WORKTREE_BASE:-}"
 if [[ "${#REPOS[@]}" -eq 0 ]]; then problems+=("REPOS is empty (no sub-repos configured)"); fi
 
+# ── Worker model floor/ceiling: a HARD assertion, not informational ──
+# GOVERN_WORKER_MODEL (floor, first attempt) and GOVERN_WORKER_ESCALATION_MODEL (ceiling,
+# escalate-once retry) are deliberately two knobs (see workspace.sh): the retry only buys
+# anything if the ceiling actually outranks the floor. `${VAR:-default}` lets a downstream
+# fleet's environment export collapse them to the same tier SILENTLY: the escalation path then
+# stops being degraded and becomes a same-tier no-op that still bills at ceiling rates, with no
+# signal that it happened (it reads as cost variance, not as a bug). Assert it here as a hard
+# PROBLEM (drives exit 1 below), not a warn_only print.
+#
+# Reuse the repo's own tier ordering (govern::model_rank, defined in lib/common.sh and already
+# used via govern::model_max on the spawn-worker.sh escalation path) instead of hard-coding a
+# second list of model names here. govern::model_max itself is NOT enough for this check: on a
+# tie it returns the second argument (the ceiling) unchanged ("b wins ties"), so
+# `model_max(floor, ceiling) == ceiling` is true both when floor < ceiling (fine) AND when
+# floor == ceiling (the exact no-op this assertion exists to catch): it cannot express a STRICT
+# less-than. govern::model_rank, the primitive model_max is built on, can.
+resolved_floor="${GOVERN_WORKER_MODEL:-sonnet}"
+resolved_ceiling="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
+floor_rank="$(govern::model_rank "$resolved_floor")"
+ceiling_rank="$(govern::model_rank "$resolved_ceiling")"
+if [[ "$floor_rank" -ge "$ceiling_rank" ]]; then
+  problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (ceiling, rank $ceiling_rank): a floor equal to or above the ceiling makes escalation a no-op that bills every attempt at ceiling rates")
+fi
+
 # ── Optional knobs (informational) ──
 opt_seen=()
-for k in GOVERN_MERGE_REPOS GOVERN_LOCAL_FIRST_REPOS GOVERN_WORKER_MODEL \
-         GOVERN_WORKER_ESCALATION_MODEL GOVERN_MODEL_CEILING GOVERN_SESSION_MODEL \
+for k in GOVERN_MERGE_REPOS GOVERN_LOCAL_FIRST_REPOS \
+         GOVERN_MODEL_CEILING GOVERN_SESSION_MODEL \
          GOVERN_SCOUT GOVERN_SCOUT_MODEL GOVERN_SCOUT_TIMEOUT \
          GOVERN_EXTERNALIZE_LANE GOVERN_EXTERNALIZE_REPO GOVERN_EXTERNALIZE_SUBREPO \
          GOVERN_EXTERNALIZE_LABELS WSP_LINT_FIX_CMD GOVERN_MIGRATE_CMD GOVERN_VERIFY_CMD \
@@ -161,6 +185,10 @@ if [[ "$MODE" == json ]]; then
     --arg h_ismerge      "$h_ismerge" \
     --arg h_islocal      "$h_islocal" \
     --arg h_next_ticket  "$h_next_ticket" \
+    --arg resolved_floor   "$resolved_floor" \
+    --arg resolved_ceiling "$resolved_ceiling" \
+    --argjson floor_rank   "$floor_rank" \
+    --argjson ceiling_rank "$ceiling_rank" \
     --argjson opt_seen   "$(printf '%s\n' "${opt_seen[@]}" | jq -R . | jq -s .)" \
     --argjson problems   "$( { [ "${#problems[@]}"  -gt 0 ] && printf '%s\n' "${problems[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
     --argjson warn_only  "$( { [ "${#warn_only[@]}" -gt 0 ] && printf '%s\n' "${warn_only[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
@@ -169,6 +197,8 @@ if [[ "$MODE" == json ]]; then
       helpers: {repo_slug:$h_slug, repo_localdir:$h_localdir, repo_port:$h_port,
                repo_cmd:$h_cmd, is_merge_repo:$h_ismerge, is_local_first:$h_islocal,
                next_ticket_number:$h_next_ticket},
+      model_tiers: {floor:$resolved_floor, floor_rank:$floor_rank,
+                    ceiling:$resolved_ceiling, ceiling_rank:$ceiling_rank},
       knobs:$opt_seen, problems:$problems, warnings:$warn_only}'
 else
   echo "════════ config-check (no-auth smoke) ════════"
@@ -188,6 +218,10 @@ else
   echo "  wsp_is_merge_repo    : $h_ismerge"
   echo "  wsp_is_local_first   : $h_islocal"
   echo "  next_ticket_number   : ${h_next_ticket:-<skipped>}"
+  echo ""
+  echo "── worker model floor/ceiling ──"
+  echo "  GOVERN_WORKER_MODEL            (floor)   : $resolved_floor (rank $floor_rank)"
+  echo "  GOVERN_WORKER_ESCALATION_MODEL (ceiling) : $resolved_ceiling (rank $ceiling_rank)"
   echo ""
   echo "── optional knobs ──"
   for e in "${opt_seen[@]}"; do echo "  $e"; done
