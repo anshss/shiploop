@@ -95,6 +95,13 @@ run_spawn() { # <logroot> <claude-bin> [extra env...]
       "$SPAWN" 7 </dev/null
 }
 
+# MODEL_IS_RETRY now comes from a RECORDED attempt (attempts.jsonl), not the worktree directory
+# alone (see spawn-worker.sh): seed a real ledger row for attempt 1 under this call's flat log
+# dir ($TMP/logs1/ticket-7, since no GOVERN_RUN_DIR is exported here) so this dispatch is
+# genuinely detected as the retry it is meant to simulate.
+mkdir -p "$TMP/logs1/ticket-7"
+printf '{"attempt":1,"model":"sonnet","tokens":{"input":100,"output":50,"cacheRead":0,"cacheCreation":0,"total":150},"status":"failed"}\n' \
+  > "$TMP/logs1/ticket-7/attempts.jsonl"
 run_spawn "$TMP/logs1" "$TMP/fake-claude-capture.sh" >/dev/null
 seen="$(cat "$TMP/seen-prompt.txt")"
 
