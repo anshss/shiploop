@@ -99,4 +99,29 @@ else
   echo "ok   - 9. no migration notice once GOVERN_MIGRATE_CMD is configured"
 fi
 
+# ── 10. worker model floor == ceiling → HARD failure (the exact no-op regression) ──────────────
+# mk_ws_stub's workspace.sh stub never sets GOVERN_WORKER_MODEL/GOVERN_WORKER_ESCALATION_MODEL, so
+# an exported override survives sourcing untouched, same as the real workspace.sh's `${VAR:-...}`
+# default idiom would let a downstream fleet's env export collapse the two.
+out="$(GOVERN_WORKER_MODEL=opus GOVERN_WORKER_ESCALATION_MODEL=opus bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "10. floor == ceiling (both opus) → exit 1"
+assert_contains "$out" "GOVERN_WORKER_MODEL" "10. problem names the floor variable"
+assert_contains "$out" "GOVERN_WORKER_ESCALATION_MODEL" "10. problem names the ceiling variable"
+assert_contains "$out" "opus" "10. problem names the resolved (colliding) value"
+assert_contains "$out" "no-op" "10. problem states plainly that this makes escalation a no-op"
+assert_contains "$out" "PROBLEMS" "10. surfaces via the hard PROBLEMS section, not a notice"
+
+# ── 11. worker model floor ABOVE ceiling → also a HARD failure (not just equality) ─────────────
+out="$(GOVERN_WORKER_MODEL=opus GOVERN_WORKER_ESCALATION_MODEL=sonnet bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "11. floor (opus) above ceiling (sonnet) → exit 1"
+assert_contains "$out" "GOVERN_WORKER_MODEL='opus'" "11. problem names the floor's resolved value"
+assert_contains "$out" "GOVERN_WORKER_ESCALATION_MODEL='sonnet'" "11. problem names the ceiling's resolved value"
+
+# ── 12. worker model floor strictly below ceiling → passes (both the default and an explicit set)
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "12a. default floor (sonnet) < default ceiling (opus) → exit 0"
+assert_contains "$out" "GOVERN_WORKER_MODEL" "12a. resolved floor/ceiling reported in the human summary"
+out="$(GOVERN_WORKER_MODEL=haiku GOVERN_WORKER_ESCALATION_MODEL=opus bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "12b. explicit floor (haiku) < ceiling (opus) → exit 0"
+
 assert_done

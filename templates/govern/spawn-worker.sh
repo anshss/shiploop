@@ -41,24 +41,41 @@ block="$(govern::ticket_block "$N" "$TICKETS_FILE")"
 [[ -n "$block" ]] || govern::die "ticket #$N not found in $TICKETS_FILE"
 
 # LATCH the per-ticket Model: field (if any) AND the first-attempt-vs-retry signal NOW — before
-# worktree creation, so `[[ -d "$WORKTREE_BASE/$slug" ]]` still reflects the STATE BEFORE the
-# current spawn, not a worktree we just created ourselves. The check is applied lower down where
-# --model is assembled; see the block near `GOVERN_WORKER_MODEL`. `GOVERN_SPAWN_FORCE_RETRY=1` is
-# a test seam. Extraction is ANCHORED to the ticket's LEADING FIELD BLOCK — the contiguous field
-# lines between the `## #N` heading and the first blank line — so a `Model:` mention later in
-# prose or inside a code fence in the body can never be parsed as the field. The awk strips the
-# heading, skips leading blank lines, then reads until the first blank line and stops. The sed
-# pattern (case-insensitive; strips optional `**Model:**` markdown emphasis) then extracts the
-# tier value; allowlist gate below applies unchanged.
+# worktree creation, so the retry check still reflects the STATE BEFORE the current spawn, not a
+# worktree/ledger we just created ourselves. The check is applied lower down where --model is
+# assembled; see the block near `GOVERN_WORKER_MODEL`. `GOVERN_SPAWN_FORCE_RETRY=1` is a test
+# seam. Extraction is ANCHORED to the ticket's LEADING FIELD BLOCK: the contiguous field lines
+# between the `## #N` heading and the first blank line, so a `Model:` mention later in prose or
+# inside a code fence in the body can never be parsed as the field. The awk strips the heading,
+# skips leading blank lines, then reads until the first blank line and stops. The sed pattern
+# (case-insensitive; strips optional `**Model:**` markdown emphasis) then extracts the tier value;
+# allowlist gate below applies unchanged.
 TICKET_MODEL="$(printf '%s' "$block" \
   | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
   | sed -n 's/^[[:space:]]*\*\{0,2\}[Mm]odel:\*\{0,2\}[[:space:]]*\([A-Za-z0-9._-]\{1,32\}\).*$/\1/p' \
   | head -1)"
+# MODEL_IS_RETRY: derive from whether a PRIOR ATTEMPT WAS ACTUALLY RECORDED for this ticket (a row
+# in attempts.jsonl, the same ledger record_attempt() appends to below, at $logdir/attempts.jsonl),
+# never from worktree existence alone. The harness DELIBERATELY preserves a worktree on failure, on
+# a watchdog kill, and on interrupt, so a leftover directory is not evidence a worker ever ran in
+# it: a hard SIGKILL (OOM, host restart) before the EXIT trap fires leaves a worktree with zero
+# recorded attempts, and that genuine first attempt would otherwise buy the escalation ceiling
+# without ever trying the floor. `-s` (non-empty) matches the exact idiom the attempt-numbering
+# code below uses to decide the next attempt number, off the very same file.
+#
+# `$logdir` (set above via govern::worker_logdir) already resolves to the CURRENT layout: run-
+# scoped under $GOVERN_RUN_DIR, or the legacy flat $LOG_ROOT/$slug otherwise. But a ticket last
+# attempted under the OTHER layout (e.g. a manual/standalone spawn before this run-scoped one, or
+# vice versa) must still be seen, or the check silently reads as "first attempt" forever under
+# whichever layout it isn't looking at, worse than the bug being fixed. So probe both. A missing
+# or unreadable attempts file on either path is simply "not a retry" (no error path needed: `-s`
+# already reads false for both).
 MODEL_IS_RETRY=0
-# Preserved-worktree is the primary retry signal; a flat-log check was removed as inert (run-loop
-# nukes the flat log at line ~20; run-scoped `worker.jsonl` is truncated at spawn anyway).
-[[ -d "$WORKTREE_BASE/$slug" ]] && MODEL_IS_RETRY=1
-[[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]] && MODEL_IS_RETRY=1
+for _attempts_probe in "$logdir/attempts.jsonl" "$LOG_ROOT/$slug/attempts.jsonl"; do
+  if [[ -s "$_attempts_probe" ]]; then MODEL_IS_RETRY=1; break; fi
+done
+unset _attempts_probe
+if [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]]; then MODEL_IS_RETRY=1; fi
 export TICKET_MODEL MODEL_IS_RETRY
 # Ticket number into the worker environment so a wrapper running INSIDE the worker shell can
 # attribute what it records. verify-filter.sh is the only consumer today: it emits the
