@@ -628,6 +628,9 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern:trim": "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh",
+    "validation:record": "bash scripts/govern/validation-record.sh",
+    "preflight:base-ci": "bash scripts/govern/preflight-base-ci.sh",
+    "preflight:main": "bash scripts/govern/preflight-main.sh .",
     "vf": "bash scripts/govern/verify-filter.sh"
   }
 }
@@ -683,6 +686,9 @@ component_package_json_merge() {
     "govern:trim":        "bash scripts/govern/claudemd-trim.sh",
     "govern:externalize": "bash scripts/govern/externalize-low-tickets.sh",
     "govern:validations": "bash scripts/govern/govern-validations.sh",
+    "validation:record":  "bash scripts/govern/validation-record.sh",
+    "preflight:base-ci":  "bash scripts/govern/preflight-base-ci.sh",
+    "preflight:main":     "bash scripts/govern/preflight-main.sh .",
     "vf":                 "bash scripts/govern/verify-filter.sh"
   }') || { warn "package-json-merge: jq failed to build the script set"; return 0; }
 
@@ -1198,7 +1204,8 @@ config_drift_report() {
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
          "worktree:exec","govern","govern:health","govern:dry-run","govern:status","govern:audit",
-         "govern:budgets","govern:trim","govern:externalize","govern:validations","vf"]
+         "govern:budgets","govern:trim","govern:externalize","govern:validations",
+         "validation:record","preflight:base-ci","preflight:main","vf"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")
     ' package.json 2>/dev/null)"
     [ -n "$missing_scripts" ] && notes+="  package.json    missing script(s): $missing_scripts"$'\n'

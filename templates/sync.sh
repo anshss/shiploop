@@ -156,6 +156,29 @@ sync_root() {
     return
   fi
   repair_duplicate_upstream
+
+  # #71's run-start reconcile, now reachable outside the dispatch path: fetch + ff/push/rebase+push,
+  # and self-heals known governor runtime artifacts a crashed run left dirty. Reuses
+  # preflight-main.sh rather than re-implementing its reconcile ladder here (the plain `git pull
+  # --ff-only` below is the fallback for a workspace scaffolded before preflight-main.sh existed, or
+  # with GOVERN_SYNC_PREFLIGHT_MAIN=0). Exit 2 is the ONE case that must NOT be swallowed: main
+  # genuinely diverged and auto-reconcile failed, which is a real halt (the harness lane would
+  # otherwise cut PRs off a stale base): everything else stays exactly as fail-open as before.
+  if [ "${GOVERN_SYNC_PREFLIGHT_MAIN:-1}" != "0" ] && [ -f "$ROOT/scripts/govern/preflight-main.sh" ]; then
+    local pf_out pf_rc
+    pf_out="$(bash "$ROOT/scripts/govern/preflight-main.sh" "$ROOT" 2>&1)"; pf_rc=$?
+    if [ "$pf_rc" -eq 2 ]; then
+      fail "main DIVERGED from origin/main and auto-reconcile FAILED: sync is halting, not building on a stale base"
+      printf '%s\n' "$pf_out" | sed 's/^/    /'
+      SYNC_HALT=1
+    elif [ "$pf_rc" -eq 0 ]; then
+      ok "root main reconciled with origin/main"
+    else
+      dim "preflight-main.sh exited $pf_rc, leaving root main as-is"
+    fi
+    return
+  fi
+
   if git pull --ff-only >/dev/null 2>&1; then
     ok "root main up to date"
   else
@@ -163,6 +186,7 @@ sync_root() {
   fi
 }
 
+SYNC_HALT=0
 sync_root
 for sub in "${REPOS[@]}"; do
   sync_repo "$sub"
@@ -170,3 +194,8 @@ done
 
 printf "\n%s── done ──%s\n" "$ANSI_DIM" "$ANSI_RESET"
 printf "  Run %s%s run status%s to see the final state.\n" "$ANSI_GREEN" "$ROOT_PM" "$ANSI_RESET"
+
+if [ "${SYNC_HALT:-0}" = "1" ]; then
+  fail "sync halted: reconcile root main manually (see above), then re-run"
+  exit 2
+fi

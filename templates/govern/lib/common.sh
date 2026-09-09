@@ -1062,6 +1062,28 @@ govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/sp
   printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_TICKET_RE" 2>/dev/null
 }
 
+# Which currently-OPEN tickets are validation-shaped (govern::is_validation_ticket) but have no
+# matching .claude/shiploop/validation/ticket-<N>-*.md evidence file yet? Backs the ticket-sweep
+# Stop-hook nudge (GOVERN_VALIDATION_NUDGE): a coarse, ALWAYS-ADVISORY proxy for "this session may
+# have validated it live but never ran /validated to record the evidence": a Stop hook has no
+# per-ticket session attribution, so a false positive here just costs one extra advisory line
+# pointing at /validated <N>, never a block. Always exits 0 (a reusable helper must never abort a
+# caller through the "while read hit EOF" exit-status gotcha, hard rule #1).
+govern::tickets_missing_validation_doc() { # [tickets-file] [meta-root] -> "N" lines
+  local f="${1:-$TICKETS_FILE}" meta="${2:-}" n block
+  [[ -n "$meta" ]] || meta="$(govern::meta_root)"
+  if [[ -f "$f" ]]; then
+    while read -r n; do
+      [[ -n "$n" ]] || continue
+      block="$(govern::ticket_block "$n" "$f" 2>/dev/null || true)"
+      govern::is_validation_ticket "$block" || continue
+      compgen -G "$meta/.claude/shiploop/validation/ticket-$n-"'*.md' >/dev/null 2>&1 && continue
+      printf '%s\n' "$n"
+    done < <(grep -oE '^##[[:space:]]+#[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+')
+  fi
+  return 0
+}
+
 # ── warm-parent dispatch assertion (not every ticket earns a full worker) ────────────────────────
 # Dispatch is otherwise UNCONDITIONAL: every ticket gets a fresh headless worker that re-derives the
 # codebase from scratch, regardless of what the parent session already knows. The criterion for

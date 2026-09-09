@@ -111,6 +111,9 @@ END {
 # Verify liveness. A spawn with no matching done is a CLAIM, not a fact — a killed driver leaves it
 # in the log forever, and a statusline still reading "4 workers" an hour after the fleet died is
 # worse than silence. `kill -0` is the arbiter, exactly as in status.sh.
+NOW="$(date +%s)"
+_STALE_DAYS="${GOVERN_EVENTS_STALE_DAYS:-7}"
+_STALE_CHECK="${GOVERN_STATUSLINE_STALE_CHECK:-1}"
 LIVE=0; NDONE=0; BEST_T=""; BEST_M=""; BEST_S=0
 while IFS=$'\t' read -r _k _a _b _c _d; do
   case "${_k:-}" in
@@ -118,6 +121,16 @@ while IFS=$'\t' read -r _k _a _b _c _d; do
     P)
       [[ "${_b:-0}" -gt 0 ]] 2>/dev/null || continue
       kill -0 "$_b" 2>/dev/null || continue
+      # A pid can be REUSED by an unrelated process long after the worker that originally held it
+      # died: `kill -0` alone can't tell the difference, so a claim whose OWN spawn event is older
+      # than GOVERN_EVENTS_STALE_DAYS is treated as dead rather than as a genuinely week-plus-old
+      # worker (workers are bounded well under a day by GOVERN_WORKER_TIMEOUT). This is what keeps
+      # the segment SILENT (its own contract, see header) instead of reading a ghost as live
+      # forever. Same knob status.sh uses so the two surfaces can't disagree. Kill switch:
+      # GOVERN_STATUSLINE_STALE_CHECK=0.
+      if [[ "$_STALE_CHECK" != "0" ]] && [[ "${_c:-0}" -gt 0 ]] 2>/dev/null; then
+        [[ $(( NOW - _c )) -gt $(( _STALE_DAYS * 86400 )) ]] && continue
+      fi
       LIVE=$((LIVE+1))
       if [[ "$BEST_S" -eq 0 || "${_c:-0}" -lt "$BEST_S" ]]; then BEST_S="${_c:-0}"; BEST_T="$_a"; BEST_M="${_d:-}"; fi
       ;;
@@ -135,7 +148,6 @@ _hms() {
   return 0
 }
 
-NOW="$(date +%s)"
 TOTAL=$((LIVE + NDONE))
 printf '%s %s/%s' "${GOVERN_STATUSLINE_ICON:-⚙}" "$LIVE" "$TOTAL"
 if [[ -n "$BEST_T" ]]; then

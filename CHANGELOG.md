@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.19.2 — 2026-09-09
+
+### Fixed
+
+**Three capabilities were reachable only from the dispatch loop, so a workspace that stops
+dispatching silently stops recording and stops checking.** This file already names the principle at
+`govern-bookkeep.sh:14`, where budget enforcement hit it first: "budgets are a property of the FILES,
+not of the run." It was fixed once, for budgets, and never generalized. The same shape was still live
+in three more places, and it fails silently by construction: the readers are guarded `|| true`, so
+nothing ever reports that a capability has not run.
+
+**The validation sink recorded nothing outside a governor resolve.** The writer for
+`.claude/shiploop/validation/ticket-<N>-<slug>.md` was inlined in `govern-bookkeep.sh`, whose only
+callers are the dispatch loop and `npm run govern:budgets`. A ticket you validated by hand in an
+interactive session, with a live deploy and captured output, left no durable git-tracked record at
+all. The writer is now `scripts/govern/validation-record.sh`, a standalone entry point: the governor
+resolve path and an interactive session are two callers of one writer, same path, same slug rule,
+same never-clobber behaviour. Kill switch `GOVERN_VALIDATION_RECORD=0`.
+
+**A sink-write failure can no longer cost you the resolve.** `govern-bookkeep.sh` runs under
+`set -euo pipefail`, where a failing command substitution in an assignment aborts the script. Routing
+the promotion through an external script therefore introduced a path where a bad argument would abort
+bookkeeping before the `tickets.md` commit. The call now logs and swallows its own failure.
+
+**`preflight-base-ci.sh` and `preflight-main.sh` are no longer dispatch-bound.** The first refuses to
+start work on a base branch whose newest CI run is a completed failure; the second reconciles the meta
+repo with `origin/main` and self-heals runtime artifacts a crashed run left dirty. Both were called
+only from `run-loop.sh`. They now have npm entries, `doctor.sh` reports a red base, and `sync.sh` runs
+the reconcile, halting with exit 2 only on genuine divergence.
+
+**The statusline no longer presents stale governor numbers as current.** `statusline-segment.sh` and
+`status.sh` read `governor/events.jsonl`, which only the dispatch path writes. When it is missing or
+older than `GOVERN_EVENTS_STALE_DAYS` (default 7) they now render an explicit "no recent dispatch
+activity" state.
+
+### Added
+
+**`/shiploop:validated <N>`, the interactive twin of the governor promotion.** You state the empirical
+evidence you actually captured, ids and output and a PASS/FAIL verdict, and the write goes through the
+same `validation-record.sh` the governor calls. The command is explicit that reading the source and
+concluding it looks correct is not evidence. A workspace-local `/validated` ships alongside it.
+
+**A Stop-hook nudge for unrecorded validations.** `ticket-sweep-reminder.sh` now points out a
+validation ticket that was worked with no matching sink record. Advisory only, kill switch
+`GOVERN_VALIDATION_NUDGE=0`.
+
+### Known gaps
+
+**Harness self-improvement is still governor-only.** `govern-improve.sh`,
+`govern-improve-triage.sh` and `govern-self-apply.sh` are called only from `run-loop.sh`, and they
+build their prompts from `state.jsonl`, `review.md`, `worker.jsonl` and `report.json`, artifacts that
+exist only inside a dispatch run. Making them session-reachable means designing a new input, which is
+a contract change rather than a patch, so it is deliberately not in this release.
+
 ## 1.19.1 — 2026-09-08
 
 ### Fixed
