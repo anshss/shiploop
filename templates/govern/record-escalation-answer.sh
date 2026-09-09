@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # #N15 — write the operator's escalation answer back into governor/escalations.md WITHOUT the
 # calling command needing Edit-tool access. commands/govern.md's escalation round-trip declares
-# `allowed-tools: Bash, Read` only (bash-owns-everything, matching run-loop/spawn-worker's own
+# `allowed-tools: Bash, Read` only (bash-owns-everything, matching spawn-worker's own
 # posture); before this script existed that command's Phase-2 procedure asked the relay to hand-edit
 # escalations.md, which either stalled on a permission ask or improvised fragile inline sed/awk.
 #

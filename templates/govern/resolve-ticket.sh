@@ -27,12 +27,15 @@
 #      product-judgment call the worker must never make for itself.
 #   4. Await CI + merge EVERY PR the report names (.pr + .prs[]), via the EXISTING await-ci.sh /
 #      merge-pr.sh — never reimplemented here. merge-pr.sh's exit code is honoured exactly:
-#        0 merged · 2 frontend-refused · 3 CI red/pending · 4 CI unverifiable ·
+#        0 merged · 2 frontend/PR-only · 3 CI red/pending · 4 CI unverifiable ·
 #        5 external-PR-blocked · 6 left-open (GOVERN_AUTONOMY observe/pr-only)
-#      ANY non-zero exit on ANY PR means: do NOT land, print what happened and why, exit non-zero
-#      so the session can act. A refusal is not a failure of this script, it is information — the
-#      interactive session (or the operator) decides what to do next, then re-runs this script
-#      (plain, once the refusal clears, or with --no-merge once they handled it by hand).
+#      rc 2 and rc 6 are LEFT OPEN BY DESIGN, not refusals: the PR is deliberately not this
+#      governor's to merge, so the ticket still lands with the PR surfaced in the history note,
+#      exactly as the loop bookkept it. rc 3/4/5 (and anything unexpected) mean the PR is not
+#      known-good: do NOT land, print what happened and why, exit non-zero so the session can act.
+#      A refusal is not a failure of this script, it is information: the interactive session (or the
+#      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
+#      or with --no-merge once they handled it by hand).
 #   5. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD the way run-loop.sh
 #      did (same destructive-migration refusal, same local-first neutralization, same
 #      apply-then-verify-then-classify-the-failure shape).
@@ -57,6 +60,7 @@ fi
 
 NO_MERGE=0
 N=""
+PR_DISPOSITIONS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-merge) NO_MERGE=1; shift ;;
@@ -182,7 +186,18 @@ if [[ "$NO_MERGE" -eq 1 ]]; then
   echo "resolve-ticket #$N: --no-merge — skipping CI/merge (operator already handled it), landing directly" >&2
   MERGE_REPO_MERGED=1
 elif [[ -n "$pr_lines" ]]; then
+  # Two DIFFERENT non-zero classes, exactly as the loop drew the line (#129, #autonomy):
+  #   LEFT OPEN, still land, rc 2 (frontend/PR-only repo: a different account merges it) and
+  #     rc 6 (GOVERN_AUTONOMY observe/pr-only: the governor opens PRs and does not merge them).
+  #     Neither is a failure of the resolution: the work is done, the PR is deliberately not ours
+  #     to merge, and the loop bookkept the ticket resolved with the PR SURFACED as left-open.
+  #     Refusing to land here would strand every multi-repo ticket with a frontend sibling and
+  #     every pr-only workspace permanently un-bookkept.
+  #   REFUSAL, do not land, rc 3 (CI red/pending), 4 (CI unverifiable), 5 (external-PR guard) and
+  #     anything unexpected. Those say "this PR is not known-good", which is exactly the case where
+  #     landing edits tickets.md against work that never merged.
   ALL_MERGED=1
+  PR_DISPOSITIONS=""
   while IFS=$'\t' read -r _mrepo _mnum _murl; do
     [[ -n "$_mrepo" && -n "$_mnum" ]] || continue
     set +e
@@ -192,18 +207,25 @@ elif [[ -n "$pr_lines" ]]; then
     case "$_mrc" in
       0)
         echo "resolve-ticket #$N: merged $_mrepo#$_mnum" >&2
+        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(merged)"
         govern::is_merge_repo "$_mrepo" && MERGE_REPO_MERGED=1
         ;;
-      2) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — frontend/PR-only repo (a different account merges). Merge it yourself, then re-run with --no-merge once every PR is handled." >&2; ALL_MERGED=0 ;;
+      2)
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only) [#129], surfaced, not merged; merge it yourself when ready." >&2
+        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(frontend-left-open)"
+        ;;
+      6)
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open, GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
+        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
+        ;;
       3) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2; ALL_MERGED=0 ;;
       4) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI state could not be verified (gh network/auth/rate-limit/5xx). Investigate, then re-run." >&2; ALL_MERGED=0 ;;
       5) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — external-PR safety guard blocked it (not this governor's own PR/branch). Merge it by hand via gh/web if trusted, then re-run with --no-merge." >&2; ALL_MERGED=0 ;;
-      6) echo "resolve-ticket #$N: $_mrepo#$_mnum left open — GOVERN_AUTONOMY is observe/pr-only. Merge it yourself, then re-run with --no-merge once every PR is handled." >&2; ALL_MERGED=0 ;;
       *) echo "resolve-ticket #$N: $_mrepo#$_mnum — merge-pr.sh exited $_mrc (unexpected)." >&2; ALL_MERGED=0 ;;
     esac
   done <<< "$pr_lines"
   if [[ "$ALL_MERGED" != "1" ]]; then
-    echo "resolve-ticket #$N: not every PR merged — NOT landing the resolution. A refusal above is information, not a failure of this script: fix it (or merge by hand), then re-run." >&2
+    echo "resolve-ticket #$N: a PR is not known-good, NOT landing the resolution. A refusal above is information, not a failure of this script: fix it (or merge by hand), then re-run." >&2
     exit 5
   fi
 else
@@ -285,7 +307,11 @@ if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
 fi
 
 # ── 7. Record the outcome (govern-health.sh's only input) ──────────────────────────────────────
-_rnote="$(printf '%s\n' "$pr_lines" | awk -F'\t' 'NF>=2{printf "%s%s#%s",sep,$1,$2; sep=", "}')"
+# #129: record EVERY PR with its disposition (merged / frontend-left-open / autonomy-left-open) so
+# nothing a multi-repo ticket opened is silently dropped from the history row.
+_rnote="${PR_DISPOSITIONS:-}"
+_rnote="${_rnote# }"
+[[ -n "$_rnote" ]] || _rnote="$(printf '%s\n' "$pr_lines" | awk -F'\t' 'NF>=2{printf "%s%s#%s",sep,$1,$2; sep=", "}')"
 [[ -n "$_rnote" ]] || _rnote="$(jq -r '.pr.url // ""' <<<"$report" 2>/dev/null || true)"
 rt_record_history resolved "$_rnote"
 

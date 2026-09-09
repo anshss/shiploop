@@ -95,17 +95,12 @@ export GOVERN_INDEX="${GOVERN_INDEX:-1}"                                   # 0 =
 export GOVERN_VERIFY_FILTER="${GOVERN_VERIFY_FILTER:-1}"                   # 0 = stop collapsing a passing build/test run to one line
 export GOVERN_RUN_MAX_TOKENS="${GOVERN_RUN_MAX_TOKENS:-0}"                 # >0 = stop the run cleanly once this many tokens are spent (0 = no run-level brake)
 
-# ── Default concurrency (GOVERN_PARALLEL_DEFAULT) ────────────────────────────
-# How many LOCALITY GROUPS a named `scripts/govern/run-loop.sh <N> ...` dispatch works at once.
-#   N > 1 (default 4)  the driver becomes an orchestrator and runs one full driver child per group
-#                concurrently, contending on the per-ticket claim lock. This is the "launch N
-#                terminals" recipe, automated, and it is the DEFAULT.
-#   1            one group at a time — set this to opt out permanently.
-# Naming EXACTLY ONE ticket always stays sequential, whatever this says.
-# Per-run overrides always win: `--parallel[=N]` to fan out further, `--serial` to force one-at-a-time.
-# NOTE this multiplies CONCURRENT headless workers — N groups in flight means up to N workers'
-# spend at once. It does not make a single ticket cheaper; it makes a big set finish sooner.
-# Lower it if you are rate-limited or want a smaller blast radius.
+# ── GOVERN_PARALLEL_DEFAULT (retired) ─────────────────────────────────────────
+# Used to size the autonomous dispatch loop's (run-loop.sh) locality-group fan-out: how many full
+# driver children ran concurrently, one per group, each contending on the per-ticket claim lock.
+# The loop is retired: the session lane (pre-dispatch-check.sh → a worker → resolve-ticket.sh)
+# handles one ticket at a time, so no surviving script reads this knob any more. Left exported so
+# an existing override does not error on startup; safe to delete from your own workspace.sh.
 export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────

@@ -27,9 +27,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/scripts/govern" "$TMP/wt"
 cp -r "$GOVERN_SRC/lib" "$TMP/scripts/govern/lib"
 cp "$GOVERN_SRC/spawn-worker.sh" "$TMP/scripts/govern/spawn-worker.sh"
-cp "$GOVERN_SRC/run-loop.sh" "$TMP/scripts/govern/run-loop.sh"
 SPAWN="$TMP/scripts/govern/spawn-worker.sh"
-RL="$TMP/scripts/govern/run-loop.sh"
 
 # mk_ws_stub writes scripts/lib/workspace.sh AND exports GOVERN_WS_ROOT — undo the export right
 # after so the fallback in common.sh (GOVERN_LIB_DIR/../../..) is what actually resolves WS_ROOT,
@@ -120,11 +118,5 @@ out3="$(run_spawn GOVERN_CLAUDE_BIN="$TMP/fake-claude-real.sh" 2>/dev/null)"
 assert_contains "$out3" '"status":"resolved"' "real-looking claude_bin: never blocked even with no override/opt-in"
 assert_eq "$(exists "$TMP/logs/govern/ticket-7/worker.jsonl")" yes "real-looking claude_bin: worker.jsonl written under the real tree, as production does"
 rm -rf "$TMP/logs" "$TMP/governor/.claude-real-bin"
-
-# ── 4. run-loop.sh carries the SAME guard, before it ever creates a run directory ─────────────────
-out4="$(env GOVERN_CLAUDE_BIN="$TMP/fake-claude-stub.sh" bash "$RL" --serial 7 2>&1)" && rc4=0 || rc4=$?
-assert_eq "$rc4" "1" "run-loop.sh: stub claude_bin + no override refuses before dispatch"
-assert_contains "$out4" "GOVERN_ALLOW_REAL_LOG_WRITE" "run-loop.sh refusal names the same opt-in"
-assert_eq "$(exists "$TMP/logs/govern")" no "run-loop.sh: no run-* directory created under the real tree"
 
 assert_done

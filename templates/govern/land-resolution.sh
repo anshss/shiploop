@@ -284,8 +284,8 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
           # tree is exactly the situation where we must back off, not write behind someone's back.
           govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its working tree is DIRTY (uncommitted changes present) — refusing to write/commit into it; staying at root CLAUDE.md ($placement_reason)"
         elif [[ "$(git -C "$subrepo_dir" symbolic-ref --short -q HEAD 2>/dev/null || true)" != "$(govern::subrepo_default_branch "$subrepo_dir")" ]]; then
-          # SAFETY (#83 review): land-resolution.sh runs against the MAIN checkout (run-loop.sh
-          # invokes it from the same tree that owns queue/tickets.md — never a worker's worktree,
+          # SAFETY (#83 review): land-resolution.sh runs against the MAIN checkout (resolve-ticket.sh
+          # invokes it from the same tree that owns queue/tickets.md, never a worker's worktree,
           # which lives under a separate WORKTREE_BASE), and the workspace convention is that the
           # main checkout's sub-repos always sit on their default branch (root CLAUDE.md rule #8;
           # check-main-on-main.sh warns on drift, but only as an advisory SessionStart hook — it

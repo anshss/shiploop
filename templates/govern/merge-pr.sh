@@ -14,7 +14,7 @@
 #   6 — refused: GOVERN_AUTONOMY is observe/pr-only (trust ladder) — the governor opens PRs but
 #       does not auto-merge in this mode. NOT a failure: the PR is left open for a human by design.
 # GOVERN_ECHO=1 prints instead of running. GOVERN_SKIP_CI=1 skips the green check — pass it
-# from a caller (run-loop) that JUST confirmed green itself, to avoid a redundant CI poll.
+# from a caller (resolve-ticket.sh) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -53,7 +53,7 @@ fi
 # External-PR safety guard: three fail-closed checks (own author, own branch pattern, no forks) that
 # fire BEFORE the `gh pr merge`. Runs in echo mode too so a dry-run smoke test still exercises the
 # invariant. A block prints the reason token (external-author | fork-pr | bad-branch | lookup-failed)
-# so the caller (run-loop) can escalate with a specific cause; exit code 5 is the machine signal.
+# so the caller (resolve-ticket.sh) can escalate with a specific cause; exit code 5 is the machine signal.
 if ! _guard_reason="$(govern::pr_automerge_allowed "$REPO" "$PR")"; then
   govern::log "refusing auto-merge of $REPO#$PR — external-pr-blocked ($_guard_reason). The governor's auto-merge lane only lands PRs it itself opened (own gh login, own branch pattern, non-fork). A human can still merge this PR via gh/web; the governor will not."
   exit 5

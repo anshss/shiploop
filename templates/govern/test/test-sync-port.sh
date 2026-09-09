@@ -60,7 +60,7 @@ wsp_repo_slug() { case "\$1" in shiploop) printf '%s' "\$GOVERN_META_REPO_SLUG";
 wsp_repo_localdir() { case "\$1" in shiploop) printf '%s' "$T";; *) printf '%s/%s' "\$META_ROOT" "\$1";; esac; }
 wsp_is_merge_repo() { local r="\$1" a; for a in \$GOVERN_MERGE_REPOS; do [ "\$r" = "\$a" ] && return 0; done; return 1; }
 EOF
-  printf 'echo run\n' > "$H/scripts/govern/run-loop.sh"
+  printf 'echo run\n' > "$H/scripts/govern/spawn-worker.sh"
   printf '# marker placeholder\n' > "$H/scripts/govern/.templates-synced-at"
   printf '# Escalations\n\n## Open\n' > "$H/governor/escalations.md"
   printf '# tickets\n' > "$H/queue/tickets.md"
@@ -69,7 +69,7 @@ EOF
   local BASE; BASE="$(git -C "$H" rev-parse HEAD)"
 
   # ── templates repo: the counterpart + a placeholder workspace.sh + a trivial test dir ──
-  printf 'echo run\n' > "$T/templates/govern/run-loop.sh"
+  printf 'echo run\n' > "$T/templates/govern/spawn-worker.sh"
   printf '#!/usr/bin/env bash\nMETA_NAME="__META_NAME__"\nGITHUB_ORG="__GITHUB_ORG__"\nREPOS=(__REPOS__)\n' > "$T/templates/lib/workspace.sh"
   printf 'echo assert\n' > "$T/templates/govern/test/assert.sh"
   git -C "$T" init -q; git -C "$T" config user.email t@t; git -C "$T" config user.name t
@@ -84,8 +84,8 @@ EOF
     GOVERN_TEMPLATE_DIR="$T/templates/govern" \
     bash "$STPL" --mark "$BASE"
   git -C "$H" add -A; git -C "$H" commit -qm "mark base"
-  printf 'echo run v2\n' >> "$H/scripts/govern/run-loop.sh"
-  git -C "$H" add -A; git -C "$H" commit -qm "feat: improve run-loop mechanism"
+  printf 'echo run v2\n' >> "$H/scripts/govern/spawn-worker.sh"
+  git -C "$H" add -A; git -C "$H" commit -qm "feat: improve spawn-worker mechanism"
   } >/dev/null 2>&1
   printf '%s\n' "$s"
 }
@@ -113,7 +113,7 @@ if [ "\${STUB_NO_COMMIT:-0}" != "1" ] && [ -n "\${STUB_ADD_LINE:-}" ]; then
   git add -A >/dev/null 2>&1
   git commit -qm "port: stub change" >/dev/null 2>&1
 fi
-report="{\"status\":\"\${STUB_STATUS:-ported}\",\"files\":[\"govern/run-loop.sh\"],\"escalation\":\"\${STUB_ESCALATION:-}\"}"
+report="{\"status\":\"\${STUB_STATUS:-ported}\",\"files\":[\"govern/spawn-worker.sh\"],\"escalation\":\"\${STUB_ESCALATION:-}\"}"
 [ -n "\${GOVERN_REPORT_PATH:-}" ] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
 printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
 EOF
@@ -144,7 +144,7 @@ assert_not_contains "$(git -C "$s/templates" branch --list 'sync-auto-*')" "sync
 
 # ── Case 2: drift + ported + gate passes → merge invoked + marker advanced ───────────────────────
 s="$(mk_sandbox)"
-porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/run-loop.sh"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
 gh="$s/gh.sh"; mk_gh_stub "$gh"
 mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 drift_sha="$(git -C "$s/harness" rev-parse HEAD)"
@@ -160,7 +160,7 @@ assert_not_contains "$(cat "$s/harness/governor/escalations.md")" "sync-port —
 
 # ── Case 3: drift + porter LEAKS a forbidden identity string → gate BLOCKS, NO merge, escalation ──
 s="$(mk_sandbox)"
-porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/run-loop.sh"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
 gh="$s/gh.sh"; mk_gh_stub "$gh"
 mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 out="$( tool_env "$s"
@@ -174,7 +174,7 @@ assert_contains "$(cat "$s/harness/governor/escalations.md")" "FORBIDDEN identit
 
 # ── Case 4: drift + porter ESCALATES → NO merge, escalation filed ────────────────────────────────
 s="$(mk_sandbox)"
-porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/run-loop.sh"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
 gh="$s/gh.sh"; mk_gh_stub "$gh"
 mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 out="$( tool_env "$s"
@@ -192,7 +192,7 @@ mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 out="$( tool_env "$s"; export GOVERN_MERGE_CMD="$merge"; bash "$TOOL" --dry-run 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "5. --dry-run → exit 0"
 assert_contains "$out" "DRY RUN" "5. dry-run announces itself"
-assert_contains "$out" "scripts/govern/run-loop.sh" "5. dry-run lists the drifted file"
+assert_contains "$out" "scripts/govern/spawn-worker.sh" "5. dry-run lists the drifted file"
 assert_contains "$out" "would open a PR" "5. dry-run states it would open a PR"
 assert_contains "$out" "acmeorg" "5. dry-run prints the forbidden identity strings"
 assert_not_contains "$(git -C "$s/templates" branch --list 'sync-auto-*')" "sync-auto" "5. dry-run cuts NO branch"
@@ -209,7 +209,7 @@ assert_eq "$( [ -s "$mrec" ] && echo yes || echo no )" "no" "6. lock held → no
 
 # ── Case 7: escalations are NUMERIC `### #N` so the whole lifecycle sees them
 s="$(mk_sandbox)"
-porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/run-loop.sh"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
 gh="$s/gh.sh"; mk_gh_stub "$gh"
 mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 out="$( tool_env "$s"
@@ -230,7 +230,7 @@ cat > "$s/porter-empty.sh" <<EOF
 #!/usr/bin/env bash
 git commit --allow-empty -qm "empty port attempt" >/dev/null 2>&1
 git reset --hard origin/main >/dev/null 2>&1
-report='{"status":"ported","files":["govern/run-loop.sh"]}'
+report='{"status":"ported","files":["govern/spawn-worker.sh"]}'
 [ -n "\${GOVERN_REPORT_PATH:-}" ] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
 printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
 EOF
@@ -252,10 +252,10 @@ assert_eq "$cur_branch" "main" "8. templates repo restored to main (no orphan br
 s="$(mk_sandbox)"
 cat > "$s/porter-strand.sh" <<EOF
 #!/usr/bin/env bash
-printf 'echo committed\n' >> templates/govern/run-loop.sh
+printf 'echo committed\n' >> templates/govern/spawn-worker.sh
 git add -A >/dev/null 2>&1; git commit -qm "port change" >/dev/null 2>&1
-printf 'echo stranded\n' >> templates/govern/run-loop.sh
-report='{"status":"ported","files":["govern/run-loop.sh"]}'
+printf 'echo stranded\n' >> templates/govern/spawn-worker.sh
+report='{"status":"ported","files":["govern/spawn-worker.sh"]}'
 [ -n "\${GOVERN_REPORT_PATH:-}" ] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
 printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
 EOF
@@ -277,7 +277,7 @@ assert_eq "$dirty" "" "9. strand cleaned from templates worktree (no dirty files
 
 # ── Case 10: fingerprint dedup — TWO runs against same drift produce ONE open entry ─────────
 s="$(mk_sandbox)"
-porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/run-loop.sh"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
 gh="$s/gh.sh"; mk_gh_stub "$gh"
 mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
 _scaffold_fail="$s/scaf-fail.sh"; printf '#!/usr/bin/env bash\nexit 7\n' > "$_scaffold_fail"; chmod +x "$_scaffold_fail"

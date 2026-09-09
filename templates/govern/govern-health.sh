@@ -4,7 +4,7 @@
 # Computes a governor-health summary from the cross-run outcome history
 # (governor/ticket-history.jsonl): park rate, self-referential/churn classification, and
 # token-per-ticket spend (from the tokenjam-tagged worker token usage folded into each history
-# entry by run-loop's record()). Motivated by #115 — a run where most tickets were
+# entry by resolve-ticket.sh's history writer). Motivated by #115, a stretch where most tickets were
 # self-referential "port into templates" churn with near-zero product value, discovered only by
 # hand. This surfaces that waste class automatically instead of after it has dominated a run.
 #

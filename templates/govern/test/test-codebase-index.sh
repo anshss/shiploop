@@ -16,7 +16,7 @@ gitcfg() { git -C "$1" config user.email t@t; git -C "$1" config user.name t; }
 
 export GOVERN_INDEX_DIR="$TMP/index"
 export GOVERN_INDEX_CTAGS=0
-# assert.sh force-exports GOVERN_INDEX=0 for the whole suite (the post-resolve rebuild in run-loop.sh
+# assert.sh force-exports GOVERN_INDEX=0 for the whole suite (the post-resolve rebuild in resolve-ticket.sh
 # is pure wall-clock across hundreds of synthetic tickets). This is the one test that must actually
 # build, so it opts back in explicitly — the same per-feature pattern every other gated mechanism uses.
 export GOVERN_INDEX=1

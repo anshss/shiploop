@@ -45,7 +45,7 @@ assert_contains "$out" "govern: in-sync" "1. govern in-sync"
 assert_contains "$out" "core-scripts: in-sync" "1. core-scripts in-sync"
 
 # ── 2. mutate a mechanism script → --diff-only detects behind ──────────────
-echo "# drift injected" >> "$W/scripts/govern/run-loop.sh"
+echo "# drift injected" >> "$W/scripts/govern/spawn-worker.sh"
 out="$(bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --diff-only 2>&1)"; rc=$?
 assert_eq "$rc" "3" "2. mutated mechanism → --diff-only exit 3"
 assert_contains "$out" "govern: behind" "2. govern reported behind"

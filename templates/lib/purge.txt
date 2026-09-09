@@ -57,3 +57,22 @@ scripts/lib/doctor-extra.sh.example
 # now its own entry point with no flag needed). No shim; every call site (run-loop.sh,
 # package.json, scaffold.sh) points at the new names.
 scripts/govern/govern-bookkeep.sh
+
+# v1.19.3: the autonomous dispatch loop is retired. run-loop.sh was the only whole-run driver, and
+# with it go the three scripts that only ever ran from inside it (the self-improvement lane and its
+# triage/apply pair) plus lock-release.sh, whose only job was reclaiming that driver's single-run
+# lock. What replaces it is the SESSION lane, already installed: pre-dispatch-check.sh runs every
+# pre-spawn gate the loop ran (including the failure-streak breaker, ported verbatim), a worker runs
+# one item, and resolve-ticket.sh awaits CI, merges and lands. The `govern` npm script that pointed
+# at run-loop.sh is dropped from scaffold.sh in the same release; govern:dry-run, govern:resolve,
+# govern:pre-dispatch and govern:audit are unaffected.
+scripts/govern/run-loop.sh
+scripts/govern/govern-improve.sh
+scripts/govern/govern-improve-triage.sh
+scripts/govern/govern-self-apply.sh
+scripts/govern/lock-release.sh
+
+# v1.19.3: lib/events.sh folded into lib/common.sh. The emitter is not loop machinery (spawn-worker,
+# status.sh and the statusline all use it) so the FUNCTIONS survive verbatim; only the file is gone,
+# and common.sh's existence guard around it went with it.
+scripts/govern/lib/events.sh

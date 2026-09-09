@@ -98,7 +98,7 @@ assert_eq "$RC" "0" "#4: unknown-to-git missing path → exit 0, NOT stale (no p
 assert_not_contains "$OUT" "STALE" "#4: never reports stale on a path that may just be a typo"
 
 # ── (b) executing a queue-authored command is its OWN opt-in ─────────────────────────────────────
-# tickets.md is partly machine-written (worker `newTickets[]`, govern-improve-triage proposals), so
+# tickets.md is partly machine-written (worker `newTickets[]`, file-ticket.sh appends), so
 # enabling the stat()-only staleness check must NOT also authorize running a backticked string out of
 # it. With the gate on but GOVERN_STALENESS_RUN_TESTS unset, the probe is declined, not run.
 run 5

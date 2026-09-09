@@ -20,7 +20,7 @@
 # Exit 0 when main == origin/main afterwards, OR when reconcile does not apply (no origin remote,
 # not on main, fetch failed offline, GOVERN_NO_PUSH=1) — the run proceeds. Exit 2 ONLY when main
 # truly diverged and the rebase/push could NOT reconcile it (rebase conflict / rejected push):
-# the caller (run-loop) then HALTS with one clear message instead of silently cascading.
+# the caller then STOPS with one clear message instead of silently cascading.
 #
 # Usage: preflight-main.sh <meta-checkout-dir>
 set -euo pipefail

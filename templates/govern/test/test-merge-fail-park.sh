@@ -1,82 +1,71 @@
 #!/usr/bin/env bash
-# Regression for ticket #42: when a PR's merge FAILS (conflict / failing required check),
-# run-loop must PARK the ticket — keep its tickets.md block, leave the PR open, and file an
-# escalation — NOT bookkeep it as "resolved" (which deletes the block while the PR sits unmerged).
+# Regression for ticket #42, re-targeted at resolve-ticket.sh (the loop purge moved this step here):
+# when a PR's merge FAILS (conflict / failing required check, merge-pr.sh returns rc=3), resolve-
+# ticket.sh must refuse to land, keep the tickets.md block untouched, leave the PR open, and exit
+# non-zero, NOT bookkeep it as "resolved" (which would delete the block while the PR sits unmerged).
+# Hermetic, resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
+# land-resolution.sh, no network, no gh, no real push.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-REPO="$(cd "$DIR/../../.." && pwd)"
-RL="$DIR/../run-loop.sh"
+set +e
+
+RT="$DIR/../resolve-ticket.sh"
+[[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin" "$T/governor" "$T/logs" "$T/wt"
-( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
-# Hermetic config: the worker reports repo "alpha" — make it auto-mergeable so run-loop reaches the
-# await-CI/merge branch (where the gh stub fails the merge) and routes to park, not bookkeep.
 mk_ws_stub "$T"
+export GOVERN_QUEUE_DIR="$T/queue"
+mkdir -p "$T/bin/lib" "$T/queue"
+( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
-cat > "$T/tickets.md" <<'EOF'
+cp "$RT" "$T/bin/resolve-ticket.sh"
+cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
+[[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+
+LANDED="$T/landed.log"
+cat > "$T/bin/land-resolution.sh" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'landed %s\n' "${1:-}" >> "$LANDED_LOG"
+exit 0
+STUB
+cat > "$T/bin/await-ci.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'green\n'
+exit 0
+STUB
+# rc=3, merge-pr.sh's own "CI is red or still pending" / merge-failed exit.
+cat > "$T/bin/merge-pr.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 3
+STUB
+chmod +x "$T/bin"/*.sh
+export LANDED_LOG="$LANDED"
+landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LANDED" | wc -c | tr -d ' '; }
+
+cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
----
+
 ## #1 — high one
-**Severity:** High — x.
-body1
+
+**Severity:** High
+
+Done when: x.
+
 ---
-EOF
-printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"
+TIX
+( cd "$T" && git add -A && git commit -qm init )
 
-cat > "$T/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/wt.sh"
+report='{"status":"resolved","pr":{"repo":"alpha","number":101,"url":"http://pr/1"},"prs":[]}'
+: > "$LANDED"
+out="$( cd "$T" && printf '%s' "$report" | bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
+rc=$?
 
-# stub gh: `pr list` (resume check) → none; `pr merge` → FAIL (simulate conflict); else pass.
-cat > "$T/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"pr list"*)   echo '[]';;
-  *"pr merge"*)  echo 'X Pull request is not mergeable: merge conflict' >&2; exit 1;;
-  *)             echo '[{"bucket":"pass"}]';;
-esac
-EOF
-chmod +x "$T/bin/gh"
+assert_eq "$rc" "5" "a merge failure (merge-pr rc=3) is a refusal, resolve-ticket exits 5 (#42)"
+assert_eq "$(landed_count)" "0" "merge failure does not land, land-resolution.sh was never reached"
+assert_contains "$out" "CI is red or still pending" "resolve-ticket's own red/pending wording is surfaced"
+remaining="$(grep -c '^## #' "$T/queue/tickets.md" || true)"
+assert_eq "$remaining" "1" "ticket #1 block SURVIVES a failed merge (not deleted while the PR sits unmerged)"
 
-# stub claude: supervisor verdict on the marker, else a worker that resolves with a mergeable-repo PR.
-cat > "$T/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-prompt=""
-while [[ $# -gt 0 ]]; do [[ "$1" == "-p" ]] && { prompt="$2"; shift 2; continue; }; shift; done
-if printf '%s' "$prompt" | grep -q 'SUPERVISOR-REVIEW'; then
-  printf '{"type":"result","result":%s}\n' "$(printf '{"verdict":"ok","concerns":[],"haltReason":null}' | jq -Rs .)"
-  exit 0
-fi
-n="$(printf '%s' "${GOVERN_REPORT_PATH:-}" | sed -E 's#.*/ticket-([0-9]+)/.*#\1#')"
-report="{\"status\":\"resolved\",\"pr\":{\"repo\":\"alpha\",\"number\":${n}01,\"url\":\"http://pr/${n}\"},\"lessonPatch\":null,\"newTickets\":[],\"crossRefs\":{\"overlaps\":[],\"dependsOn\":[]},\"migration\":null,\"escalation\":null}"
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T/bin/claude"
-
-# NB: GOVERN_ECHO is unset → merge-pr.sh actually runs `gh pr merge` (which the stub fails).
-out="$(PATH="$T/bin:$PATH" \
-  GOVERN_TICKETS_FILE="$T/tickets.md" \
-  GOVERN_ESCALATIONS_FILE="$T/governor/escalations.md" \
-  GOVERN_WORKER_PROMPT_FILE="$GOVERN_PROMPTS_DIR/worker-prompt.md" \
-  GOVERN_PREFERENCES_FILE="$GOVERN_PROMPTS_DIR/preferences.md" \
-  GOVERN_SUPERVISOR_PROMPT_FILE="$GOVERN_PROMPTS_DIR/supervisor-prompt.md" \
-  GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_LOCK="$T/lock" \
-  GOVERN_WORKTREE_CMD="$T/wt.sh" \
-  GOVERN_CLAUDE_BIN="$T/bin/claude" \
-  GOVERN_SKIP_CI=1 GOVERN_IMPROVE=0 \
-  bash "$RL" 1 2>&1)"
-
-assert_contains "$out" "parking (ticket NOT deleted)" "merge failure parks instead of resolving (#42)"
-assert_contains "$out" "parked=1"                     "#1 counted as parked, not resolved"
-remaining="$(grep -c '^## #' "$T/tickets.md" || true)"
-assert_eq "$remaining" "1" "ticket #1 block SURVIVES a failed merge (not deleted)"
-commits="$(cd "$T" && git log --oneline 2>/dev/null | grep -c 'resolve #' || true)"
-assert_eq "$commits" "0" "no resolve commit for a PR that never merged"
-assert_contains "$(cat "$T/governor/escalations.md")" "could not be merged" "an escalation was filed for the unmerged PR"
 assert_done

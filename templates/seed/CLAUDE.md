@@ -21,7 +21,7 @@
    | shape | route |
    |---|---|
    | a `## #N` ticket exists, or the user names tickets | `Agent(subagent_type: "worker")`, one per ticket |
-   | multi-ticket batch, cron, or no session open | `npm run govern -- <N...>` |
+   | multi-ticket batch, cron, or no session open | headless lane, one ticket at a time: `npm run govern:pre-dispatch -- <N>` then `spawn-worker.sh <N>` |
    | heavy but not ticket-shaped (investigation feeding an answer) | `Agent`, sized per the table below |
    | trivial | inline |
    | a worker failed once | retry once with `model: opus`, then stop and report |
@@ -30,9 +30,9 @@
    inherit only for judgment-heavy synthesis or final review. Never size a ticket when filing one —
    the scout measures that.
 
-   **The interactive lane ends at PR-open plus report.** Merge, CI await and queue bookkeeping
-   always go through govern: `npm run govern -- <N>` on an open PR adopts that PR instead of redoing
-   the work. A ticket's queue block is never deleted before merge.
+   **Either lane ends at PR-open plus report.** Landing it is the same last step either way: pipe
+   that report into `npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue
+   file. A ticket's queue block is never deleted before merge.
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
