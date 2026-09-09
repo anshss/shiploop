@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# §5.2 — the scout no longer decides the TIER, and §5.7 — escalation fires exactly once per ticket.
+# §5.2: the scout no longer decides the TIER, and the retry rail no longer decides it either.
 #
 # §5.2: the scout used to fold a cached `--verdict` into resolve_sizing and claim both axes. Measured
 # over every verdict this workspace ever cached, 4 of 5 were opus/high and its HARD gate was a
 # disjunction in which `testsCover==false` alone forced opus — a rubber stamp, not arbitrage. Tier now
-# comes from exactly TWO knobs: the cheap floor GOVERN_WORKER_MODEL and the ceiling
-# GOVERN_WORKER_ESCALATION_MODEL, reachable only via the retry rail. ABSENCE OF EVIDENCE ROUTES DOWN.
+# comes from ONE knob, the cheap floor GOVERN_WORKER_MODEL. ABSENCE OF EVIDENCE ROUTES DOWN.
 #
-# §5.7: escalation was purely "a preserved worktree exists" — a boolean with no memory — so every
-# in-run re-dispatch rail could independently re-buy the ceiling under a single failure count. A stamp
-# in the preserved worktree now makes once-ness structural rather than emergent.
+# The §5.7 half of this file used to lock in "escalation fires exactly once per ticket", enforced by a
+# `.governor-escalated` stamp in the preserved worktree. AUTOMATIC ESCALATION IS REMOVED, so there is
+# no spend left to bound: the stamp, GOVERN_ESCALATE_ONCE and the escalation-spent class are all gone
+# with it, and those cases are replaced below by their successors: a retry HOLDS the floor, and a
+# capability-classed failure surfaces a re-specification request to the operator instead.
 #
 # Uses GOVERN_SPAWN_DRY_RUN=1 (pure observation, no worktree, no worker, no auth) except where the
-# stamp has to be written, which requires the live path.
+# escalation entry has to be written, which requires the live path.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -83,37 +84,31 @@ assert_eq "$(printf '%s' "$out3" | jq -r '.model')" "haiku" \
 assert_eq "$(printf '%s' "$out1" | jq -r 'has("scope_class")')" "false" \
   "scope_class is removed — nothing consumed it but the retired verdict path"
 
-# ── §5.7 — escalation fires exactly once ────────────────────────────────────────────────────────
-# A retry (preserved worktree) escalates to the ceiling exactly once; the SECOND retry holds the floor.
+# ── the retry rail HOLDS the tier (automatic escalation removed) ────────────────────────────────
 mkdir -p "$TMP/wt/ticket-102"
 out5="$(dry 102 GOVERN_SPAWN_FORCE_RETRY=1)"
-assert_eq "$(printf '%s' "$out5" | jq -r '.model')" "opus" \
-  "first retry escalates to GOVERN_WORKER_ESCALATION_MODEL [§5.7]"
+assert_eq "$(printf '%s' "$out5" | jq -r '.model')" "sonnet" \
+  "a retry holds the floor tier: no failure class buys GOVERN_WORKER_ESCALATION_MODEL"
+assert_eq "$(printf '%s' "$out5" | jq -r '.respec_requested')" "true" \
+  "an unrecognized failure signature surfaces a re-specification request instead of spending"
 
-# The dry-run seam is pure observation — it must NOT have burned the escalation.
+# The stamp that used to bound escalation is gone, and nothing recreates it.
 [[ -f "$TMP/wt/ticket-102/.governor-escalated" ]] && st=yes || st=no
-assert_eq "$st" "no" "the dry-run seam never stamps state a later real dispatch reads"
+assert_eq "$st" "no" "no .governor-escalated stamp is written any more; the mechanism it bounded is gone"
+assert_not_contains "$(cat "$SPAWN")" "GOVERN_ESCALATE_ONCE:-1" \
+  "GOVERN_ESCALATE_ONCE is removed, not left reading state nothing writes"
 
-# Now simulate the stamp a live escalated dispatch leaves behind.
-: > "$TMP/wt/ticket-102/.governor-escalated"
-out6="$(dry 102 GOVERN_SPAWN_FORCE_RETRY=1)"
-assert_eq "$(printf '%s' "$out6" | jq -r '.model')" "sonnet" \
-  "a SECOND escalation is refused — the ticket's one escalation is already spent [§5.7]"
-assert_eq "$(printf '%s' "$out6" | jq -r '.retry_class')" "escalation-spent" \
-  "the refusal is visible in the retry class, not silent"
-out7="$(dry 102 GOVERN_SPAWN_FORCE_RETRY=1 GOVERN_ESCALATE_ONCE=0)"
-assert_eq "$(printf '%s' "$out7" | jq -r '.model')" "opus" \
-  "GOVERN_ESCALATE_ONCE=0 restores the previous unbounded-escalation behavior"
-rm -f "$TMP/wt/ticket-102/.governor-escalated"
-
-# A conflict-resolution re-dispatch is a merge job, not a re-bet: same tier, no escalation burned.
+# A conflict-resolution re-dispatch is a merge job, not a re-bet: same tier, and NOT a capability
+# failure, so it must not file a re-specification request against an already-solved ticket.
 out8="$(dry 102 GOVERN_SPAWN_FORCE_RETRY=1 GOVERN_RESOLVE_CONFLICT="alpha#7")"
 assert_eq "$(printf '%s' "$out8" | jq -r '.model')" "sonnet" \
-  "a GOVERN_RESOLVE_CONFLICT re-dispatch does NOT buy the ceiling tier [§5.7]"
+  "a GOVERN_RESOLVE_CONFLICT re-dispatch keeps the floor tier [§5.7]"
 assert_eq "$(printf '%s' "$out8" | jq -r '.retry_class')" "ci" \
   "it is classified ci (non-model cause), the same pin GOVERN_FIX_CI already had"
+assert_eq "$(printf '%s' "$out8" | jq -r '.respec_requested')" "false" \
+  "and it does NOT ask the operator to re-specify a ticket that was already solved"
 
-# ── the stamp is actually written by the LIVE path ──────────────────────────────────────────────
+# ── the re-specification request is filed by the LIVE path ──────────────────────────────────────
 cat > "$TMP/fake-worktree.sh" <<EOF
 #!/usr/bin/env bash
 mkdir -p "$TMP/wt/\$1"; echo "$TMP/wt/\$1"
@@ -127,15 +122,50 @@ printf '{"type":"result","result":%s}\n' "$(printf '%s' "$report" | jq -Rs .)"
 EOF
 chmod +x "$TMP/fake-claude.sh"
 
+live() { # [extra env...] -> runs the LIVE spawn path for #102 against a fresh escalations file
+  printf '# Escalations\n\n## Open\n' > "$TMP/governor/escalations.md"
+  env GOVERN_TICKETS_FILE="$TMP/tickets.md" \
+      GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
+      GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
+      GOVERN_ESCALATIONS_FILE="$TMP/governor/escalations.md" \
+      GOVERN_LOG_ROOT="$TMP/logs-live" \
+      GOVERN_WORKTREE_CMD="$TMP/fake-worktree.sh" \
+      GOVERN_CLAUDE_BIN="$TMP/fake-claude.sh" \
+      GOVERN_SPAWN_FORCE_RETRY=1 \
+      "$@" "$SPAWN" 102 </dev/null >/dev/null 2>&1 || true
+}
+
+live
+assert_contains "$(cat "$TMP/governor/escalations.md")" "re-specification needed: the last attempt failed on capability" \
+  "a LIVE capability-classed retry files a re-specification request under ## Open"
+assert_contains "$(cat "$TMP/governor/escalations.md")" "**Kind:** respec" \
+  "the entry is tagged Kind: respec so the lane is identifiable"
+assert_contains "$(cat "$TMP/governor/escalations.md")" "Automatic tier escalation is removed" \
+  "the entry states WHY it is a re-specification request rather than an escalation"
+
+# Dedupe: a ticket that keeps failing files ONE request, not one per attempt.
+before="$(grep -c '^### #102' "$TMP/governor/escalations.md")"
 env GOVERN_TICKETS_FILE="$TMP/tickets.md" \
     GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
     GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
+    GOVERN_ESCALATIONS_FILE="$TMP/governor/escalations.md" \
     GOVERN_LOG_ROOT="$TMP/logs-live" \
     GOVERN_WORKTREE_CMD="$TMP/fake-worktree.sh" \
     GOVERN_CLAUDE_BIN="$TMP/fake-claude.sh" \
     GOVERN_SPAWN_FORCE_RETRY=1 \
     "$SPAWN" 102 </dev/null >/dev/null 2>&1 || true
-[[ -f "$TMP/wt/ticket-102/.governor-escalated" ]] && st2=yes || st2=no
-assert_eq "$st2" "yes" "a LIVE escalated dispatch stamps the preserved worktree [§5.7]"
+assert_eq "$(grep -c '^### #102' "$TMP/governor/escalations.md")" "$before" \
+  "a second failing attempt does NOT file a duplicate; an open entry already asks the question"
+
+# Kill switch: the filing can be turned off without resurrecting the tier purchase.
+live GOVERN_RESPEC_ON_CAPABILITY_FAIL=0
+assert_not_contains "$(cat "$TMP/governor/escalations.md")" "### #102" \
+  "GOVERN_RESPEC_ON_CAPABILITY_FAIL=0 suppresses the filing"
+
+# The dry-run seam is pure observation: it must never write the entry the live path writes.
+printf '# Escalations\n\n## Open\n' > "$TMP/governor/escalations.md"
+GOVERN_ESCALATIONS_FILE="$TMP/governor/escalations.md" dry 102 GOVERN_SPAWN_FORCE_RETRY=1 >/dev/null
+assert_not_contains "$(cat "$TMP/governor/escalations.md")" "### #102" \
+  "the dry-run seam never files an escalation; it only observes"
 
 assert_done

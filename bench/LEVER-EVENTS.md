@@ -70,9 +70,12 @@ and skipped, never fatal.
   ONCE. Crediting once is a deliberately loose floor: the real saving is that those bytes would have
   been re-sent on every later turn, which is the entire reason the wrapper exists.
 
-- `escalation`: emitted when a failed cheap-tier attempt escalates. `failedTokens` is what the
-  failed attempt burned; replay SUBTRACTS it from routing credit. Carries `failedTier` instead of
-  `tier`.
+- `escalation`: **RETIRED, no longer emitted.** Automatic tier escalation was removed from the
+  dispatch path (no failure class buys a tier), so there is no escalation event left to emit. The
+  schema is kept documented because historical `lever-events.jsonl` files still carry these rows and
+  replay must keep reading them: `failedTokens` is what the failed attempt burned, replay SUBTRACTS
+  it from routing credit, and the row carries `failedTier` instead of `tier`. Do not add a new
+  emitter for it.
 
 ## Emitter rules
 

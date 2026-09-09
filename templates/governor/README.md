@@ -100,11 +100,12 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 - Additive prod migration auto-applies **only if** `GOVERN_MIGRATE_CMD` is configured (else it parks
   for a manual apply — it never merges code ahead of a schema it needs and forgets).
 
-## Model floor + retry escalation (which model runs, and what a retry changes)
+## Model floor + retry policy (which model runs, and what a retry changes)
 - Sizing is **not predicted**. There is no per-ticket difficulty estimate: every first attempt
-  dispatches at the workspace floor `GOVERN_WORKER_MODEL` (default `sonnet`), and the only route
-  above it is the retry rail below, which escalates to `GOVERN_WORKER_ESCALATION_MODEL` (default
-  `opus`). The scout used to score its survey into a `(model, effort)` verdict; that was measured as
+  dispatches at the workspace floor `GOVERN_WORKER_MODEL` (default `sonnet`) and STAYS there.
+  Automatic tier escalation is removed: no failure class buys a bigger model, and
+  `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`) is now only a cap on what an explicit request may
+  ask for. The scout used to score its survey into a `(model, effort)` verdict; that was measured as
   a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
   `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
   `--verdict`/`--score` modes are deleted. `haiku` still runs the scout survey and the supervisor
@@ -115,26 +116,37 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 - The tier set is deliberately **coarse and must stay so**: the prompt cache is per-model and an
   effort change invalidates the tools+system prefix, so spreading N tickets across N distinct
   `(model, effort)` combinations fragments the cross-worker shared prefix that currently works.
-- A **retry** classifies *why* the prior attempt failed and escalates the axis that actually failed —
-  it no longer always jumps to `GOVERN_WORKER_MODEL`, which used to re-bet the top tier on failures
-  where the model was never the problem:
+- A **retry** still classifies *why* the prior attempt failed, but the classification no longer picks
+  a price. **No row raises the tier:**
 
   | failure signature (from the outcome ledger + the driver) | response |
   |---|---|
-  | gh/network/auth outage, transient drop, CI state unverifiable | retry **identically** — nothing escalates |
+  | gh/network/auth outage, transient drop, CI state unverifiable | retry **identically** |
   | red CI (usually a portability/env bug, not a thinking bug) | **same tier**, same effort |
-  | burned the per-worker token budget while still exploring | scope underestimated → **raise the tier** |
-  | opened a PR that never landed (a coherent but wrong fix) | judgment → **raise effort**, and the tier |
-  | anything else, incl. a wall-clock timeout or no evidence | fallback: escalate to `GOVERN_WORKER_MODEL` |
+  | burned the per-worker token budget while still exploring | **same sizing** (a tier is not scope) |
+  | opened a PR that never landed (a coherent but wrong fix) | judgment → **raise effort only**, and file a re-specification request |
+  | anything else, incl. a wall-clock timeout or no evidence | hold at the floor, and file a re-specification request |
 
-- Effort is the cheaper knob, so it moves first; the tier moves only when it is below the floor. An
-  escalation never **down**-grades below the tier the first attempt used — only a positively
-  identified infra/CI cause may keep a sub-floor tier. Every decision is logged as
-  `worker #N sizing: model=… effort=… retry-class=… — <reason>`.
+- **Capability failure goes back to a person, not up a tier.** A `judgment` class or an unrecognized
+  signature files an entry under `## Open` in `escalations.md` (`Kind: respec`) asking the operator to
+  re-specify, split, or close the item, carrying what the worker learned. The reasoning: an item that
+  was scoped and still failed on capability at the floor is evidence the SPECIFICATION was
+  insufficient. `GOVERN_RESPEC_ON_CAPABILITY_FAIL=0` disables the filing.
+- Effort is the only knob a retry moves, and only on `judgment`. It is a different and much cheaper
+  knob than tier: more reasoning per turn inside the same model, at the same per-token price, without
+  moving the prompt-cache key. Every decision is logged as
+  `worker #N sizing: model=… effort=… retry-class=… — <reason>` and recorded on the per-attempt
+  ledger row (`retryClass`, `retryReason`, `respecRequested`).
+
+  **This removal is a doctrine decision, not a measured one.** The corpus cannot settle it either
+  way: the 23% capability-failure figure comes from 30 *opus* first attempts (escalating from the
+  ceiling goes nowhere), and there are exactly 2 sonnet first attempts on record, both infrastructure
+  failures. The sonnet capability-failure rate, the one quantity that could justify or refute an
+  escalation rail, does not exist in the data.
 - **A session may never spawn above its own tier.** Every `--model` the harness assembles (worker,
   scout, supervisor, sync porter) is clamped to `max(opus, the model of the
   session that spawned it)`. Opus is the FLOOR of that ceiling, not the ceiling itself, so a haiku or
-  sonnet driver still buys opus on a retry exactly as before; what the rail forbids is a driver
+  sonnet driver can still be configured to dispatch opus; what the rail forbids is a driver
   buying a tier ABOVE the one it is itself running at, which is the only way a cheap session could
   quietly dispatch the most expensive model in the fleet. A session whose own model sits in a family
   above opus raises its ceiling to that model, and no higher: a `claude-fable-5` session may spawn

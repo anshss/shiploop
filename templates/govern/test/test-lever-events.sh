@@ -22,8 +22,9 @@
 #     8b. the same real call site with GOVERN_LEVER_EVENTS genuinely unset: the runtime default
 #         reaches production dispatch, not just the isolated emitter in case 1b
 #     9.  watchdog-kill ABSENT: same ticket, resolved normally (no kill, no stray event)
-#     10. resume + escalation PRESENT together: a retry with real notes + a real prior attempt
-#     11. escalation ABSENT: a retry classified infra/ci re-bets the SAME tier (never escalates)
+#     10. resume PRESENT / escalation ABSENT: automatic tier escalation was removed, so the
+#         `escalation` lever has no emitter left; `resume` is unaffected
+#     11. escalation ABSENT on an infra retry too (the same tier is re-bet, as it always was)
 #     12. scripted-action PRESENT: deterministic-apply.sh resolves with zero model turns
 #     13. scripted-action ABSENT: the kill switch is off, the ticket falls through untouched
 set -euo pipefail
@@ -239,9 +240,14 @@ else
 fi
 assert_eq "$n9" "0" "watchdog-kill/resume/escalation ABSENT: a clean first-attempt resolve fires none of them"
 
-# ── 10. resume + escalation PRESENT together: a retry with real notes + a real prior attempt ───
-# rm -rf first: a stale worktree (and any `.governor-escalated` stamp on it) from an earlier case
-# must not leak in and turn this into an escalation-spent no-op.
+# ── 10. resume PRESENT, escalation ABSENT: a retry with real notes + a real prior attempt ──────
+# This case used to assert an `escalation` lever event beside `resume`. Automatic tier escalation is
+# REMOVED (no failure class buys a model), so the emitter is gone and the event can never fire. What
+# is asserted now is both halves of that: `resume` still fires exactly as before, and `escalation`
+# is absent even on the signature that used to be its canonical trigger (an unrecognized class on a
+# real prior attempt). The `escalation` schema stays documented in bench/LEVER-EVENTS.md because
+# historical logs still carry those rows; nothing emits new ones.
+# rm -rf first: a stale worktree from an earlier case must not leak into this one.
 rm -rf "$T/wt/ticket-7"; mkdir -p "$T/wt/ticket-7" "$T/logs10/ticket-7"
 cat > "$T/wt/ticket-7/.governor-notes.md" <<'EOF'
 Freeform scratchpad from attempt one.
@@ -262,7 +268,8 @@ printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Rea
   > "$T/logs10/ticket-7/worker.jsonl"
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/b"}}],"usage":{"input_tokens":300,"output_tokens":100,"cache_read_input_tokens":3000,"cache_creation_input_tokens":25}}}\n' \
   >> "$T/logs10/ticket-7/worker.jsonl"
-# The prior attempt's ledger row: escalation's failedTokens reads THIS, not the raw stream.
+# The prior attempt's ledger row. It used to be what escalation's failedTokens read; it is kept
+# because it is ALSO what makes MODEL_IS_RETRY true, which is what this case needs.
 printf '{"attempt":1,"model":"sonnet","tokens":{"input":1000,"output":500,"cacheRead":0,"cacheCreation":0,"total":1500},"status":"failed"}\n' \
   > "$T/logs10/ticket-7/attempts.jsonl"
 
@@ -270,7 +277,7 @@ out10="$(run_spawn "$T/logs10" "$T/fake-claude-ok.sh" GOVERN_WORKER_TIMEOUT=60)"
 assert_eq "$(jq -r '.status' <<<"$out10")" "resolved" "sanity: the retry itself resolved"
 LE10="$T/logs10/lever-events.jsonl"
 [[ -f "$LE10" ]] && present10=yes || present10=no
-assert_eq "$present10" "yes" "resume/escalation: lever-events.jsonl written for the retry"
+assert_eq "$present10" "yes" "resume: lever-events.jsonl written for the retry"
 
 resume10="$(jq -c 'select(.event=="resume")' "$LE10" 2>/dev/null || true)"
 assert_eq "$([[ -n "$resume10" ]] && echo yes || echo no)" "yes" "resume PRESENT: the retry carried real notes + a real handoff block"
@@ -281,13 +288,12 @@ assert_eq "$(jq -r '.freshStartTokens' <<<"$resume10")" "1175" \
 assert_eq "$([[ "$(jq -r '.checkpointTokens' <<<"$resume10")" -gt 0 ]] && echo ok || echo bad)" "ok" "resume: checkpointTokens > 0 (the injected notes + handoff are non-empty)"
 
 esc10="$(jq -c 'select(.event=="escalation")' "$LE10" 2>/dev/null || true)"
-assert_eq "$([[ -n "$esc10" ]] && echo yes || echo no)" "yes" "escalation PRESENT: no recorded evidence classifies as 'unknown', which escalates"
-assert_eq "$(jq -r '.ticket' <<<"$esc10")" "7" "escalation: ticket=7"
-assert_eq "$(jq -r '.tier' <<<"$esc10")" "null" "escalation: tier is null …"
-assert_eq "$(jq -r '.failedTier' <<<"$esc10")" "sonnet" "… failedTier is the floor tier the failed attempt ran at"
-assert_eq "$(jq -r '.failedTokens' <<<"$esc10")" "1500" "escalation: failedTokens = the failed attempt's own ledger total (not the live stream sum)"
+assert_eq "$([[ -z "$esc10" ]] && echo absent || echo present)" "absent" \
+  "escalation ABSENT even on an unrecognized class: the lever it measured no longer exists"
+assert_not_contains "$(cat "$DIR/../spawn-worker.sh")" "emit_lever_event escalation" \
+  "and the emitter itself is deleted, not just unreachable"
 
-# ── 11. escalation ABSENT: a driver-declared infra retry re-bets the SAME tier ──────────────────
+# ── 11. escalation ABSENT on a driver-declared infra retry, which re-bets the SAME tier ────────
 # MODEL_IS_RETRY now comes from a RECORDED attempt (attempts.jsonl), not from the worktree
 # directory alone (see spawn-worker.sh): seed a real ledger row for the infra-killed attempt 1 so
 # this dispatch is genuinely detected as a retry, same as case 10 above.
@@ -311,7 +317,7 @@ else
   esc11=""
 fi
 assert_eq "$([[ -z "$esc11" ]] && echo absent || echo present)" "absent" \
-  "escalation ABSENT: GOVERN_RETRY_CLASS=infra re-bets the same tier, never escalates"
+  "escalation ABSENT: GOVERN_RETRY_CLASS=infra re-bets the same tier (and nothing escalates at all now)"
 # resume still fires (real notes were injected): the two levers are independent.
 resume11="$(jq -c 'select(.event=="resume")' "$LE11" 2>/dev/null || true)"
 assert_eq "$([[ -n "$resume11" ]] && echo yes || echo no)" "yes" "resume still PRESENT on the infra retry (notes were real) even though escalation is absent"
