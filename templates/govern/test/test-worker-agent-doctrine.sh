@@ -54,10 +54,15 @@ assert_eq "$(sed -n 's/^model: *//p' <<<"$fm")" "$headless_model" \
 # ── 3. Tools mirror GOVERN_WORKER_TOOLS_DEFAULT ────────────────────────────
 # Compare as normalized comma lists so `a, b` and `a,b` are the same list.
 norm_tools() { tr -d ' ' <<<"$1" | tr ',' '\n' | sed '/^$/d' | paste -sd, - ; }
-headless_tools="$(sed -n 's/^GOVERN_WORKER_TOOLS_DEFAULT="\(.*\)"$/\1/p' "$SPAWN" | head -1)"
+spawn_body="$(cat "$SPAWN")"
+# #117: GOVERN_WORKER_TOOLS_DEFAULT is now DERIVED from worker.md at runtime (see
+# govern::worker_agent_field) — the quoted literal below is only the fallback for a fleet that
+# hasn't synced .claude/agents/worker.md yet, so `tail -1` grabs that fallback rather than the
+# `$(...)` derive expression (which also textually matches `="…"` and would sort first).
+headless_tools="$(sed -n 's/.*GOVERN_WORKER_TOOLS_DEFAULT="\([^"]*\)".*/\1/p' "$SPAWN" | tail -1)"
 agent_tools="$(sed -n 's/^tools: *//p' <<<"$fm")"
 assert_eq "$([ -n "$headless_tools" ] && echo yes || echo no)" "yes" \
-  "3. read GOVERN_WORKER_TOOLS_DEFAULT out of spawn-worker.sh"
+  "3. read GOVERN_WORKER_TOOLS_DEFAULT's fallback out of spawn-worker.sh"
 assert_eq "$(norm_tools "$agent_tools")" "$(norm_tools "$headless_tools")" \
   "3b. worker.md tools mirror GOVERN_WORKER_TOOLS_DEFAULT exactly"
 
@@ -110,5 +115,51 @@ assert_contains "$body" "npm run govern:resolve --" \
   "5d. the lane bridge names govern's resolve path"
 assert_contains "$body" "queue/tickets.md" \
   "5e. the queue-bookkeeping boundary is stated"
+
+# ── 6. Capability posture ported from spawn-worker.sh (#117) ──────────────
+# Genuine delegation, not a second hardcoded copy that happens to match: the failure mode #117
+# closes is two independently-maintained tool lists kept in sync only by test 3 above. Pin that
+# spawn-worker.sh actually CALLS the reader rather than restating the list.
+assert_contains "$spawn_body" "govern::worker_agent_field tools" \
+  "6. spawn-worker.sh derives its tool default from worker.md instead of duplicating it"
+
+# permissionMode: worker.md declares the same default spawn-worker.sh hardcodes
+# (permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"). The interactive lane has no
+# per-run CLI invocation of its own to attach a flag to, so this has to live in the frontmatter.
+headless_permission="$(sed -n 's/.*GOVERN_PERMISSION_MODE:-\([a-zA-Z]*\)}.*/\1/p' "$SPAWN" | head -1)"
+assert_eq "$([ -n "$headless_permission" ] && echo yes || echo no)" "yes" \
+  "6b. read the headless permission-mode default out of spawn-worker.sh"
+assert_eq "$(sed -n 's/^permissionMode: *//p' <<<"$fm")" "$headless_permission" \
+  "6c. worker.md permissionMode matches the headless default ($headless_permission)"
+
+# mcpServers: zero MCP tools on both lanes, by two different mechanisms. Headless gets there at
+# the CONNECTION level (--strict-mcp-config, no --mcp-config passed). The interactive lane has no
+# flag to attach that to, so it gets there at the TOOL level instead: a `tools:` allow-list with no
+# `mcp__` entry already means no MCP tool is invocable regardless of what connects, and
+# disallowedTools makes that explicit and keeps it true even if `tools:` is ever loosened. See the
+# mcpServers finding in CLAUDE-APPENDIX.md (merge-vs-replace, sourced against the installed CLI)
+# that this pins.
+assert_contains "$spawn_body" "strict-mcp-config" \
+  "6d. headless lane still defaults to zero MCP servers (strict-mcp-config)"
+assert_contains "$fm" "disallowedTools:" \
+  "6e. worker.md declares a disallowedTools line"
+assert_contains "$(sed -n 's/^disallowedTools: *//p' <<<"$fm")" "mcp__" \
+  "6f. that disallowedTools line denies the mcp__ tool namespace"
+assert_not_contains "$fm" "mcpServers:" \
+  "6g. worker.md does not declare mcpServers -- omitted IS the zero-MCP state here, not a list to merge/replace"
+
+# isolation: 5b above already prohibits the Agent-tool CALLER from passing isolation: "worktree"
+# to this agent type, because a meta-repo's nested sub-repo .git directories don't come along into
+# a bare git worktree. A frontmatter isolation: worktree DEFAULT would trigger the exact same
+# breakage from the other side -- every future interactive spawn, whether or not the caller asked
+# for it -- so it must never be declared here either.
+assert_not_contains "$fm" "isolation:" \
+  "6h. worker.md does not declare isolation -- worktree would break this meta-repo's nested .git dirs"
+
+# hooks: a SubagentStop hook (agent-progress-guard.sh) already supervises every subagent at the
+# settings.json level (scaffold.sh writes it project-wide; both lanes load project settings). A
+# hooks: entry here would be a second registration of the same supervision for the same children.
+assert_not_contains "$fm" "hooks:" \
+  "6i. worker.md does not declare hooks -- SubagentStop supervision is owned once, at settings.json"
 
 assert_done
