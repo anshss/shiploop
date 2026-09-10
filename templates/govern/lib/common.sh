@@ -427,6 +427,64 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
   printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
 }
 
+# ── Gotcha injection (rail 9 / #118) ────────────────────────────────────────────────────────────
+# A worker's cwd at session start is the META-repo worktree root, so Claude Code's project-memory
+# auto-load only ever picks up the ROOT CLAUDE.md — a sub-repo's own CLAUDE.md two directories down
+# is never auto-loaded, and worker-prompt.md's "read the sub-repo CLAUDE.md" line is a pointer the
+# worker has to act on itself. This is the mechanical half of closing that: an author tags a
+# CLAUDE.md or learnings.md entry with the files it's about, and the tagged text gets INLINED into
+# the dispatch prompt for a ticket that actually names those files, instead of relying on the
+# worker to go find and read it.
+#
+# Opt-in, not a rewrite of either file's existing prose: a `### <title>` entry (the same heading
+# shape learnings.md's own dated entries already use) becomes eligible the moment it carries a
+# `**Paths:**` line naming one or more space-separated globs — the same field name and
+# dir-boundary-prefix match govern::flows_matching_paths already uses for the flow-staleness
+# heads-up (spawn-worker.sh), so there is one convention to learn, not two. An entry with no
+# `**Paths:**` line can never match: it costs nothing and behaves exactly as it does today.
+#
+# Deliberately does NOT call into flows.sh (no `source` dependency on it): this must work on a
+# workspace that never adopted the flow registry at all, so the ~6-line prefix-match is
+# reimplemented here rather than shared. See govern::flow_glob_prefix for the twin.
+govern::gotchas_in_file() { # <file> <max-entries> <path> [path…] -> matched "### title\nbody" blocks, file order, capped
+  local file="$1" max="$2"
+  shift 2
+  [[ -f "$file" && "$#" -gt 0 ]] || return 0
+  local paths="$*"
+  awk -v paths="$paths" -v maxn="$max" '
+    function glob_prefix(g,   p) { p = g; sub(/\*.*$/, "", p); sub(/\/$/, "", p); return p }
+    function path_match(gp,    n, i, c, arr) {
+      if (gp == "") return 0
+      n = split(paths, arr, " ")
+      for (i = 1; i <= n; i++) {
+        c = arr[i]; sub(/\/$/, "", c)
+        if (c == gp || index(c, gp "/") == 1 || index(gp, c "/") == 1) return 1
+      }
+      return 0
+    }
+    function flush(   n, i, hit) {
+      if (title == "" || pathsfield == "" || printed >= maxn) return
+      n = split(pathsfield, globs, " ")
+      hit = 0
+      for (i = 1; i <= n; i++) if (path_match(glob_prefix(globs[i]))) { hit = 1; break }
+      if (hit) { print "### " title; printf "%s", body; print ""; printed++ }
+    }
+    BEGIN { title = ""; body = ""; pathsfield = ""; printed = 0 }
+    /^### / {
+      flush()
+      title = $0; sub(/^### /, "", title); sub(/[ \t]+$/, "", title)
+      body = ""; pathsfield = ""
+      next
+    }
+    /^\*\*Paths:\*\*/ {
+      line = $0; sub(/^\*\*Paths:\*\*[ \t]*/, "", line); pathsfield = line
+      body = body $0 "\n"; next
+    }
+    { body = body $0 "\n" }
+    END { flush() }
+  ' "$file"
+}
+
 # Fail CLOSED if a commit dir didn't resolve to a real git work-tree (#28). A commit dir is derived as
 # `$(cd "$(dirname "$TICKETS_FILE")" && pwd)`; when that directory is MISSING the substitution yields an
 # EMPTY string, and a later `cd "$commit_dir"` becomes `cd ""` — a no-op that leaves git running against

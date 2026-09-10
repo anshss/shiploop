@@ -804,6 +804,62 @@ Not a validation ticket, but your change touches paths mapped by these currently
   fi
 fi
 
+# Gotcha injection (rail 9 / #118): CLAUDE.md / learnings.md entries an author tagged `**Paths:**`
+# (govern::gotchas_in_file, lib/common.sh) for the ROOT files and for each SUB-REPO the ticket's
+# candidate paths name. Own extraction, independent of the flow heads-up block above — never
+# depends on that block having run (a workspace with no flow registry still gets this). `**Paths:**`
+# is opt-in per entry; an untagged rule is invisible to this mechanism, exactly as it is today.
+# GOVERN_GOTCHA_INJECT=0 disables the whole mechanism (test/assert.sh forces it off for the
+# suite; this ticket's own test opts back in, per the local idiom for a new dispatch-path knob).
+if [[ "${GOVERN_GOTCHA_INJECT:-1}" != "0" && ${#REPOS[@]} -gt 0 ]]; then
+  _gotcha_meta="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
+  _gotcha_repo_alt="$(printf '%s|' "${REPOS[@]}")"; _gotcha_repo_alt="${_gotcha_repo_alt%|}"
+  # Extract distinct `<repo>/<path>` tokens the ticket names (dedup, order-stable) — same shape as
+  # the flow heads-up extraction above, duplicated rather than shared so this block never depends
+  # on that one's guard (flows.md existing) having been satisfied.
+  _gotcha_cand="$(printf '%s' "$block" \
+    | grep -oE "(^|[^A-Za-z0-9_/.-])(${_gotcha_repo_alt})/[A-Za-z0-9._*/-]+" 2>/dev/null \
+    | sed -E 's/^[^A-Za-z0-9]//' | awk '!seen[$0]++' || true)"
+  if [[ -n "$_gotcha_cand" ]]; then
+    _gotcha_cap="${GOVERN_GOTCHA_MAX:-3}"
+    _gotcha_text=""
+    # Root-level files: candidate paths used AS-IS (repo-prefixed, e.g. "alpha/src/pay/charge.ts") —
+    # a root CLAUDE.md/learnings.md entry can name any sub-repo's paths.
+    for _gf in "$_gotcha_meta/CLAUDE.md" "$_gotcha_meta/learnings.md"; do
+      # shellcheck disable=SC2086
+      _hit="$(govern::gotchas_in_file "$_gf" "$_gotcha_cap" $_gotcha_cand 2>/dev/null || true)"
+      [[ -n "$_hit" ]] && _gotcha_text="$_gotcha_text
+$_hit"
+    done
+    # Per-repo files: only the repos the ticket actually names, candidate paths made REPO-RELATIVE
+    # (the "<repo>/" prefix stripped) — a sub-repo's own CLAUDE.md/learnings.md is read from inside
+    # that repo and names its own paths without repeating its own folder name.
+    _gotcha_repos="$(printf '%s\n' "$_gotcha_cand" | sed -E "s#^(${_gotcha_repo_alt})/.*#\1#" | awk '!seen[$0]++')"
+    for _gr in $_gotcha_repos; do
+      _gotcha_rel="$(printf '%s\n' "$_gotcha_cand" | grep -E "^${_gr}/" | sed -E "s#^${_gr}/##")"
+      [[ -n "$_gotcha_rel" ]] || continue
+      for _gf in "$_gotcha_meta/$_gr/CLAUDE.md" "$_gotcha_meta/$_gr/learnings.md"; do
+        # shellcheck disable=SC2086
+        _hit="$(govern::gotchas_in_file "$_gf" "$_gotcha_cap" $_gotcha_rel 2>/dev/null || true)"
+        [[ -n "$_hit" ]] && _gotcha_text="$_gotcha_text
+$_hit"
+      done
+    done
+    if [[ -n "${_gotcha_text//[[:space:]]/}" ]]; then
+      _gotcha_max_bytes="${GOVERN_GOTCHA_MAX_BYTES:-3000}"
+      if [[ "$(printf '%s' "$_gotcha_text" | wc -c | tr -d '[:space:]')" -gt "$_gotcha_max_bytes" ]]; then
+        _gotcha_text="$(printf '%s' "$_gotcha_text" | head -c "$_gotcha_max_bytes")
+[… truncated at ${_gotcha_max_bytes} bytes — read the file(s) directly in your worktree for the rest]"
+      fi
+      prompt="$prompt
+
+## Recorded gotchas for files this ticket touches
+\`**Paths:**\`-tagged entries in CLAUDE.md / learnings.md matching the files/repos this ticket names — a project-specific trap someone already hit, not general doctrine. Untagged rules in those same files are NOT reproduced here; still read the file for the area you're touching.
+$_gotcha_text"
+    fi
+  fi
+fi
+
 # ── RETRY CONTEXT ─────────────────────────────────────────────────────────────────────────────
 # Blocks below are appended ONLY when this is a retry (MODEL_IS_RETRY=1). They are independent,
 # self-contained sections: add a new retry signal by appending another block here, never by

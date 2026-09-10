@@ -15,6 +15,9 @@ or duplicated code is OUT OF SCOPE unless the fix cannot land without it — not
 If you cannot tell whether something is in scope, it is not.
 
 1. Read the sub-repo `CLAUDE.md` for the area you're touching (root `CLAUDE.md` is already loaded).
+   A "Recorded gotchas" section below, if present, already inlines any `**Paths:**`-tagged entry
+   matching your files — that's a supplement, not a substitute: it never contains the file's
+   untagged rules, so still read the file itself.
 2. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`.
 3. Commit per sub-repo (`cd` in first), then `gh pr create` against `<org>/<sub-repo>` on the branch
    the worktree gave you. Do NOT merge; do NOT edit `queue/tickets.md`. A PUBLIC-REPO PR HYGIENE

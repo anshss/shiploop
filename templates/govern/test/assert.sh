@@ -75,6 +75,11 @@ export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter (spec 4b): it
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
 export GOVERN_AGENT_SUPERVISION=0    # #116 rails 6-8: in-session Agent SubagentStop guard, its own test opts in
+export GOVERN_GOTCHA_INJECT=0        # #118 rail 9: CLAUDE.md/learnings.md **Paths:** gotcha injection — several
+                                      # existing tests (test-claudemd-trim.sh etc.) write their OWN CLAUDE.md at
+                                      # the stub root for unrelated reasons; a coincidental `### `+`**Paths:**`
+                                      # match there must never leak into an unrelated test's assembled prompt.
+                                      # Its own test (test-spawn-gotcha-inject.sh) opts back in.
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

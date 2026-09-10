@@ -330,6 +330,28 @@ and only the operator makes that promise.
 
 ---
 
+## Rules that live in a dispatch-time gotcha instead of a just-in-time pack
+
+The packs above are keyed on the ACTION being taken (editing any `*.sh` file, running `git`) and fire
+at tool-call time regardless of which ticket is running. That model can't carry a rule that's
+project-specific to a FILE rather than generic to an action — "this exact module has this exact
+quirk" — and it can't reach the moment a worker is DISPATCHED, before it has touched anything at all.
+
+`### <title>` entries in `CLAUDE.md` or `learnings.md` (root or sub-repo) tagged with a `**Paths:**`
+line (space-separated globs) close that gap instead: `govern::gotchas_in_file`
+(`scripts/govern/lib/common.sh`) matches a ticket's named files against every tagged entry in the
+ROOT `CLAUDE.md`/`learnings.md` and in each SUB-REPO's own copies, and `spawn-worker.sh` inlines every
+match into that ticket's prompt before the worker ever starts — a sub-repo's own `CLAUDE.md` is never
+auto-loaded by a worker (its cwd at session start is the meta-repo worktree root), so this is the only
+channel that reaches it at all. Match is dir-boundary, either direction, same rule the flow-staleness
+heads-up already uses for `**Paths:**` in `.claude/shiploop/validation/flows.md` — one convention,
+three consumers. An entry with no `**Paths:**` line is invisible to this mechanism and costs nothing;
+it still reaches a session only the way it does today (read the file, or the root `learnings.md`
+recency digest). Knobs: `GOVERN_GOTCHA_INJECT=0` (off), `GOVERN_GOTCHA_MAX` (entries per file, default
+3), `GOVERN_GOTCHA_MAX_BYTES` (total injected size, default 3000).
+
+---
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_
