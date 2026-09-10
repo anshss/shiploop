@@ -89,6 +89,10 @@ ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_escalated\",\"ticket\":94,\"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":94,\"status\":\"resolved\",\"model\":\"opus\",\"elapsed\":812}"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":95,\"status\":\"stale\",\"pid\":9,\"reapedBy\":\"status.sh\"}"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"ticket_parked\",\"ticket\":96,\"note\":\"needs a human\"}"
+# #116 rails 6-8: agent-progress-guard.sh (SubagentStop) writes this when it catches an in-session
+# `Agent` child about to stop on a doom signature. Same event stream, same dedupe/rate-limit rules —
+# this is the fleet-wide channel, not a governor-workers-only one (see the file header comment).
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"agent_progress_alarm\",\"agent_id\":\"a1\",\"agent_type\":\"general-purpose\",\"reason\":\"LOOP: the same command ran identically 6 times\"}"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"driver_reaped\",\"label\":\"#94\",\"pid\":222,\"tickets\":1,\"ok\":true}"
 sleep 3
 
@@ -97,6 +101,8 @@ assert_contains "$out" "#94" "monitor: surfaces the worker_spawned transition"
 assert_contains "$out" "opus" "monitor: surfaces the escalation"
 assert_contains "$out" "resolved" "monitor: surfaces the completion"
 assert_contains "$out" "PARKED" "monitor: surfaces a park, which is the one outcome needing a human"
+assert_contains "$out" "general-purpose" "monitor: surfaces an in-session Agent child's progress alarm (#116), not just governor workers"
+assert_contains "$out" "LOOP: the same command" "monitor: the alarm line carries the deterministic signature, not just a bare notice"
 assert_not_contains "$out" "driver" "monitor: driver fan-out plumbing is NOT surfaced"
 assert_not_contains "$out" "#95" "monitor: a status.sh bookkeeping reap (status=stale) is not reported as a worker outcome"
 assert_eq "$(grep -c 'worker started on #94' "$LOG" | tr -d ' ')" "1" \
