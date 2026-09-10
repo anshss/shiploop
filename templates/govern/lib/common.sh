@@ -2919,6 +2919,88 @@ govern::usage_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
+# ── progress signature, shared by the headless watchdog AND in-session supervision (#116) ──────
+# Extracted from spawn-worker.sh's §4.4a early-abort watchdog so the SAME deterministic doom
+# signature (stall / identical-command loop / rising tool-error rate) is available to a second
+# caller: templates/hooks/agent-progress-guard.sh, a SubagentStop hook that reaches this to
+# in-session `Agent` children — which have no pid and no worker.jsonl, so the headless watchdog
+# never covered them (see .specs/2026-09-09-model-orchestration-design.md, rails 6-8). One
+# implementation, two callers, so a doom signature detected here has one definition rather than
+# two that can drift apart.
+#
+# HARD CONSTRAINT unchanged from the original: every signal is DETERMINISTIC, read straight off a
+# live stream-json transcript. No model call anywhere in this path.
+#
+# Reduce the live stream to one token per event of interest, so the aggregation below is a single
+# awk pass over a tiny tab-separated projection instead of repeated jq scans.
+#   T            one assistant turn
+#   X            one file-mutating tool_use (Edit/Write/NotebookEdit)
+#   C <command>  one Bash command string
+#   E 0|1        one tool_result, flagged with whether it was an error
+# `.message.content` is guarded with a type check: some events carry it as a STRING, and iterating a
+# string aborts the whole jq program (taking every already-parsed line with it). A partial last line
+# mid-write is tolerated the same way govern::cumulative_tokens tolerates it — jq stops there, and
+# the already-flushed lines still count. Uses govern::stream_grep, never a bare grep, so a NUL-holed
+# stream cannot silently read as "perfectly healthy, no signals" and disable the whole watchdog.
+govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
+  local f="${1:-}"
+  [[ -n "$f" && -s "$f" ]] || return 0
+  { govern::stream_grep "$f" -e '"type":"assistant"' -e '"type":"user"' || true; } \
+    | jq -r '
+        (if ((.message.content? | type) == "array") then .message.content else [] end) as $c
+        | if .type == "assistant" then
+            ( ["T"]
+              + [ $c[] | select(.type? == "tool_use" and (.name? == "Edit" or .name? == "Write" or .name? == "NotebookEdit")) | "X" ]
+              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | "C\t" + ((.input.command? // "") | tostring) ]
+            ) []
+          elif .type == "user" then
+            ( $c[] | select(.type? == "tool_result")
+              | if (.is_error? == true) then "E\t1" else "E\t0" end )
+          else empty end' 2>/dev/null || true
+  return 0
+}
+
+# Echoes a one-line reason when the stream shows a doom signature, and NOTHING when it looks healthy.
+# Empty output is the safe answer for every degenerate input (no file, no parseable events, jq
+# missing): a caller must never treat absence of data as evidence of doom. UNGATED by design — each
+# caller (spawn-worker.sh's GOVERN_EARLY_ABORT, agent-progress-guard.sh's GOVERN_AGENT_SUPERVISION)
+# owns its own on/off switch and default, so this stays a pure function of the stream.
+# Thresholds read straight from env so both callers share the exact same defaults with no plumbing:
+# GOVERN_EARLY_ABORT_TURNS (30), GOVERN_EARLY_ABORT_REPEATS (5), GOVERN_EARLY_ABORT_ERROR_PCT (60),
+# GOVERN_EARLY_ABORT_ERROR_WINDOW (20).
+govern::early_abort_reason() { # <jsonl> -> reason | empty
+  local f="${1:-}"
+  govern::early_abort_signals "$f" | awk -F'\t' \
+    -v turns="${GOVERN_EARLY_ABORT_TURNS:-30}" -v reps="${GOVERN_EARLY_ABORT_REPEATS:-5}" \
+    -v epct="${GOVERN_EARLY_ABORT_ERROR_PCT:-60}" -v ewin="${GOVERN_EARLY_ABORT_ERROR_WINDOW:-20}" '
+    $1=="T" { t++; since++ }
+    $1=="X" { since=0; edits++ }
+    $1=="C" { n_c++; cmd[$2]++; if (cmd[$2] > maxrep) { maxrep = cmd[$2]; maxcmd = $2 } }
+    $1=="E" { ne++; err[ne] = ($2+0) }
+    END {
+      if (turns+0 > 0 && t+0 >= turns+0 && since+0 >= turns+0) {
+        printf "STALL: no file edit (Edit/Write/NotebookEdit) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
+        exit
+      }
+      if (reps+0 > 0 && maxrep+0 >= reps+0) {
+        c = maxcmd; if (length(c) > 160) c = substr(c, 1, 160) "…"
+        printf "LOOP: the same command ran identically %d times — re-running a failing command does not change its answer: %s\n", maxrep, c
+        exit
+      }
+      if (ewin+0 > 0 && ne+0 >= ewin+0) {
+        rec = 0; for (i = ne - ewin + 1; i <= ne; i++) rec += err[i]
+        old = 0; for (i = 1; i <= ne - ewin; i++) old += err[i]
+        rp = rec * 100.0 / ewin
+        op = (ne - ewin > 0) ? (old * 100.0 / (ne - ewin)) : 0
+        if (rp >= epct+0 && rp > op) {
+          printf "ERRORS: tool-error rate rose to %d%% over the last %d tool results (was %d%% before that) — the worker is fighting its own tools\n", rp, ewin, op
+          exit
+        }
+      }
+    }' || true
+  return 0
+}
+
 # ── in-flight token-budget monitoring (#16) ─────────────────────────────────
 # The only ceiling on a worker used to be wall-clock (GOVERN_WORKER_TIMEOUT) — a worker that wanders
 # could burn tens of millions of tokens before that fired. GOVERN_WORKER_MAX_TOKENS adds a cumulative

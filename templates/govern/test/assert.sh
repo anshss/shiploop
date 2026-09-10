@@ -74,6 +74,7 @@ export GOVERN_EVENTS=0               # fleet event log (lib/common.sh): OFF for 
 export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter (spec 4b): its own test opts in
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
+export GOVERN_AGENT_SUPERVISION=0    # #116 rails 6-8: in-session Agent SubagentStop guard, its own test opts in
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

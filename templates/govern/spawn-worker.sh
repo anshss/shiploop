@@ -1250,79 +1250,27 @@ budget_marker="$logdir/budget-exceeded.marker"; rm -f "$budget_marker"
 # SHIPS INERT: GOVERN_EARLY_ABORT defaults to 0. This is a new mechanism on the dispatch path, and
 # the project anti-pattern is explicit — anything new there perturbs the stateful fake-`claude` stubs
 # the govern suite drives (precedent: GOVERN_FIX_CI). Opt in with GOVERN_EARLY_ABORT=1.
+#
+# #116: the three signals above are implemented ONCE, as govern::early_abort_signals() /
+# govern::early_abort_reason() in lib/common.sh, so templates/hooks/agent-progress-guard.sh (a
+# SubagentStop hook) can reach the identical shape for in-session `Agent` children — this watchdog
+# only ever sees a governor-spawned PROCESS via its pid and worker.jsonl, never an Agent-tool child.
 early_abort_on=0
 case "${GOVERN_EARLY_ABORT:-0}" in 1|on|true|yes) early_abort_on=1 ;; esac
-ea_turns="${GOVERN_EARLY_ABORT_TURNS:-30}"
-ea_repeats="${GOVERN_EARLY_ABORT_REPEATS:-5}"
 ea_poll="${GOVERN_EARLY_ABORT_POLL_S:-20}"
-ea_err_pct="${GOVERN_EARLY_ABORT_ERROR_PCT:-60}"
-ea_err_win="${GOVERN_EARLY_ABORT_ERROR_WINDOW:-20}"
 worker_early_abort=0
 early_abort_marker="$logdir/early-abort.marker"; rm -f "$early_abort_marker"
 
-# Reduce the live stream to one token per event of interest, so the aggregation below is a single
-# awk pass over a tiny tab-separated projection instead of repeated jq scans.
-#   T            one assistant turn
-#   X            one file-mutating tool_use (Edit/Write/NotebookEdit)
-#   C <command>  one Bash command string
-#   E 0|1        one tool_result, flagged with whether it was an error
-# `.message.content` is guarded with a type check: some events carry it as a STRING, and iterating a
-# string aborts the whole jq program (taking every already-parsed line with it). A partial last line
-# mid-write is tolerated the same way govern::cumulative_tokens tolerates it — jq stops there, and
-# the already-flushed lines still count. Uses govern::stream_grep, never a bare grep, so a NUL-holed
-# stream cannot silently read as "perfectly healthy, no signals" and disable the whole watchdog.
-early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
-  local f="${1:-}"
-  [[ -n "$f" && -s "$f" ]] || return 0
-  { govern::stream_grep "$f" -e '"type":"assistant"' -e '"type":"user"' || true; } \
-    | jq -r '
-        (if ((.message.content? | type) == "array") then .message.content else [] end) as $c
-        | if .type == "assistant" then
-            ( ["T"]
-              + [ $c[] | select(.type? == "tool_use" and (.name? == "Edit" or .name? == "Write" or .name? == "NotebookEdit")) | "X" ]
-              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | "C\t" + ((.input.command? // "") | tostring) ]
-            ) []
-          elif .type == "user" then
-            ( $c[] | select(.type? == "tool_result")
-              | if (.is_error? == true) then "E\t1" else "E\t0" end )
-          else empty end' 2>/dev/null || true
-  return 0
-}
-
-# Echoes a one-line reason when the stream shows a doom signature, and NOTHING when it looks healthy.
-# Empty output is the safe answer for every degenerate input (no file, no parseable events, jq
-# missing): an early abort must never fire on absence of data, only on positive evidence.
+# #116: the doom-signature detector itself (stall / identical-command loop / rising tool-error
+# rate) now lives in lib/common.sh as govern::early_abort_reason(), shared with
+# templates/hooks/agent-progress-guard.sh — the SubagentStop hook that reaches this same signal to
+# in-session `Agent` children, which have no pid and no worker.jsonl for THIS watchdog to see. Its
+# thresholds (GOVERN_EARLY_ABORT_TURNS/_REPEATS/_ERROR_PCT/_ERROR_WINDOW) are read straight from env
+# by the shared function, so both callers get identical defaults with no plumbing here.
 early_abort_reason() { # <jsonl> -> reason | empty
   local f="${1:-}"
   [[ "$early_abort_on" -eq 1 ]] || return 0
-  early_abort_signals "$f" | awk -F'\t' \
-    -v turns="$ea_turns" -v reps="$ea_repeats" -v epct="$ea_err_pct" -v ewin="$ea_err_win" '
-    $1=="T" { t++; since++ }
-    $1=="X" { since=0; edits++ }
-    $1=="C" { n_c++; cmd[$2]++; if (cmd[$2] > maxrep) { maxrep = cmd[$2]; maxcmd = $2 } }
-    $1=="E" { ne++; err[ne] = ($2+0) }
-    END {
-      if (turns+0 > 0 && t+0 >= turns+0 && since+0 >= turns+0) {
-        printf "STALL: no file edit (Edit/Write/NotebookEdit) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
-        exit
-      }
-      if (reps+0 > 0 && maxrep+0 >= reps+0) {
-        c = maxcmd; if (length(c) > 160) c = substr(c, 1, 160) "…"
-        printf "LOOP: the same command ran identically %d times — re-running a failing command does not change its answer: %s\n", maxrep, c
-        exit
-      }
-      if (ewin+0 > 0 && ne+0 >= ewin+0) {
-        rec = 0; for (i = ne - ewin + 1; i <= ne; i++) rec += err[i]
-        old = 0; for (i = 1; i <= ne - ewin; i++) old += err[i]
-        rp = rec * 100.0 / ewin
-        op = (ne - ewin > 0) ? (old * 100.0 / (ne - ewin)) : 0
-        if (rp >= epct+0 && rp > op) {
-          printf "ERRORS: tool-error rate rose to %d%% over the last %d tool results (was %d%% before that) — the worker is fighting its own tools\n", rp, ewin, op
-          exit
-        }
-      }
-    }' || true
-  return 0
+  govern::early_abort_reason "$f"
 }
 
 # #239: stamp the worker's start time. After the worker exits — for ANY reason, including a

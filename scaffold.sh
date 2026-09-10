@@ -301,6 +301,7 @@ component_core_scripts() {
   cp "$T/hooks/validations-pending-hook.sh" scripts/
   cp "$T/hooks/learnings-digest.sh" scripts/
   cp "$T/hooks/session-reconcile.sh" scripts/
+  cp "$T/hooks/agent-progress-guard.sh" scripts/
   chmod +x scripts/*.sh
   # sourced libs (no +x needed but harmless)
   cp "$T/lib/session-state.sh" scripts/lib/
@@ -815,6 +816,9 @@ component_settings() {
     "Stop": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
     ]}],
+    "SubagentStop": [{ "matcher": "*", "hooks": [
+      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
+    ]}],
     "SessionEnd": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
     ]}]
@@ -856,7 +860,7 @@ component_settings_merge() {
   # introduced hook (e.g. validations-pending-hook.sh added after an install already had
   # session-snapshot.sh) never got appended to an existing settings.json. Per-hook checking fixes that:
   # a hook lands iff its own marker is absent, and re-running is idempotent (all markers then present).
-  local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules stop_hook se_cleanup
+  local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules stop_hook agent_guard se_cleanup
   ss_snap=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 }
 EOF
@@ -893,6 +897,10 @@ EOF
 { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
 EOF
 )
+  agent_guard=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
+EOF
+)
   se_cleanup=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
 EOF
@@ -906,7 +914,7 @@ EOF
     --argjson ss_snap "$ss_snap" --argjson ss_learn "$ss_learn" \
     --argjson ss_main "$ss_main" --argjson ss_val "$ss_val" --argjson ss_rec "$ss_reconcile" \
     --argjson up "$up_reminder" --argjson pt "$pt_guard" --argjson ptr "$pt_rules" \
-    --argjson sp "$stop_hook" --argjson se "$se_cleanup" \
+    --argjson sp "$stop_hook" --argjson ag "$agent_guard" --argjson se "$se_cleanup" \
     '[
       {event:"SessionStart", matcher:"*", items:[
         {marker:"session-snapshot\\.sh",         hook:$ss_snap},
@@ -919,6 +927,7 @@ EOF
       {event:"PreToolUse",       matcher:"Read|Bash|Agent", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
       {event:"PreToolUse",       matcher:"Write|Edit|Bash", items:[{marker:"rules-on-touch\\.sh",         hook:$ptr}]},
       {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
+      {event:"SubagentStop",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
       {event:"SessionEnd",       matcher:"*",         items:[{marker:"session-end-cleanup\\.sh",     hook:$se}]}
     ]') || die "settings-merge: failed to build hook spec (jq error)"
   local jq_prog
@@ -1013,7 +1022,7 @@ probe_files() {
       for s in doctor dev sync tail; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks install-semaphore; do
