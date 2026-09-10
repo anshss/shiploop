@@ -1288,6 +1288,46 @@ govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this 
   return 0
 }
 
+# ── precision grade (design: .specs/2026-09-09-model-orchestration-design.md, Layer 2) ───────────
+# "Tier is chosen by how well-specified the work is, not by how hard it looks." `govern::warm_assertion`
+# above already implements the top of that scale — a parent that STATED the change gets the haiku
+# shortcut — but it was still a single binary (warm or not) with nothing between "fully specified" and
+# "ordinary dispatch". This generalises it into the design's three grades:
+#   stated — parent stated the change; GOVERN_WARM already covers this, unchanged, below.
+#   scoped — intent clear, files named or trivially locatable. The ORDINARY case; nothing to assert.
+#   open   — requires discovery of where and what. Same tier as scoped today (sonnet — the advisor
+#            budget half of "open" is layer 3, not built), but the grade is still worth RECORDING so a
+#            later advisor mechanism has something to key on and rail 11 has a precision grade to
+#            attach to the dispatch record at all.
+# Same shape as warm_assertion on purpose: explicit, per-invocation (so it cannot rot in the queue the
+# way a ticket field does — see the "THE TICKET's Model:/Effort: FIELDS DO NOT PARTICIPATE" note in
+# spawn-worker.sh for why filing-time fields are the wrong place for a dispatch-time decision), and
+# scoped to exactly one ticket number.
+#   GOVERN_PRECISION="<ticket-number>|open|scoped"
+# Returns rc 0 and sets GOVERN_PRECISION_TEXT (the grade) when the assertion applies to <N>; rc 1
+# otherwise (unset, malformed, wrong ticket, or an unrecognized grade — absence of evidence routes
+# down to the caller's own "scoped" default rather than being guessed at).
+GOVERN_PRECISION_TEXT=""
+govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion covers this ticket
+  GOVERN_PRECISION_TEXT=""
+  local n="${1:-}" raw="${GOVERN_PRECISION:-}" pn pg
+  [[ -n "$raw" ]] || return 1
+  case "$raw" in
+    *"|"*) ;;
+    *) govern::log "GOVERN_PRECISION is malformed (expected '<ticket>|open|scoped', got '${raw:0:40}…') — ignoring, dispatching normally"; return 1 ;;
+  esac
+  pn="${raw%%|*}"; pn="${pn//[[:space:]]/}"
+  [[ "$pn" =~ ^[0-9]+$ ]] || {
+    govern::log "GOVERN_PRECISION does not start with a ticket number — ignoring, dispatching normally"; return 1
+  }
+  [[ "$pn" == "$n" ]] || return 1      # scoped to exactly one ticket
+  pg="${raw#*|}"; pg="${pg//[[:space:]]/}"
+  case "$pg" in
+    open|scoped) GOVERN_PRECISION_TEXT="$pg"; return 0 ;;
+    *) govern::log "GOVERN_PRECISION names an unrecognized grade '${pg:0:40}…' (want open|scoped) — ignoring, dispatching normally"; return 1 ;;
+  esac
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
@@ -2806,6 +2846,29 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 #                       attempts are exactly the rows a sizing loop needs most (they are what proves
 #                       a tier was too cheap), so they must not come back empty.
 #   none              — nothing readable (no stream, or no usage anywhere in it).
+#
+# ROOT CAUSE of null costUsd (queue #114), verified 2026-09-10 against aquanode's own
+# logs/govern/**/attempts.jsonl, not just this repo's: `total_cost_usd` exists ONLY on the CLI's
+# final `"type":"result"` event — every `"type":"assistant"` event's `.message.usage` was checked
+# directly and carries token counts but NO price field at all, at any point in the stream. So a
+# null costUsd is not a parsing defect; it is EVERY attempt this watchdog hard-kills before that
+# final event can be written (timeout/budget-exceeded/killed-by-signal/early-abort), which is a
+# real limit of the CLI's own streaming protocol, not something this file can recover. Confirmed
+# the mechanism itself is sound: every genuinely-resolved opus row in aquanode's real logs (12/12)
+# carries a correct costUsd; the null rows are exactly the killed ones.
+#
+# Separately: the design doc's "costUsd is null on all 80 sonnet rows" figure is inflated by a
+# CONTAMINATED run in aquanode's own log tree, `logs/govern/run-20260908-005554-81792/ticket-7/`,
+# which holds 64 synthetic attempts (fabricated exactly-100/50-token rows, an injected
+# `error: unknown option '--definitely-not-a-real-flag'`, the literal example string from
+# govern::usage_error_signature's own doc comment below) — almost certainly manual/ad-hoc testing
+# run directly against the real fleet checkout rather than a scaffolded workspace (the anti-pattern
+# root CLAUDE.md rule 13 exists to prevent), sitting in the SAME directory shape a real run uses
+# with nothing to tell them apart. Excluding that one run, aquanode's real sonnet population is 3
+# attempts total: 2 killed (correctly null) and 1 resolved with a correctly-priced result event —
+# too small to support "unverifiable," and not evidence of a live defect. See status.sh's "by
+# source" summary (rail 5) for a per-session view that would have caught this measurement error
+# live instead of costing a dedicated audit.
 # Always echoes ONE valid JSON object: {tokens:{input,output,cacheRead,cacheCreation,total}|null,
 # costUsd:<number|null>, usageSource:"result"|"assistant-partial"|"none"}. Never fails.
 govern::stream_usage() { # worker-jsonl -> usage JSON

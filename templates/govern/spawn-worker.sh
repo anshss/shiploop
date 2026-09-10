@@ -121,6 +121,19 @@ fi
 [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" && -n "${GOVERN_EXECUTE_ONLY_BRIEF//[[:space:]]/}" ]] \
   || GOVERN_EXECUTE_ONLY_BRIEF=""
 
+# PRECISION GRADE (design Layer 2: .specs/2026-09-09-model-orchestration-design.md). Computed from
+# the SAME signal GOVERN_EXECUTE_ONLY_BRIEF was just finalized from, so the recorded grade and the
+# sizing branch below can never disagree. `govern::precision_assertion` (lib/common.sh) is the
+# scoped-vs-open sibling of `govern::warm_assertion` above; "scoped" is the ordinary, unasserted
+# case, so absence of BOTH signals is not a gap in the record, it IS the scoped grade.
+PRECISION_GRADE="scoped"; PRECISION_SOURCE="default (no explicit grade — ordinary dispatch)"
+if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
+  PRECISION_GRADE="stated"; PRECISION_SOURCE="GOVERN_WARM (parent stated the change)"
+elif govern::precision_assertion "$N"; then
+  PRECISION_GRADE="$GOVERN_PRECISION_TEXT"
+  PRECISION_SOURCE="GOVERN_PRECISION (parent asserted $GOVERN_PRECISION_TEXT)"
+fi
+
 # ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
 # ONE resolver, called by BOTH the dry-run observation seam and the live spawn — previously the two
 # paths carried copy-pasted resolution logic that could drift apart. Sets the globals
@@ -210,17 +223,21 @@ resolve_sizing_uncapped() {
   # automatic escalation removed, the ONLY remaining ways for a dispatch to end up above
   # GOVERN_WORKER_MODEL are the operator raising the floor itself, or the ticket `Model:` field under
   # GOVERN_MEASURED_SIZING=0, and that second one is capped by GOVERN_WORKER_ESCALATION_MODEL.)
-  # EXECUTE-ONLY dispatch (GOVERN_EXECUTE_ONLY_BRIEF, set above from a GOVERN_WARM assertion, or
-  # directly by a caller, when the parent explicitly asserted it is warm on this ticket): the worker
-  # is no longer explore → decide → edit → verify, it is edit → verify against a change someone
-  # already decided. That is a genuinely smaller job, so it takes the cheapest tier, and this is
-  # where the right-sizing question gets answered from the SHAPE OF THE WORK rather than a guess.
+  # TIER FROM PRECISION (design Layer 2). PRECISION_GRADE was computed once, above, from the exact
+  # same signal (GOVERN_EXECUTE_ONLY_BRIEF, set from a GOVERN_WARM assertion or directly by a
+  # caller) this branch used to test directly — testing the grade instead of the raw brief cannot
+  # drift from it, by construction. `stated` gets the cheapest tier: the worker is no longer
+  # explore → decide → edit → verify, it is edit → verify against a change someone already decided,
+  # a genuinely smaller job. `scoped` and `open` both fall through to the ordinary baseline below —
+  # the design's table puts them at the same tier (sonnet) today; `open`'s "+ advisor budget" half
+  # is layer 3, not built by this ticket, so the grade is recorded (below, in the ledger and the
+  # event log) for a future advisor mechanism to key on, and buys no sizing difference yet.
   #
   # "Cheapest" means the cheapest option in the EXISTING coarse tier set, never a new (model, effort)
   # combination: the prompt cache is per-model and an effort change invalidates the tools+system
   # prefix, so minting a tier here would re-fragment the shared prefix the coarse set exists to
   # protect. A RETRY overrides this below — a failed cheap bet is never re-bet.
-  if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
+  if [[ "$PRECISION_GRADE" == "stated" ]]; then
     base_model="haiku"; model_source="execute-only (parent stated the change)"
     base_effort="low";  effort_source="execute-only (parent stated the change)"
     TICKET_MODEL_APPLIED=0   # the shortcut, not the ticket field, decided this tier
@@ -531,8 +548,10 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --arg respecclass "$RESPEC_CLASS" \
     --arg capsource "$MODEL_CAP_SOURCE" \
     --argjson retry "$MODEL_IS_RETRY" \
+    --arg pg "$PRECISION_GRADE" \
+    --arg ps "$PRECISION_SOURCE" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, respec_requested:($respec == 1), respec_class:$respecclass, model_cap_source:$capsource, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, respec_requested:($respec == 1), respec_class:$respecclass, model_cap_source:$capsource, precision_grade:$pg, precision_source:$ps, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
   exit 0
 fi
 
@@ -1186,6 +1205,7 @@ record_attempt() { # status -> appends one ledger row
      --argjson retry "$MODEL_IS_RETRY" --arg mode "$mode" --arg st "$st" \
      --arg rc "${retry_class:-}" --arg rr "${retry_reason:-}" \
      --argjson respec "${RESPEC_REQUESTED:-0}" --arg respecclass "${RESPEC_CLASS:-}" \
+     --arg pg "${PRECISION_GRADE:-}" --arg ps "${PRECISION_SOURCE:-}" \
      --argjson u "$usage" --argjson ts "$(date +%s)" \
      '{attempt:$a, model:$m, modelSource:$ms,
        effort:(if $e == "" then null else $e end), effortSource:$es,
@@ -1194,19 +1214,27 @@ record_attempt() { # status -> appends one ledger row
        retryReason:(if $rr == "" then null else $rr end),
        respecRequested:($respec == 1),
        respecClass:(if $respecclass == "" then null else $respecclass end),
+       precisionGrade:(if $pg == "" then null else $pg end),
+       precisionSource:(if $ps == "" then null else $ps end),
        mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
   # Fleet event log (off unless GOVERN_EVENTS=1). record_attempt is the single funnel every exit
   # path runs through (clean return AND the INT/TERM/EXIT teardown), and it is latched idempotent —
   # so the log gets exactly one worker_done per attempt, including the killed ones.
   # `if`, not `[[ … ]] && …` (rule 11): under `set -e` a false test in an && list aborts the
   # CALLER, and record_attempt runs on the teardown path where an abort would lose the ledger row.
-  local _ev_tok _ev_elapsed=0
+  local _ev_tok _ev_cost _ev_elapsed=0
   _ev_tok="$(printf '%s' "$usage" | jq -r '.tokens // "null"' 2>/dev/null || echo null)"
+  # Rail 11/rail 5: costUsd travels with the SAME worker_done event tokens does — status.sh's "by
+  # source" summary (grouped by modelSource) sums this per session without opening attempts.jsonl.
+  # null whenever the CLI's stream carried no final "type":"result" event (a hard-killed attempt);
+  # see govern::stream_usage's header comment for why that is a data-availability limit, not a bug.
+  _ev_cost="$(printf '%s' "$usage" | jq -r '.costUsd // "null"' 2>/dev/null || echo null)"
   if [[ -n "${WORKER_SPAWN_TS:-}" ]]; then _ev_elapsed=$(( $(date +%s) - WORKER_SPAWN_TS )); fi
   # WORKER_PID, not $cpid: the reap path clears cpid to disarm the cleanup traps, and record_attempt
   # runs after that on the clean-exit route — reading cpid here would log an empty pid.
-  govern::event worker_done "ticket=$N" "status=$st" "model=$model" "effort=${effort:-}" \
-    "attempt=$attempt" "tokens=${_ev_tok:-null}" "elapsed=$_ev_elapsed" "pid=${WORKER_PID:-null}"
+  govern::event worker_done "ticket=$N" "status=$st" "model=$model" "modelSource=$model_source" \
+    "effort=${effort:-}" "precision=${PRECISION_GRADE:-}" "attempt=$attempt" \
+    "tokens=${_ev_tok:-null}" "costUsd=${_ev_cost:-null}" "elapsed=$_ev_elapsed" "pid=${WORKER_PID:-null}"
   return 0
 }
 
@@ -1438,8 +1466,11 @@ set +m
 # Fleet event log (off unless GOVERN_EVENTS=1). THIS is the line that makes a running worker
 # visible: until now the only record of a live worker was $cpid in this shell's memory.
 WORKER_SPAWN_TS="$(date +%s)"; WORKER_PID="$cpid"
-govern::event worker_spawned "ticket=$N" "model=$model" "effort=${effort:-}" \
-  "timeout=$to" "worktree=$wtpath" "pid=$cpid"
+# modelSource/precision travel on the SAME spawn event as model/effort (both known before the CLI
+# even runs) so a per-session summary grouped by model_source (rail 5) never has to join two rows
+# to answer "why was this tier picked" — see status.sh's "by source" section.
+govern::event worker_spawned "ticket=$N" "model=$model" "modelSource=$model_source" \
+  "effort=${effort:-}" "precision=$PRECISION_GRADE" "timeout=$to" "worktree=$wtpath" "pid=$cpid"
 if [[ "$to" -gt 0 ]]; then
   # 1>/dev/null: the watchdog (and its sleep child) must NOT inherit this script's stdout — that
   # pipe feeds the caller's $(...) capture, and an orphaned sleep holding it would hang the caller.
