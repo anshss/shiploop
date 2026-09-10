@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.19.4 — 2026-09-10
+
+### Added
+
+**`config-check.sh` now detects a fleet's local govern config drifting from the hub template, and a
+named-but-missing script.** Rail 12 gap: the smoke asserted plenty about internal consistency
+(required knobs non-empty, worker-model floor/ceiling) but nothing about correspondence with the
+hub, so a workspace could silently run a `GOVERN_WORKER_MODEL` the hub no longer defaults to, or
+keep a `npm run <x>` / `package.json` script pointing at a file the hub renamed or removed, forever.
+Two live instances the same session: `pre-dispatch-check.sh` was absent from an already-drifted
+workspace while `CLAUDE.md` still instructed every session to run it, and `npm run govern` stayed
+documented a release after the underlying script was deleted.
+
+- A local knob whose value differs from the hub template's shipped default (currently
+  `GOVERN_WORKER_MODEL` / `GOVERN_WORKER_ESCALATION_MODEL`, generically any self-referential
+  `KNOB="${KNOB:-default}"` policy default in `templates/lib/workspace.sh`) is now a WARNING naming
+  the knob and both values — a deliberate override is legitimate, unnoticed drift is the bug. Declare
+  an intentional override with `GOVERN_CONFIG_DRIFT_ACK="KNOB_NAME ..."` in `workspace.sh` to silence
+  it. Hub resolution follows `/shiploop:update`'s order (`CLAUDE_PLUGIN_ROOT` →
+  `GOVERN_UPSTREAM_HARNESS_DIR` → `~/.claude/skills/shiploop` → plugin-cache glob); unresolvable hubs
+  print one soft advisory line instead of erroring.
+- A `package.json` script that runs `bash|sh|node <path>` where `<path>` does not exist on disk is
+  now a HARD problem (nonzero exit) — the entry is wired to run something, and there is no
+  legitimate reason for the target to be missing.
+- A root `CLAUDE.md` that documents `npm run <key>` for a `<key>` no longer in `package.json` is also
+  a HARD problem by default (tolerates trailing args, backticks, and markdown table cells — the
+  actual shapes CLAUDE.md writes commands in), but this one is a weaker signal than a wired script:
+  a fleet's CLAUDE.md may legitimately mention a command for a module it hasn't installed. Declare
+  that with `GOVERN_CLAUDE_SCRIPT_IGNORE="key ..."` in `workspace.sh`, same shape as
+  `GOVERN_CONFIG_DRIFT_ACK` above; it exempts only the CLAUDE.md-prose check, never a genuinely
+  wired-but-missing `package.json` script.
+
+`test-config-check.sh` gains eight regression cases (15-22), covering the parsing edge cases as well
+as the happy path. Reuses `scaffold.sh --diff-only`'s
+existing hub-vs-installed byte comparison philosophy but not its code; that mechanism already covers
+whole-file mechanism-script drift (including "hub template exists, installed copy is a missing file"),
+this adds VALUE-level knob drift and the specific rule/npm-script-names-a-missing-file case that
+`--diff-only` doesn't reach on its own.
+
 ## 1.19.3 — 2026-09-10
 
 ### Fixed

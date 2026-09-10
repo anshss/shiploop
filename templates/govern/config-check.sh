@@ -76,6 +76,104 @@ if [[ "$floor_rank" -ge "$ceiling_rank" ]]; then
   problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (the explicit-request cap, rank $ceiling_rank): a cap at or below the floor is inert, since every dispatch already runs at or above the highest tier a ticket Model: field may ask for")
 fi
 
+# ── Named-but-missing scripts (rail 12 / #119) — a HARD problem ──
+# Nothing checked whether a rule or an npm script naming an installed script
+# still points at a real file. Two live instances the same session: (a)
+# package.json's OWN "govern:pre-dispatch" entry named
+# scripts/govern/pre-dispatch-check.sh while this workspace's scripts/govern/
+# had drifted far enough behind the hub that the file was simply absent; (b)
+# CLAUDE.md documented `npm run govern` after a release deleted that npm-script
+# key outright. Unlike a diverging knob value below, nothing legitimate
+# explains either case, so both are hard problems, not warnings.
+pkg_json="$WS_ROOT/package.json"
+if [[ -f "$pkg_json" ]] && command -v jq >/dev/null 2>&1; then
+  # (a) every npm script that literally invokes `bash|sh|node <path>`: the path
+  # must exist. Scripts that shell out to something else (a binary, another npm
+  # script) are out of scope — there is no local FILE to check.
+  while IFS=$'\t' read -r skey scmd spath; do
+    [[ -n "$spath" ]] || continue
+    [[ -f "$WS_ROOT/$spath" ]] || problems+=("package.json script '$skey' runs '$scmd' but '$spath' does not exist on disk")
+  done < <(jq -r '.scripts // {} | to_entries[] | [.key, .value, (.value | capture("^(?:bash|sh|node)\\s+(?<p>\\S+)").p // "")] | @tsv' "$pkg_json" 2>/dev/null)
+
+  # (b) every `npm run <key>` / `pnpm run <key>` / `yarn run <key>` mentioned in
+  # the root CLAUDE.md must still be a real package.json script key — the
+  # "npm run govern" instance, where the rule outlived the script it named.
+  # The `[A-Za-z0-9:_-]+` capture stops at the first space, so it already
+  # tolerates the forms CLAUDE.md actually uses: trailing args
+  # ("npm run govern:pre-dispatch -- <N>"), inside backticks, and inside a
+  # markdown table cell — all verified by 20/21/22 below.
+  #
+  # A prose mention is a weaker signal than a package.json script that is
+  # actually WIRED to a missing file (case (a) above): CLAUDE.md may
+  # legitimately document a command for an optional module this fleet hasn't
+  # installed. GOVERN_CLAUDE_SCRIPT_IGNORE (space-separated script-key list
+  # in workspace.sh) is the declared-exemption escape, same shape as
+  # GOVERN_CONFIG_DRIFT_ACK above, so a real gap still hard-fails by default
+  # but an operator can name the deliberate exception instead of the check
+  # either over-trusting prose or never catching the "npm run govern" case.
+  claude_md="$WS_ROOT/CLAUDE.md"
+  if [[ -f "$claude_md" ]]; then
+    claude_ignore=" ${GOVERN_CLAUDE_SCRIPT_IGNORE:-} "
+    while IFS= read -r rkey; do
+      [[ -n "$rkey" ]] || continue
+      case "$claude_ignore" in *" $rkey "*) continue ;; esac
+      jq -e --arg k "$rkey" '.scripts // {} | has($k)' "$pkg_json" >/dev/null 2>&1 || \
+        problems+=("CLAUDE.md references 'npm run $rkey' but package.json has no such script (declare it in GOVERN_CLAUDE_SCRIPT_IGNORE in workspace.sh if deliberate)")
+    done < <(grep -ohE '(npm|pnpm|yarn) run [A-Za-z0-9:_-]+' "$claude_md" | awk '{print $3}' | sort -u)
+  fi
+fi
+
+# ── Hub-default knob drift (rail 12 / #119) — a WARNING, never a hard problem ──
+# A local knob running a different value than the hub ships is not itself a
+# bug: a fleet may deliberately pin a floor/ceiling the hub no longer
+# defaults to. The bug is drift NOBODY NOTICED — scripts/lib/workspace.sh is
+# copied once at scaffold time and then deliberately never overwritten by an
+# update (it is the one file holding per-workspace customization), so when the
+# hub bumps a shipped default, an already-scaffolded workspace keeps the OLD
+# one silently, forever, with no surface ever naming the gap.
+#
+# Compare against the hub template's CURRENT literal default instead of
+# hardcoding a knob list: any `KNOB="${KNOB:-default}"` line in
+# templates/lib/workspace.sh whose default is neither empty nor an unfilled
+# `__PLACEHOLDER__` is a shared POLICY default (as opposed to per-workspace
+# identity like META_NAME/REPOS, which use `__PLACEHOLDER__` substitution and
+# so never match this pattern). Today that is exactly GOVERN_WORKER_MODEL and
+# GOVERN_WORKER_ESCALATION_MODEL; the check stays correct if the hub adds
+# another self-referential policy default later with no code change here.
+#
+# Hub resolution order matches /shiploop:update (commands/update.md): the
+# installed plugin, then an operator's local fork clone, then the legacy
+# skill path, then a plugin-cache glob. Soft-fails to one advisory line when
+# none resolve (offline / a bare git clone with no plugin install) — the same
+# "graceful when unresolvable" contract render_update_channel already holds
+# to in govern-health.sh.
+hub_ws_file=""
+for _cand in "${CLAUDE_PLUGIN_ROOT:-}" "${GOVERN_UPSTREAM_HARNESS_DIR:-}" \
+             "$HOME/.claude/skills/shiploop" \
+             "$HOME/.claude/plugins/cache/claude-plugins-official/shiploop"; do
+  [[ -n "$_cand" && -f "$_cand/templates/lib/workspace.sh" ]] && { hub_ws_file="$_cand/templates/lib/workspace.sh"; break; }
+done
+if [[ -z "$hub_ws_file" ]]; then
+  for _cand in "$HOME"/.claude/plugins/*/shiploop/templates/lib/workspace.sh \
+               "$HOME"/.claude/plugins/*/*/shiploop/templates/lib/workspace.sh; do
+    [[ -f "$_cand" ]] && { hub_ws_file="$_cand"; break; }
+  done
+fi
+if [[ -n "$hub_ws_file" ]]; then
+  ack_list=" ${GOVERN_CONFIG_DRIFT_ACK:-} "
+  while IFS=$'\t' read -r kname kdefault; do
+    [[ -n "$kname" ]] || continue
+    case "$kdefault" in __*__) continue ;; esac   # per-workspace identity placeholder, not a shared default
+    case "$ack_list" in *" $kname "*) continue ;; esac   # declared override — stop warning
+    cur="${!kname:-$kdefault}"
+    if [[ "$cur" != "$kdefault" ]]; then
+      warn_only+=("knob '$kname' diverges from hub default: local='$cur' hub default='$kdefault' — if deliberate, add it to GOVERN_CONFIG_DRIFT_ACK in workspace.sh to stop this warning")
+    fi
+  done < <(sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)="\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]+)\}".*/\1\t\2/p' "$hub_ws_file")
+else
+  warn_only+=("hub not resolvable (no CLAUDE_PLUGIN_ROOT / GOVERN_UPSTREAM_HARNESS_DIR / ~/.claude/skills/shiploop) — skipped hub-default knob-drift check")
+fi
+
 # ── Optional knobs (informational) ──
 opt_seen=()
 for k in GOVERN_MERGE_REPOS GOVERN_LOCAL_FIRST_REPOS \
