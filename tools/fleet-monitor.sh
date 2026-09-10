@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# shiploop fleet monitor — the in-session channel for governor workers.
+# shiploop fleet monitor — the in-session channel for the fleet: governor-spawned workers AND,
+# since #116, in-session `Agent` children carrying the agent-progress-guard.sh SubagentStop hook
+# (governor/events.jsonl's `agent_progress_alarm` type — see that hook + govern::early_abort_reason
+# in scripts/govern/lib/common.sh for what fires it).
 #
 # Registered as a plugin Monitor (monitors/monitors.json). Claude Code runs it as a persistent
 # background process for the session's lifetime and turns EVERY LINE IT PRINTS ON STDOUT into a
@@ -116,6 +119,14 @@ handle() { # <event line>
     ticket_parked)
       t="$(jget "$line" ticket)"
       emit "park-$t" "shiploop fleet: #$t PARKED — needs a human decision" ;;
+    agent_progress_alarm)
+      # #116 rails 6-8: agent-progress-guard.sh (SubagentStop) caught an in-session `Agent` child
+      # about to stop on a doom signature (stall/loop/rising errors) — its own completion claim,
+      # whatever it turns out to be, is not evidence on its own. One line per (agent, reason) pair
+      # inside the dedupe window, not per re-fire, so a child forced through several blocked stops
+      # by the same signature does not flood.
+      lbl="$(jget "$line" agent_type)"; frm="$(jget "$line" agent_id)"
+      emit "agent-alarm-$frm" "shiploop fleet: in-session agent ($lbl, $frm) stop blocked — $(jget "$line" reason)" ;;
     run_done)
       emit "run-done" "shiploop fleet: run finished — resolved=$(jget "$line" resolved) parked=$(jget "$line" parked) failed=$(jget "$line" failed)" ;;
     # driver_spawned / driver_reaped are deliberately NOT surfaced: they are fan-out plumbing, one
