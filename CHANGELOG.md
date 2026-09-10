@@ -4,6 +4,21 @@
 
 ### Added
 
+**`bench/replay.mjs` gains an attempt-outcome breakdown and states the driver-session exclusion
+unmissably (#108).** `--scope all` keeps pricing every attempt unconditionally and the headline
+total is unchanged; alongside it, a new `outcomeBreakdown` reads spawn-worker.sh's per-attempt
+ledger (`attempts.jsonl`) where it exists and sorts every attempt into `first-attempt`,
+`infra`/`ci`/`budget`/`judgment`/`unknown` (`govern::retry_class`'s own verdicts), or an explicit
+`unclassified` with a named reason (never silently folded into `unknown`, and never a measured
+zero) when the ledger is missing or ambiguous. Separately, the report, the JSON (`driverScope`),
+`bench/METHODOLOGY.md` and `bench/KNOWN-LIMITS.md` now all state, in the same terms, that the
+interactive driver session is excluded from every number: under the current architecture that
+session does the specification work, and the vanilla baseline this tool models ("one long Claude
+Code session") is now the same kind of session the driver itself is, so the honest claim is
+confined to the execution half of the comparison. Fixture: `bench/fixtures/replay-outcome-fleet`
+(`make-outcome-fixture.mjs`), test: `test-bench-outcome.sh`. No benchmark number is published by
+this change.
+
 **`config-check.sh` now detects a fleet's local govern config drifting from the hub template, and a
 named-but-missing script.** Rail 12 gap: the smoke asserted plenty about internal consistency
 (required knobs non-empty, worker-model floor/ceiling) but nothing about correspondence with the

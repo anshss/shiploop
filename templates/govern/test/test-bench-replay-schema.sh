@@ -26,7 +26,7 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unknownModels,unmeasuredLevers" \
+  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverScope,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,outcomeBreakdown,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unknownModels,unmeasuredLevers" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
@@ -92,6 +92,32 @@ assert_eq "$(printf '%s' "$j" | jq -r '.driverTierAudit.fromFallbackHighestTier'
   "and the driver tier came from the fallback, which is counted rather than assumed"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].label')" "a 1M-context session" \
   "the arm carries the sentence a caller should print beside the number"
+
+# ── driverScope (#108, 2026-09-10 addendum): the interactive driver is excluded unmissably ────
+assert_eq "$(printf '%s' "$j" | jq -r '.driverScope.excluded')" "true" \
+  "the driver session's exclusion is a stated fact of the report, not a silent gap"
+assert_contains "$(printf '%s' "$j" | jq -r '.driverScope.reason')" "one premium session doing the work itself" \
+  "and the JSON carries the honest counterfactual in full, not just a boolean"
+
+# ── outcomeBreakdown (#108, "no attempt-outcome dimension"): a census of attempts, not a filter.
+# The fixture ships no attempts.jsonl anywhere, so every attempt is unclassified with a reason.
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown | keys | join(",")')" \
+  "classes,totalAttempts,unclassified" "outcomeBreakdown has a fixed shape"
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.classes | keys | join(",")')" \
+  "budget,ci,first-attempt,infra,judgment,unknown" "every canonical retry class is always named, even at zero"
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.classes["first-attempt"] | keys | join(",")')" \
+  "attempts,costUsd,tokens" "each class row carries a count and both metrics"
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.totalAttempts')" "5" \
+  "the census counts every attempt --scope all prices, unconditionally"
+assert_eq "$(printf '%s' "$j" | jq -r '[.outcomeBreakdown.classes[].attempts] | add')" "0" \
+  "the fixture ships no attempts.jsonl, so no attempt lands in a named retry class"
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.unclassified.attempts')" "5" \
+  "every attempt is unclassified instead -- absent data, not a silent zero"
+assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.unclassified.reasons["no-ledger"]')" "5" \
+  "and the reason is named: this corpus carries no per-attempt ledger at all"
+assert_eq "$(printf '%s' "$j" | jq -r '([.outcomeBreakdown.classes[].attempts] | add) + .outcomeBreakdown.unclassified.attempts')" \
+  "$(printf '%s' "$j" | jq -r '.outcomeBreakdown.totalAttempts')" \
+  "classified plus unclassified attempts equal the total: nothing is dropped between them"
 
 # The reduction percentages must be the ones implied by the token and cost totals. A consumer that
 # recomputes them must land on the same figure.

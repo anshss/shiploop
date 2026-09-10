@@ -159,6 +159,26 @@ const ABSORBED_LEVERS = [
   },
 ];
 
+// The interactive/driver session that specifies tickets and dispatches workers is EXCLUDED from
+// every number in this report, unmissably, per queue #108's 2026-09-10 addendum. This is a STATED
+// EXCLUSION, not instrumentation: instrumenting the driver is separate, larger work, and a half
+// instrumented driver figure is worse than an honestly stated gap. See METHODOLOGY.md and
+// KNOWN-LIMITS.md for the full mechanism.
+const DRIVER_SCOPE = {
+  excluded: true,
+  reason:
+    'Bench walks logs/govern/<run>/** only; the driver writes no transcript there, so its tokens are ' +
+    'not in this report. That was sound while the governor spent near-zero context itself. Under the ' +
+    'current architecture the specification work happens IN the driver, so this report credits the ' +
+    'saving that work produces while never counting the premium tokens that produced it -- and the ' +
+    'overstatement GROWS as the harness works better. Worse, the vanilla baseline IS "one long Claude ' +
+    'Code session", and the driver session now IS one, so the baseline and the treatment overlap at ' +
+    'exactly the point this report cannot see. The honest counterfactual is one premium session doing ' +
+    'the work itself versus one premium session specifying while cheaper workers execute the tickets, ' +
+    'with the delta this report measures confined to the EXECUTION half of that comparison. The ' +
+    'specification half is not measured here in either arm.',
+};
+
 function tierOf(model) {
   const m = String(model || '').toLowerCase();
   // The '-5-1' check MUST run before the plain 'fable'/'mythos' check: 'claude-fable-5-1'.includes
@@ -831,6 +851,115 @@ function resolveDriverTier(fleetDir, run, workerSessions, orchSessions) {
   return { tier: highestTier(workerSessions) || 'opus', source: 'fallback-highest-tier' };
 }
 
+// ── attempt-outcome classification (queue #108, "no attempt-outcome dimension") ────────────
+// govern::retry_class (templates/govern/lib/common.sh) already classifies why a retry was
+// dispatched -- infra|ci|budget|judgment|unknown -- and spawn-worker.sh's PER-ATTEMPT LEDGER
+// (a sibling `attempts.jsonl` next to the transcript, one appended row per dispatch of a ticket)
+// already carries that verdict as `retryClass`, plus the literal string "first-attempt" on a
+// ticket's very first dispatch (never a retry, so there is nothing to classify). This reads that
+// SAME ledger, when it exists, to say WHY each attempt happened, so a reader can separate
+// infrastructure failures from capability ones. --scope all keeps pricing every attempt
+// unconditionally; this never changes what is priced, only what is printed alongside it.
+const ATTEMPT_FILE_RE = /^worker\.attempt(\d+)\.jsonl$/;
+const OUTCOME_CLASSES = ['first-attempt', 'infra', 'ci', 'budget', 'judgment', 'unknown'];
+
+// dir -> Map(attempt number -> ledger row), or null when no ledger exists for that ticket
+// directory at all (an uninstrumented / pre-ledger corpus). Memoized: a ticket with N attempts
+// would otherwise re-read and re-parse the same file up to N times.
+const ledgerCache = new Map();
+function attemptLedger(dir) {
+  if (ledgerCache.has(dir)) return ledgerCache.get(dir);
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(dir, 'attempts.jsonl'), 'utf8');
+  } catch {
+    ledgerCache.set(dir, null);
+    return null;
+  }
+  const byAttempt = new Map();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue; // an unparseable ledger line is skipped, never guessed at
+    }
+    if (row && typeof row.attempt === 'number') byAttempt.set(row.attempt, row);
+  }
+  ledgerCache.set(dir, byAttempt);
+  return byAttempt;
+}
+
+// One session -> { bucket, reason }. `reason` is set only for `unclassified`, so the report can
+// say WHY a class is missing instead of folding "we don't know" into `unknown` -- which is itself
+// a specific classifier verdict (the classifier ran and found no signature match), not a stand-in
+// for absent data.
+//
+// File-name convention this relies on (spawn-worker.sh's PER-ATTEMPT LEDGER comment):
+// spawn-worker.sh ROTATES the previous attempt's transcript aside (to `worker.attemptN.jsonl`)
+// BEFORE writing a fresh `worker.jsonl` for the next attempt, and appends that previous attempt's
+// ledger row before it exits -- both on the SAME exit path, so the ledger and the directory can
+// never disagree about which attempt number is current. `worker.jsonl` is therefore always the
+// ledger's own highest attempt number; `worker.attemptN.jsonl` is attempt N by construction.
+function classifyAttempt(sess, sessionsInFile) {
+  // A transcript holding more than one session (a resumed CLI process appending further turns) is
+  // ambiguous: there is no way to tell which of its sessions a single ledger row describes.
+  if (sessionsInFile > 1) return { bucket: 'unclassified', reason: 'multi-session-file' };
+  const dir = path.dirname(sess.file);
+  const base = path.basename(sess.file);
+  const ledger = attemptLedger(dir);
+  if (!ledger) return { bucket: 'unclassified', reason: 'no-ledger' };
+  let n = null;
+  const m = ATTEMPT_FILE_RE.exec(base);
+  if (m) {
+    n = Number(m[1]);
+  } else if (base === 'worker.jsonl') {
+    for (const k of ledger.keys()) if (n == null || k > n) n = k;
+  }
+  // Anything else (`worker.prior.jsonl`, an orphan stream from a standalone invocation that
+  // predates the ledger) carries no attempt number to look up.
+  if (n == null) return { bucket: 'unclassified', reason: 'ambiguous-file' };
+  const row = ledger.get(n);
+  if (!row) return { bucket: 'unclassified', reason: 'attempt-number-unmatched' };
+  const rc = row.retryClass;
+  if (OUTCOME_CLASSES.includes(rc)) return { bucket: rc, reason: null };
+  return { bucket: 'unclassified', reason: rc == null ? 'retryclass-null' : 'retryclass-unrecognized' };
+}
+
+// Every session bench already parsed, bucketed by the ledger's own classification. Independent of
+// --scope: scope selects which TICKETS are counted toward the headline, never which attempts
+// existed, and this is a census of attempts, not a headline component. Computed over every
+// session in every kept ticket -- including partial (killed) ones -- because those are exactly
+// the attempts a breakdown like this exists to separate out.
+function outcomeBreakdown(kept) {
+  const classes = {};
+  for (const c of OUTCOME_CLASSES) classes[c] = { attempts: 0, tokens: 0, costUsd: 0 };
+  const unclassified = { attempts: 0, tokens: 0, costUsd: 0, reasons: {} };
+  const perFile = new Map();
+  for (const t of kept) for (const sess of t.sessions) perFile.set(sess.file, (perFile.get(sess.file) || 0) + 1);
+  let totalAttempts = 0;
+  for (const t of kept) {
+    for (const sess of t.sessions) {
+      totalAttempts++;
+      const tok = sessionTokens(sess);
+      const cost = sessionCost(sess).usd;
+      const { bucket, reason } = classifyAttempt(sess, perFile.get(sess.file));
+      if (bucket === 'unclassified') {
+        unclassified.attempts++;
+        unclassified.tokens += tok;
+        unclassified.costUsd += cost;
+        unclassified.reasons[reason] = (unclassified.reasons[reason] || 0) + 1;
+      } else {
+        classes[bucket].attempts++;
+        classes[bucket].tokens += tok;
+        classes[bucket].costUsd += cost;
+      }
+    }
+  }
+  return { totalAttempts, classes, unclassified };
+}
+
 function scanFleet(fleetDir) {
   const logs = path.join(fleetDir, 'logs', 'govern');
   const files = walkJsonl(logs, []);
@@ -1319,6 +1448,11 @@ function main() {
   // outright would shorten the modeled session and mechanically flatter whichever arm.
   const kept = allTicketsAfterVersion.filter((t) => t.sessions.length > 0);
   for (const t of kept) t.counted = opts.scope === 'all' ? true : t.status === 'resolved';
+
+  // Attempt-outcome census (queue #108): unconditional, like --scope all's own count, and
+  // computed once over the whole kept corpus rather than per arm -- it does not depend on the
+  // carry model at all.
+  const attemptOutcomes = outcomeBreakdown(kept);
 
   // Group into runs and order tickets within a run by completion time. That ordering is what a
   // single session would have worked them in.
@@ -1812,9 +1946,11 @@ function main() {
     sessionsExcludedNoResultEvent: excludedSessions,
     abortedRuns,
     resolvedWithoutTranscript,
+    driverScope: DRIVER_SCOPE,
     driverTierAudit,
     harnessOverhead: overhead,
     instrumentation: instrumented,
+    outcomeBreakdown: attemptOutcomes,
     unmeasuredLevers: UNMEASURED_LEVERS,
     absorbedLevers: ABSORBED_LEVERS,
     partialRecovery,
@@ -1880,6 +2016,15 @@ function render(out) {
   L.push(`  MODELED COUNTERFACTUAL: shiploop arm measured from result events, vanilla arm modeled as`);
   const names = Object.keys(out.arms);
   L.push(`  ${names.map((n) => ARMS[n].label).join(' / ')}. No vanilla session was ever run.`);
+  L.push('');
+  L.push('  EXCLUDED FROM EVERY NUMBER BELOW: the interactive driver session. It writes no');
+  L.push('  transcript into logs/govern, so its tokens are not counted, and under the current');
+  L.push('  architecture that session does the SPECIFICATION work -- the saving it produces is');
+  L.push('  credited here while the tokens that produced it never are. The vanilla baseline is');
+  L.push('  "one long Claude Code session", and the driver session now IS one, so the baseline and');
+  L.push('  the treatment overlap exactly where this report cannot see. Honest counterfactual: one');
+  L.push('  premium session doing the work itself, vs. one premium session specifying while cheaper');
+  L.push('  workers execute -- the delta below is confined to the EXECUTION half only.');
   L.push('');
   L.push(
     `  baseline: ${out.baseline} (${BASELINES[out.baseline].label}).` +
@@ -2069,6 +2214,34 @@ function render(out) {
   L.push(
     `  ${out.resolvedWithoutTranscript} ticket(s) recorded resolved with no transcript in this corpus ` +
       `(direct-to-main or hand-resolved work the bench cannot see).`,
+  );
+  L.push('');
+  // Attempt-outcome breakdown (queue #108): --scope all keeps pricing every attempt
+  // unconditionally, unchanged above. This is the additional dimension: WHY each attempt happened,
+  // read from spawn-worker.sh's per-attempt ledger where it exists, so infrastructure failures can
+  // be told apart from capability ones instead of all landing in one undifferentiated total.
+  const ob = out.outcomeBreakdown;
+  L.push(
+    `  attempt outcomes (${ob.totalAttempts} attempt(s) total; --scope all's own count is unchanged by this):`,
+  );
+  for (const c of OUTCOME_CLASSES) {
+    const row = ob.classes[c];
+    L.push(`    ${c.padEnd(13)} ${String(row.attempts).padStart(4)} attempt(s)   ${fmtTok(row.tokens)}   ${fmtUsd(row.costUsd)}`);
+  }
+  const reasonStr = Object.entries(ob.unclassified.reasons)
+    .map(([r, n]) => `${r} x${n}`)
+    .join(', ');
+  L.push(
+    `    unclassified  ${String(ob.unclassified.attempts).padStart(4)} attempt(s)   ${fmtTok(ob.unclassified.tokens)}   ${fmtUsd(ob.unclassified.costUsd)}` +
+      (reasonStr ? `   (${reasonStr})` : ''),
+  );
+  L.push(
+    '                   unclassified is data this report does NOT have, never a measured zero. ' +
+      '"unknown" above is the classifier\'s own verdict (it ran and found no signature match);',
+  );
+  L.push(
+    '                   an uninstrumented or pre-ledger corpus reports every attempt unclassified ' +
+      '(reason no-ledger), which is the expected state until #108\'s ledger has been running a while.',
   );
   L.push('');
   L.push('  levers this bench does NOT measure, and what each would need:');

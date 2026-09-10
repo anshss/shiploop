@@ -4,6 +4,48 @@ Led by the least flattering true facts, per the operator's instruction on ticket
 in `README.md` or `METHODOLOGY.md` looks better than this file, this file is right and the number
 needs another look.
 
+## The interactive driver session is excluded, and the baseline now overlaps it
+
+Added 2026-09-10 (#108). `bench/replay.mjs` walks `logs/govern/<run>/**` only. The interactive
+driver session -- the one that turns a conversation into tickets, decides scope, dispatches
+workers and reviews the PRs -- writes no transcript there, so none of its tokens are in this
+report, in either arm, under any flag.
+
+This was a survivable gap while the governor itself spent near-zero context (`run-loop.sh` era):
+the uncounted cost was small and roughly constant. It stopped being survivable the moment the
+specification work moved INTO the driver, because now the uncounted cost is exactly the thing the
+harness is supposed to be making cheaper, and it GROWS as the harness gets better: the more work a
+driver correctly delegates to disposable workers instead of doing itself, the larger a share of the
+real total cost sits in the one session this report cannot see.
+
+Worse than merely uncounted: the vanilla arm this entire tool models is defined as "one long Claude
+Code session doing the work." The driver session, under the current architecture, **is** one long
+Claude Code session doing real work on the same tickets. The baseline this report compares against
+and the treatment it is crediting are, at the specification layer, the same kind of session. Nothing
+in `replay.mjs` can currently tell them apart, because neither one is instrumented at all.
+
+**This is a stated exclusion, not a partial instrumentation.** The alternative -- reading whatever
+driver transcript happens to exist and calling the resulting figure "complete" -- would be worse
+than saying nothing, because a half-covered driver charge reads as a measurement and is not one.
+Instrumenting the driver honestly is separate, larger work (deciding what counts as
+"specification" tokens versus incidental exploration, capturing a transcript for a session type
+that currently has no run-scoped log directory of its own -- see "Run-scoped stamps" below) and is
+not done here.
+
+**What the report actually claims, stated plainly.** The honest counterfactual left standing is:
+one premium session doing the work itself, versus one premium session specifying while cheaper
+workers execute the tickets. The delta this tool computes is confined to the EXECUTION half of that
+comparison -- the workers' tokens against what one session's tokens would have been for the same
+execution. The specification half (turning intent into tickets, reviewing results) is real work,
+happens identically in both arms of the honest comparison, and this report does not measure it in
+either one. Read every percentage in this repository with that scope in mind: it is a claim about
+execution cost, not about total cost of ownership of either way of working.
+
+This exclusion is stated in four places so it cannot be missed by reading only one of them:
+`replay.mjs`'s human report (an unmissable block right after the "no vanilla session was ever run"
+disclaimer, before any number), its JSON (`driverScope`), this file, and `METHODOLOGY.md`'s
+"Flatters shiploop" list.
+
 ## There is no published (6+ ticket) live backlog yet
 
 `bench/backlogs/` holds only the test fixture. Building a real SWE-bench-shaped backlog (a merged
@@ -140,6 +182,18 @@ uninstrumented ones, because the levers can only be credited where the events ex
 `output-suppression` is weaker still: it has no event in the wire contract at all, and the bytes it
 withholds are by construction absent from every transcript. It is listed in the lever table with a
 zero and the reason, so it can never be mistaken for a measured zero.
+
+## The attempt-outcome breakdown is `unclassified` wherever the per-attempt ledger is missing
+
+Added 2026-09-10 (#108). `outcomeBreakdown()` reads spawn-worker.sh's per-attempt ledger
+(`attempts.jsonl`, sibling of the transcript) to say why an attempt happened
+(`infra`/`ci`/`budget`/`judgment`/`unknown`/`first-attempt`), the same way the lever levers above
+read `lever-events.jsonl`. A ticket directory with no `attempts.jsonl` at all -- any corpus
+predating the ledger, or a hand-run dispatch outside the normal spawn path -- reports every one of
+its attempts `unclassified` (reason `no-ledger`), not a measured zero and not folded into the
+classifier's own `unknown` verdict. Expect this to be the common case for a while, exactly as the
+five event-derived levers were when they first shipped: the ledger has to accumulate real corpus
+history before this breakdown says much on any given fleet.
 
 ## Two instrumented levers are under-counted on purpose, and one is partial
 

@@ -289,6 +289,46 @@ session and mechanically move the number, which is a measurement artifact rather
 On the author's corpus `--scope resolved` is the **harsher** cut, not `--scope all`: resolved
 tickets skew toward earlier positions in a run, where less has been carried.
 
+### Attempt-outcome breakdown
+
+Added 2026-09-10 (#108, "no attempt-outcome dimension"). `--scope all` prices every attempt
+unconditionally, unchanged by anything below -- this is an ADDITIVE breakdown alongside that total,
+never a filter on it. It answers a different question: not how many tokens an attempt cost, but WHY
+that attempt happened, so a reader can separate infrastructure failures from capability ones
+instead of everything landing in one undifferentiated total. It reads data the harness already
+writes; nothing here is a new measurement.
+
+`govern::retry_class` (`templates/govern/lib/common.sh`) classifies why a retry is being dispatched
+into `infra`, `ci`, `budget`, `judgment` or `unknown`, and spawn-worker.sh's PER-ATTEMPT LEDGER
+(`attempts.jsonl`, one appended row per dispatch of a ticket, sitting beside the transcript in the
+same worker log directory) already carries that verdict as `retryClass` on the attempt it produced
+-- plus the literal string `first-attempt` on a ticket's very first dispatch, which is never a
+retry and so has nothing to classify. `outcomeBreakdown()` in `replay.mjs` reads that ledger, when
+it exists, and buckets every session bench already parsed by it.
+
+**File-name convention the bucketing relies on**, spelled out because it is load-bearing: `attempts.jsonl` numbers a
+ticket's dispatches from 1. spawn-worker.sh rotates the PREVIOUS attempt's transcript aside to
+`worker.attemptN.jsonl` before it writes a fresh `worker.jsonl` for the next attempt, and appends
+that previous attempt's ledger row on the SAME exit path before it does so -- so the ledger and the
+directory can never disagree about which attempt is current. `worker.jsonl` is therefore always the
+ledger's own highest attempt number; `worker.attemptN.jsonl` is attempt N by construction. A
+transcript file holding more than one session (a resumed CLI process appending further turns) is
+ambiguous -- there is no way to tell which session a single ledger row describes -- and is
+`unclassified` rather than guessed at.
+
+**`unclassified` is data this report does not have, never a measured zero, and never folded into
+the classifier's own `unknown` verdict** -- those are two different facts. `unknown` means the
+classifier ran and found no signature match for a real retry; `unclassified` means there was
+nothing to read at all: no `attempts.jsonl` in the ticket's log directory (`no-ledger`, the expected
+state for an uninstrumented or pre-ledger corpus), no ledger row for the resolved attempt number
+(`attempt-number-unmatched`), an unrecognized filename (`ambiguous-file`), or the multi-session
+case above (`multi-session-file`). The report and the JSON both print the reason breakdown, never
+just a count.
+
+The census is computed over every session in every kept ticket, including partial (killed) ones,
+independent of `--scope`: scope selects which TICKETS are counted toward the headline, never which
+attempts existed, and this is a census of attempts, not a headline component.
+
 ### Version scope
 
 No transcript event names the shiploop *package* version, so by default the tool would blend every
@@ -405,6 +445,24 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    bounded by the uncovered count instead of being a shrug: where coverage is 0 of N runs, the
    shiploop arm's cost is a stated LOWER bound rather than a measurement. The interactive session
    that typed `/shiploop:bench` is still not counted anywhere, and never will be by this path.
+
+   **This stopped being a mere gap on 2026-09-10, and became a definitional overlap.** Under the
+   architecture where the driver session does the specification work (turning a conversation into
+   tickets, deciding scope, reviewing PRs), that session's tokens are the ones this bias was always
+   about, and they grow as the harness gets better at avoiding worker spend -- the overstatement
+   GROWS with the product, not with the corpus size. Worse: the vanilla baseline this whole document
+   models IS "one long Claude Code session doing the work", and the driver session now literally IS
+   one, on the same model, doing real thinking about the same tickets. The baseline and the
+   treatment therefore overlap at exactly the point this report cannot see. This ticket's operator
+   decision (queue #108, 2026-09-10 addendum) is a STATED EXCLUSION rather than instrumentation: the
+   driver's tokens are not brought into scope here (that is separate, larger work, and a half
+   instrumented driver figure would be worse than an honest gap), but `replay.mjs`'s own JSON and
+   human report now both carry the exclusion unmissably (`driverScope`), and so does
+   `bench/KNOWN-LIMITS.md`. The honest counterfactual this leaves standing is: one premium session
+   doing the work itself, versus one premium session specifying while cheaper workers execute the
+   tickets, with the delta this report measures confined to the EXECUTION half of that comparison.
+   The specification half is identical work in both arms and this report does not measure it in
+   either one.
 2. **Scouts and re-verification are counted only when they wrote a worker transcript.** Anything
    the loop spends outside `logs/govern/**/*.jsonl` is invisible here.
 3. **A modeled session is assumed to do the same work in the same number of turns.** A single
