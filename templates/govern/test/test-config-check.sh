@@ -146,4 +146,112 @@ printf '%s' "$out" | jq -e '.helpers.next_ticket_number == "51"' >/dev/null 2>&1
   printf 'ok   - 14. peeked value reflects max(hwm 50, tickets.md #9) + 1 = 51\n' || \
   { printf 'FAIL - 14. unexpected peeked next_ticket_number\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
+# ── #119 (rail 12): hub-default knob drift + named-but-missing scripts ─────
+# A fake "hub" clone, pointed at via GOVERN_UPSTREAM_HARNESS_DIR — the same
+# knob a real operator's local fork clone uses (commands/update.md). Every
+# case below also pins CLAUDE_PLUGIN_ROOT="" and HOME="$ROOT" so an ambient
+# plugin install / ~/.claude/skills/shiploop on the machine running the suite
+# can never leak into the fixture (rule 13's inherited-env failure mode).
+HUB="$(mktemp -d)"; trap '{ rm -rf "$ROOT" "$HUB"; }' EXIT
+mkdir -p "$HUB/templates/lib"
+cat > "$HUB/templates/lib/workspace.sh" <<'EOF'
+GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-sonnet}"
+GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
+EOF
+
+# ── 15. a local knob set differently than the hub default → WARNING, not a problem ──
+out="$(CLAUDE_PLUGIN_ROOT= HOME="$ROOT" GOVERN_UPSTREAM_HARNESS_DIR="$HUB" GOVERN_WORKER_MODEL=haiku bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "15. hub-default knob drift → exit 0 (warning, not a problem)"
+assert_contains "$out" "knob 'GOVERN_WORKER_MODEL' diverges from hub default" "15. names the diverging knob"
+assert_contains "$out" "local='haiku'" "15. reports the local value"
+assert_contains "$out" "hub default='sonnet'" "15. reports the hub's value"
+
+# ── 16. a declared override (GOVERN_CONFIG_DRIFT_ACK) silences the same drift ──
+out="$(CLAUDE_PLUGIN_ROOT= HOME="$ROOT" GOVERN_UPSTREAM_HARNESS_DIR="$HUB" GOVERN_WORKER_MODEL=haiku GOVERN_CONFIG_DRIFT_ACK="GOVERN_WORKER_MODEL" bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "16. acknowledged override → exit 0"
+if printf '%s' "$out" | grep -q "diverges from hub default"; then
+  echo "FAIL - 16. GOVERN_CONFIG_DRIFT_ACK did not silence the declared knob"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - 16. declared override stops the warning"
+fi
+
+# ── 17. hub unresolvable (no plugin root, no upstream dir, no skills symlink) → one advisory line, exit 0 ──
+out="$(CLAUDE_PLUGIN_ROOT= HOME="$ROOT" GOVERN_UPSTREAM_HARNESS_DIR=/no/such/hub-dir bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "17. hub unresolvable → exit 0 (soft, not an error)"
+assert_contains "$out" "hub not resolvable" "17. names the gap instead of staying silent"
+
+# ── 18. package.json script naming a script path absent on disk → HARD failure ──
+# The pre-dispatch-check.sh live instance: the npm-script entry existed, the file didn't.
+cat > "$ROOT/package.json" <<'EOF'
+{"scripts": {"ghost": "bash scripts/govern/does-not-exist.sh"}}
+EOF
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "18. npm script names a missing file → exit 1"
+assert_contains "$out" "package.json script 'ghost'" "18. names the offending script key"
+assert_contains "$out" "scripts/govern/does-not-exist.sh" "18. names the missing path"
+assert_contains "$out" "PROBLEMS" "18. surfaces as a hard PROBLEM, not a notice"
+
+# ── 19. CLAUDE.md documents `npm run <key>` for a key package.json no longer has → HARD failure ──
+# The "npm run govern" live instance: a rule outlived the npm script it named.
+cat > "$ROOT/package.json" <<'EOF'
+{"scripts": {"dev": "bash scripts/dev.sh"}}
+EOF
+mkdir -p "$ROOT/scripts" && : > "$ROOT/scripts/dev.sh"
+printf 'Run `npm run dev` first, then `npm run retired-command`.\n' > "$ROOT/CLAUDE.md"
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "19. CLAUDE.md names a removed npm script → exit 1"
+assert_contains "$out" "CLAUDE.md references 'npm run retired-command'" "19. names the removed script"
+if printf '%s' "$out" | grep -q "references 'npm run dev'"; then
+  echo "FAIL - 19. a still-live npm script was wrongly flagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - 19. a still-live npm script (dev) is not flagged"
+fi
+
+# ── 20. the CLAUDE.md scan tolerates the three real shapes CLAUDE.md writes commands in:
+# trailing args ("-- <N>"), a markdown table cell, and mid-sentence backticks + punctuation.
+# All three name a REAL script (govern:resolve) so none of them should be flagged.
+cat > "$ROOT/package.json" <<'EOF'
+{"scripts": {"dev": "bash scripts/dev.sh", "govern:resolve": "bash scripts/govern/resolve-ticket.sh"}}
+EOF
+mkdir -p "$ROOT/scripts/govern" && : > "$ROOT/scripts/govern/resolve-ticket.sh"
+cat > "$ROOT/CLAUDE.md" <<'EOF'
+1. Run `npm run govern:resolve -- <N>` BEFORE landing.
+2. | command | what it does |
+   |---|---|
+   | `npm run govern:resolve` | lands a ticket |
+3. Then commit, via `npm run govern:resolve`, once CI is green.
+EOF
+out="$(bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "20. all three real-world CLAUDE.md shapes resolve to a live script → exit 0"
+if printf '%s' "$out" | grep -q "references 'npm run govern:resolve'"; then
+  echo "FAIL - 20. a live script mentioned with trailing args / in a table / mid-sentence was wrongly flagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - 20. trailing-args / table-cell / mid-sentence forms all parsed to the same live key"
+fi
+
+# ── 21. same removed-script case as 19, but declared via GOVERN_CLAUDE_SCRIPT_IGNORE → no longer a problem ──
+# The escape hatch for "CLAUDE.md deliberately mentions a command this fleet does not install."
+printf 'Run `npm run dev` first, then `npm run retired-command`.\n' > "$ROOT/CLAUDE.md"
+cat > "$ROOT/package.json" <<'EOF'
+{"scripts": {"dev": "bash scripts/dev.sh"}}
+EOF
+out="$(GOVERN_CLAUDE_SCRIPT_IGNORE="retired-command" bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "21. declared GOVERN_CLAUDE_SCRIPT_IGNORE → exit 0, no longer hard-fails"
+if printf '%s' "$out" | grep -q "references 'npm run retired-command'"; then
+  echo "FAIL - 21. GOVERN_CLAUDE_SCRIPT_IGNORE did not silence the declared key"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - 21. declared ignore-list entry silences the named-but-missing check"
+fi
+
+# ── 22. GOVERN_CLAUDE_SCRIPT_IGNORE is scoped to the CLAUDE.md prose check only — an actually-WIRED
+# package.json script pointing at a missing file still hard-fails regardless (case (a) has no exemption:
+# it is never "deliberately not installed", the entry exists and is broken).
+cat > "$ROOT/package.json" <<'EOF'
+{"scripts": {"dev": "bash scripts/dev.sh", "ghost": "bash scripts/govern/does-not-exist.sh"}}
+EOF
+printf 'nothing relevant here\n' > "$ROOT/CLAUDE.md"
+out="$(GOVERN_CLAUDE_SCRIPT_IGNORE="ghost" bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "1" "22. GOVERN_CLAUDE_SCRIPT_IGNORE does not exempt a wired-but-missing package.json script"
+assert_contains "$out" "package.json script 'ghost'" "22. still hard-fails on the wired-but-missing script"
+
 assert_done
