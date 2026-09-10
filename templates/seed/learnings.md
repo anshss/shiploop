@@ -42,6 +42,22 @@ Order doesn't matter (entries are date-sorted on read). Keep each heading immedi
 own body — the digest slices the file at headings, so appending a new entry *between* a heading and
 its body silently injects a garbled fragment into every session from then on.
 
+**Optional `**Paths:**` tag — for a gotcha specific to files, not general knowledge.** This digest only
+ever shows the newest few entries, and a worker dispatched into a sub-repo never opens that sub-repo's
+`learnings.md` (or the root one) on its own. Add a `**Paths:**` line (space-separated globs) right
+under the heading and a ticket naming those files gets the entry INLINED into its dispatch prompt,
+regardless of how old it is or which repo it lives in. The same `### <title>` + `**Paths:**` shape
+works in `CLAUDE.md` too (see `CLAUDE-APPENDIX.md`) — one convention for both files. Leave it off for
+anything that isn't file-specific; an untagged entry only ever reaches a session through the recency
+digest above.
+
+```
+### YYYY-MM-DD — short grep-able title
+**Paths:** backend/src/pay/**
+
+What you OBSERVED, with source and n.
+```
+
 ---
 
 _(empty — append dated entries as you discover things)_
