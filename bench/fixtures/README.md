@@ -28,6 +28,8 @@ real runs and nothing published may be computed from them.
 | `make-lever-fixture.mjs` | the generator for the multi-lever fixture below. Same rule: the numbers live here and nowhere else |
 | `replay-lever-fleet/` | a three-session run with three tiers, an orchestration transcript, a driver-model stamp, a killed session, a `lever-events.jsonl`, and a second run that aborted pre-flight |
 | `golden-results.jsonl` | the same four sessions expressed as a `results.jsonl` for the rollup test |
+| `make-outcome-fixture.mjs` | the generator for the attempt-outcome fixture below |
+| `replay-outcome-fleet/` | three tickets exercising spawn-worker.sh's per-attempt ledger (`attempts.jsonl`): a two-attempt retry with the ledger present, a single attempt classified `infra`, and a ticket with no ledger at all |
 
 Regenerate with `node bench/fixtures/make-replay-fixture.mjs`. It rewrites `replay-fleet/`,
 `replay-empty-fleet/` and `golden-results.jsonl` together, so they can never drift apart.
@@ -152,3 +154,24 @@ Two properties this fixture exists to lock, beyond the arithmetic:
   there are, and the test asserts that as an identity across all six arm/partials pairs.
 - **Uninstrumented is not zero.** `replay-fleet` carries no `lever-events.jsonl`, so the same four
   levers must read `uninstrumented` there while reading measured here.
+
+## The attempt-outcome fixture (`replay-outcome-fleet`)
+
+Built for `templates/govern/test/test-bench-outcome.sh`, which asserts the "present class, absent
+class" contract for `outcomeBreakdown()` (queue #108, "no attempt-outcome dimension"). Regenerate
+with `node bench/fixtures/make-outcome-fixture.mjs`.
+
+Three tickets in `run-20260301-000000`, each exercising a different state of spawn-worker.sh's
+per-attempt ledger (`attempts.jsonl`, sibling of the transcript):
+
+| Ticket | Attempts | Ledger | Classification |
+|---|---|---|---|
+| `ticket-701` | 2: `worker.attempt1.jsonl` then `worker.jsonl` | present, both rows | attempt 1 `first-attempt` (36,000 tokens), attempt 2 `judgment` (47,000 tokens) |
+| `ticket-702` | 1: `worker.jsonl` | present, one row | `infra` (29,000 tokens) -- proves a class other than the first two sorted alphabetically is actually read off the ledger |
+| `ticket-703` | 1: `worker.jsonl` | absent (no `attempts.jsonl` at all) | `unclassified`, reason `no-ledger` (21,000 tokens) |
+
+This is deliberately NOT a numeric-derivation fixture the way `replay-fleet` and
+`replay-lever-fleet` are: only the classification path is under test, so token counts are small
+and arbitrary rather than chosen to land on a checkable percentage. `ticket-701` is the shape that
+matters most -- it is the ordinary retry, and it is what proves `worker.jsonl` always resolves to
+the ledger's own highest attempt number rather than a hardcoded one.
