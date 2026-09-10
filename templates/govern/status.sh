@@ -71,6 +71,9 @@ FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
   else if (typ == "worker_spawned") {
     t = jget(line,"ticket"); k = rid SUBSEP t
     wstate[k] = "live"; wpid[k] = jget(line,"pid"); wmodel[k] = jget(line,"model")
+    # modelSource/precision: rail 5/Layer 2 — WHY this tier was picked, carried on the same event
+    # as model/effort (both known before the CLI even runs). Read by the "by source" fold below.
+    wms[k] = jget(line,"modelSource"); wprec[k] = jget(line,"precision")
     weffort[k] = jget(line,"effort"); wsince[k] = ts
     if (!(k in wseen)) { wseen[k] = 1; worder[++nw] = k; wrid[k] = rid; wtick[k] = t }
   }
@@ -82,6 +85,7 @@ FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
   else if (typ == "worker_done") {
     t = jget(line,"ticket"); k = rid SUBSEP t
     wstate[k] = "done"; wstatus[k] = jget(line,"status")
+    wcost[k] = jget(line,"costUsd")
     tally[rid, jget(line,"status")]++
   }
   else if (typ == "ticket_parked") { tally[rid,"parked_event"]++ }
@@ -101,6 +105,16 @@ END {
     k = worder[i]
     if (wstate[k] != "live") continue
     printf "W\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], wtick[k], (wpid[k]==""?0:wpid[k]), wmodel[k], weffort[k], (wsince[k]==""?0:wsince[k])
+  }
+  # U = per-session tier attribution (rail 5): one row per ticket EVER spawned in scope (live or
+  # done — unlike the W rows above, which are live-only), carrying the model_source/precision the
+  # dispatch was decided from and the cost once known. Old logs from before this field existed print
+  # "" for modelSource/precision/cost; the bash-side fold below labels that "(unrecorded)"/"null"
+  # rather than treating it as a fourth real value.
+  for (i = 1; i <= nw; i++) {
+    k = worder[i]
+    st = wstatus[k]; if (st == "") { if (wstate[k] == "live") st = "live"; else continue }
+    printf "U\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], wtick[k], wmodel[k], wms[k], wprec[k], st, wcost[k]
   }
   for (i = 1; i <= nd; i++) {
     k = dorder[i]
@@ -206,6 +220,41 @@ N_RES="$(counter resolved)"; N_PARK="$(counter parked)"; N_FAIL="$(counter faile
 N_TIME="$(counter timeout)"; N_BUDGET="$(counter budget-exceeded)"; N_ABORT="$(counter early-abort)"
 N_INTR="$(counter interrupted)"; N_ESC="$(counter escalated)"; N_STALEC="$(counter stale)"
 
+# ── per-session tier attribution, grouped by model_source (rail 5 / design doc Layer 2) ──────────
+# The gap this closes: `model_source` was already logged (spawn-worker.sh's attempts.jsonl ledger)
+# but nothing aggregated it, so answering "which tier decided what, and what did it cost" took a
+# dedicated agent 38 tool calls on the run that first needed the answer. This reads it straight off
+# the SAME event fold everything else above uses (worker_spawned/worker_done now carry
+# modelSource/precision/costUsd — see spawn-worker.sh), so it costs one more awk pass, not a second
+# file format. `U` rows cover every ticket EVER dispatched in scope (live or done), unlike the
+# live-only `W` rows.
+#
+# Unknown statuses fall into "other" rather than being silently dropped from the per-source detail
+# string — the fixed order below is display convenience, never a filter.
+# U columns (see the FOLD_PROG emitter above): 1=U 2=rid 3=ticket 4=model 5=modelSource
+# 6=precision 7=status 8=costUsd.
+BY_SRC="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="U"' | run_filter | awk -F'\t' '
+  BEGIN { forder = "resolved parked failed timeout budget-exceeded early-abort interrupted killed-by-signal usage-error infra stale live"
+          nf = split(forder, forderArr, " ") }
+  {
+    ms = $5; if (ms == "") ms = "(unrecorded)"
+    st = $7; co = $8
+    if (!(ms in seen)) { seen[ms] = 1; order[++n] = ms }
+    cnt[ms]++; stcnt[ms SUBSEP st]++
+    if (co != "" && co != "null") { cost[ms] += co + 0; costn[ms]++ }
+  }
+  END {
+    for (i = 1; i <= n; i++) {
+      ms = order[i]; detail = ""; shown = 0
+      for (j = 1; j <= nf; j++) {
+        s = forderArr[j]; key = ms SUBSEP s
+        if (key in stcnt) { detail = detail (detail=="" ? "" : " ") s ":" stcnt[key]; shown += stcnt[key] }
+      }
+      if (shown < cnt[ms]) detail = detail (detail=="" ? "" : " ") "other:" (cnt[ms]-shown)
+      printf "%s\t%s\t%s\t%s\t%s\n", ms, cnt[ms], cost[ms]+0, costn[ms]+0, detail
+    }
+  }')"
+
 hms() { # seconds -> compact human duration
   local s="${1:-0}"
   [[ "$s" =~ ^[0-9]+$ ]] || { printf '?'; return 0; }
@@ -242,6 +291,14 @@ if [[ "$JSON" -eq 1 ]]; then
       [[ "$_first" -eq 1 ]] || printf ','; _first=0
       printf '{"label":"%s","pid":%s,"elapsed":%s}' "$_l" "$_p" "$(( NOW - ${_si:-NOW} ))"
     done
+    printf '],"bySource":['
+    _first=1
+    while IFS=$'\t' read -r _ms _cnt _cost _costn _detail; do
+      [[ -n "$_ms" ]] || continue
+      [[ "$_first" -eq 1 ]] || printf ','; _first=0
+      printf '{"modelSource":"%s","count":%s,"costUsd":%s,"pricedCount":%s,"byStatus":"%s"}' \
+        "$_ms" "$_cnt" "$_cost" "$_costn" "$_detail"
+    done <<<"$BY_SRC"
     printf '],"counts":{"resolved":%s,"parked":%s,"failed":%s,"timeout":%s,"budgetExceeded":%s,"earlyAborted":%s,"interrupted":%s,"escalated":%s,"stale":%s}}\n' \
       "$N_RES" "$N_PARK" "$N_FAIL" "$N_TIME" "$N_BUDGET" "$N_ABORT" "$N_INTR" "$N_ESC" "$N_STALEC"
   }
@@ -283,5 +340,15 @@ if [[ "${#STALE[@]}" -gt 0 ]]; then
     printf ' #%s' "$_t"
   done
   printf '\n'
+fi
+
+if [[ -n "$BY_SRC" ]]; then
+  printf 'by source:\n'
+  while IFS=$'\t' read -r _ms _cnt _cost _costn _detail; do
+    [[ -n "$_ms" ]] || continue
+    _costtxt="no cost data"
+    [[ "$_costn" -gt 0 ]] 2>/dev/null && _costtxt="\$$(printf '%.2f' "$_cost") ($_costn/$_cnt priced)"
+    printf '  %-58s %3s dispatch(es) — %s — %s\n' "$_ms" "$_cnt" "$_detail" "$_costtxt"
+  done <<<"$BY_SRC"
 fi
 exit 0

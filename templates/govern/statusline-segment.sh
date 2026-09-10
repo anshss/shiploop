@@ -91,18 +91,25 @@ function jget(line, key,   pat, i, s, c, out, esc, n) {
 {
   rid = jget($0, "run_id"); typ = jget($0, "type")
   if (rid == "" || typ == "") next
-  if (rid != cur) { cur = rid; split("", st); split("", pid); split("", mod); split("", since); done = 0; answered = 0 }
+  if (rid != cur) { cur = rid; split("", st); split("", pid); split("", mod); split("", since); split("", doneModel); done = 0; answered = 0 }
   if (typ == "run_done") { done = 1 }
   else if (typ == "worker_spawned") {
     t = jget($0,"ticket"); st[t] = 1; pid[t] = jget($0,"pid"); mod[t] = jget($0,"model"); since[t] = jget($0,"ts")
   }
   else if (typ == "worker_escalated") { t = jget($0,"ticket"); if (t in mod) mod[t] = jget($0,"to") }
-  else if (typ == "worker_done") { t = jget($0,"ticket"); st[t] = 0; answered++ }
+  else if (typ == "worker_done") {
+    t = jget($0,"ticket"); st[t] = 0; answered++
+    # Tier mix (rail 5, the terse counterpart of `status.sh`s full "by source" — this stays a raw
+    # MODEL tally, not the full model_source string, on purpose: one more awk pass is affordable,
+    # but the segment must stay a single glance, and model_source prose is not.
+    dm = jget($0,"model"); if (dm != "") doneModel[dm]++
+  }
 }
 END {
   if (done) exit 0
   for (t in st) if (st[t] == 1) printf "P\t%s\t%s\t%s\t%s\n", t, pid[t], since[t], mod[t]
   printf "N\t%d\n", answered
+  for (m in doneModel) printf "M\t%s\t%s\n", m, doneModel[m]
 }
 ' "$LOG" 2>/dev/null)"
 
@@ -114,10 +121,17 @@ END {
 NOW="$(date +%s)"
 _STALE_DAYS="${GOVERN_EVENTS_STALE_DAYS:-7}"
 _STALE_CHECK="${GOVERN_STATUSLINE_STALE_CHECK:-1}"
-LIVE=0; NDONE=0; BEST_T=""; BEST_M=""; BEST_S=0
+LIVE=0; NDONE=0; BEST_T=""; BEST_M=""; BEST_S=0; MIX=""; N_MIX=0
 while IFS=$'\t' read -r _k _a _b _c _d; do
   case "${_k:-}" in
     N) NDONE="${_a:-0}" ;;
+    M)
+      # Tier mix among ALREADY-ANSWERED tickets this run — the raw model, not the full
+      # model_source (see the fold above). Only ever printed alongside a live worker below (the
+      # segment's own silence contract), so this never fires on an idle fleet.
+      N_MIX=$((N_MIX+1))
+      MIX="${MIX:+$MIX }${_a}${_b:+×$_b}"
+      ;;
     P)
       [[ "${_b:-0}" -gt 0 ]] 2>/dev/null || continue
       kill -0 "$_b" 2>/dev/null || continue
@@ -155,5 +169,9 @@ if [[ -n "$BEST_T" ]]; then
   [[ -n "$BEST_M" ]] && printf ' %s' "$BEST_M"
   [[ "${BEST_S:-0}" -gt 0 ]] && printf ' %s' "$(_hms "$(( NOW - BEST_S ))")"
 fi
+# Only worth a glance once more than one tier answered something THIS run — a single-tier run says
+# nothing `$BEST_M` above didn't already. The full breakdown, grouped by model_source with cost, is
+# `status.sh`'s "by source" section; this is the one-line hint that it exists.
+[[ "$N_MIX" -gt 1 ]] && printf ' · %s' "$MIX"
 printf '\n'
 exit 0
