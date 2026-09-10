@@ -11,15 +11,15 @@
 #   2. GOVERN_WARM matching the ticket -> "stated", haiku (already covered by test-warm-dispatch.sh
 #      for the tier; this asserts the recorded GRADE too).
 #   3. GOVERN_PRECISION="<N>|open" matching the ticket -> "open", but the SAME tier as scoped today
-#      (the advisor-budget half of "open" is layer 3, not built yet) — the grade is what changes,
+#      (the advisor-budget half of "open" is layer 3, not built yet): the grade is what changes,
 #      not the sizing.
 #   4. GOVERN_PRECISION="<N>|scoped" explicit -> "scoped", same tier, source names the assertion.
 #   5. GOVERN_PRECISION naming a DIFFERENT ticket -> not applied; falls back to the "scoped" default.
 #   6. Malformed GOVERN_PRECISION (no pipe / non-numeric ticket / unrecognized grade) -> ignored.
-#   7. GOVERN_WARM beats a GOVERN_PRECISION=open on the SAME ticket — "stated" is the strongest
+#   7. GOVERN_WARM beats a GOVERN_PRECISION=open on the SAME ticket: "stated" is the strongest
 #      signal and wins regardless of what else is asserted.
 #   8. The live path: the per-attempt ledger (attempts.jsonl) and the fleet event log both carry
-#      precisionGrade/precisionSource (rail 11 — every input to the decision is recorded at the
+#      precisionGrade/precisionSource (rail 11: every input to the decision is recorded at the
 #      moment the decision is made).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,14 +33,14 @@ mk_ws_stub "$TMP"
 mkdir -p "$TMP/governor" "$TMP/wt"
 
 cat > "$TMP/tickets.md" <<'EOF'
-## #701 — the ticket under test
+## #701: the ticket under test
 **Severity:** Medium
 Observed: something small in one file.
 Done when: PR opens.
 
 ---
 
-## #702 — an unrelated ticket
+## #702: an unrelated ticket
 **Severity:** Medium
 Observed: something else entirely.
 Done when: PR opens.
@@ -89,7 +89,7 @@ assert_eq "$(printf '%s' "$d3" | jq -r '.precision_grade')" "open" \
 assert_contains "$(printf '%s' "$d3" | jq -r '.precision_source')" "GOVERN_PRECISION" \
   "the recorded source names GOVERN_PRECISION"
 assert_eq "$(printf '%s' "$d3" | jq -r '.model')" "sonnet" \
-  "open buys NO tier change today — the design's table puts scoped and open at the same tier"
+  "open buys NO tier change today, the design's table puts scoped and open at the same tier"
 
 # ── 4. GOVERN_PRECISION=scoped explicit -> "scoped", source names the assertion ──────────────────
 d4="$(dry 701 scoped-explicit "GOVERN_PRECISION=701|scoped")"

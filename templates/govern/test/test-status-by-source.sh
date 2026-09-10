@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# status.sh's "by source" summary — per-session tier attribution grouped by model_source (rail 5 /
+# status.sh's "by source" summary: per-session tier attribution grouped by model_source (rail 5 /
 # design doc Layer 2: .specs/2026-09-09-model-orchestration-design.md).
 #
 # Why it exists: model_source was already logged (spawn-worker.sh's attempts.jsonl ledger) but
@@ -9,7 +9,7 @@
 # turns those into a grouped summary.
 #
 # Contract:
-#   1. Grouped by modelSource, not raw model — two sources that happen to pick the same tier stay
+#   1. Grouped by modelSource, not raw model: two sources that happen to pick the same tier stay
 #      distinct rows.
 #   2. Counts EVERY ticket ever dispatched in scope (done or still live), not just live ones.
 #   3. Cost sums only PRICED rows; an unpriced (killed-before-result-event) row still counts toward
