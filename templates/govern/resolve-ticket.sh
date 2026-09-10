@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# resolve-ticket.sh — the SESSION-SIDE resolve path for ticket N (shiploop 1.19.3, the loop purge).
+# resolve-ticket.sh — the SESSION-SIDE resolve path for ticket N (shiploop 1.19.2, the loop purge).
 #
 # Before this script, the ONLY thing that landed a resolution was the autonomous loop
 # (run-loop.sh): it awaited CI, merged the PR, then piped the worker's report into the bookkeep

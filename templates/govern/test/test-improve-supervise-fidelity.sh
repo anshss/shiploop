@@ -4,7 +4,7 @@
 # defaults to 500 (it was a hardcoded head -260 that silently truncated conflict detection past
 # ~ticket 25).
 # The part of this file that covered govern-improve.sh went with that script when the
-# self-improvement lane was deleted in 1.19.3. govern-supervise.sh survives: it is a MANUAL audit,
+# self-improvement lane was deleted in 1.19.2. govern-supervise.sh survives: it is a MANUAL audit,
 # never on any dispatch path.
 # The reviewer shells out to `claude` (overridable via GOVERN_CLAUDE_BIN). The mock captures the
 # prompt it is handed to a file, then emits a minimal valid stream-json result event, so we can

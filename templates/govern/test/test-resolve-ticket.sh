@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# resolve-ticket.sh — the session-side resolve path (shiploop 1.19.3, the loop purge).
+# resolve-ticket.sh — the session-side resolve path (shiploop 1.19.2, the loop purge).
 #
 # The one invariant worth more than all the others: it must NEVER land a resolution it did not
 # earn. Landing edits tickets.md, rewrites CLAUDE.md and pushes to origin/main, so a land on a red

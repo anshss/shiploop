@@ -63,7 +63,7 @@ TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 
 # ── Fleet event log (govern::event) ─────────────────────────────────────────────────────────────
-# Folded in from the former lib/events.sh (deleted with the dispatch loop, 1.19.3). The emitter is
+# Folded in from the former lib/events.sh (deleted with the dispatch loop, 1.19.2). The emitter is
 # NOT loop machinery: spawn-worker.sh, status.sh, statusline-segment.sh and the plugin monitor all
 # read/write it, and every one of them survives the loop purge. It lives here now so there is one
 # file to source and no existence guard to get wrong on an old workspace.
@@ -2284,7 +2284,7 @@ govern::paths_overlap() { # "pathsA" "pathsB" -> rc 0 if they intersect
 #     edit inside one worker, and pre-dispatch-check.sh's dependency gate already defers a
 #     dependent whose blocker is unlanded, so nothing is lost.
 # Reads $3 (def TICKETS_FILE).
-# NO PRODUCTION CALLER as of 1.19.3. The automatic partitioner ran only inside the deleted
+# NO PRODUCTION CALLER as of 1.19.2. The automatic partitioner ran only inside the deleted
 # dispatch loop; pre-dispatch-check.sh's overlap nudge SUGGESTS a batch and spawn-worker.sh still
 # accepts one (`spawn-worker.sh <N> <other>`), but the grouping decision is the operator's now.
 # Kept, with its test, because it is a pure function and the only thing a batch driver would need.
