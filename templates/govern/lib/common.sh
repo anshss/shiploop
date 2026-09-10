@@ -1951,6 +1951,98 @@ govern::collect_ticket_prs() {
   return 0
 }
 
+# #120: resolve which configured repo owns OPEN PR number $1, for a worker report that gave a
+# bare integer with no repo. If the merge-first candidate set (GOVERN_MERGE_REPOS +
+# GOVERN_FRONTEND_REPOS, i.e. every REPOS entry) has exactly ONE repo total, that repo IS the
+# answer — no `gh` call needed, and a bad number still fails safely later (merge-pr.sh/await-ci.sh
+# refuse on a PR that doesn't exist, never a silent land). With more than one candidate, ask `gh`
+# which repo actually has PR $1 open, merge-first then harness slugs, first OPEN match wins.
+# Prints "repo url" (repo = short REPOS name, or bare slug for a harness repo) on success; empty +
+# rc 1 if `gh` is unavailable or no configured repo has it open — the caller must treat that as
+# UNRESOLVABLE, never as "no PR" (#120).
+govern::resolve_pr_repo() { # <pr-number> -> "repo url"
+  local num="$1" candidates ncand repo slug j state url
+  candidates="$(govern::_repos_merge_first)"
+  ncand="$(printf '%s\n' "$candidates" | grep -c . || true)"
+  if [[ "$ncand" -eq 1 ]]; then
+    printf '%s %s\n' "$candidates" ""
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 1
+  while IFS= read -r repo; do
+    [[ -n "$repo" ]] || continue
+    slug="$(govern::repo_slug "$repo" 2>/dev/null || true)"
+    [[ -n "$slug" ]] || continue
+    j="$(gh pr view "$num" --repo "$slug" --json state,url 2>/dev/null || true)"
+    [[ -n "$j" ]] || continue
+    state="$(jq -r '.state // ""' <<<"$j" 2>/dev/null || true)"
+    if [[ "$state" == "OPEN" ]]; then
+      url="$(jq -r '.url // ""' <<<"$j" 2>/dev/null || true)"
+      printf '%s %s\n' "$repo" "$url"
+      return 0
+    fi
+  done <<< "$candidates"
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    j="$(gh pr view "$num" --repo "$slug" --json state,url 2>/dev/null || true)"
+    [[ -n "$j" ]] || continue
+    state="$(jq -r '.state // ""' <<<"$j" 2>/dev/null || true)"
+    if [[ "$state" == "OPEN" ]]; then
+      url="$(jq -r '.url // ""' <<<"$j" 2>/dev/null || true)"
+      printf '%s %s\n' "${slug##*/}" "$url"
+      return 0
+    fi
+  done < <(govern::harness_repo_slugs 2>/dev/null)
+  return 1
+}
+
+# #120: normalize the worker-report `.pr` field into the canonical {repo,number,url} object, or
+# refuse. Accepted shapes:
+#   * absent / null           — no PR at all (legitimate — see `.prs[]`); passed through untouched.
+#   * an OBJECT                {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"}
+#                              — the documented shape; `.url` is optional, `.repo`+`.number` are not.
+#   * a bare INTEGER            42   — the shape a worker naturally emits when it only knows the
+#                              number; resolved to a repo via govern::resolve_pr_repo.
+# Prints the (possibly rewritten) report JSON on stdout and returns 0 when `.pr` matches one of
+# the shapes above. Returns 1, printing nothing, when `.pr` is PRESENT but is none of them (a
+# non-numeric string, a bool/array, an object missing `.number`/`.repo`, or an integer no
+# configured repo has open) — the caller MUST treat that as a hard refusal, never fall through to
+# the "no PR" path: that silent fall-through once deleted a queue block while the PR sat open,
+# unmerged (#120).
+govern::normalize_pr_field() { # <report-json> -> normalized-report-json (rc 1 = refuse)
+  local report="$1" pr_type num repo resolved rrepo rurl
+  pr_type="$(jq -r '.pr | type' <<<"$report" 2>/dev/null || echo error)"
+  case "$pr_type" in
+    null)
+      printf '%s' "$report"
+      return 0
+      ;;
+    object)
+      num="$(jq -r '.pr.number // empty' <<<"$report" 2>/dev/null || true)"
+      repo="$(jq -r '.pr.repo // empty' <<<"$report" 2>/dev/null || true)"
+      if [[ -n "$num" && "$num" =~ ^[0-9]+$ && -n "$repo" ]]; then
+        printf '%s' "$report"
+        return 0
+      fi
+      return 1
+      ;;
+    number|string)
+      num="$(jq -r '.pr' <<<"$report" 2>/dev/null || true)"
+      [[ "$num" =~ ^[0-9]+$ ]] || return 1
+      resolved="$(govern::resolve_pr_repo "$num" 2>/dev/null || true)"
+      [[ -n "$resolved" ]] || return 1
+      rrepo="${resolved%% *}"
+      rurl="${resolved#* }"
+      jq --arg repo "$rrepo" --arg url "$rurl" --argjson num "$num" \
+        '.pr = {repo:$repo, number:$num, url:$url}' <<<"$report" 2>/dev/null
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # owner/repo slugs recognized as "the harness/meta-repo" — the root repo's OWN git origin
 # (the common case: a governor-dispatched HARNESS-scope ticket's PR targets this repo itself) plus
 # GOVERN_UPSTREAM_HARNESS_REPO if configured (the /shiploop:push hub — a workspace may route some

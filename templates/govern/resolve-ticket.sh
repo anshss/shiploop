@@ -14,18 +14,35 @@
 #                deliberately left open) by hand — go straight to landing.
 #   stdin        the worker's JSON report — the EXACT shape land-resolution.sh consumes:
 #                .pr, .prs[], .status, .lessonPatch, .newTickets[], .validation.*
+#                Accepted `.pr` shapes (#120 — an ambiguous contract once let a present-but-
+#                unparseable `.pr` silently land as "no PR", deleting a queue block with the PR
+#                still open, unmerged):
+#                  * absent / null            — no PR at all (see `.prs[]`), e.g. omit the field.
+#                  * an OBJECT                  {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"}
+#                                               — `.repo` + `.number` required, `.url` optional.
+#                  * a bare INTEGER             42
+#                                               — the shape a worker naturally emits when it only
+#                                               knows the number; the repo is resolved from the
+#                                               workspace's configured repos (govern::resolve_pr_repo).
+#                Anything else present (a non-numeric string, an object missing `.repo`/`.number`,
+#                an integer no configured repo has open) is a HARD REFUSAL before any bookkeeping —
+#                never treated as "no PR". `.prs[]` entries follow the same OBJECT shape.
 #
 # What it does, in order:
 #   1. Refuse anything whose report.status is not "resolved" — that is the worker's own concern,
 #      not this script's; read the worker's output directly.
-#   2. PR-hygiene backstop: strip a leaked internal #N reference from the PR's title/body, and warn
+#   2. Normalize `.pr` into {repo,number,url}, or REFUSE (#120): a `.pr` that is present but not
+#      one of the accepted shapes (see the stdin contract above) must never fall through to the
+#      "no PR" path — that silent fall-through once deleted a queue block while the PR sat open,
+#      unmerged. This runs BEFORE any bookkeeping, so a refusal here leaves tickets.md untouched.
+#   3. PR-hygiene backstop: strip a leaked internal #N reference from the PR's title/body, and warn
 #      if a Claude spec/plan artifact leaked into the diff. Ported from run-loop.sh's per-ticket
 #      PR-hygiene block; scoped, like the original, to the single reported .pr (not every PR a
 #      multi-repo ticket opened).
-#   3. The validation-evidence gate (#67 no live-test evidence / #73 gate measured a negative):
+#   4. The validation-evidence gate (#67 no live-test evidence / #73 gate measured a negative):
 #      refuse to land, explain which of the two rules tripped, exit non-zero. A refusal here is a
 #      product-judgment call the worker must never make for itself.
-#   4. Await CI + merge EVERY PR the report names (.pr + .prs[]), via the EXISTING await-ci.sh /
+#   5. Await CI + merge EVERY PR the report names (.pr + .prs[]), via the EXISTING await-ci.sh /
 #      merge-pr.sh — never reimplemented here. merge-pr.sh's exit code is honoured exactly:
 #        0 merged · 2 frontend/PR-only · 3 CI red/pending · 4 CI unverifiable ·
 #        5 external-PR-blocked · 6 left-open (GOVERN_AUTONOMY observe/pr-only)
@@ -36,14 +53,14 @@
 #      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
 #      or with --no-merge once they handled it by hand).
-#   5. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD the way run-loop.sh
+#   6. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD the way run-loop.sh
 #      did (same destructive-migration refusal, same local-first neutralization, same
 #      apply-then-verify-then-classify-the-failure shape).
-#   6. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
+#   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
-#   7. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
+#   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
 #      the codebase index (§4.3, GOVERN_INDEX) and tear down the ticket's worktree.
-#   8. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), preserving the
+#   9. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), preserving the
 #      exact JSON shape run-loop.sh's record()/history_enrich() wrote.
 #
 # Kill switch: GOVERN_RESOLVE_TICKET=0 refuses to run at all (exit 1) — there is no sensible
@@ -79,6 +96,18 @@ if [[ "$status" != "resolved" ]]; then
   echo "resolve-ticket #$N: report status is '$status', not 'resolved' — nothing to land. Read the worker's own output/escalation and handle it directly." >&2
   exit 2
 fi
+
+# ── Normalize/validate the reported `.pr` shape, or REFUSE (#120) ──────────────────────────────
+# A present-but-unparseable `.pr` (a bare integer, a malformed object, any other shape) used to
+# fall through to the SAME branch as a genuinely PR-less report, and that branch LANDS — deleting
+# the queue block while the real PR sat open, unmerged, with only a stderr line as the signal. This
+# runs BEFORE any bookkeeping (no ticket-history write, no land-resolution.sh call), so a refusal
+# here leaves tickets.md byte-identical. See the stdin contract at the top of this file for the
+# accepted `.pr` shapes.
+_norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report" || {
+  echo "resolve-ticket #$N: .pr is present but not one of the accepted shapes (an object {repo,number,url}, or a bare integer PR number a configured repo has open) — refusing BEFORE any bookkeeping rather than silently landing as 'no PR' (#120). Fix the report's .pr field and re-run." >&2
+  exit 9
+}
 
 # ── ticket-history.jsonl writer (§B3) ───────────────────────────────────────────────────────────
 # Mirrors run-loop.sh's record()/history_enrich() exactly (same JSON shape: {ticket,run,status,ts}
