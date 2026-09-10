@@ -20,6 +20,20 @@
 #      (transcript under .../subagents/) are both silent. Workers hold the Agent tool for
 #      their own sub-delegation, so nagging them is wrong AND would break sub-delegation.
 #   7. The deny never consumes the shared per-session warn cap (a deny is not an advisory).
+#   8. (#115) A write marker under a NEGATION ("do not open a PR", "not create a
+#      worktree") does not count against the exemption, for EVERY write marker, not
+#      just the "do not edit/commit" pair the first fix special-cased. A genuine,
+#      non-negated write verb still defeats it.
+#   9. (#115) AUTHORING is its own two-signal exemption: an authoring verb
+#      (draft/author) PLUS a content-artifact noun (prose, write-up, entries) reads
+#      as producing text about a ticket, not dispatching it -- even though the
+#      quoted/drafted text is full of ticket references and "Fix:"-shaped headers.
+#      Either signal alone, or a real non-negated write verb anywhere, still denies.
+#  10. (#115) Item-shaped NAME/DESCRIPTION (`t1004`, `ticket-955`, `w973`) carries
+#      ticket-shaped + dispatch intent on its own, even when the PROMPT body never
+#      says "ticket" or a dispatch verb. A single-digit `t1`/`t2` is a step label,
+#      not a ticket number, and stays untouched; an item-shaped name doing
+#      genuinely read-only work is still exempt.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -143,6 +157,89 @@ for i in 1 2 3 4 5; do
   case "$out" in *'"permissionDecision": "deny"'*) denies=$((denies + 1)) ;; esac
 done
 assert_eq "$denies" "5" "7. all 5 ticket-shaped calls in one session are denied (the warn cap never gates a deny)"
+clear_counter "$sid"
+
+# ── 8. negated write verbs beyond edit/commit don't count against the exemption ─────
+# The first fix only special-cased "do not (edit|commit)"; a prohibition worded
+# "do not open a PR" / "do not create a worktree" slipped straight past it (#115).
+sid="ticketroute-negwrite"; clear_counter "$sid"
+payload "" "Audit ticket #42, fix it. Do not open a PR, do not create a worktree, and do not merge." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "8. negated write verbs beyond edit/commit (open a PR, worktree, merge) don't defeat a read-only exemption"
+clear_counter "$sid"
+
+sid="ticketroute-negwrite-mixed"; clear_counter "$sid"
+payload "" "Audit ticket #42, fix it, and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "8b. a real (non-negated) write verb after a read-only framing is still DENIED"
+clear_counter "$sid"
+
+# ── 9. authoring exemption: drafting queue-entry prose is not ticket dispatch ───────
+# Fresh evidence, 2026-09-10: a general-purpose subagent asked to DRAFT prose for two
+# new queue entries (quoting "## #N" and a "Fix:" template header) into a scratchpad
+# file was denied twice, even though it explicitly disclaimed opening a PR, creating a
+# worktree, or touching product code.
+sid="ticketroute-authoring"; clear_counter "$sid"
+payload "" "Draft prose for two new queue entries as plain text, referencing ## #117 and ticket #118, in this format: **Where:** ... **Fix:** ... **Done when:** ... Write the result to /private/tmp/scratch/queue-draft.md. This is an AUTHORING task, not work-item resolution: do not open a PR, do not create a worktree, and do not change any product code." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "9. drafting queue-entry prose into a scratchpad, with only negated write verbs, is not ticket dispatch"
+clear_counter "$sid"
+
+sid="ticketroute-authoring-bare"; clear_counter "$sid"
+payload "" "Draft a fix for ticket #42 and land it." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "9b. 'draft a fix' (authoring verb, no content-artifact noun) is still genuine dispatch, still DENIED"
+clear_counter "$sid"
+
+sid="ticketroute-authoring-mixed"; clear_counter "$sid"
+payload "" "Draft prose for queue entries: ## #42 **Fix:** patch the retry path. Then commit the change yourself." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "9c. authoring framing with a real (non-negated) commit is still DENIED"
+clear_counter "$sid"
+
+# ── 10. named-child blind spot: an item-shaped name/description carries both signals ─
+# #115: item-named children measured since 2026-09-04 outnumbered subagent_type
+# "worker" ones roughly 4 to 1, and the prompt-only scan saw none of them because the
+# PROMPT never says "ticket" or a dispatch verb -- only the NAME/description does.
+payload_named() { # <name> <description> <prompt> <session_id>
+  python3 -c '
+import json, sys
+name, desc, prompt, session_id = sys.argv[1:5]
+ti = {"prompt": prompt, "description": desc}
+if name:
+    ti["name"] = name
+print(json.dumps({
+    "tool_name": "Agent",
+    "transcript_path": "/tmp/fake-transcript.jsonl",
+    "session_id": session_id,
+    "tool_input": ti,
+}))
+' "$1" "$2" "$3" "$4" > "$PL"
+}
+
+sid="ticketroute-namedblind"; clear_counter "$sid"
+payload_named "t1004" "delegated task" "Go handle the backend refactor we discussed and land it." "$sid"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "10a. name t1004 with dispatch language but no ticket vocab in the prompt is DENIED"
+clear_counter "$sid"
+
+sid="ticketroute-namedblind2"; clear_counter "$sid"
+payload_named "" "ticket-955" "Handle the payment-retry regression end to end." "$sid"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "10b. description ticket-955 (no name field) is item-shaped too"
+assert_contains "$out" 'govern:pre-dispatch -- 955' "10c. the ticket number is recovered from the item-shaped field when the prompt has no #N"
+clear_counter "$sid"
+
+sid="ticketroute-namedfloor"; clear_counter "$sid"
+payload_named "t1" "delegated task" "Summarize step 1 of the plan." "$sid"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "10d. single-digit t1 is a step label, not a ticket number, and passes untouched"
+clear_counter "$sid"
+
+sid="ticketroute-namedreadonly"; clear_counter "$sid"
+payload_named "w973-audit" "delegated task" "Investigate why the retry classifier misfires and report back. Read-only." "$sid"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "10e. an item-shaped name doing genuinely read-only work is still exempt"
 clear_counter "$sid"
 
 assert_done

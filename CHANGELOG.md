@@ -1,6 +1,37 @@
 # Changelog
 
-## 1.19.2 — 2026-09-10
+## 1.19.3 — 2026-09-10
+
+### Fixed
+
+**The ticket-route guard denied read-only and authoring work over a write verb inside a
+prohibition, and never saw a custom-named dispatch child.** `router-posture-guard.sh` (#115), two
+defects in the same two-signal matcher:
+
+1. A write marker under a NEGATION ("do not open a PR", "do not create a worktree", "never merge")
+   still counted as the write marker it was explicitly forbidding, defeating an otherwise-exempt
+   read-only or authoring framing. A prior fix (1.18.4) special-cased only "do not (edit|commit)";
+   the same defect reproduced twice more this session on other write verbs the enumerated pair
+   didn't cover. The check is now generic: any write_re marker preceded, within a short filler
+   window, by a negator (do/does/did not, will not, won't, cannot, can't, never, without) is
+   stripped before the write check ever sees it, for every marker in the list.
+2. A prompt that only QUOTES or DESCRIBES ticket text (drafting queue-entry prose for a scratchpad,
+   quoting a `## #N` heading and a `Fix:` section header as reference material) read as dispatch,
+   because the quoted material itself contains ticket references and dispatch-shaped words.
+   Authoring now gets its own two-signal exemption, same shape as ticket-shaped itself: an
+   authoring verb (draft/author) PLUS a content-artifact noun (prose, write-up, queue entr(y|ies))
+   -- neither alone is safe ("draft" also reads "draft a fix", which is real dispatch).
+3. The guard only ever scanned the Agent call's PROMPT for a ticket reference plus dispatch intent.
+   A custom-NAMED child (`t1004`, `ticket-955`, `w973`) carries both signals in its `name` or
+   `description` field alone, even when the prompt body never says "ticket" or a dispatch verb --
+   measured across 95 sessions since 2026-09-04, item-named children outnumbered `worker`-typed
+   ones roughly 4 to 1, and the prompt-only scan caught none of them. An item-shaped name/description
+   (`t[0-9]{2,}`, `w[0-9]{2,}`, `ticket-?[0-9]+`, each with an optional `-<suffix>`) is now itself a
+   ticket-shaped signal, still subject to the same read-only/authoring exemption.
+
+Kill switch unchanged: `GOVERN_TICKET_ROUTE_GUARD=0`. `test-ticket-route-guard.sh` gains ten
+regression cases across the three fixes, plus the mixed-intent and floor cases that keep a genuine
+dispatch prompt denied.
 
 ### Breaking
 
