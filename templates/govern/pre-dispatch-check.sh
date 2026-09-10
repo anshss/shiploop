@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-dispatch-check.sh — ONE entry point for the pre-spawn gates a session should run BEFORE
-# dispatching a worker on ticket N (shiploop 1.19.3, the loop purge).
+# dispatching a worker on ticket N (shiploop 1.19.2, the loop purge).
 #
 # Before this script, these gates only ran inside the autonomous loop's dispatch path
 # (run-loop.sh), so a plain interactive session dispatching a worker directly (or via

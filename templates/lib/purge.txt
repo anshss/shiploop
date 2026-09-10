@@ -52,13 +52,13 @@ scripts/lib/doctor-extra.sh.example
 # twin command is retired.
 .claude/commands/govern.md
 
-# v1.19.3: govern-bookkeep.sh split into two scripts that share nothing but a filename:
+# v1.19.2: govern-bookkeep.sh split into two scripts that share nothing but a filename:
 # land-resolution.sh (the resolve path) and context-budgets.sh (the --enforce-budgets path,
 # now its own entry point with no flag needed). No shim; every call site (run-loop.sh,
 # package.json, scaffold.sh) points at the new names.
 scripts/govern/govern-bookkeep.sh
 
-# v1.19.3: the autonomous dispatch loop is retired. run-loop.sh was the only whole-run driver, and
+# v1.19.2: the autonomous dispatch loop is retired. run-loop.sh was the only whole-run driver, and
 # with it go the three scripts that only ever ran from inside it (the self-improvement lane and its
 # triage/apply pair) plus lock-release.sh, whose only job was reclaiming that driver's single-run
 # lock. What replaces it is the SESSION lane, already installed: pre-dispatch-check.sh runs every
@@ -72,7 +72,7 @@ scripts/govern/govern-improve-triage.sh
 scripts/govern/govern-self-apply.sh
 scripts/govern/lock-release.sh
 
-# v1.19.3: lib/events.sh folded into lib/common.sh. The emitter is not loop machinery (spawn-worker,
+# v1.19.2: lib/events.sh folded into lib/common.sh. The emitter is not loop machinery (spawn-worker,
 # status.sh and the statusline all use it) so the FUNCTIONS survive verbatim; only the file is gone,
 # and common.sh's existence guard around it went with it.
 scripts/govern/lib/events.sh

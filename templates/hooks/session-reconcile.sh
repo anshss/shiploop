@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart hook — close the escalation lifecycle for a plain interactive session (shiploop
-# 1.19.3, the loop purge).
+# 1.19.2, the loop purge).
 #
 # escalations-apply-answers.sh (un-park / migrate-to-parked / mitigated / kill / rules an answered
 # escalation, commits + pushes) and escalations-emit-pending.sh (regenerate
