@@ -34,13 +34,20 @@ Ignore only these two things in it, which describe the other lane:
    work there. **NEVER use the Agent tool's `isolation: "worktree"`**: it worktrees the root repo
    only, and a meta-repo's nested sub-repo `.git` directories do not come along, so you would edit a
    tree that cannot commit or push.
-2. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
+2. **Run the hazard lookup yourself, before you touch anything.** The headless lane gets its
+   worker-prompt.md §1 "Recorded gotchas" section injected by the launcher; you have no launcher, so
+   you produce it: from the workspace root, run
+   `scripts/govern/gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...]` for every path you are
+   about to touch (from the ticket's `Where:` field or the files you've identified), and treat any
+   output the same way §1 describes. Empty output is the common case (nothing tagged for those
+   paths) and is not a reason to skip the step.
+3. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
-3. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
+4. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
    redoing the work.
-4. **The report contract is unchanged.** Your final message is the single JSON object from
+5. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
-5. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
+6. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
    `status` and a filled `escalation` rather than thrashing. The driver owns the one retry.
