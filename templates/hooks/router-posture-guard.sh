@@ -39,19 +39,47 @@
 # spawn-worker.sh. Any Agent-tool child that is NOT subagent_type "worker" is a
 # **subagent** (the platform's own term). "Ticket-shaped" needs TWO signals, not
 # one keyword: a real ticket REFERENCE (the word "ticket" on its own, or a bare
-# `#<N>`) AND DISPATCH intent (a verb meaning "go make this ticket done"). A
-# read-only framing (audit / investigate / explain) with no write marker
-# overrides both. A blind `/ticket/i` scan denied prompts that merely NAMED a
-# ticket artifact (`queue/tickets.md`, `ticket-<N>`, `GOVERN_MAX_TICKETS`) or
-# audited ticket vocabulary. An `Agent` call that IS ticket-shaped WITHOUT
-# subagent_type "worker" is a full-fat subagent doing a worker's job: it inherits the driver's posture,
+# `#<N>`) AND DISPATCH intent (a verb meaning "go make this ticket done") --
+# OR an item-shaped `name`/`description` (`t1004`, `ticket-955`, `w973`,
+# `t920-fix`), which carries both signals on its own even when the prompt body
+# never says "ticket" or a dispatch verb (#115: measured across 95 sessions,
+# item-named children outnumbered `worker`-typed ones roughly 4 to 1, and the
+# prompt-only scan saw none of them).
+#
+# A write marker under a NEGATION ("do not open a PR", "never commit",
+# "without editing") is the prompt FORBIDDING that action, not evidence it
+# will happen. The first cut of this fix only special-cased "do not
+# (edit|commit)"; #115 hit the identical defect again on "do not open a PR" /
+# "not create a worktree", proving enumerate-the-pairs doesn't scale. The
+# negation check is generic instead: ANY write marker preceded (within a
+# short filler window) by a negator -- do/does/did not, will not, won't,
+# cannot, can't, never, without -- is stripped before the write check ever
+# sees it.
+#
+# A prompt that only QUOTES or DESCRIBES ticket text (drafting queue-entry
+# prose for a *different* ticket, reviewing a draft ticket body) is not a
+# prompt that DISPATCHES one, even though the quoted text is full of ticket
+# references and section headers ("Fix:") that read as dispatch verbs out of
+# context (#115, 2026-09-10). Authoring gets its own two-signal exemption,
+# same shape as ticket-shaped itself: an authoring verb (draft/author) PLUS a
+# content-artifact noun (prose, write-up, queue entr(y|ies), scratchpad) --
+# either alone is too weak ("draft" also reads "draft a fix", which IS
+# dispatch) but the pair together isn't real dispatch language.
+#
+# A read-only OR authoring framing with no SURVIVING (non-negated) write
+# marker overrides both ticket-shaped signals. A blind `/ticket/i` scan
+# denied prompts that merely NAMED a ticket artifact (`queue/tickets.md`,
+# `ticket-<N>`, `GOVERN_MAX_TICKETS`) or audited ticket vocabulary. An
+# `Agent` call that IS ticket-shaped WITHOUT subagent_type "worker" is a
+# full-fat subagent doing a worker's job: it inherits the driver's posture,
 # skips the worker doctrine, and costs multiples of a worker for the same
-# ticket. That call is DENIED with the correct call written out to paste, plus
-# the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0 (default ON,
-# same polarity as GOVERN_VF_NUDGE above). It never fires inside a worker (the
-# GOVERN_RUN and .../subagents/ exemptions below already cover both lanes, and
-# workers hold the Agent tool for their own sub-delegation) and never on a call
-# that already carries subagent_type "worker".
+# ticket. That call is DENIED with the correct call written out to paste,
+# plus the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0
+# (default ON, same polarity as GOVERN_VF_NUDGE above). It never fires
+# inside a worker (the GOVERN_RUN and .../subagents/ exemptions below
+# already cover both lanes, and workers hold the Agent tool for their own
+# sub-delegation) and never on a call that already carries subagent_type
+# "worker".
 #
 # Output contract: a PreToolUse hook that prints
 #   {"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"..."}}
@@ -85,6 +113,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
   IFS= read -r subagent_type
   IFS= read -r agent_prompt
   IFS= read -r agent_desc
+  IFS= read -r agent_name
 } < <(printf '%s' "$payload" | python3 -c '
 import sys, json
 try:
@@ -105,6 +134,7 @@ fields = [
     g("subagent_type"),
     g("prompt"),
     g("description"),
+    g("name"),
 ]
 for f in fields:
     print(f.replace("\t", " ").replace("\n", " "))
@@ -114,6 +144,7 @@ session_id="${session_id:-}"; file_path="${file_path:-}"
 limit="${limit:-}"; command="${command:-}"
 subagent_type="${subagent_type:-}"; agent_prompt="${agent_prompt:-}"
 agent_desc="${agent_desc:-}"
+agent_name="${agent_name:-}"
 [ -n "$tool_name" ] || exit 0
 
 # --- skip sub-agent calls (their transcript lives under .../subagents/) ------
@@ -136,13 +167,77 @@ if [ "$tool_name" = "Agent" ]; then
   # `GOVERN_MAX_TICKETS` are IDENTIFIERS being cited, not tickets being dispatched.
   ticket_ref_re='(^|[^[:alnum:]_/.#-])tickets?([^[:alnum:]_/.-]|$)|(^|[^[:alnum:]])#[0-9]+'
   dispatch_re='(^|[^[:alnum:]])(resolv(e|es|ing)|fix(es|ing)?|implement(s|ing)?|clos(e|es|ing)|land|ship|complet(e|es|ing)|handl(e|es|ing)|solv(e|es|ing)|address(es)?|work (on|the)|working on|works on|pick up|take on|do the|end[- ]to[- ]end)([^[:alnum:]]|$)'
-  readonly_re='(^|[^[:alnum:]])(audit(s|ing)?|review(s|ing)?|investigat(e|es|ing|ion)|analy[sz]|diagnos|read[- ]only|report back|explain|survey|inventor(y|ies)|summari[sz]|terminology|wording|no edits?|do not (edit|commit)|without editing)'
-  write_re='(^|[^[:alnum:]])(open (a|the) pr|commit|worktree|branch|patch|edit|rewrite|apply the fix|merge)'
-  if printf '%s' "$probe" | grep -Eqi "$ticket_ref_re" \
-     && printf '%s' "$probe" | grep -Eqi "$dispatch_re" \
-     && ! { printf '%s' "$probe" | grep -Eqi "$readonly_re" \
-            && ! printf '%s' "$probe" | grep -Eqi "$write_re"; }; then
-    tnum="$(printf '%s' "$probe" | grep -oE '#[0-9]+' 2>/dev/null | head -1 | tr -d '#' || true)"
+
+  # Item-shaped NAME/DESCRIPTION: a short slug that carries its own ticket reference +
+  # dispatch intent, so a custom-named child that skips ticket vocabulary in its PROMPT
+  # (t1004, ticket-955, w973, t920-fix) is still routed (#115). Anchored to the WHOLE
+  # field, never a substring, so a prose description ("Fix ticket 930 ready_at") is
+  # untouched here -- it already matches ticket_ref_re + dispatch_re below. `{2,}`
+  # floors t/w names at two digits: a single-digit `t1`/`t2` used as an ad-hoc step
+  # label ("task 1", "task 2") is not a ticket number.
+  item_shape_re='^(t[0-9]{2,}|w[0-9]{2,}|ticket-?[0-9]+)(-[a-zA-Z0-9-]+)?$'
+
+  # NOTE ON PIPE STYLE BELOW: every check here feeds a possibly-large $probe (the
+  # full agent prompt) into a consumer via a herestring (`<<<`), never a live
+  # `printf '%s' "$var" | grep -q ...` pipe -- a `-q`/`head`-style consumer that
+  # stops reading early closes its end while the producer is still writing, and a
+  # producer that gets SIGPIPE on a long-enough probe is a silent, hard-to-repro
+  # failure. A herestring hands the shell a real fd (backed by a temp file), so
+  # there is no live writer to kill.
+  ticket_shaped=0
+  if grep -Eqi "$ticket_ref_re" <<< "$probe" && grep -Eqi "$dispatch_re" <<< "$probe"; then
+    ticket_shaped=1
+  fi
+  item_shaped=0
+  if grep -Eqi "$item_shape_re" <<< "$agent_name" || grep -Eqi "$item_shape_re" <<< "$agent_desc"; then
+    item_shaped=1
+  fi
+
+  if [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; then
+    readonly_re='(^|[^[:alnum:]])(audit(s|ing)?|review(s|ing)?|investigat(e|es|ing|ion)|analy[sz]|diagnos|read[- ]only|report back|explain|survey|inventor(y|ies)|summari[sz]|terminology|wording)'
+    write_verbs_re='(open (a|the) pr|commit|worktree|branch|patch|edit|rewrite|apply the fix|merge)'
+    write_re="(^|[^[:alnum:]])$write_verbs_re"
+
+    # AUTHORING is its own two-signal exemption, same shape as ticket-shaped itself:
+    # drafting queue-entry PROSE quotes ticket vocabulary and "Fix:"-shaped section
+    # headers without dispatching anything (#115, 2026-09-10). Neither signal alone is
+    # safe on its own -- "draft" also reads "draft a fix" (real dispatch), and
+    # "prose"/"entries" show up in unrelated writing -- so both must be present.
+    authoring_verb_re='(^|[^[:alnum:]])(draft(s|ing)?|author(s|ing)?)([^[:alnum:]]|$)'
+    authoring_noun_re='(prose|scratchpad|write[- ]?up|entr(y|ies))'
+    authoring=0
+    if grep -Eqi "$authoring_verb_re" <<< "$probe" && grep -Eqi "$authoring_noun_re" <<< "$probe"; then
+      authoring=1
+    fi
+
+    # A write marker under a NEGATION is the prompt FORBIDDING that action, not
+    # evidence it will happen -- generic over every write_re marker rather than a
+    # hand-picked "do not edit/commit" pair (#115 hit the same defect twice: a
+    # prohibition worded "do not open a PR" / "not create a worktree" slipped past a
+    # fix scoped only to edit/commit). Strip a write_re marker preceded, within a
+    # short filler window, by a negator: do/does/did not, will not, won't, cannot,
+    # can't, never, without. Lowercase first (BSD sed has no case-insensitive flag);
+    # this is boolean-only scratch text, never shown to the user.
+    neg_trigger_re='(do|does|did)[[:space:]]+not|will[[:space:]]+not|won.?t|cannot|can.?t|never|without'
+    neg_filler_re='([a-z]+[[:space:]]+){0,3}'
+    neg_write_re="(^|[^[:alnum:]])($neg_trigger_re)[[:space:]]+${neg_filler_re}${write_verbs_re}"
+    probe_lc="$(tr '[:upper:]' '[:lower:]' <<< "$probe")"
+    probe_write_lc="$(sed -E "s/$neg_write_re/ /g" <<< "$probe_lc")"
+
+    exempt=0
+    if { grep -Eqi "$readonly_re" <<< "$probe" || [ "$authoring" = 1 ]; } \
+       && ! grep -Eq "$write_re" <<< "$probe_write_lc"; then
+      exempt=1
+    fi
+  else
+    exempt=1  # neither signal fired; nothing to exempt FROM
+  fi
+
+  if { [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; } && [ "$exempt" != 1 ]; then
+    tnum="$(grep -oE '#[0-9]+' <<< "$probe" 2>/dev/null | head -1 | tr -d '#' || true)"
+    if [ -z "$tnum" ]; then
+      tnum="$(grep -oEi '^(t|w|ticket-?)[0-9]+' <<< "$agent_name"$'\n'"$agent_desc" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)"
+    fi
     [ -n "$tnum" ] || tnum="N"
     deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, single-ticket session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
@@ -162,7 +257,7 @@ Headless lane, for no open session, one ticket at a time:
 
 The interactive lane STOPS at PR-open plus the report too. Landing it either way is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. If the worker fails once, retry it once with \`model: opus\`, then stop and report.
 
-Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") with no write marker is already exempt. Otherwise drop the dispatch verb or the ticket reference and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
+Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer, or drafting/authoring prose about a ticket rather than resolving one)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") or an authoring framing ("draft"/"author" plus what you're producing: "prose", "write-up", "entries") with no SURVIVING write marker is already exempt; a write verb inside a prohibition ("do not open a PR", "never commit") does not count against you. Otherwise drop the dispatch verb, the ticket reference, and any item-shaped name/description (t<N>, ticket-<N>, w<N>), and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
 )"
     python3 -c '
