@@ -4,6 +4,18 @@
 
 ### Added
 
+**The interactive worker lane gets the same hazard handoff as the headless one, from one
+implementation (#125).** 1.19.4's earlier gotcha injection built the mechanism inside
+`spawn-worker.sh`, so only a launcher-spawned worker ever received `**Paths:**`-tagged entries from
+`CLAUDE.md` and `learnings.md`; a worker spawned in-session through the `Agent` tool was still told
+to go read the files itself, which is the lane most work actually takes. The lookup and formatting
+now live once, in `govern::gotcha_block()` (`lib/common.sh`), `spawn-worker.sh` calls it instead of
+carrying ~50 inline lines, and a new `gotchas-for-paths.sh` lets the worker subagent run the same
+lookup itself as its first step. `worker.md` and `worker-prompt.md` are lane-neutral again. No new
+env knob and no new CLI flag: the existing `GOVERN_GOTCHA_INJECT` / `GOVERN_GOTCHA_MAX` /
+`GOVERN_GOTCHA_MAX_BYTES` are reused unchanged. Test: `test-gotchas-for-paths.sh`, plus the
+unmodified headless test still passing, which is what proves the refactor changed no behavior.
+
 **`bench/replay.mjs` gains an attempt-outcome breakdown and states the driver-session exclusion
 unmissably (#108).** `--scope all` keeps pricing every attempt unconditionally and the headline
 total is unchanged; alongside it, a new `outcomeBreakdown` reads spawn-worker.sh's per-attempt
