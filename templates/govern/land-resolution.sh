@@ -8,12 +8,24 @@
 #   --enforce-budgets flag) as its own entry point; the two share nothing but the lib/common.sh
 #   helpers, and neither calls the other.
 # Usage:  printf '%s' "$report" | land-resolution.sh <N>
+#   stdin  the worker's JSON report. Accepted `.pr` shapes (#120): absent/null (no PR); an OBJECT
+#          {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"} (`.repo`+
+#          `.number` required); or a bare INTEGER `42` (repo resolved from workspace config, see
+#          govern::resolve_pr_repo). Anything else present is a hard refusal, before ANY edit.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
 
 N="${1:?ticket number required}"
 report="$(cat)"
+# #120: this script is the one that actually deletes the queue block and commits — normalize/
+# refuse on `.pr` HERE too, not just in resolve-ticket.sh's caller, since land-resolution.sh is
+# also a documented standalone entry point (the usage line above). A present-but-unparseable `.pr`
+# must never reach the commit-message builder below (it degraded to the literal string "?#0").
+_norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report" || {
+  echo "land-resolution #$N: .pr is present but not one of the accepted shapes (see the usage comment above) — refusing before any edit (#120)." >&2
+  exit 9
+}
 # '|| true' so a MISSING queue dir yields "" (not an unreliable set -e abort with a confusing cd error);
 # the explicit assert below is the deterministic fail-closed guard (#28).
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # the queue/ folder (holds tickets.md)
