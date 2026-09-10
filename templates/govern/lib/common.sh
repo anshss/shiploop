@@ -34,6 +34,11 @@ PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
+# The interactive lane's subagent definition (#117). spawn-worker.sh reads its tool allow-list
+# out of this file instead of keeping a second hardcoded copy — see govern::worker_agent_field
+# below. Absent on a fleet scaffolded before this file shipped, or in a hermetic test's stub
+# workspace: callers must treat that as "fall back to your own default", never a hard failure.
+WORKER_AGENT_FILE="${GOVERN_WORKER_AGENT_FILE:-$WS_ROOT/.claude/agents/worker.md}"
 # The live + parked queues live in one folder at the meta-repo root: queue/. Override QUEUE_DIR to
 # relocate the whole folder; the individual GOVERN_*_FILE overrides still win per-file (the tests
 # point them at temp dirs).
@@ -425,6 +430,24 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
   local qd prefix; qd="$(dirname "$TICKETS_FILE")"
   prefix="$(cd "$qd" 2>/dev/null && git rev-parse --show-prefix 2>/dev/null || true)"
   printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
+}
+
+# ── Interactive-worker agent-definition reader (#117) ───────────────────────────────────────────
+# The headless launcher (spawn-worker.sh) and the interactive lane (.claude/agents/worker.md) run
+# one capability posture, and worker.md is now the declared source for the parts that live in its
+# frontmatter (currently: tools). This reads a single flat `key: value` frontmatter line out of
+# WORKER_AGENT_FILE — nested keys (experimental.cacheTtl) aren't needed by any caller and aren't
+# supported. Prints nothing and returns 1 if the file or the field is missing, so every caller
+# MUST fall back to its own hardcoded default rather than treat absence as "empty list" — a fleet
+# that hasn't synced templates/.claude/agents/ yet, or a hermetic test's stub workspace (neither
+# carries this file), must spawn exactly as it did before this function existed.
+govern::worker_agent_field() { # <field-name> -> the field's value, rc 1 if unresolvable
+  local field="$1" fm val
+  [[ -f "$WORKER_AGENT_FILE" ]] || return 1
+  fm="$(awk 'NR==1 && $0=="---"{inb=1;next} inb && $0=="---"{exit} inb{print}' "$WORKER_AGENT_FILE")"
+  val="$(sed -n "s/^${field}: *//p" <<<"$fm" | head -1)"
+  [[ -n "$val" ]] || return 1
+  printf '%s\n' "$val"
 }
 
 # ── Gotcha injection (rail 9 / #118) ────────────────────────────────────────────────────────────

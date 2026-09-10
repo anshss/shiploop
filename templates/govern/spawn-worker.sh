@@ -458,7 +458,16 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # Re-run that histogram before any future edit to this list:
 #   find logs/govern -name '*.jsonl' -print0 | xargs -0 grep -aoh \
 #     '"type":"tool_use","id":"[^"]*","name":"[^"]*"' | sed 's/.*"name":"//;s/"//' | sort | uniq -c
-GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
+#
+# #117: this list is now DERIVED from the interactive lane's own frontmatter
+# (.claude/agents/worker.md's `tools:` line) via govern::worker_agent_field, so there is exactly
+# one place a fleet edits the allow-list — the string literal below only fires as a fallback for a
+# fleet that hasn't synced that file yet (or a hermetic test's stub workspace, which never has
+# one), and is kept byte-identical to worker.md's tools: line so neither path ever silently wins
+# over the other. test-worker-agent-doctrine.sh pins both: the fallback matches worker.md, and a
+# worker.md with a DIFFERENT list is what a live spawn actually resolves.
+GOVERN_WORKER_TOOLS_DEFAULT="$(govern::worker_agent_field tools 2>/dev/null || true)"
+[[ -n "$GOVERN_WORKER_TOOLS_DEFAULT" ]] || GOVERN_WORKER_TOOLS_DEFAULT="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,WebFetch,WebSearch,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
 # Sets the global `tools_flag` (empty, or `--tools <list>`) and always returns 0.
 resolve_tools_flag() { # <claude_bin>
   local bin="$1" list
@@ -1082,7 +1091,10 @@ mode="${GOVERN_MODE:-live}"
 # bypassPermissions: a headless worker can't answer prompts; acceptEdits only covers file edits,
 # so git/gh/<pm>/build would stall. Operator-approved exception to the global "never
 # dangerously-skip-permissions" rule — scoped to throwaway worktrees; the doctrine hard-stops
-# (destructive git / prod-data) still gate the dangerous actions via self-park.
+# (destructive git / prod-data) still gate the dangerous actions via self-park. #117: the
+# interactive lane declares the same default (`permissionMode: bypassPermissions` in
+# .claude/agents/worker.md) directly in its own frontmatter rather than through this env var, since
+# it has no per-run CLI invocation of its own to attach a flag to.
 permflag="${GOVERN_PERMISSION_MODE:-bypassPermissions}"; [[ "$mode" == "dry" ]] && permflag="plan"
 claude_bin="${GOVERN_CLAUDE_BIN:-claude}"
 
@@ -1183,7 +1195,10 @@ fi
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
 # risks a teardown stall on exit. --strict-mcp-config = load ONLY --mcp-config files (we pass
-# none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers.
+# none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers. #117: the
+# interactive lane gets the same zero-MCP posture from its own frontmatter (`disallowedTools:
+# mcp__*` plus never listing an `mcp__*` entry in `tools:`) rather than a connection-level flag —
+# see the "mcpServers" note in CLAUDE-APPENDIX.md for why the field itself stays undeclared there.
 strict_mcp="--strict-mcp-config"; [[ "${GOVERN_WORKER_MCP:-0}" == "1" ]] && strict_mcp=""
 
 # Disable slash commands: workers never invoke /skills or /slashes, so loading the full
