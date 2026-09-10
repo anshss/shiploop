@@ -508,6 +508,60 @@ govern::gotchas_in_file() { # <file> <max-entries> <path> [path…] -> matched "
   ' "$file"
 }
 
+# govern::gotcha_block <repo/path> [<repo/path> ...] -> the "## Recorded gotchas ..." markdown
+# block for **Paths:**-tagged CLAUDE.md/learnings.md entries matching those <repo>/<path> tokens
+# (root files' entries as-is; each named repo's OWN CLAUDE.md/learnings.md, repo-relative), or
+# nothing if none match. THE single implementation for BOTH worker lanes (#125, closing rail 9's
+# headless-only half left by #118/#174): spawn-worker.sh extracts <repo>/<path> candidates from a
+# ticket's block text and calls this; the interactive lane has no launcher to inject anything FOR
+# it, so its gotchas-for-paths.sh wrapper calls this directly on the paths a worker names before it
+# starts editing — same function, same output, for the same candidate shape. Honors
+# GOVERN_GOTCHA_INJECT=0 (mechanism off for both lanes), GOVERN_GOTCHA_MAX (per-file cap, default
+# 3), GOVERN_GOTCHA_MAX_BYTES (total cap, default 3000, truncates with a pointer to the source).
+govern::gotcha_block() {
+  [[ "${GOVERN_GOTCHA_INJECT:-1}" != "0" && ${#REPOS[@]} -gt 0 && "$#" -gt 0 ]] || return 0
+  local meta; meta="$(govern::meta_root 2>/dev/null || echo "$WS_ROOT")"
+  local repo_alt; repo_alt="$(printf '%s|' "${REPOS[@]}")"; repo_alt="${repo_alt%|}"
+  local cand; cand="$(printf '%s\n' "$@" | awk '!seen[$0]++')"
+  local cap="${GOVERN_GOTCHA_MAX:-3}"
+  local out="" hit gf
+  # Root-level files: candidate paths used AS-IS (repo-prefixed, e.g. "alpha/src/pay/charge.ts") —
+  # a root CLAUDE.md/learnings.md entry can name any sub-repo's paths.
+  for gf in "$meta/CLAUDE.md" "$meta/learnings.md"; do
+    # shellcheck disable=SC2086
+    hit="$(govern::gotchas_in_file "$gf" "$cap" $cand 2>/dev/null || true)"
+    [[ -n "$hit" ]] && out="$out
+$hit"
+  done
+  # Per-repo files: only the repos actually named, candidate paths made REPO-RELATIVE (the
+  # "<repo>/" prefix stripped) — a sub-repo's own CLAUDE.md/learnings.md is read from inside that
+  # repo and names its own paths without repeating its own folder name.
+  local repos_seen; repos_seen="$(printf '%s\n' "$cand" | sed -E "s#^(${repo_alt})/.*#\1#" | awk '!seen[$0]++')"
+  local gr rel
+  for gr in $repos_seen; do
+    rel="$(printf '%s\n' "$cand" | grep -E "^${gr}/" | sed -E "s#^${gr}/##")"
+    [[ -n "$rel" ]] || continue
+    for gf in "$meta/$gr/CLAUDE.md" "$meta/$gr/learnings.md"; do
+      # shellcheck disable=SC2086
+      hit="$(govern::gotchas_in_file "$gf" "$cap" $rel 2>/dev/null || true)"
+      [[ -n "$hit" ]] && out="$out
+$hit"
+    done
+  done
+  [[ -n "${out//[[:space:]]/}" ]] || return 0
+  local max_bytes="${GOVERN_GOTCHA_MAX_BYTES:-3000}"
+  if [[ "$(printf '%s' "$out" | wc -c | tr -d '[:space:]')" -gt "$max_bytes" ]]; then
+    out="$(printf '%s' "$out" | head -c "$max_bytes")
+[… truncated at ${max_bytes} bytes — read the file(s) directly in your worktree for the rest]"
+  fi
+  local block
+  block="## Recorded gotchas for files this ticket touches
+\`**Paths:**\`-tagged entries in CLAUDE.md / learnings.md matching the files/repos this ticket names — a project-specific trap someone already hit, not general doctrine. Untagged rules in those same files are NOT reproduced here; still read the file for the area you're touching.
+$out"
+  printf '%s' "$block"
+  return 0
+}
+
 # Fail CLOSED if a commit dir didn't resolve to a real git work-tree (#28). A commit dir is derived as
 # `$(cd "$(dirname "$TICKETS_FILE")" && pwd)`; when that directory is MISSING the substitution yields an
 # EMPTY string, and a later `cd "$commit_dir"` becomes `cd ""` — a no-op that leaves git running against
