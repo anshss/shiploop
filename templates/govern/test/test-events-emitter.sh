@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# govern::event: the fleet event log emitter (folded into lib/common.sh in 1.19.3, when the
+# govern::event: the fleet event log emitter (folded into lib/common.sh in 1.19.2, when the
 # former lib/events.sh was deleted with the dispatch loop; the functions moved verbatim).
 #
 # Contract:

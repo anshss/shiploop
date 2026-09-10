@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-dispatch-check.sh — the pre-spawn gates, as one entry point (shiploop 1.19.3, the loop purge).
+# pre-dispatch-check.sh — the pre-spawn gates, as one entry point (shiploop 1.19.2, the loop purge).
 #
 # The gates are FAIL-OPEN by construction: a false "skip"/"refuse" silently drops real work, so only
 # positive evidence may withhold a dispatch. These assertions pin that posture, not the individual

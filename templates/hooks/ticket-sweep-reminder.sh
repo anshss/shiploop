@@ -102,7 +102,7 @@ Only blocker."
 fi
 
 # --- BLOCKING: a validation-shaped ticket resolved by hand, without a validation record (shiploop
-# 1.19.3, the loop purge — B2b). Read this comment before touching the logic below: the OBVIOUS
+# 1.19.2, the loop purge — B2b). Read this comment before touching the logic below: the OBVIOUS
 # implementation ("any open validation-shaped ticket with no evidence file blocks") is wrong — that
 # is the existing advisory nudge below (validation_note), and making IT blocking would refuse every
 # session in a workspace that has any unvalidated validation ticket, forever, whether or not this

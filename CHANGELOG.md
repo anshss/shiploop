@@ -1,8 +1,90 @@
 # Changelog
 
-## 1.19.2 — 2026-09-09
+## 1.19.2 — 2026-09-10
+
+### Breaking
+
+Read this before upgrading. The version number is a patch bump because 1.19.2 was staged and never
+published, not because this release is a drop-in. Three things change under you.
+
+**1. `npm run govern` is gone.** The autonomous dispatch loop is retired: `run-loop.sh` (~2074
+lines), `govern-improve.sh`, `govern-improve-triage.sh`, `govern-self-apply.sh`, `lock-release.sh`
+and `lib/events.sh` are deleted. A workspace that scripts or aliases `npm run govern` breaks.
+*Migration:* dispatch from the session you are already in. Run `npm run govern:pre-dispatch -- <N>`
+for the pre-spawn gates and obey its one-line verdict (`proceed` / `skip:` / `refuse:`), spawn the
+worker, then land it with `npm run govern:resolve -- <N>`. `npm run govern:dry-run` is unchanged.
+The gates did not die with the loop: the dependency gate, cross-driver re-verify, the disk
+pre-flight, the NA chronic-skip nudge, the overlap nudge, and the failure-streak breaker
+(`GOVERN_MAX_TICKET_FAILS`, default 2) all moved into `pre-dispatch-check.sh`, reusing the same
+implementations rather than reimplementations.
+
+**2. `config-check.sh` now FAILS a run whose model floor is not strictly below its ceiling.** It
+previously printed `GOVERN_WORKER_MODEL` as an informational knob and asserted nothing about it.
+*Migration:* if your workspace sets `GOVERN_WORKER_MODEL` equal to (or above)
+`GOVERN_WORKER_ESCALATION_MODEL`, fix it before upgrading, or config-check exits non-zero. This is
+deliberate. A floor equal to the ceiling makes escalate-once a silent no-op that bills every first
+attempt at ceiling rates, and it went unnoticed on one fleet for two months precisely because
+nothing asserted it.
+
+**3. No failure class buys a model tier automatically any more.** `GOVERN_ESCALATE_ONCE` and the
+`.governor-escalated` stamp are removed. `GOVERN_WORKER_ESCALATION_MODEL` is no longer an automatic
+destination; it is now only a cap on what an explicit ticket `Model:` field may request.
+*Migration:* a capability failure now files a `Kind: respec` entry in `governor/escalations.md`
+instead of silently re-running at a higher tier, so read your escalations. Infrastructure failures
+still retry at the same tier, unchanged. **Stated plainly: this is a doctrine decision, not a
+measured one.** The capability-failure rate that would justify or refute an automatic escalation
+rail does not exist in any corpus we have, because the floor defect above meant a cheap first
+attempt almost never happened.
 
 ### Fixed
+
+**Retry status came from a directory existing.** `spawn-worker.sh` inferred a retry from
+`[[ -d "$WORKTREE_BASE/$slug" ]]`. Worktrees are deliberately preserved on failure, watchdog kill
+and interrupt, so any leftover directory made a genuine first attempt skip the floor and buy the
+escalation path. It now derives from whether a prior attempt was actually recorded in
+`attempts.jsonl`, under both the run-scoped and flat log layouts. Two existing tests had been
+simulating a retry by creating a bare worktree directory, so the bug was baked into its own
+coverage; both now seed a real attempt row.
+
+**Every dispatch record now says why.** `attempts.jsonl` rows carry `retryClass`, `retryReason`,
+`respecRequested`, `respecClass`, and `MODEL_CAP_SOURCE` records which ceiling moved a tier. A
+design that changes how tiers are chosen without recording why is how the original overcharge hid
+for two months.
+
+**Bench priced unknown models silently as Opus.** `RATES` held only opus, sonnet and haiku, and an
+unrecognized model fell through to Opus rates with no trace, understating a Fable-driven fleet's
+baseline by 2x. Fable and Mythos are now priced, Fable 5.1 and Mythos 5.1 get their 0.025x
+cache-read rate (all other tiers stay 0.1x), and any tier bench cannot classify is named in the
+report as a conservative fallback estimate rather than passing unnoticed.
+
+**A stale seed-hash and a scaffold divergence.** `component_package_json_merge` had dropped the
+`govern` key while the fresh-scaffold path kept it, so new installs and converged installs ended up
+with different npm-script surfaces and drift-check stayed quiet about it. `resolve-ticket.sh`
+treated every non-zero `merge-pr.sh` exit as land-blocking, including exit 2 (frontend PR-only) and
+exit 6 (autonomy pr-only), which would have stranded every multi-repo item with a frontend sibling
+un-bookkept.
+
+### Changed
+
+**Workers get a 1-hour prompt cache.** `templates/.claude/agents/worker.md` sets
+`experimental.cacheTtl: 1h`. Worker spawns sit a median 83 minutes apart and none of the measured
+spawns landed inside the 5-minute default, so each was paying a full cache write against an
+always-dead cache. Requires Claude Code v2.1.248 or later, and the docs note `1h` is ignored while a
+subscription is on usage credits.
+
+**The README no longer claims workers exclude slash commands and personal settings.** There is no
+per-subagent equivalent of `--disable-slash-commands` or `--setting-sources`, so that claim was only
+ever true of the headless lane. The measured 66.7% tool-byte trim is unchanged and still stated.
+
+### Internal
+
+The test suite went from 188 files to 171. That is not a coverage loss: 18 were loop-only and died
+with their subject, 24 had their assertions preserved and re-pointed at `resolve-ticket.sh` or
+`pre-dispatch-check.sh`, and the rest were incidental references. Each of the 63 files that
+mentioned the loop was read for what it asserted rather than classified by filename.
+
+
+### Fixed (loop-independence work, landed earlier under this version)
 
 **Three capabilities were reachable only from the dispatch loop, so a workspace that stops
 dispatching silently stops recording and stops checking.** This file already names the principle at
@@ -48,11 +130,20 @@ validation ticket that was worked with no matching sink record. Advisory only, k
 
 ### Known gaps
 
-**Harness self-improvement is still governor-only.** `govern-improve.sh`,
-`govern-improve-triage.sh` and `govern-self-apply.sh` are called only from `run-loop.sh`, and they
-build their prompts from `state.jsonl`, `review.md`, `worker.jsonl` and `report.json`, artifacts that
-exist only inside a dispatch run. Making them session-reachable means designing a new input, which is
-a contract change rather than a patch, so it is deliberately not in this release.
+**Harness self-improvement is gone, not deferred.** `govern-improve.sh`,
+`govern-improve-triage.sh` and `govern-self-apply.sh` built their prompts from `state.jsonl`,
+`review.md`, `worker.jsonl` and `report.json`, artifacts that only ever existed inside a dispatch
+run. With the loop retired they observe nothing, so they are deleted rather than left as dead
+entry points. Making self-improvement session-reachable means designing a new input, which is a
+contract change and is not in this release.
+
+**The model-orchestration design is only half implemented.** This release ships its defect fixes and
+retires the loop it assumed. The architecture it is named after is not built: there is no precision
+grade recorded on a dispatch, so tier-follows-specification has nothing to read, nothing aggregates
+`model_source` into a per-session view, and the advisor consult does not exist. `costUsd` is still
+null on some rows, which is a data-availability bug in the CLI result event rather than a missing
+mechanism. In-session `Agent` children remain unsupervised, which is the stated precondition for the
+advisor. Tracked, with the spec's own errata, in the queue.
 
 ## 1.19.1 — 2026-09-08
 

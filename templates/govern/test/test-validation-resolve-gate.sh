@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The BLOCKING validation gate in the Stop hook (ticket-sweep-reminder.sh, shiploop 1.19.3).
+# The BLOCKING validation gate in the Stop hook (ticket-sweep-reminder.sh, shiploop 1.19.2).
 #
 # The gate must fire on RESOLUTION WITHOUT A RECORD and on nothing else. The failure mode this
 # guards is not a missed block, it is a FALSE block: the obvious session-blind implementation

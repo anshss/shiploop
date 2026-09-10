@@ -6,7 +6,7 @@
 #       emitted stream is jq-validated. Proof: a `### #42` body ref yields exactly ONE entry, valid JSON.
 # Part (b) of the original regression covered the self-apply safety-rail knob list shared by
 # govern-self-apply.sh and govern-improve-triage.sh. Both scripts, and the shared constant, were
-# deleted with the self-improvement lane in 1.19.3, so there is nothing left to protect and the
+# deleted with the self-improvement lane in 1.19.2, so there is nothing left to protect and the
 # assertions went with them.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
