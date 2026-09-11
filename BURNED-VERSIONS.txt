@@ -1,0 +1,12 @@
+# Version numbers that were tagged and/or published and then withdrawn, so a fresh cut can
+# never reuse them. `gh release delete <tag> --cleanup-tag` erases every trace of a withdrawn
+# release from GitHub itself, so this file is the only durable record left; anyone who already
+# installed the withdrawn version from the marketplace holds a version string higher than
+# whatever main claims next, so the next real cut still has to land above it.
+#
+# tools/check-release-parity.sh --pre is the only reader: it fails a proposed VERSION that is
+# less than or equal to the highest of (every published release tag) union (every line below).
+#
+# One entry per line: <version> <ISO date withdrawn> <one-line reason>. Comment lines (#) and
+# blank lines are ignored.
+1.19.0 2026-09-08 withdrawn: bench PR #144 cut v1.19.0, operator withdrew it (gh release delete v1.19.0 --cleanup-tag); manifests rolled back to 1.18.5 (commits 9064d1c + d648211)
