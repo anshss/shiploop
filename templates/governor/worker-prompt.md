@@ -104,6 +104,13 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
 - **Slow provisioning → BLOCK-AND-POLL in THIS turn; NEVER `ScheduleWakeup` or end your turn on a
   background wait** — a headless worker gets NO re-invocation, so a verdict-less turn reads as
   FAILED and burns the resource. Bounded `until` loop under `GOVERN_WORKER_TIMEOUT`, else PARK.
+- **About to wait on something long → say so in ONE line before you go quiet, naming what you wait
+  on.** A background task you correctly must not poll (a test suite, a consult reply, a
+  provisioning job) and a genuine stall look identical from outside: nobody watching your session
+  can tell "blocked correctly" from "stuck" without checking (.specs/2026-09-11-advisor-worker-design.md
+  D8/G10). This is not a discipline rule — a worker waiting correctly is behaving correctly, and
+  saying nothing does not make you wrong — it only reduces how often whoever is watching has to
+  stop and read your transcript to find out which one you are; it never removes their need to look.
 - **Real UI → drive it headlessly via the project's browser tool** — the real user path.
 - **One judgment fork you cannot resolve → consult, don't guess or fail.** Run
   `scripts/govern/advisor-consult.sh claim <N>` (from the workspace root, the script decides, you
