@@ -217,6 +217,59 @@ is zero, and the shiploop arm's cost is a stated LOWER bound rather than a measu
 prints the covered/uncovered split for exactly this reason. The interactive session that dispatched
 the run is not counted by this path and never will be: it writes no transcript into `logs/govern`.
 
+## Advisor consult spend is attributed by ticket, and only when a ticket appears in exactly one run
+
+`templates/govern/advisor-consult.sh` buys a worker ONE scoped answer from a higher tier at a fork
+it cannot resolve. Those tokens are real dispatch spend and they land in no transcript this report
+walks: the consult is a separate call, ledgered at `logs/govern/ticket-N/advisor.jsonl`. They are
+now read (`readAdvisorLedgers`), reported as a top-level `advisorSpend`, and charged INTO the
+shiploop arm as a negative `advisor-consult` lever, the same direction and shape as
+`harness-overhead`. Two limits come with that, both stated in the report where it prints them.
+
+**The ledger is FLAT, not run-scoped.** There is no `GOVERN_RUN_DIR` to scope it under any more
+(the dispatch loop that exported one is retired, see the last section here), so a ledger names a
+ticket and never a run. Attribution is therefore sound only where a ticket appears in EXACTLY ONE
+run of the corpus. Where it appears in several, the spend is reported `unattributed` with reason
+`ticket-in-multiple-runs`; where the corpus contains no run touching it at all, `ticket-not-in-corpus`.
+Unattributed spend is real money counted in the totals and charged to no arm, never dropped and
+never guessed onto the nearest run. On a corpus that re-runs the same tickets across arms, expect
+most or all advisor spend to land there.
+
+**The cost is an upper bound by construction.** A `record` row carries ONE `tokens` figure with no
+input/output split, so it cannot be priced the way a transcript is. `advisorRowCost()` prices the
+whole figure at the answering tier's OUTPUT rate, the most expensive reading available. That is
+deliberate and it is the conservative direction HERE specifically, because this is a cost on the
+shiploop side only: over-stating it lowers shiploop's own reduction. The pricing goes through the
+same `RATES` / `QUOTA_WEIGHTS` / `tierOf()` the rest of the report uses, never a second table.
+
+Advisor tokens are folded into `shipBreakdown.output`, so the four parts of the breakdown still sum
+to `shiploopTokens` with the new cost included.
+
+## Run-less lever events are counted and credited to no arm
+
+The interactive lane's watchdog (`templates/hooks/agent-watchdog-guard.sh`) now emits the same
+`watchdog-kill` event the headless launcher emits, so bench sees one watchdog stream across both
+lanes. But a live session exports no `GOVERN_RUN_DIR`, so the emitter's fallback writes those rows
+to `logs/govern/lever-events.jsonl`: flat, beside the run directories, naming no run.
+
+`replay.mjs` reads that file (`readUnscopedLeverEvents`) and reports it as a census under
+`instrumentation.unscoped`, `credited:false`. Every event-derived lever is credited PER RUN, and
+these rows name no run. Picking one for them (newest run, only run, nearest timestamp) would attach
+a real saving to an arbitrary arm, which is worse than a visible gap. So the interactive lane's
+kills are disclosed and contribute zero credit. That is an understatement of the watchdog lever on
+any fleet that does interactive work, not a measurement that interactive kills save nothing.
+
+## The idle-progress alarm is a named exclusion, not an unmeasured lever
+
+`templates/hooks/agent-progress-guard.sh` raises `agent_progress_alarm` on the fleet event log. It
+is deliberately NOT a lever event and bench credits it nothing, which is a decision and not a gap.
+A lever bench credits must REMOVE tokens from the counterfactual, and this one removes none: the
+`TeammateIdle` branch cannot block by construction (there is no stop to hold open), so it terminates
+nothing and truncates nothing, and the `SubagentStop` branch blocks a stop, which makes the child
+work LONGER, not shorter. Crediting it would be crediting an observation as a saving. Locked by case
+14 of `templates/govern/test/test-agent-progress-guard.sh` and recorded in the deliberate-exclusions
+section of `bench/LEVER-EVENTS.md`.
+
 ## The replay ("best-case") number's corpus is thin for the current version
 
 No transcript event carries the shiploop *package* version — only the Claude Code CLI version
@@ -347,7 +400,7 @@ rather than solved here.
 after it created `logs/govern/run-<ts>-<pid>/`. Everything run-scoped hung off it: each worker's log
 directory (`govern::worker_logdir`), the five capability-probe caches, `lever-events.jsonl`, and the
 two sibling stamps `shiploop-version` and `driver-model` that `bench/replay.mjs` reads (replay.mjs
-lines 598, 714 and 754).
+lines 688 and 883).
 
 The loop is retired, and the replacement session lane deliberately does NOT set it. A plain
 interactive session running `pre-dispatch-check.sh`, then a worker, then `resolve-ticket.sh` falls

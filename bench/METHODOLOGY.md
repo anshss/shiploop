@@ -203,6 +203,7 @@ sum to it (`leverSumCheck` in the JSON, `sum check:` in the report). A component
 | skip-the-model | from `scripted-action` events: a per-class token FLOOR, table printed in the report. Keyed on the scout's deterministic kinds. An unknown class is counted and credited zero |
 | escalation-correction | from `escalation` events: the routing credit claimed for a failed cheap-tier attempt is taken back. Negative by construction, and **partial by design**, see below |
 | harness-overhead | the orchestration-side transcripts, charged into the shiploop arm. **Negative by construction** |
+| advisor-consult | the advisor consult ledger (`logs/govern/ticket-N/advisor.jsonl`), charged into the shiploop arm. Priced whole at the answering tier's OUTPUT rate, a stated upper bound; attributed only where a ticket appears in exactly ONE run, otherwise reported unattributed and charged to no arm. **Negative by construction** |
 | output-suppression | **uninstrumented.** The withheld bytes are, by definition, absent from every transcript, and the wire contract (`bench/LEVER-EVENTS.md`) carries no event for them |
 | shared-exploration, memory-budget, blocked-work-early-catch | **unmeasured.** Each is printed with the counterfactual it would need |
 | lean-worker-session, scripted-codebase-map | **absorbed (uncredited, conservative).** See below |
