@@ -16,11 +16,16 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Daily so release-parity (below) has a second chance to catch a tag/release drift beyond
+  # the push-to-main that introduced it, without every other job paying for a nightly run.
+  schedule:
+    - cron: '15 6 * * *'
 
 jobs:
   lint-templates:
     name: Lint shell templates
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +79,7 @@ jobs:
   validate-manifests:
     name: Validate plugin + marketplace manifests
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
       - name: jq empty on .claude-plugin/*.json
@@ -125,6 +131,7 @@ jobs:
   check-manifests:
     name: Manifest guards (purge-manifest-complete + seed-hashes-current)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,6 +144,7 @@ jobs:
   hub-context-tests:
     name: Update-channel tests (run from the hub checkout, not a workspace)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     # These tests assert on the hub itself — scaffold.sh, templates/, VERSION, purge.txt,
     # seed-hashes.txt — so they resolve HUB as $DIR/../../.. and exit 77 ("skip") when that
     # is not a hub checkout. `scaffold-and-test` COPIES the suite into a throwaway workspace,
@@ -187,6 +195,7 @@ jobs:
   hook-tests:
     name: Hook tests (templates/hooks/test-*.sh, run from the hub checkout)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     # The govern suite only globs templates/govern/test/test-*.sh, so a test that
     # ships beside the hook it covers would never run. These are self-contained
     # (no assert.sh, no scaffolded workspace) and exit 77 to SKIP.
@@ -218,6 +227,7 @@ jobs:
   scaffold-and-test:
     name: Govern suite (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     # The suite is ~550s of wall clock and every test is self-contained (its own
     # mktemp workspace), so it is embarrassingly parallel. Sharding it turns the
     # long pole of this workflow into ~1/N of itself WITHOUT dropping a single
@@ -363,3 +373,46 @@ jobs:
           done
           [ "$unaccounted" -eq 0 ] || exit 1
           echo "ok - all $skipped skip(s) are covered by the hub-context-tests job"
+
+  release-parity:
+    name: Release parity (VERSION <-> tag <-> release <-> CHANGELOG)
+    runs-on: ubuntu-latest
+    # A version bump is not a release. v1.18.4 was tagged and pushed with no GitHub Release
+    # ever cut, and the public release list read 1.18.3 then 1.18.5 until an operator noticed
+    # by eye; a later bump to 1.18.5 merged with its tag and release uncut, caught the same
+    # way. Withdrawing v1.19.0 added a third direction: `gh release delete --cleanup-tag`
+    # erases every trace of a burned number, so BURNED-VERSIONS.txt is the only durable
+    # record that it can never be reused. This job fails loudly and never publishes anything:
+    # release notes stay hand-curated.
+    #
+    # This is the ONLY job that runs on the daily schedule (every other job carries
+    # `if: github.event_name != 'schedule'`), so the nightly costs one runner, not the whole
+    # workflow. The schedule exists because the push-to-main run is a single chance: a merge
+    # that lands while a tag is still uncut is a normal, expected transient, and only the next
+    # day's run can tell that apart from a cut nobody ever finished.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --post walks `git tag --merged main`, which sees nothing under the default
+          # shallow, tagless fetch.
+          fetch-depth: 0
+      - name: install jq
+        # jq ships on the ubuntu-latest image; only pay for apt if it is missing.
+        run: command -v jq >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
+      - name: test the checker against a stubbed gh
+        # Runs first, and with no GH_TOKEN: the test drives tools/check-release-parity.sh over
+        # fixture repos with a fake `gh` earlier on PATH, so a checker that has stopped
+        # detecting anything fails here rather than passing the real checks vacuously.
+        run: bash tools/test/test-release-parity.sh
+      - name: pre-merge (VERSION not below any published release, and above every burned one)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/check-release-parity.sh --pre
+      - name: post-merge (every tag released, VERSION tagged, release body == its CHANGELOG section)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/check-release-parity.sh --post
