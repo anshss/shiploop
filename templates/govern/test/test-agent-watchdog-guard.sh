@@ -111,7 +111,7 @@ assert_eq "$out9" "" "no transcript file yet for this child → silent no-op, ne
 # only half the fleet's kills and read the interactive half as "never fired" rather than
 # "unmeasured". These exercise the hook's REAL code path (a payload in, the emitted file out), not
 # a fixture of its output. GOVERN_LEVER_EVENTS is pinned 0 in assert.sh, so each case turns it on
-# explicitly — which is also what makes case 12 a real kill-switch test rather than a tautology.
+# explicitly, which is also what makes case 12 a real kill-switch test rather than a tautology.
 EV="$TMP/lever-events.jsonl"
 
 # 10. wall-clock. Same event name and same reason string the headless lane uses for the same cap,

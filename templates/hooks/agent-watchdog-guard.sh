@@ -144,7 +144,7 @@ fi
 # is not found at either candidate path, `|| exit 0` degrades this to a silent no-op. A common.sh
 # that DOES load but whose own workspace-config source fails (a bare checkout with no
 # scripts/lib/workspace.sh) still defines every function that doesn't need that config,
-# govern::cumulative_tokens included — verified live: bash suppresses `set -e` for the whole
+# govern::cumulative_tokens included, verified live: bash suppresses `set -e` for the whole
 # recursive execution of one member of an `A || B` list, so a failure deep inside common.sh's OWN
 # sourcing of workspace.sh does not stop the rest of common.sh from loading. That is a feature
 # here, not a gap to route around: a pure function over a transcript file has no business needing
@@ -152,7 +152,7 @@ fi
 # exactly: this script installs to scripts/ (workspace) or lives at templates/hooks/ (hub repo /
 # hermetic tests).
 #
-# Called LAZILY, only on a path that is about to deny or emit — a scan of the child's transcript on
+# Called LAZILY, only on a path that is about to deny or emit: a scan of the child's transcript on
 # every single tool call would be a real per-call cost for a reading nothing reads.
 child_tokens() { # -> the child's cumulative tokens, or "" when unreadable
   local t
