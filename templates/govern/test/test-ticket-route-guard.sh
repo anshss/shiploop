@@ -34,6 +34,24 @@
 #      says "ticket" or a dispatch verb. A single-digit `t1`/`t2` is a step label,
 #      not a ticket number, and stays untouched; an item-shaped name doing
 #      genuinely read-only work is still exempt.
+#  11. (D9, 2026-09-11) subagent_type "lookup"/"investigator" is exempt from the deny
+#      even on a GENUINELY ticket-shaped, non-read-only-framed dispatch -- proven from
+#      the type alone, the same as "worker" already was, never from prompt shape. The
+#      identical prompt with no subagent_type (or a stock type) is still denied: the
+#      type is what changed, not the words.
+#  12. (#126, 2026-09-11) A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166")
+#      is not a ticket reference: it must not make an otherwise non-ticket prompt
+#      ticket-shaped. A genuine ticket reference elsewhere in the same prompt still
+#      denies, so the fix narrows the false positive without widening the exemption.
+#  13. (#126, 2026-09-11) One negator governs a whole LIST in English -- "do not
+#      edit, commit, or create anything" negates BOTH edit and commit -- but the
+#      first negation fix only stripped ONE write verb per trigger, so a read-only
+#      audit prompt (read-only, audit, explain, report back, do not edit) was denied
+#      anyway because "commit" survived un-negated later in the same sentence.
+#  14. (D4, 2026-09-11) the fan-out cap: nothing previously counted a genuine
+#      subagent_type "worker" dispatch, so a session could spawn unbounded workers.
+#      Past MAX_WORKERS_PER_SESSION, an advisory (never a deny) is attached; the
+#      kill switch is GOVERN_WORKER_FANOUT_NUDGE=0.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -241,5 +259,98 @@ payload_named "w973-audit" "delegated task" "Investigate why the retry classifie
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "10e. an item-shaped name doing genuinely read-only work is still exempt"
 clear_counter "$sid"
+
+# ── 11. D9: subagent_type lookup/investigator is a read-only data child, exempt by
+#          TYPE ALONE, even on a prompt that would otherwise deny ────────────────
+# Same prompt, two directions: no subagent_type denies (this is genuine ticket
+# dispatch, per test 1's shape), lookup/investigator does not, because the type
+# itself is provably read-only (tools: Read, Grep, Glob, Bash -- no Write/Edit/Agent).
+sid="ticketroute-d9-stock"; clear_counter "$sid"
+payload "" "Resolve ticket #50 end to end and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "11a. the same ticket-shaped prompt with no subagent_type is DENIED (baseline)"
+clear_counter "$sid"
+
+sid="ticketroute-d9-lookup"; clear_counter "$sid"
+payload "lookup" "Resolve ticket #50 end to end and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "11b. subagent_type lookup passes untouched on the IDENTICAL prompt (type, not prompt shape, is what exempts it)"
+clear_counter "$sid"
+
+sid="ticketroute-d9-investigator"; clear_counter "$sid"
+payload "investigator" "Resolve ticket #50 end to end and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "11c. subagent_type investigator passes untouched on the same genuinely-dispatch-shaped prompt"
+clear_counter "$sid"
+
+# ── 12. #126: a "#NNN" that prose marks as a PULL REQUEST is not a ticket reference ─
+sid="ticketroute-prref-only"; clear_counter "$sid"
+payload "" "Reference: PR #166. Finish the migration end to end." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "12a. 'PR #166' with no other ticket signal is NOT ticket-shaped (the literal regression case)"
+clear_counter "$sid"
+
+sid="ticketroute-prref-lower"; clear_counter "$sid"
+payload "" "the changelog says pr #166 shipped last week. now finish the migration end to end." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "12b. lower-case 'pr #166' is exempted the same way"
+clear_counter "$sid"
+
+sid="ticketroute-prref-plus-real"; clear_counter "$sid"
+payload "" "PR #166 introduced the bug. Please resolve ticket #200 end to end." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "12c. a genuine ticket reference alongside a PR reference in the same prompt is still DENIED"
+assert_contains "$out" 'govern:pre-dispatch -- 200' "12d. the recovered ticket number is the real ticket (200), never the PR number (166)"
+clear_counter "$sid"
+
+# ── 13. #126: one negator governs a whole LIST, not just the first write verb ───
+sid="ticketroute-neglist"; clear_counter "$sid"
+payload "" "Audit ticket #126 read-only and fix the root-cause writeup: investigate why the guard denies audits, explain the finding, and report back. Do not edit, commit, or create anything." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "13. a read-only framing with a NEGATED LIST of write verbs (edit, commit) is exempt -- the exact reproduction from G4/D4"
+clear_counter "$sid"
+
+sid="ticketroute-neglist-mixed"; clear_counter "$sid"
+payload "" "Audit ticket #126 read-only: investigate and fix the root cause, explain the finding, and report back. Do not edit or create anything, then commit the fix." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "13b. a real (non-negated) write verb OUTSIDE the negated list is still DENIED"
+clear_counter "$sid"
+
+# ── 14. D4: the fan-out cap on genuine WORKER dispatches, advisory only ─────────
+# MAX_WORKERS_PER_SESSION=5 in the script under test. This is a SEPARATE counter
+# file from the Read/Bash advisory one (contract item 7's cap must stay untouched).
+clear_fanout() { rm -f "${TMPDIR:-/tmp}/metarepo-router-posture-worker-fanout-$1" 2>/dev/null || true; }
+
+sid="ticketroute-fanout"; clear_fanout "$sid"
+nudged=0; denies=0
+for i in 1 2 3 4 5 6; do
+  payload "worker" "Resolve ticket #$((900 + i)) end to end and open a PR." "$sid" "/tmp/fake-transcript-fanout-$i.jsonl"
+  out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+  case "$out" in *'"permissionDecision": "deny"'*) denies=$((denies + 1)) ;; esac
+  [ -n "$out" ] && nudged=$((nudged + 1))
+done
+assert_eq "$denies" "0" "14a. a worker-typed dispatch is NEVER denied by the fan-out cap, however many fire"
+assert_eq "$nudged" "1" "14b. exactly one advisory fires, on the 6th dispatch (past MAX_WORKERS_PER_SESSION=5)"
+out_last="$out"
+assert_contains "$out_last" "6" "14c. the advisory names the running dispatch count"
+assert_contains "$out_last" "GOVERN_WORKER_FANOUT_NUDGE=0" "14d. the advisory names its own kill switch"
+clear_fanout "$sid"
+
+sid="ticketroute-fanout-killswitch"; clear_fanout "$sid"
+for i in 1 2 3 4 5 6; do
+  payload "worker" "Resolve ticket #$((900 + i)) end to end and open a PR." "$sid" "/tmp/fake-transcript-fk-$i.jsonl"
+  out="$(env -u GOVERN_RUN GOVERN_WORKER_FANOUT_NUDGE=0 bash "$GUARD" < "$PL" 2>&1)"
+  assert_eq "$out" "" "14e.$i GOVERN_WORKER_FANOUT_NUDGE=0 silences the fan-out advisory even past the cap"
+done
+clear_fanout "$sid"
+
+# ── 14f. lookup/investigator dispatches never count against the worker fan-out cap ─
+sid="ticketroute-fanout-datachild"; clear_fanout "$sid"
+for i in 1 2 3 4 5 6 7; do
+  payload "lookup" "Resolve ticket #$((950 + i)) end to end and open a PR." "$sid" "/tmp/fake-transcript-fd-$i.jsonl"
+  out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+  assert_eq "$out" "" "14f.$i a lookup dispatch is silent regardless of count (data children are not capped, D9)"
+done
+clear_fanout "$sid"
 
 assert_done
