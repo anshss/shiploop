@@ -94,6 +94,18 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
   background wait** — a headless worker gets NO re-invocation, so a verdict-less turn reads as
   FAILED and burns the resource. Bounded `until` loop under `GOVERN_WORKER_TIMEOUT`, else PARK.
 - **Real UI → drive it headlessly via the project's browser tool** — the real user path.
+- **One judgment fork you cannot resolve → consult, don't guess or fail.** Run
+  `scripts/govern/advisor-consult.sh claim <N>` (from the workspace root, the script decides, you
+  never do). `allow` names an `advisorModel` (already capped by `GOVERN_WORKER_ESCALATION_MODEL`,
+  the same cap an explicit ticket `Model:` request obeys) and a `maxTokens` ceiling: spawn exactly
+  ONE `Agent` at that model with a single scoped question, then run `advisor-consult.sh record <N>
+  <consultId> --model <m> --tokens <n> --answer "<summary>"` and continue at your own tier. This
+  never raises the tier for the rest of the ticket, only that one call. `deny` (budget exhausted, or
+  the mechanism is off) is not a cue to retry, reformulate, or consult anyway: note it and keep
+  going on your own judgment, or say so plainly in `escalation` if the fork is genuinely where you
+  are stuck. An exhausted budget surfaces to the operator, it never buys a bigger tier by itself. A
+  stuck agent looping on a broken command does not need this; that is a progress problem, not a
+  question to ask.
 
 **Escalate as human-only ONLY** with a concrete unworkable blocker — a credential you cannot
 self-grant, unrentable hardware, money beyond the test grant, subjective judgment. Hard/flaky/slow,

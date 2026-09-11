@@ -134,6 +134,30 @@ elif govern::precision_assertion "$N"; then
   PRECISION_SOURCE="GOVERN_PRECISION (parent asserted $GOVERN_PRECISION_TEXT)"
 fi
 
+# ADVISOR BUDGET (#127, design Layer 3: completing Layer 2's inert half). The grade scales HOW MANY
+# consults a worker may buy; it never gates WHETHER it may ask. This harness never dispatches a
+# sonnet-solo unit of work in the first place: the premium (advisor) session and the sonnet worker
+# are a pair, and the pair is the unit, so a grade carrying ZERO budget would strand exactly the
+# configuration that is never acceptable. (An earlier version of this comment, and of the code, read
+# `stated`/`scoped` as zero-budget grades; that was the ticket's own mistake, corrected here. Layer
+# 3's prose has no grade qualifier ("a sonnet worker... spawns ONE opus Agent"), only Layer 2's table
+# gated it to `open`, and the two halves of the same design cannot both be authoritative.) The grade
+# still scales the NUMBER: `open` needs the most live judgment calls, `scoped` fewer, `stated` at
+# least one (a worker executing an already-stated change can still hit something the parent did not
+# anticipate, and stranding it there is the exact failure this mechanism exists to prevent). Model
+# and effort are unchanged by any of this: the design's table puts every grade at the same tier.
+# Exported below (near the live spawn) so the headless child's OWN advisor-consult.sh call (a
+# consult is a mid-session decision only the running worker can make, so nothing computes it FOR the
+# child in advance) sees the grade-appropriate cap without the script needing to know the grade
+# itself. Each rung is independently overridable, in the style GOVERN_ADVISOR_PER_WORKER (the
+# `scoped`/default rung, unchanged) already set: 3/2/1 is a starting point, not a measured constant.
+case "$PRECISION_GRADE" in
+  open)   ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER_OPEN:-3}" ;;
+  stated) ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER_STATED:-1}" ;;
+  *)      ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER:-2}" ;;   # scoped, the ordinary case
+esac
+export GOVERN_ADVISOR_BUDGET="$ADVISOR_BUDGET"
+
 # ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
 # ONE resolver, called by BOTH the dry-run observation seam and the live spawn — previously the two
 # paths carried copy-pasted resolution logic that could drift apart. Sets the globals
@@ -365,18 +389,17 @@ resolve_sizing() {
     model_source="$model_source (clamped to $capped by the session model ceiling)"
     model="$capped"; MODEL_CAP_SOURCE="session-ceiling"
   fi
-  # The worker-request cap. Rank comparison, not string equality, so `Model: opus` under a `sonnet`
-  # ceiling is caught while an at-or-below request passes through untouched. An unrankable ceiling
-  # (rank 0) caps nothing rather than inventing a tier, matching govern::model_clamp's own contract.
+  # The worker-request cap. govern::model_request_cap (lib/common.sh) is the ONE shared clamp: rank
+  # comparison, not string equality, so `Model: opus` under a `sonnet` ceiling is caught while an
+  # at-or-below request passes through untouched, and an unrankable ceiling (rank 0) caps nothing
+  # rather than inventing a tier. The advisor consult model (#127, design Layer 3) reuses this exact
+  # function rather than a second copy: see govern::advisor_claim.
   if [[ "$TICKET_MODEL_APPLIED" -eq 1 ]]; then
-    local wcap wrank crank
-    wcap="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
-    wrank="$(govern::model_rank "$wcap")"
-    crank="$(govern::model_rank "$model")"
-    if [[ "$wrank" -gt 0 && "$crank" -gt "$wrank" ]]; then
-      govern::log "worker request cap: ticket Model: '$model' outranks GOVERN_WORKER_ESCALATION_MODEL '$wcap', dispatching at '$wcap'"
-      model_source="$model_source (capped to $wcap by GOVERN_WORKER_ESCALATION_MODEL)"
-      model="$wcap"; MODEL_CAP_SOURCE="worker-request-cap"
+    local capped_model; capped_model="$(govern::model_request_cap "$model")"
+    if [[ "$capped_model" != "$model" ]]; then
+      govern::log "worker request cap: ticket Model: '$model' outranks GOVERN_WORKER_ESCALATION_MODEL '${GOVERN_WORKER_ESCALATION_MODEL:-opus}', dispatching at '$capped_model'"
+      model_source="$model_source (capped to $capped_model by GOVERN_WORKER_ESCALATION_MODEL)"
+      model="$capped_model"; MODEL_CAP_SOURCE="worker-request-cap"
     fi
   fi
   [[ "$model" != "$before" ]] && MODEL_CLAMPED_FROM="$before"
@@ -559,8 +582,9 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
     --argjson retry "$MODEL_IS_RETRY" \
     --arg pg "$PRECISION_GRADE" \
     --arg ps "$PRECISION_SOURCE" \
+    --argjson ab "$ADVISOR_BUDGET" \
     --arg n "$N" \
-    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, respec_requested:($respec == 1), respec_class:$respecclass, model_cap_source:$capsource, precision_grade:$pg, precision_source:$ps, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
+    '{ticket:($n|tonumber), claude_bin:$bin, model:$model, model_source:$source, ticket_model:$tm, effort:$effort, effort_source:$effort_source, ticket_effort:$te, is_retry:$retry, retry_class:$rclass, retry_reason:$rreason, respec_requested:($respec == 1), respec_class:$respecclass, model_cap_source:$capsource, precision_grade:$pg, precision_source:$ps, advisor_budget:$ab, permission_mode:$perm, strict_mcp:$mcp, exclude_dynamic_prompt:$edp, tools:$tools, max_turns:$maxturns, worktree:$wtpath}'
   exit 0
 fi
 
@@ -1249,6 +1273,7 @@ record_attempt() { # status -> appends one ledger row
      --arg rc "${retry_class:-}" --arg rr "${retry_reason:-}" \
      --argjson respec "${RESPEC_REQUESTED:-0}" --arg respecclass "${RESPEC_CLASS:-}" \
      --arg pg "${PRECISION_GRADE:-}" --arg ps "${PRECISION_SOURCE:-}" \
+     --argjson ab "${ADVISOR_BUDGET:-0}" \
      --argjson u "$usage" --argjson ts "$(date +%s)" \
      '{attempt:$a, model:$m, modelSource:$ms,
        effort:(if $e == "" then null else $e end), effortSource:$es,
@@ -1259,6 +1284,7 @@ record_attempt() { # status -> appends one ledger row
        respecClass:(if $respecclass == "" then null else $respecclass end),
        precisionGrade:(if $pg == "" then null else $pg end),
        precisionSource:(if $ps == "" then null else $ps end),
+       advisorBudget:$ab,
        mode:$mode, status:$st, ts:$ts} + $u' >> "$attempts_file" 2>/dev/null || true
   # Fleet event log (off unless GOVERN_EVENTS=1). record_attempt is the single funnel every exit
   # path runs through (clean return AND the INT/TERM/EXIT teardown), and it is latched idempotent —
@@ -1461,7 +1487,8 @@ WORKER_SPAWN_TS="$(date +%s)"; WORKER_PID="$cpid"
 # even runs) so a per-session summary grouped by model_source (rail 5) never has to join two rows
 # to answer "why was this tier picked" — see status.sh's "by source" section.
 govern::event worker_spawned "ticket=$N" "model=$model" "modelSource=$model_source" \
-  "effort=${effort:-}" "precision=$PRECISION_GRADE" "timeout=$to" "worktree=$wtpath" "pid=$cpid"
+  "effort=${effort:-}" "precision=$PRECISION_GRADE" "advisorBudget=$ADVISOR_BUDGET" \
+  "timeout=$to" "worktree=$wtpath" "pid=$cpid"
 if [[ "$to" -gt 0 ]]; then
   # 1>/dev/null: the watchdog (and its sleep child) must NOT inherit this script's stdout — that
   # pipe feeds the caller's $(...) capture, and an orphaned sleep holding it would hang the caller.

@@ -1463,6 +1463,149 @@ govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion co
   esac
 }
 
+# ── advisor consult (#127, design Layer 3: .specs/2026-09-09-model-orchestration-design.md) ──────
+# "A sonnet worker that reaches a decision it cannot make spawns ONE opus `Agent` with a scoped
+# question, receives an answer, and continues at sonnet." Same shape as govern::gotcha_block (#125/
+# #176): THE one implementation both lanes call through a thin CLI wrapper
+# (advisor-consult.sh). A launcher can inject the gotchas block IN ADVANCE because it is static text
+# known before dispatch; a consult is a LIVE decision only the running worker can make mid-session,
+# so there is nothing for a launcher to precompute FOR either lane here: the headless worker and an
+# interactive worker subagent both call `advisor-consult.sh` themselves, the same way, at the moment
+# they need it. spawn-worker.sh's only role is exporting GOVERN_ADVISOR_BUDGET from the ticket's
+# precision grade (Layer 2) before the live spawn, so the grade-appropriate cap is already in the
+# headless child's environment when it calls this; an interactive worker has no grade at all, so
+# govern::advisor_claim falls back to the plain GOVERN_ADVISOR_PER_WORKER default in that case
+# rather than being permanently zero-budgeted.
+#
+# Bounded by construction (rail 4): GOVERN_ADVISOR=0 is the kill switch, default OFF everywhere
+# (test/assert.sh pins it explicitly, matching GOVERN_GOTCHA_INJECT's own idiom): with it off,
+# `claim` denies immediately and writes NOTHING, a true no-op. Two independent numeric caps: per
+# WORKER (this ticket's own flat ledger, so it accumulates across retries rather than resetting) and
+# per SESSION (every ticket sharing one CLAUDE_CODE_SESSION_ID; the case that matters in practice is
+# the interactive lane, where one human session can dispatch many worker subagents across many
+# tickets; a headless dispatch is its own standalone `claude -p` process now that the run-loop
+# grouping several tickets under one session is retired (#108), so a session key that never repeats
+# collapses this to the per-worker cap on its own). A missing session key degrades to the per-worker
+# cap LOUDLY (govern::log), never silently unbounded. A missing/absent ledger file means ZERO
+# consults used so far, never a denial: "no evidence" is not "no budget".
+#
+# The flat ledger path ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped) is deliberate: unlike
+# attempts.jsonl, which IS run-scoped via govern::worker_logdir, GOVERN_RUN_DIR is gone with the loop
+# (#108's 2026-09-09 update), so there is no run to scope this ledger under even for a caller that
+# still sets it.
+govern::advisor_ledger_path() { # <N> -> the flat advisor.jsonl path for this ticket (dir mkdir -p'd)
+  local n="${1:?ticket number required}"
+  local dir="$LOG_ROOT/ticket-$n"
+  mkdir -p "$dir" 2>/dev/null || true
+  printf '%s/advisor.jsonl' "$dir"
+}
+
+# The session key. GOVERN_ADVISOR_SESSION_KEY is a test seam (hermetic tests can't rely on a real
+# CLAUDE_CODE_SESSION_ID); CLAUDE_CODE_SESSION_ID is what a real running session actually carries.
+govern::advisor_session_key() { # -> the session key, or "" when none is available
+  printf '%s' "${GOVERN_ADVISOR_SESSION_KEY:-${CLAUDE_CODE_SESSION_ID:-}}"
+}
+
+govern::advisor_used_worker() { # <ledger-file> -> count of "claim" rows in THIS ticket's ledger
+  local f="$1" n
+  [[ -f "$f" ]] || { printf '0'; return 0; }
+  n="$(jq -s '[.[] | select(.event=="claim")] | length' "$f" 2>/dev/null)" || n=0
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "$n"
+  return 0
+}
+
+govern::advisor_used_session() { # <session-key> -> count of "claim" rows across ALL tickets' ledgers
+  local key="$1" total=0 f n
+  [[ -n "$key" ]] || { printf '0'; return 0; }
+  for f in "$LOG_ROOT"/ticket-*/advisor.jsonl; do
+    [[ -f "$f" ]] || continue
+    n="$(jq -s --arg k "$key" '[.[] | select(.event=="claim" and .sessionId==$k)] | length' "$f" 2>/dev/null)" || n=0
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    total=$(( total + n ))
+  done
+  printf '%s' "$total"
+  return 0
+}
+
+# govern::advisor_claim <N> [<question>] [<turn>] -> prints ONE JSON decision line; rc 0 = allow,
+# rc 1 = deny. `claim` OPENS the ledger entry (reserves one budget unit up front, so a worker cannot
+# dodge the cap by never calling `record`); `record` (below) closes it with what came back.
+govern::advisor_claim() { # <N> [<question>] [<turn>]
+  local n="${1:?ticket number required}" question="${2:-}" turn="${3:-}"
+  local ledger; ledger="$(govern::advisor_ledger_path "$n")"
+  if [[ "${GOVERN_ADVISOR:-0}" != "1" ]]; then
+    jq -nc '{decision:"deny",reason:"disabled"}'
+    return 1
+  fi
+  local worker_cap session_cap key used_worker used_session wr sr
+  worker_cap="${GOVERN_ADVISOR_BUDGET:-${GOVERN_ADVISOR_PER_WORKER:-2}}"
+  session_cap="${GOVERN_ADVISOR_PER_SESSION:-6}"
+  key="$(govern::advisor_session_key)"
+  used_worker="$(govern::advisor_used_worker "$ledger")"
+  if [[ -z "$key" ]]; then
+    govern::log "advisor consult #$n: no session key available (CLAUDE_CODE_SESSION_ID unset), degrading the per-session cap to the per-worker cap rather than treating it as unbounded"
+    used_session="$used_worker"
+    session_cap="$worker_cap"
+  else
+    used_session="$(govern::advisor_used_session "$key")"
+  fi
+  wr=$(( worker_cap - used_worker )); if [[ "$wr" -lt 0 ]]; then wr=0; fi
+  sr=$(( session_cap - used_session )); if [[ "$sr" -lt 0 ]]; then sr=0; fi
+  if [[ "$used_worker" -ge "$worker_cap" ]]; then
+    jq -nc --argjson wr 0 --argjson sr "$sr" \
+      '{decision:"deny",reason:"worker-budget-exhausted",workerRemaining:$wr,sessionRemaining:$sr}'
+    return 1
+  fi
+  if [[ "$used_session" -ge "$session_cap" ]]; then
+    jq -nc --argjson wr "$wr" --argjson sr 0 \
+      '{decision:"deny",reason:"session-budget-exhausted",workerRemaining:$wr,sessionRemaining:$sr}'
+    return 1
+  fi
+  local advisor_model max_tokens consult_id wr2 sr2
+  advisor_model="$(govern::model_request_cap opus)"
+  max_tokens="${GOVERN_ADVISOR_MAX_TOKENS:-4000}"
+  consult_id=$(( used_worker + 1 ))
+  wr2=$(( wr - 1 )); if [[ "$wr2" -lt 0 ]]; then wr2=0; fi
+  sr2=$(( sr - 1 )); if [[ "$sr2" -lt 0 ]]; then sr2=0; fi
+  jq -nc --argjson ts "$(date +%s)" --arg key "$key" --argjson cid "$consult_id" \
+     --arg q "$question" --arg turn "$turn" \
+     '{ts:$ts, event:"claim", consultId:$cid, sessionId:(if $key=="" then null else $key end),
+       question:(if $q=="" then null else $q end), turn:(if $turn=="" then null else $turn end)}' \
+     >> "$ledger" 2>/dev/null || true
+  jq -nc --argjson cid "$consult_id" --arg am "$advisor_model" --argjson mt "$max_tokens" \
+     --argjson wr "$wr2" --argjson sr "$sr2" \
+     '{decision:"allow",consultId:$cid,advisorModel:$am,maxTokens:$mt,workerRemaining:$wr,sessionRemaining:$sr}'
+  return 0
+}
+
+# govern::advisor_record <N> <consultId> <model> <tokens> <answer-summary> -> closes the ledger
+# entry `claim` opened. Best-effort and always rc 0 once arguments parse: this is observability, not
+# a gate, so a logging hiccup must never fail a worker's own flow.
+govern::advisor_record() { # <N> <consultId> <model> <tokens> <answer>
+  local n="${1:?ticket number required}" cid="${2:?consultId required}"
+  local model="${3:-}" tokens="${4:-0}" answer="${5:-}"
+  local ledger; ledger="$(govern::advisor_ledger_path "$n")"
+  [[ "$tokens" =~ ^[0-9]+$ ]] || tokens=0
+  local worker_cap session_cap key used_worker used_session wr sr
+  worker_cap="${GOVERN_ADVISOR_BUDGET:-${GOVERN_ADVISOR_PER_WORKER:-2}}"
+  session_cap="${GOVERN_ADVISOR_PER_SESSION:-6}"
+  key="$(govern::advisor_session_key)"
+  used_worker="$(govern::advisor_used_worker "$ledger")"
+  if [[ -z "$key" ]]; then
+    used_session="$used_worker"; session_cap="$worker_cap"
+  else
+    used_session="$(govern::advisor_used_session "$key")"
+  fi
+  wr=$(( worker_cap - used_worker )); if [[ "$wr" -lt 0 ]]; then wr=0; fi
+  sr=$(( session_cap - used_session )); if [[ "$sr" -lt 0 ]]; then sr=0; fi
+  jq -nc --argjson ts "$(date +%s)" --argjson cid "$cid" --arg m "$model" --argjson tok "$tokens" \
+     --arg a "$answer" --argjson wr "$wr" --argjson sr "$sr" \
+     '{ts:$ts, event:"record", consultId:$cid, model:$m, tokens:$tok, answer:$a,
+       workerRemaining:$wr, sessionRemaining:$sr}' >> "$ledger" 2>/dev/null || true
+  return 0
+}
+
 govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
   local f="${1:-$TICKETS_FILE}"
   [[ -f "$f" ]] || return 0
@@ -3511,6 +3654,28 @@ govern::model_clamp() { # <tier> -> <tier>, or the ceiling when <tier> outranks 
     printf '%s' "$ceil"
   else
     printf '%s' "$tier"
+  fi
+  return 0
+}
+
+# govern::model_request_cap <requested-model> -> <requested-model>, or GOVERN_WORKER_ESCALATION_MODEL
+# when the request outranks it. Rank comparison, not string equality, so an at-or-below request
+# passes through untouched and an unrankable ceiling (rank 0) caps nothing rather than inventing a
+# tier: the exact comparison spawn-worker.sh's resolve_sizing used to run inline for the ticket
+# `Model:` field cap. Factored out here so the advisor consult model (#127, design Layer 3) can
+# reuse the SAME cap instead of a second copy: "the advisor model is capped, not free... resolves
+# against GOVERN_WORKER_ESCALATION_MODEL the same way an explicit ticket Model: request already
+# does." Never logs (callers that already log the ticket-Model-field case keep doing so themselves,
+# unchanged) and never fails: an unrankable requested model just passes through.
+govern::model_request_cap() { # <requested> -> <requested-or-capped>
+  local requested="${1:-}" wcap wrank crank
+  wcap="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
+  wrank="$(govern::model_rank "$wcap")"
+  crank="$(govern::model_rank "$requested")"
+  if [[ "$wrank" -gt 0 && "$crank" -gt "$wrank" ]]; then
+    printf '%s' "$wcap"
+  else
+    printf '%s' "$requested"
   fi
   return 0
 }

@@ -80,6 +80,10 @@ export GOVERN_GOTCHA_INJECT=0        # #118 rail 9: CLAUDE.md/learnings.md **Pat
                                       # the stub root for unrelated reasons; a coincidental `### `+`**Paths:**`
                                       # match there must never leak into an unrelated test's assembled prompt.
                                       # Its own test (test-spawn-gotcha-inject.sh) opts back in.
+export GOVERN_ADVISOR=0              # #127 design Layer 3: the advisor consult kill switch. Already the
+                                      # script's own default, restated here per the GOVERN_FIX_CI precedent
+                                      # (a live governor session's exported env must never leak into a suite
+                                      # run). Its own test (test-advisor-consult.sh) opts back in explicitly.
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
