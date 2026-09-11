@@ -43,9 +43,8 @@ Ignore only these two things in it, which describe the other lane:
    paths) and is not a reason to skip the step.
 3. **The advisor consult mechanism (worker-prompt.md §4) is self-serve here too.** No launcher
    pre-computes your per-worker budget from a precision grade, since nothing grades an interactive
-   dispatch, so `advisor-consult.sh` falls back to the plain per-worker default directly, the same
-   way `gotchas-for-paths.sh` self-serves the hazard lookup above rather than being permanently
-   zero-budgeted.
+   dispatch, so `advisor-consult.sh` falls back to the plain, nonzero per-worker default directly,
+   the same way `gotchas-for-paths.sh` self-serves the hazard lookup above.
 4. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
 5. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch

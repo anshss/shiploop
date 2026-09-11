@@ -9,21 +9,26 @@
 #   1. No GOVERN_WARM, no GOVERN_PRECISION -> "scoped" (the ordinary, unasserted case), tier
 #      unchanged from the floor.
 #   2. GOVERN_WARM matching the ticket -> "stated", haiku (already covered by test-warm-dispatch.sh
-#      for the tier; this asserts the recorded GRADE too).
+#      for the tier; this asserts the recorded GRADE too), and a NONZERO advisor_budget: this
+#      harness never dispatches a sonnet-solo unit of work, so even a fully-specified "stated"
+#      change keeps at least one consult for whatever the parent did not anticipate.
 #   3. GOVERN_PRECISION="<N>|open" matching the ticket -> "open", the SAME model tier as scoped (the
-#      design's table puts both at sonnet, do not invent a model change for "open") but now a
-#      NONZERO advisor_budget (#127, design Layer 3, completing this grade's other half): the
-#      sizing difference "open" buys is the consult budget, not the tier.
-#   4. GOVERN_PRECISION="<N>|scoped" explicit -> "scoped", same tier, ZERO advisor_budget, source
-#      names the assertion.
+#      design's table puts both at sonnet, do not invent a model change for "open") but the LARGEST
+#      advisor_budget of the three grades (#127, design Layer 3): the grade scales HOW MANY
+#      consults, it never gates WHETHER a worker may ask at all.
+#   4. GOVERN_PRECISION="<N>|scoped" explicit -> "scoped", same tier, source names the assertion,
+#      and an advisor_budget strictly between "stated" and "open" (the ordinary case, in the middle).
 #   5. GOVERN_PRECISION naming a DIFFERENT ticket -> not applied; falls back to the "scoped" default.
 #   6. Malformed GOVERN_PRECISION (no pipe / non-numeric ticket / unrecognized grade) -> ignored.
 #   7. GOVERN_WARM beats a GOVERN_PRECISION=open on the SAME ticket: "stated" is the strongest
-#      signal and wins regardless of what else is asserted, and "stated" also carries ZERO advisor
-#      budget (a fully-specified change has no fork the advisor exists for).
+#      signal and wins regardless of what else is asserted, and still carries "stated"'s own
+#      (smallest, but nonzero) advisor budget, not "open"'s.
 #   8. The live path: the per-attempt ledger (attempts.jsonl) and the fleet event log both carry
 #      precisionGrade/precisionSource/advisorBudget (rail 11: every input to the decision is
 #      recorded at the moment the decision is made).
+#   9. The real invariant across all of this: open >= scoped >= stated >= 1. The specific numbers
+#      are a starting point (GOVERN_ADVISOR_PER_WORKER_OPEN/GOVERN_ADVISOR_PER_WORKER/
+#      GOVERN_ADVISOR_PER_WORKER_STATED are each independently overridable), the ordering is not.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -84,10 +89,10 @@ assert_eq "$(printf '%s' "$d2" | jq -r '.precision_grade')" "stated" \
 assert_contains "$(printf '%s' "$d2" | jq -r '.precision_source')" "GOVERN_WARM" \
   "the recorded source names GOVERN_WARM"
 assert_eq "$(printf '%s' "$d2" | jq -r '.model')" "haiku" "stated -> the cheapest existing tier"
-assert_eq "$(printf '%s' "$d2" | jq -r '.advisor_budget')" "0" \
-  "stated carries ZERO advisor budget (a fully-specified change has no fork the advisor is for)"
+assert_eq "$(printf '%s' "$d2" | jq -r '.advisor_budget')" "1" \
+  "stated carries the SMALLEST but still NONZERO advisor budget: no unit of work runs sonnet-solo"
 
-# ── 3. GOVERN_PRECISION=open -> "open", SAME tier as scoped, NONZERO advisor budget (#127) ───────
+# ── 3. GOVERN_PRECISION=open -> "open", SAME tier as scoped, the LARGEST advisor budget (#127) ───
 d3="$(dry 701 open "GOVERN_PRECISION=701|open")"
 assert_eq "$(printf '%s' "$d3" | jq -r '.precision_grade')" "open" \
   "a matching GOVERN_PRECISION=open assertion -> the 'open' grade"
@@ -95,8 +100,8 @@ assert_contains "$(printf '%s' "$d3" | jq -r '.precision_source')" "GOVERN_PRECI
   "the recorded source names GOVERN_PRECISION"
 assert_eq "$(printf '%s' "$d3" | jq -r '.model')" "sonnet" \
   "open buys NO tier change today, the design's table puts scoped and open at the same tier"
-assert_eq "$(printf '%s' "$d3" | jq -r '.advisor_budget')" "2" \
-  "open buys the nonzero GOVERN_ADVISOR_PER_WORKER default (2) instead: the whole sizing split"
+assert_eq "$(printf '%s' "$d3" | jq -r '.advisor_budget')" "3" \
+  "open buys the LARGEST advisor budget of the three grades: how many consults, not whether any"
 
 # ── 4. GOVERN_PRECISION=scoped explicit -> "scoped", source names the assertion ──────────────────
 d4="$(dry 701 scoped-explicit "GOVERN_PRECISION=701|scoped")"
@@ -104,9 +109,19 @@ assert_eq "$(printf '%s' "$d4" | jq -r '.precision_grade')" "scoped" \
   "an explicit GOVERN_PRECISION=scoped -> still 'scoped'"
 assert_contains "$(printf '%s' "$d4" | jq -r '.precision_source')" "GOVERN_PRECISION" \
   "but the source now names the explicit assertion, not the silent default"
-assert_eq "$(printf '%s' "$d4" | jq -r '.advisor_budget')" "0" \
-  "and 'scoped' carries ZERO advisor budget, the same as the silent default: 'open' and 'scoped' \
-no longer resolve identically"
+assert_eq "$(printf '%s' "$d4" | jq -r '.advisor_budget')" "2" \
+  "and 'scoped' sits in the MIDDLE: nonzero, strictly between 'stated' and 'open'"
+
+# ── 4b. the invariant that actually matters is the ORDERING, not the specific numbers ─────────────
+ab_stated="$(printf '%s' "$d2" | jq -r '.advisor_budget')"
+ab_open="$(printf '%s' "$d3" | jq -r '.advisor_budget')"
+ab_scoped="$(printf '%s' "$d4" | jq -r '.advisor_budget')"
+if [[ "$ab_open" -ge "$ab_scoped" && "$ab_scoped" -ge "$ab_stated" && "$ab_stated" -ge 1 ]]; then
+  echo "ok   - open ($ab_open) >= scoped ($ab_scoped) >= stated ($ab_stated) >= 1: no grade is ever zero-budgeted"
+else
+  echo "FAIL - open ($ab_open) >= scoped ($ab_scoped) >= stated ($ab_stated) >= 1 does not hold"
+  ASSERT_FAILS=$((ASSERT_FAILS+1))
+fi
 
 # ── 5. GOVERN_PRECISION scoped to a DIFFERENT ticket -> not applied ──────────────────────────────
 d5="$(dry 702 other-ticket "GOVERN_PRECISION=701|open")"
@@ -129,8 +144,8 @@ d7="$(dry 701 both "GOVERN_WARM=701|$BRIEF" "GOVERN_PRECISION=701|open")"
 assert_eq "$(printf '%s' "$d7" | jq -r '.precision_grade')" "stated" \
   "'stated' is the strongest signal and wins over an 'open' assertion on the same ticket"
 assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "haiku" "and it still buys the cheapest tier"
-assert_eq "$(printf '%s' "$d7" | jq -r '.advisor_budget')" "0" \
-  "and it still carries ZERO advisor budget, same as any other 'stated' dispatch"
+assert_eq "$(printf '%s' "$d7" | jq -r '.advisor_budget')" "1" \
+  "and it still carries 'stated's own advisor budget (1), not 'open's, even though 'open' was also asserted"
 
 # ── 8. the live path: the ledger and the event log both carry the grade ──────────────────────────
 cat > "$TMP/wt.sh" <<EOF
@@ -167,12 +182,12 @@ assert_eq "$(jq -r '.precisionGrade' <<<"$row")" "open" \
   "the ledger row records the precision grade the dispatch was decided from"
 assert_contains "$(jq -r '.precisionSource' <<<"$row")" "GOVERN_PRECISION" \
   "and where that grade came from"
-assert_eq "$(jq -r '.advisorBudget' <<<"$row")" "2" \
-  "and the advisor budget (#127) that grade bought, same funnel as precisionGrade"
+assert_eq "$(jq -r '.advisorBudget' <<<"$row")" "3" \
+  "and the advisor budget (#127) that grade bought (open's largest rung), same funnel as precisionGrade"
 
 assert_contains "$(cat "$EVLOG" 2>/dev/null || true)" '"precision":"open"' \
   "the fleet event log's worker_spawned/worker_done rows carry the precision grade too"
-assert_contains "$(cat "$EVLOG" 2>/dev/null || true)" '"advisorBudget":2' \
+assert_contains "$(cat "$EVLOG" 2>/dev/null || true)" '"advisorBudget":3' \
   "and the advisor budget, on the same worker_spawned row"
 assert_contains "$(cat "$EVLOG" 2>/dev/null || true)" '"modelSource":"GOVERN_WORKER_MODEL"' \
   "and the model_source, so a per-session summary can group by it without opening attempts.jsonl"

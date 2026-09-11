@@ -134,17 +134,28 @@ elif govern::precision_assertion "$N"; then
   PRECISION_SOURCE="GOVERN_PRECISION (parent asserted $GOVERN_PRECISION_TEXT)"
 fi
 
-# ADVISOR BUDGET (#127, design Layer 3: completing Layer 2's inert half). The grade decides whether
-# this worker may consult at all: `stated`/`scoped` carry ZERO (a fully-specified or ordinarily-
-# scoped change has no fork the advisor exists for), and `open` alone carries the nonzero default,
-# since it is the one grade the design says needs a live judgment call mid-session. This is the
-# WHOLE sizing difference `open` buys over `scoped` today; it does NOT also change model/effort (the
-# design's table puts both grades at the same tier). Exported below (near the live spawn) so the
-# headless child's OWN advisor-consult.sh call (a consult is a mid-session decision only the
-# running worker can make, so nothing computes it FOR the child in advance) sees the
-# grade-appropriate cap without the script needing to know the grade itself.
-ADVISOR_BUDGET=0
-[[ "$PRECISION_GRADE" == "open" ]] && ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER:-2}"
+# ADVISOR BUDGET (#127, design Layer 3: completing Layer 2's inert half). The grade scales HOW MANY
+# consults a worker may buy; it never gates WHETHER it may ask. This harness never dispatches a
+# sonnet-solo unit of work in the first place: the premium (advisor) session and the sonnet worker
+# are a pair, and the pair is the unit, so a grade carrying ZERO budget would strand exactly the
+# configuration that is never acceptable. (An earlier version of this comment, and of the code, read
+# `stated`/`scoped` as zero-budget grades; that was the ticket's own mistake, corrected here. Layer
+# 3's prose has no grade qualifier ("a sonnet worker... spawns ONE opus Agent"), only Layer 2's table
+# gated it to `open`, and the two halves of the same design cannot both be authoritative.) The grade
+# still scales the NUMBER: `open` needs the most live judgment calls, `scoped` fewer, `stated` at
+# least one (a worker executing an already-stated change can still hit something the parent did not
+# anticipate, and stranding it there is the exact failure this mechanism exists to prevent). Model
+# and effort are unchanged by any of this: the design's table puts every grade at the same tier.
+# Exported below (near the live spawn) so the headless child's OWN advisor-consult.sh call (a
+# consult is a mid-session decision only the running worker can make, so nothing computes it FOR the
+# child in advance) sees the grade-appropriate cap without the script needing to know the grade
+# itself. Each rung is independently overridable, in the style GOVERN_ADVISOR_PER_WORKER (the
+# `scoped`/default rung, unchanged) already set: 3/2/1 is a starting point, not a measured constant.
+case "$PRECISION_GRADE" in
+  open)   ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER_OPEN:-3}" ;;
+  stated) ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER_STATED:-1}" ;;
+  *)      ADVISOR_BUDGET="${GOVERN_ADVISOR_PER_WORKER:-2}" ;;   # scoped, the ordinary case
+esac
 export GOVERN_ADVISOR_BUDGET="$ADVISOR_BUDGET"
 
 # ── worker sizing (model tier + reasoning effort) ───────────────────────────────────────────────
