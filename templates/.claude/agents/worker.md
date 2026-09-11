@@ -41,13 +41,18 @@ Ignore only these two things in it, which describe the other lane:
    about to touch (from the ticket's `Where:` field or the files you've identified), and treat any
    output the same way §1 describes. Empty output is the common case (nothing tagged for those
    paths) and is not a reason to skip the step.
-3. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
+3. **The advisor consult mechanism (worker-prompt.md §4) is self-serve here too.** No launcher
+   pre-computes your per-worker budget from a precision grade, since nothing grades an interactive
+   dispatch, so `advisor-consult.sh` falls back to the plain per-worker default directly, the same
+   way `gotchas-for-paths.sh` self-serves the hazard lookup above rather than being permanently
+   zero-budgeted.
+4. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
-4. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
+5. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
    redoing the work.
-5. **The report contract is unchanged.** Your final message is the single JSON object from
+6. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
-6. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
+7. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
    `status` and a filled `escalation` rather than thrashing. The driver owns the one retry.
