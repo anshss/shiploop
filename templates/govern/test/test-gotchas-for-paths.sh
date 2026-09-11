@@ -18,6 +18,11 @@
 #   6. No candidate matches any tagged entry -> silent, empty output, exit 0.
 #   7. GOVERN_GOTCHA_INJECT=0 suppresses the whole mechanism.
 #   8. No arguments at all -> usage error, exit 2.
+#   9. A MIXED invocation — one sub-repo-prefixed path and one meta-root-relative path in the same
+#      call — exits 0 and carries gotchas for BOTH shapes, not just an empty stdout: the
+#      repo-split used to leave a root-relative candidate unrewritten, feed it back in as a bogus
+#      "repo name", and abort the whole function under `set -e` when that repo's lookup matched
+#      nothing.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -39,6 +44,10 @@ ROOT-PAY-GOTCHA-SENTINEL: root-level rule about the pay path.
 ### root gotcha for a path never passed
 **Paths:** web/pages/**
 ROOT-WEB-GOTCHA-SENTINEL: never named as an argument, must not appear.
+
+### root gotcha for a meta-root path
+**Paths:** scripts/govern/**
+ROOT-META-GOTCHA-SENTINEL: a root-relative candidate, never prefixed with any sub-repo name.
 EOF
 
 # alpha's OWN CLAUDE.md: repo-relative Paths — one matching entry, one untagged.
@@ -90,5 +99,10 @@ assert_eq "$off" "" "7. GOVERN_GOTCHA_INJECT=0 suppresses the whole mechanism"
 
 if env GOVERN_WS_ROOT="$TMP" "$SCRIPT" >/dev/null 2>&1; then usage_rc=0; else usage_rc=$?; fi
 assert_eq "$usage_rc" "2" "8. no arguments at all is a usage error (exit 2)"
+
+if mixed="$(run -- "alpha/src/pay/charge.ts" "scripts/govern/foo.sh")"; then mixed_rc=0; else mixed_rc=$?; fi
+assert_eq "$mixed_rc" "0" "9. a mixed sub-repo + meta-root invocation exits 0"
+assert_contains "$mixed" "ALPHA-PAY-GOTCHA-SENTINEL" "9. ...and carries the sub-repo-prefixed candidate's gotcha"
+assert_contains "$mixed" "ROOT-META-GOTCHA-SENTINEL" "9. ...and carries the meta-root candidate's gotcha"
 
 assert_done

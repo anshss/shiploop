@@ -819,6 +819,9 @@ component_settings() {
     "SubagentStop": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
     ]}],
+    "TeammateIdle": [{ "matcher": "*", "hooks": [
+      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
+    ]}],
     "SessionEnd": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
     ]}]
@@ -840,7 +843,7 @@ EOF
 # setup.md's B2 (adopter-friction #3 from the tokenjam convergence).
 #
 # Insertion rule per event (SessionStart/UserPromptSubmit/PreToolUse/Stop/
-# SessionEnd): if a matcher entry exists that references any of the harness
+# SubagentStop/TeammateIdle/SessionEnd): if a matcher entry exists that references any of the harness
 # scripts, leave it alone (idempotent — re-run is a no-op). Otherwise APPEND a
 # new matcher block carrying just the harness's own hooks. Never delete or
 # re-order existing entries.
@@ -928,6 +931,7 @@ EOF
       {event:"PreToolUse",       matcher:"Write|Edit|Bash", items:[{marker:"rules-on-touch\\.sh",         hook:$ptr}]},
       {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
       {event:"SubagentStop",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
+      {event:"TeammateIdle",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
       {event:"SessionEnd",       matcher:"*",         items:[{marker:"session-end-cleanup\\.sh",     hook:$se}]}
     ]') || die "settings-merge: failed to build hook spec (jq error)"
   local jq_prog
