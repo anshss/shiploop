@@ -302,6 +302,7 @@ component_core_scripts() {
   cp "$T/hooks/learnings-digest.sh" scripts/
   cp "$T/hooks/session-reconcile.sh" scripts/
   cp "$T/hooks/agent-progress-guard.sh" scripts/
+  cp "$T/hooks/agent-watchdog-guard.sh" scripts/
   chmod +x scripts/*.sh
   # sourced libs (no +x needed but harmless)
   cp "$T/lib/session-state.sh" scripts/lib/
@@ -812,6 +813,8 @@ component_settings() {
       { "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
     ]}, { "matcher": "Write|Edit|Bash", "hooks": [
       { "type": "command", "command": "bash $root/scripts/rules-on-touch.sh 2>/dev/null || true", "timeout": 10 }
+    ]}, { "matcher": "*", "hooks": [
+      { "type": "command", "command": "bash $root/scripts/agent-watchdog-guard.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
     "Stop": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
@@ -863,7 +866,7 @@ component_settings_merge() {
   # introduced hook (e.g. validations-pending-hook.sh added after an install already had
   # session-snapshot.sh) never got appended to an existing settings.json. Per-hook checking fixes that:
   # a hook lands iff its own marker is absent, and re-running is idempotent (all markers then present).
-  local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules stop_hook agent_guard se_cleanup
+  local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules pt_watchdog stop_hook agent_guard se_cleanup
   ss_snap=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 }
 EOF
@@ -896,6 +899,10 @@ EOF
 { "type": "command", "command": "bash $root/scripts/rules-on-touch.sh 2>/dev/null || true", "timeout": 10 }
 EOF
 )
+  pt_watchdog=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/agent-watchdog-guard.sh 2>/dev/null || true", "timeout": 10 }
+EOF
+)
   stop_hook=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
 EOF
@@ -917,6 +924,7 @@ EOF
     --argjson ss_snap "$ss_snap" --argjson ss_learn "$ss_learn" \
     --argjson ss_main "$ss_main" --argjson ss_val "$ss_val" --argjson ss_rec "$ss_reconcile" \
     --argjson up "$up_reminder" --argjson pt "$pt_guard" --argjson ptr "$pt_rules" \
+    --argjson ptw "$pt_watchdog" \
     --argjson sp "$stop_hook" --argjson ag "$agent_guard" --argjson se "$se_cleanup" \
     '[
       {event:"SessionStart", matcher:"*", items:[
@@ -929,6 +937,7 @@ EOF
       {event:"UserPromptSubmit", matcher:"*",         items:[{marker:"router-posture-reminder\\.sh", hook:$up}]},
       {event:"PreToolUse",       matcher:"Read|Bash|Agent", items:[{marker:"router-posture-guard\\.sh",    hook:$pt}]},
       {event:"PreToolUse",       matcher:"Write|Edit|Bash", items:[{marker:"rules-on-touch\\.sh",         hook:$ptr}]},
+      {event:"PreToolUse",       matcher:"*",         items:[{marker:"agent-watchdog-guard\\.sh",    hook:$ptw}]},
       {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
       {event:"SubagentStop",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
       {event:"TeammateIdle",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
@@ -1026,7 +1035,7 @@ probe_files() {
       for s in doctor dev sync tail; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks install-semaphore; do
