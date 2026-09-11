@@ -102,7 +102,44 @@ append_rule() { # N text
   printf -- '- (#%s, %s) %s\n' "$N" "$DATE" "$text" >> "$PREFERENCES_FILE"
 }
 
-# 2. Decide + act per answered entry.
+# 2. Reconcile a PR-shaped escalation against reality BEFORE it ever gets to an operator (D7/#127,
+#    #129) — a PR the auto-merge guard refused sits here waiting for a human to merge it by hand;
+#    once that PR is merged or closed, the reason it's open is gone, but nothing checked, so a
+#    2026-09-08 entry for shiploop#159 was still printing three days after that PR merged. Scoped to
+#    entries no operator has touched (an actual answer always wins) that name a `repo#N` PR anywhere
+#    in title/reason/question. FAIL-CLOSED the other way from the merge guard itself: gh unavailable,
+#    a bad repo ref, or the bounded query returning nothing all leave the entry EXACTLY as it was —
+#    a stale banner is a far smaller harm than a silently swallowed escalation, so this never drops
+#    an entry it couldn't actually verify, and it never costs an uncached network call on a hot path
+#    (bounded to 10s, once per open entry, only at apply time — not on every SessionStart read).
+n_reconciled=0
+if command -v gh >/dev/null 2>&1; then
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    rtk="$(jq -r '.ticket' <<<"$row" 2>/dev/null)"
+    rans="$(jq -r '.answer // ""' <<<"$row" 2>/dev/null)"
+    rdisp="$(jq -r '.disposition // ""' <<<"$row" 2>/dev/null)"
+    govern::is_placeholder "$rans" && govern::is_placeholder "$rdisp" || continue
+    rtext="$(jq -r '[.title,.reason,.question] | join(" ")' <<<"$row" 2>/dev/null || true)"
+    rref="$(grep -oE '[A-Za-z0-9_.-]+#[0-9]+' <<<"$rtext" | head -1 || true)"
+    [[ -n "$rref" ]] || continue
+    rrepo="${rref%%#*}"; rnum="${rref##*#}"
+    rslug="$(govern::repo_slug "$rrepo" 2>/dev/null || true)"
+    [[ -n "$rslug" ]] || continue
+    rstate="$(govern::run_bounded 10 gh pr view "$rnum" --repo "$rslug" --json state -q .state 2>/dev/null || true)"
+    case "$rstate" in
+      MERGED|CLOSED)
+        resolved_csv+="$rtk,"
+        printf '%s\t%s\n' "$rtk" "auto-resolved — $rref is already $rstate; reconciled against reality, no operator answer needed (D7/#127)" >> "$notes_file"
+        n_reconciled=$((n_reconciled+1)); acted=1
+        govern::log "apply-answers: #$rtk auto-resolved — $rref is $rstate (reconciled against reality)"
+        ;;
+      *) : ;;   # OPEN, or the query failed/timed out (empty) — leave the entry exactly as printed
+    esac
+  done < <(printf '%s' "$entries" | jq -c '.[]')
+fi
+
+# 3. Decide + act per answered entry.
 while IFS= read -r row; do
   [[ -n "$row" ]] || continue
   tk="$(jq -r '.ticket' <<<"$row")"
@@ -251,7 +288,7 @@ if [[ "$acted" -eq 0 ]]; then
   exit 0
 fi
 
-# 3. Rewrite escalations.md: move every resolved `### #N` from "## Open" to "## Resolved",
+# 4. Rewrite escalations.md: move every resolved `### #N` from "## Open" to "## Resolved",
 #    appending the dated resolution note. Relies on Open preceding Resolved (the file format).
 tmp="$(mktemp)"
 awk -v rset="$resolved_csv" -v date="$DATE" -v notesf="$notes_file" '
@@ -282,10 +319,10 @@ awk -v rset="$resolved_csv" -v date="$DATE" -v notesf="$notes_file" '
 ' "$ESCALATIONS_FILE" > "$tmp" && mv "$tmp" "$ESCALATIONS_FILE"
 rm -f "$notes_file"
 
-# 4. Refresh pending-escalations.json so it no longer lists what we just closed.
+# 5. Refresh pending-escalations.json so it no longer lists what we just closed.
 "$DIR/escalations-emit-pending.sh" >/dev/null 2>&1 || true
 
-# 5. Commit the result in the dir holding tickets.md (the main checkout in real use), the same
+# 6. Commit the result in the dir holding tickets.md (the main checkout in real use), the same
 #    place + style land-resolution.sh commits. Guarded push so local main stays == origin/main —
 #    the same invariant land-resolution.sh / preflight-main.sh rely on (a concurrent operator
 #    session commits meta files to the SAME main, so the harness must keep them in sync). The push
@@ -306,10 +343,10 @@ govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is miss
   # committed the ENTIRE staged index — in a shared checkout a co-tenant's staged .claude/context WIP
   # got swept onto origin/main under this message (incident 2026-07-17). Scope to "${_addfiles[@]}"
   # (the exact files staged just above) so it is structurally incapable of it.
-  [[ ${#_addfiles[@]} -gt 0 ]] && git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize ${n_ext}, rules ${n_rule})" -- "${_addfiles[@]}" || true
+  [[ ${#_addfiles[@]} -gt 0 ]] && git commit -q -m "docs(governor): apply escalation answers (un-park ${n_unpark}, defer ${n_defer}, mitigated ${n_mitigated}, kill ${n_kill}, externalize ${n_ext}, rules ${n_rule}, reconciled ${n_reconciled})" -- "${_addfiles[@]}" || true
   if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
     git push origin HEAD:main >/dev/null 2>&1 \
       || govern::log "apply-answers: push to origin/main failed — local main now ahead; run 'git push' before the next harness ticket"
   fi
 )
-echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule, externalized $n_ext"
+echo "applied escalation answers: un-parked $n_unpark, deferred $n_defer, mitigated $n_mitigated, killed $n_kill, rules added $n_rule, externalized $n_ext, reconciled $n_reconciled"
