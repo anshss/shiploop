@@ -535,11 +535,20 @@ $hit"
   done
   # Per-repo files: only the repos actually named, candidate paths made REPO-RELATIVE (the
   # "<repo>/" prefix stripped) — a sub-repo's own CLAUDE.md/learnings.md is read from inside that
-  # repo and names its own paths without repeating its own folder name.
-  local repos_seen; repos_seen="$(printf '%s\n' "$cand" | sed -E "s#^(${repo_alt})/.*#\1#" | awk '!seen[$0]++')"
+  # repo and names its own paths without repeating its own folder name. A mixed invocation also
+  # carries meta-root candidates (e.g. "scripts/govern/foo.sh") that don't match "^(repo)/" at
+  # all — those belong to the meta-repo (already covered above, root files use $cand AS-IS) and
+  # must be DROPPED here, not passed through: the old `sed` rewrote only matching lines, leaving a
+  # root-relative candidate as a literal "repo name" that no candidate is ever prefixed with, so
+  # its `rel=` lookup below hit zero matches, `grep`'s exit 1 rode `pipefail` into a bare
+  # assignment, and that aborted the whole function/script under `set -e`. `grep` first so
+  # only prefixed lines reach the `sed`, and `|| true` on both pipelines so an all-meta-root
+  # invocation (zero repo-prefixed candidates, `grep` finds nothing) can't retrigger the same abort.
+  local repos_seen
+  repos_seen="$(printf '%s\n' "$cand" | grep -E "^(${repo_alt})/" | sed -E "s#^(${repo_alt})/.*#\1#" | awk '!seen[$0]++' || true)"
   local gr rel
   for gr in $repos_seen; do
-    rel="$(printf '%s\n' "$cand" | grep -E "^${gr}/" | sed -E "s#^${gr}/##")"
+    rel="$(printf '%s\n' "$cand" | grep -E "^${gr}/" | sed -E "s#^${gr}/##" || true)"
     [[ -n "$rel" ]] || continue
     for gf in "$meta/$gr/CLAUDE.md" "$meta/$gr/learnings.md"; do
       # shellcheck disable=SC2086
