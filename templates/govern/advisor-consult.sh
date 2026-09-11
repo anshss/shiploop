@@ -26,13 +26,15 @@
 # GOVERN_ADVISOR=0 (default, the kill switch) makes `claim` always deny with reason "disabled" and
 # write nothing: the whole mechanism is a no-op until an operator turns it on. GOVERN_ADVISOR_PER_WORKER
 # (default 2) / GOVERN_ADVISOR_PER_SESSION (default 6) / GOVERN_ADVISOR_MAX_TOKENS (default 4000) are
-# three of the bounded-by-construction caps. GOVERN_ADVISOR_BUDGET, when set (spawn-worker.sh sets it
-# from the ticket's precision grade, Layer 2: NEVER zero, every grade gets at least one consult, but
-# scaled by how well-specified the work is: GOVERN_ADVISOR_PER_WORKER_OPEN's default 3, plain
-# GOVERN_ADVISOR_PER_WORKER's default 2 for scoped, GOVERN_ADVISOR_PER_WORKER_STATED's default 1),
-# overrides the per-worker cap for this dispatch only; unset (the interactive lane, which has no
-# launcher and no grade) falls back to plain GOVERN_ADVISOR_PER_WORKER, the same nonzero default
-# every grade is built on top of.
+# three of the bounded-by-construction caps. GOVERN_ADVISOR_BUDGET, when set, overrides the per-worker
+# cap for this dispatch only, scaled by how well-specified the work is (NEVER zero — every grade gets
+# at least one consult): GOVERN_ADVISOR_PER_WORKER_OPEN's default 3, plain GOVERN_ADVISOR_PER_WORKER's
+# default 2 for scoped, GOVERN_ADVISOR_PER_WORKER_STATED's default 1. The headless launcher
+# (spawn-worker.sh) sets it from the ticket's precision grade before the live spawn; the interactive
+# lane has no launcher, so its own worker (`.claude/agents/worker.md` delta 3,
+# .specs/2026-09-11-advisor-worker-design.md D6) sets it inline on the `claim` invocation itself,
+# after reading the grade off the ticket the same way. Unset (grade genuinely unreadable) falls back
+# to plain GOVERN_ADVISOR_PER_WORKER, the same nonzero default every grade is built on top of.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"

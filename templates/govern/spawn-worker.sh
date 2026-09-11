@@ -121,18 +121,31 @@ fi
 [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" && -n "${GOVERN_EXECUTE_ONLY_BRIEF//[[:space:]]/}" ]] \
   || GOVERN_EXECUTE_ONLY_BRIEF=""
 
-# PRECISION GRADE (design Layer 2: .specs/2026-09-09-model-orchestration-design.md). Computed from
-# the SAME signal GOVERN_EXECUTE_ONLY_BRIEF was just finalized from, so the recorded grade and the
-# sizing branch below can never disagree. `govern::precision_assertion` (lib/common.sh) is the
-# scoped-vs-open sibling of `govern::warm_assertion` above; "scoped" is the ordinary, unasserted
-# case, so absence of BOTH signals is not a gap in the record, it IS the scoped grade.
+# PRECISION GRADE (design Layer 2: .specs/2026-09-09-model-orchestration-design.md; reaches the
+# interactive lane and gains a ticket-field source per .specs/2026-09-11-advisor-worker-design.md
+# D6). `govern::precision_assertion` (lib/common.sh) is the scoped-vs-open sibling of
+# `govern::warm_assertion` above; "scoped" is the ordinary, unasserted case, so absence of every
+# signal below is not a gap in the record, it IS the scoped grade.
+#
+# PRECEDENCE (D6): the ticket's own `**Precision:**` field is the advisor's RECORDED judgment,
+# written into the ticket at dispatch time, and it wins over every per-invocation env var — an env
+# var is a fallback for when the ticket states nothing, never an override of what the advisor
+# actually wrote down. Checked first for exactly that reason. A missing/unrecognised ticket field
+# (govern::ticket_precision already drops anything outside stated|scoped|open, including the
+# filing-time placeholder) falls through to the GOVERN_WARM / GOVERN_PRECISION env signals
+# unchanged, and PRECISION_SOURCE records which of the three actually decided it (rail 11).
 PRECISION_GRADE="scoped"; PRECISION_SOURCE="default (no explicit grade — ordinary dispatch)"
-if [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
+TICKET_PRECISION="$(govern::ticket_precision "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+if [[ -n "$TICKET_PRECISION" ]]; then
+  PRECISION_GRADE="$TICKET_PRECISION"
+  PRECISION_SOURCE="ticket **Precision:** field (advisor's recorded judgment; wins over env)"
+elif [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" ]]; then
   PRECISION_GRADE="stated"; PRECISION_SOURCE="GOVERN_WARM (parent stated the change)"
 elif govern::precision_assertion "$N"; then
   PRECISION_GRADE="$GOVERN_PRECISION_TEXT"
   PRECISION_SOURCE="GOVERN_PRECISION (parent asserted $GOVERN_PRECISION_TEXT)"
 fi
+export TICKET_PRECISION
 
 # ADVISOR BUDGET (#127, design Layer 3: completing Layer 2's inert half). The grade scales HOW MANY
 # consults a worker may buy; it never gates WHETHER it may ask. This harness never dispatches a
@@ -247,23 +260,31 @@ resolve_sizing_uncapped() {
   # automatic escalation removed, the ONLY remaining ways for a dispatch to end up above
   # GOVERN_WORKER_MODEL are the operator raising the floor itself, or the ticket `Model:` field under
   # GOVERN_MEASURED_SIZING=0, and that second one is capped by GOVERN_WORKER_ESCALATION_MODEL.)
-  # TIER FROM PRECISION (design Layer 2). PRECISION_GRADE was computed once, above, from the exact
-  # same signal (GOVERN_EXECUTE_ONLY_BRIEF, set from a GOVERN_WARM assertion or directly by a
-  # caller) this branch used to test directly — testing the grade instead of the raw brief cannot
-  # drift from it, by construction. `stated` gets the cheapest tier: the worker is no longer
-  # explore → decide → edit → verify, it is edit → verify against a change someone already decided,
-  # a genuinely smaller job. `scoped` and `open` both fall through to the ordinary baseline below —
-  # the design's table puts them at the same tier (sonnet) today; `open`'s "+ advisor budget" half
-  # is layer 3, not built by this ticket, so the grade is recorded (below, in the ledger and the
-  # event log) for a future advisor mechanism to key on, and buys no sizing difference yet.
+  # TIER FROM PRECISION (design Layer 2, corrected by .specs/2026-09-11-advisor-worker-design.md
+  # D5). PRECISION_GRADE was computed once, above, from the exact same signal
+  # (GOVERN_EXECUTE_ONLY_BRIEF, set from a GOVERN_WARM assertion or directly by a caller) this
+  # branch used to test directly — testing the grade instead of the raw brief cannot drift from it,
+  # by construction. `stated` gets a lower tier than the floor's ceiling case, but no longer the
+  # CHEAPEST tier in the coarse set: under the advisor/worker architecture the advisor always
+  # proposes the solution (D2), so `stated` stops being a rare verbatim case and becomes the common
+  # path, and routing the common path to haiku turned a narrow saving into a systematic quality cut
+  # (G6). SETTLED 2026-09-11, operator decision: `stated` resolves to sonnet, never haiku. Haiku
+  # remains reachable only through an explicit ticket `Model:` field (GOVERN_MEASURED_SIZING=0),
+  # symmetric with the ceiling — nothing starts above sonnet automatically, and nothing starts below
+  # it automatically either (rail 4). `scoped` and `open` both fall through to the ordinary baseline
+  # below — the design's table puts them at the same tier (sonnet) today; `open`'s "+ advisor
+  # budget" half is layer 3 (see the ADVISOR BUDGET block above), so the grade is recorded (below,
+  # in the ledger and the event log) for the advisor mechanism to key on, and buys no sizing
+  # difference beyond that.
   #
-  # "Cheapest" means the cheapest option in the EXISTING coarse tier set, never a new (model, effort)
-  # combination: the prompt cache is per-model and an effort change invalidates the tools+system
-  # prefix, so minting a tier here would re-fragment the shared prefix the coarse set exists to
-  # protect. A RETRY overrides this below — a failed cheap bet is never re-bet.
+  # "Sonnet" here means the literal tier, not "whatever GOVERN_WORKER_MODEL happens to be": the
+  # shortcut used to punch a hole BELOW the floor (haiku < sonnet even when the floor was raised);
+  # closing that hole means landing exactly at the floor's default value, not at a floor an operator
+  # may have deliberately raised for other reasons. A RETRY overrides this below — a failed cheap
+  # bet is never re-bet.
   if [[ "$PRECISION_GRADE" == "stated" ]]; then
-    base_model="haiku"; model_source="execute-only (parent stated the change)"
-    base_effort="low";  effort_source="execute-only (parent stated the change)"
+    base_model="sonnet"; model_source="execute-only (parent stated the change)"
+    base_effort="low";   effort_source="execute-only (parent stated the change)"
     TICKET_MODEL_APPLIED=0   # the shortcut, not the ticket field, decided this tier
   fi
   model="$base_model"; effort="$base_effort"
@@ -863,6 +884,23 @@ if [[ "${GOVERN_GOTCHA_INJECT:-1}" != "0" && ${#REPOS[@]} -gt 0 ]]; then
 
 $_gotcha_block"
   fi
+fi
+
+# Proposed-solution delivery (.specs/2026-09-11-advisor-worker-design.md D2, step 3: "delivery to
+# both lanes from one place"). By the time a live spawn reaches here, pre-dispatch-check.sh's gate
+# has already refused a ticket carrying none (GOVERN_PROPOSAL_GATE=0 bypasses that gate, not this
+# injection — a direct/test spawn still gets whatever the ticket actually carries, empty or not).
+# Reads through the SAME govern::ticket_proposal used by the gate; nothing here re-parses the file.
+_proposal="$(govern::ticket_proposal "$N" "$TICKETS_FILE" 2>/dev/null || true)"
+if [[ -n "$_proposal" ]]; then
+  prompt="$prompt
+
+## Proposed solution (written by the advisor before dispatch — implement it)
+${_proposal}
+Implement this. If you conclude a step is wrong, that is a finding for your report
+(\`newTickets\`/\`escalation\`), never a silent substitution — a worker quietly doing something other
+than what was proposed is the exact failure this mechanism exists to prevent.
+**Precision:** ${PRECISION_GRADE} (${PRECISION_SOURCE})"
 fi
 
 # ── RETRY CONTEXT ─────────────────────────────────────────────────────────────────────────────
