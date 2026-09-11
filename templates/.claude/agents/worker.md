@@ -58,10 +58,14 @@ Ignore only these three things in it, which describe the other lane:
    budget; caps/ledger are otherwise script-owned, same as the headless lane). On `allow`, ignore
    `advisorModel` — nothing is spawned. Instead `SendMessage` your one scoped question to the
    session that dispatched you (`to: "main"`, or the name it gave itself if it spawned you into a
-   named team), **then STOP and wait**: no fallback `Agent`, no guessing, no proceeding on another
-   part of the ticket. This BLOCKS with no timeout — a worker that proceeds on a guess is the exact
-   failure this design exists to prevent, and the per-worker cap already bounds how many times you
-   may interrupt the advisor. Resume where you paused once the reply arrives, then run
+   named team), **say in that same message that you are now waiting on the reply** (the one piece
+   of state an idle notification can't carry on its own — worker-prompt.md §4), **then STOP and wait**:
+   no fallback `Agent`, no guessing, no proceeding on another part of the ticket. This BLOCKS with
+   no timeout — a worker that proceeds on a guess is the exact failure this design exists to
+   prevent, and the per-worker cap already bounds how many times you may interrupt the advisor.
+   Waiting here is correct, not a stall; naming it up front only saves whoever is watching a trip
+   to your transcript to find that out, it is not what makes the wait legitimate. Resume where you
+   paused once the reply arrives, then run
    `advisor-consult.sh record <N> <consultId> --model advisor --tokens 0 --answer "<summary>"` (no
    separate agent model exists to report, so `--model advisor` names the source) and continue at
    your own tier. If the advisor genuinely cannot answer, that is an honest `escalation`, never a

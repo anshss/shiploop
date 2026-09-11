@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# SubagentStop hook: reach the SAME deterministic doom signature the headless watchdog uses
-# (govern::early_abort_reason in scripts/govern/lib/common.sh) to in-session `Agent` children,
-# which have no pid and no worker.jsonl for that watchdog to see. Closes #116 — rails 6-8 of
-# .specs/2026-09-09-model-orchestration-design.md:
+# SubagentStop + TeammateIdle hook: reach the SAME deterministic doom signature the headless
+# watchdog uses (govern::early_abort_reason in scripts/govern/lib/common.sh) to in-session `Agent`
+# children, which have no pid and no worker.jsonl for that watchdog to see. Closes #116, rails 6-8 of
+# .specs/2026-09-09-model-orchestration-design.md, and (the TeammateIdle branch) D8/G10 of
+# .specs/2026-09-11-advisor-worker-design.md:
 #
 #   RAIL 6 — supervision spans every child, not only governor-spawned PROCESSES. This is a
 #            per-subagent frontmatter hook (worker.md/investigator.md/lookup.md `hooks:`) so it
@@ -26,9 +27,33 @@
 #            CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) ends the loop — never silently, and never via a
 #            notification the parent has no way to check.
 #
-# SHIPS INERT: GOVERN_AGENT_SUPERVISION defaults to 0, same idiom as GOVERN_EARLY_ABORT (root
-# CLAUDE.md anti-pattern 12) — this hook is reachable from every subagent that carries it, in
-# every session, so a workspace that has not opted in must see zero behavior change.
+# D8/G10 (.specs/2026-09-11-advisor-worker-design.md) — THE IDLE CASE, on TeammateIdle:
+#   SubagentStop only fires when a child tries to STOP. A child that goes quiet WITHOUT stopping —
+#   still running, mid-tool-call, or correctly blocked on a background task it must not poll —
+#   never reaches SubagentStop at all, so the rail-8 check above never runs for it. G10's finding,
+#   REFINED 2026-09-11: that silence is not evidence of misconduct. A worker mid-suite-run, healthy
+#   and 128 tests in, presents identically to one that is dead. So this hook now ALSO answers
+#   `TeammateIdle` (fires when an agent-team teammate is about to go idle), running the SAME
+#   `govern::early_abort_reason` check against the SAME kind of transcript. Two differences from
+#   the SubagentStop path, both because idle is not a stop:
+#     - `TeammateIdle` is not in Claude Code's blockable-event set (no exit-2 / decision:block
+#       lever — the teammate isn't stopping, so there is nothing to "hold open"). Forcing a verdict
+#       here would be exactly the mistake G10 REFINED calls out: a legitimately blocked worker
+#       would be indistinguishable from a doomed one and get punished for waiting correctly. So
+#       this branch never prints a block decision, only the fleet-event alarm below.
+#     - the transcript field is unverified against a live TeammateIdle payload (undocumented at
+#       this level of detail as of this writing): try `agent_transcript_path` first (the
+#       SubagentStop shape, in case the event is delivered to an observing parent), then fall back
+#       to `transcript_path` (the teammate's own, in case it fires inside the idling session
+#       itself) — same "absence of data is never evidence of doom" contract as everywhere else in
+#       this script, so an unrecognized shape degrades to silent exit 0 rather than a wrong verdict.
+#   The alarm is the whole remedy on this path: worker-prompt.md's doctrine (an idle notification
+#   is a question, never a result) is what actually closes G10 — this hook only gives the advisor
+#   something to check against instead of nothing.
+#
+# SHIPS ON: GOVERN_AGENT_SUPERVISION defaults to 1 as of D8 (rail 7 — an inert-by-default gate is
+# the defect this design is written against). GOVERN_AGENT_SUPERVISION=0 is the kill switch, same
+# idiom as GOVERN_EARLY_ABORT (root CLAUDE.md anti-pattern 12).
 #
 # HARD CONSTRAINT unchanged from spawn-worker.sh's watchdog: every signal is DETERMINISTIC, read
 # straight off the child's OWN transcript. No model call anywhere in this path — an "agent hook"
@@ -39,21 +64,28 @@
 #   1. Honor stop_hook_active — never add a THIRD loop turn on top of Claude Code's own cap.
 #   2. Read-only against the transcript; the only side effect is an OPTIONAL fleet event (gated
 #      independently by GOVERN_EVENTS, same as every other govern::event call) and, when a doom
-#      signature fires, the block decision itself.
+#      signature fires on the SubagentStop path, the block decision itself.
 #   3. Absence of data is never evidence of doom (govern::early_abort_reason's own contract) — a
 #      missing transcript_path, a missing common.sh, or a missing jq all degrade to silent exit 0.
 set -uo pipefail
 
-[ "${GOVERN_AGENT_SUPERVISION:-0}" = "1" ] || exit 0
+[ "${GOVERN_AGENT_SUPERVISION:-1}" = "1" ] || exit 0
 
-# --- read the SubagentStop hook stdin payload ---
+# --- read the SubagentStop/TeammateIdle hook stdin payload ---
 payload="$(cat 2>/dev/null || true)"
 get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
 case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;; esac
 
+event_name="$(get hook_event_name)"
 transcript_path="$(get agent_transcript_path)"
 agent_id="$(get agent_id)"
 agent_type="$(get agent_type)"
+
+idle=0
+if [ "$event_name" = "TeammateIdle" ]; then
+  idle=1
+  [ -n "$transcript_path" ] || transcript_path="$(get transcript_path)"
+fi
 [ -n "$transcript_path" ] || exit 0
 
 # --- reach govern::early_abort_reason() the same way ticket-sweep-reminder.sh reaches
@@ -73,12 +105,24 @@ result="$(
   # an operator watching fleet-monitor.sh sees the alarm even on a session that never re-prompts
   # (e.g. the child's stop is force-ended by Claude Code's own block cap without ever resolving
   # it). Gated independently by GOVERN_EVENTS, same as every other govern::event call — this is
-  # not a second kill switch, it is the existing one.
-  { command -v govern::event >/dev/null 2>&1 && govern::event agent_progress_alarm \
-    "agent_id=${agent_id:-unknown}" "agent_type=${agent_type:-unknown}" "reason=${reason}"; } || true
+  # not a second kill switch, it is the existing one. `signal=idle` on the TeammateIdle path is
+  # the only thing that distinguishes it from a SubagentStop alarm in the log.
+  if [ "$idle" = "1" ]; then
+    { command -v govern::event >/dev/null 2>&1 && govern::event agent_progress_alarm \
+      "agent_id=${agent_id:-unknown}" "agent_type=${agent_type:-unknown}" "reason=${reason}" \
+      "signal=idle"; } || true
+  else
+    { command -v govern::event >/dev/null 2>&1 && govern::event agent_progress_alarm \
+      "agent_id=${agent_id:-unknown}" "agent_type=${agent_type:-unknown}" "reason=${reason}"; } || true
+  fi
   printf '%s' "$reason"
 )" || true
 [ -n "$result" ] || exit 0
+
+# TeammateIdle cannot block (it is not a stop — there is nothing to hold open, and a worker
+# correctly waiting on a background task must not be forced into "resolving" a signature it
+# doesn't have). The fleet-event alarm above is the whole remedy on this path.
+[ "$idle" = "1" ] && exit 0
 
 esc="$(printf '%s' "$result" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 printf '{"decision":"block","reason":"%s — this is a deterministic progress check, not a judgment call: address it directly (break the loop, land real progress, or state the actual blocker) rather than repeating the same stop."}\n' "$esc"

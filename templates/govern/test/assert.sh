@@ -74,7 +74,6 @@ export GOVERN_EVENTS=0               # fleet event log (lib/common.sh): OFF for 
 export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter (spec 4b): its own test opts in
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
-export GOVERN_AGENT_SUPERVISION=0    # #116 rails 6-8: in-session Agent SubagentStop guard, its own test opts in
 export GOVERN_GOTCHA_INJECT=0        # #118 rail 9: CLAUDE.md/learnings.md **Paths:** gotcha injection — several
                                       # existing tests (test-claudemd-trim.sh etc.) write their OWN CLAUDE.md at
                                       # the stub root for unrelated reasons; a coincidental `### `+`**Paths:**`
@@ -92,6 +91,16 @@ export GOVERN_PROPOSAL_GATE=0        # .specs/2026-09-11-advisor-worker-design.m
                                       # pre-existing pre-dispatch-check.sh fixture (none of which
                                       # carry a **Proposed solution:** section) keeps testing what it
                                       # was written to test. Its own tests opt back in explicitly.
+export GOVERN_AGENT_SUPERVISION=1    # .specs/2026-09-11-advisor-worker-design.md D8: same shape
+                                      # of divergence as GOVERN_PROPOSAL_GATE just above — this
+                                      # hook's SHIPPED default is ON (rail 7, closing #116/G10).
+                                      # Pinned explicitly (not left ambient) so a live governor
+                                      # session's own GOVERN_AGENT_SUPERVISION=0 export can't leak
+                                      # into a suite run and mask a regression. Unlike the knobs
+                                      # forced OFF above, there is no pre-existing fixture to
+                                      # protect: test-agent-progress-guard.sh is the only test that
+                                      # ever invokes this hook, and it covers the ON default and
+                                      # the GOVERN_AGENT_SUPERVISION=0 kill switch directly.
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
