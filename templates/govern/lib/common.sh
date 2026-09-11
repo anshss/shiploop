@@ -1010,6 +1010,67 @@ govern::ticket_block() { # N [tickets-file]
   ' "$f"
 }
 
+# ── the dispatch contract carries a proposed solution (.specs/2026-09-11-advisor-worker-design.md
+# D2, queue #130's full text recoverable at `git show 912e4be:queue/tickets.md`) ──────────────────
+# The advisor decides what the change is BEFORE dispatching a worker, and records that decision IN
+# THE TICKET rather than in a spawn prompt only pre-dispatch-check.sh can't see. One implementation,
+# the same section-bounded shape govern::gotchas_in_file (#176/#125) already uses for a CLAUDE.md
+# entry: a marker line opens the section, capture continues until the NEXT bold `**Field:**` marker
+# (or the end of the ticket block), never a blank line — a real proposal is routinely more than one
+# paragraph, so bounding on blank lines the way the single-line Model:/Effort:/Flow: latch does in
+# spawn-worker.sh would truncate it. Nothing else re-parses the ticket file for this.
+#
+# A freshly filed ticket carries a placeholder (file-ticket.sh emits it, filing is not specifying),
+# and the placeholder must read as ABSENT, not as a proposal — otherwise the gate below would pass
+# on a ticket nobody has actually thought about yet, which is the exact defect this design exists to
+# close. Detected by a fixed sentinel substring, the same idiom govern::is_placeholder already uses
+# for an unanswered escalation.
+govern::ticket_proposal() { # N [tickets-file] -> **Proposed solution:** body, "" if absent/placeholder
+  local n="$1" f="${2:-$TICKETS_FILE}"
+  local block; block="$(govern::ticket_block "$n" "$f")"
+  [[ -n "$block" ]] || return 0
+  local raw
+  raw="$(printf '%s\n' "$block" | awk '
+    /^\*\*Proposed solution:?\*\*/ {
+      line = $0
+      sub(/^\*\*Proposed solution:?\*\*[[:space:]]*/, "", line)
+      grab = 1
+      if (line != "") { buf[n++] = line }
+      next
+    }
+    grab && /^\*\*[A-Za-z][^*]*:\*\*/ { exit }
+    grab { buf[n++] = $0 }
+    END {
+      while (n > 0 && buf[n-1] ~ /^[[:space:]]*$/) n--   # drop trailing blank lines
+      for (i = 0; i < n; i++) print buf[i]
+    }
+  ')"
+  case "$raw" in
+    *"(advisor: fill in before dispatch"*) return 0 ;;
+  esac
+  [[ -n "${raw//[[:space:]]/}" ]] || return 0
+  printf '%s\n' "$raw"
+}
+
+# govern::ticket_precision — the sibling D6 adds: the **Precision:** line the advisor writes
+# adjacent to **Proposed solution:**, one of stated|scoped|open (case-insensitive on input, always
+# lowercase out). A missing or unrecognised value (including the filing-time placeholder, which
+# starts with an underscore and so never matches the bare-word capture) prints nothing — callers
+# resolve that to "scoped" themselves (D6: absence must never silently buy the cheapest grade).
+govern::ticket_precision() { # N [tickets-file] -> stated|scoped|open, "" if absent/unrecognized
+  local n="$1" f="${2:-$TICKETS_FILE}"
+  local block; block="$(govern::ticket_block "$n" "$f")"
+  [[ -n "$block" ]] || return 0
+  local val
+  val="$(printf '%s\n' "$block" \
+    | sed -n -E 's/^\*\*Precision:?\*\*[[:space:]]*([A-Za-z]+).*/\1/p' \
+    | tr '[:upper:]' '[:lower:]' | head -1)"
+  case "$val" in
+    stated|scoped|open) printf '%s\n' "$val" ;;
+    *) return 0 ;;
+  esac
+}
+
 # govern::ticket_block_delete — rewrite $2 (default TICKETS_FILE) with ticket $1's block removed:
 # the heading line, its body, and the trailing `---` separator that belongs to this block. The
 # separator is consumed with the block so we never leave a doubled-separator artifact. A bare
@@ -1423,11 +1484,13 @@ govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this 
   return 0
 }
 
-# ── precision grade (design: .specs/2026-09-09-model-orchestration-design.md, Layer 2) ───────────
+# ── precision grade (design: .specs/2026-09-09-model-orchestration-design.md, Layer 2; tier
+# corrected by .specs/2026-09-11-advisor-worker-design.md D5) ────────────────────────────────────
 # "Tier is chosen by how well-specified the work is, not by how hard it looks." `govern::warm_assertion`
-# above already implements the top of that scale (a parent that STATED the change gets the haiku
-# shortcut), but it was still a single binary (warm or not) with nothing between "fully specified" and
-# "ordinary dispatch". This generalises it into the design's three grades:
+# above already implements the top of that scale (a parent that STATED the change gets the
+# execute-only shortcut, sonnet per D5, never haiku), but it was still a single binary (warm or not)
+# with nothing between "fully specified" and "ordinary dispatch". This generalises it into the
+# design's three grades:
 #   stated: parent stated the change; GOVERN_WARM already covers this, unchanged, below.
 #   scoped: intent clear, files named or trivially locatable. The ORDINARY case; nothing to assert.
 #   open: requires discovery of where and what. Same tier as scoped today (sonnet, since the advisor

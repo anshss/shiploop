@@ -37,8 +37,18 @@
 #   6. failure-streak breaker    (#60, GOVERN_MAX_TICKET_FAILS default 2) an item that failed /
 #                                 timed out / blew its budget on the last N attempts is escalated
 #                                 as a systemic blocker instead of burning another worker
-#   7. upstream-drift pregate    (govern::pregate_hub_ahead, lib/pregate.sh)
-#   8. overlap nudge             (#139, govern::overlap_nudge) advisory only, stderr, never a verdict
+#   7. proposed-solution gate    (.specs/2026-09-11-advisor-worker-design.md D2, govern::ticket_proposal)
+#                                 refuses a ticket with no **Proposed solution:**; the advisor must
+#                                 decide what the change is before dispatching a worker on it. Ships
+#                                 ON, GOVERN_PROPOSAL_GATE=0 is the kill switch. THIS GATE APPLIES
+#                                 ONLY TO A NUMBERED-TICKET WORKER DISPATCH (this script's one and
+#                                 only input is a ticket number) — it is never in the path of an
+#                                 advisor's own read-only data-collection child (D9): that child is
+#                                 spawned directly, is not "dispatching a worker on ticket N", and so
+#                                 never calls this script at all. Nothing here needs to distinguish
+#                                 the two; the non-overlap is structural, not a runtime check.
+#   8. upstream-drift pregate    (govern::pregate_hub_ahead, lib/pregate.sh)
+#   9. overlap nudge             (#139, govern::overlap_nudge) advisory only, stderr, never a verdict
 #
 # NOT ported here (deliberately out of scope): the per-ticket CLAIM lock and the "resume an existing
 # open PR" adoption, both loop-only machinery per the purge audit. A concurrent-dispatch race is now
@@ -176,7 +186,18 @@ if [[ "${_cf:-0}" -ge "${GOVERN_MAX_TICKET_FAILS:-2}" ]]; then
   exit 0
 fi
 
-# ── 7. upstream-drift pregate ─────────────────────────────────────────────────────────────────
+# ── 7. proposed-solution gate (D2) ───────────────────────────────────────────────────────────────
+# An inert-by-default gate is the exact failure G7/#128 is filed for, so this ships ON: the kill
+# switch must be set explicitly, not assumed. Reads the ticket exactly once, through the one shared
+# implementation (govern::ticket_proposal) — nothing else on this path re-parses the ticket file.
+if [[ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]]; then
+  if [[ -z "$(govern::ticket_proposal "$N" "$TICKETS_FILE")" ]]; then
+    echo "refuse: no proposed solution - the driver must specify before dispatch"
+    exit 0
+  fi
+fi
+
+# ── 8. upstream-drift pregate ─────────────────────────────────────────────────────────────────
 if declare -F govern::pregate_hub_ahead >/dev/null 2>&1; then
   DRIFT="$(govern::pregate_hub_ahead "$N" "$TICKETS_FILE" 2>/dev/null || true)"
   if [[ -n "$DRIFT" ]]; then
@@ -187,7 +208,7 @@ if declare -F govern::pregate_hub_ahead >/dev/null 2>&1; then
   fi
 fi
 
-# ── 8. dispatch-time overlap nudge (#139, zero model calls, stderr only) ─────────────────────
+# ── 9. dispatch-time overlap nudge (#139, zero model calls, stderr only) ─────────────────────
 # A non-blocking hint that some OTHER queued-but-unnamed ticket touches the files this one does, so
 # the operator can batch them into one worker. It never changes the verdict and never touches the
 # queue. GOVERN_OVERLAP_NUDGE=0 silences it.
