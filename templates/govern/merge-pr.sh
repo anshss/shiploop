@@ -17,6 +17,23 @@
 # from a caller (resolve-ticket.sh) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Interactive-lane branches are first-party (D7, #127/G8/G9): worker.md's own doctrine is
+# self-service `npm run worktree:new -- t<N>`, so `t127`, `t57-log-guard` etc are a SECOND
+# governor-owned naming scheme, not an external contribution — the login + non-fork factors
+# below already prove "opened by us, from our own repo"; this factor only recognizes ANOTHER
+# shape we ourselves produce. Extend the DEFAULT here (before lib/common.sh sets it), never in
+# common.sh itself, so common.sh's own default stays canonical for anything that sources it
+# directly (e.g. a test exercising govern::pr_automerge_allowed without going through this
+# script). Do NOT touch the login or fork factors — those are what still block a genuine
+# external PR regardless of branch name.
+# NB: the PUBLIC variant is assigned via a conditional, not `${VAR:-default}` — lib/common.sh's
+# own comment on this line explains why: the `{12}` quantifier in `sl-[0-9a-f]{12}` mangles a
+# `${VAR:-...}` parameter-expansion default.
+[[ -n "${GOVERN_MERGE_BRANCH_RE:-}" ]] || GOVERN_MERGE_BRANCH_RE='^(ticket-[0-9]+|sync-auto-.*|t[0-9]+(-.*)?)$'
+[[ -n "${GOVERN_MERGE_BRANCH_RE_PUBLIC:-}" ]] || GOVERN_MERGE_BRANCH_RE_PUBLIC='^(sl-[0-9a-f]{12}|ticket-[0-9]+|sync-auto-.*|t[0-9]+(-.*)?)$'
+export GOVERN_MERGE_BRANCH_RE GOVERN_MERGE_BRANCH_RE_PUBLIC
+
 source "$DIR/lib/common.sh"
 
 REPO="${1:?repo required}"; PR="${2:?pr number required}"

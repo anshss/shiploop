@@ -331,8 +331,29 @@ if [[ "${GOVERN_INDEX:-1}" != "0" ]]; then
   "$DIR/codebase-index.sh" build >/dev/null 2>&1 || true
 fi
 if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
-  ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "ticket-$N" --force >/dev/null 2>&1 ) \
-    || echo "resolve-ticket #$N: worktree:rm ticket-$N failed — clean up manually" >&2
+  # Never ASSUME the worktree is named ticket-$N (#127/G9) — the interactive lane is
+  # self-service (worker.md: `npm run worktree:new -- t<N>`, or any other slug for non-ticket
+  # work) and does not share the headless lane's naming. Try the headless convention first, but
+  # VERIFY it rather than assume it: worktree/rm.sh's ONLY early-exit is an unregistered name
+  # (wt_registry_path_for, checked BEFORE anything is touched — everything after is best-effort
+  # `|| true`), so a nonzero exit here is a clean "not this name" signal, never a half-torn-down
+  # worktree to recover from. Fall back to the merged PR's own headRefName: worktree:new.sh
+  # always uses ONE name as the branch in every sub-repo, so the PR the ticket actually landed
+  # recovers whatever name was really used, with zero assumption about its shape.
+  if ! ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "ticket-$N" --force >/dev/null 2>&1 ); then
+    _wt_name=""
+    while IFS=$'\t' read -r _wrepo _wnum _wurl; do
+      [[ -n "$_wrepo" && -n "$_wnum" ]] || continue
+      _wt_name="$(gh pr view "$_wnum" --repo "$(govern::repo_slug "$_wrepo")" --json headRefName -q '.headRefName' 2>/dev/null || true)"
+      [[ -n "$_wt_name" ]] && break
+    done <<< "$pr_lines"
+    if [[ -n "$_wt_name" && "$_wt_name" != "ticket-$N" ]]; then
+      ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "$_wt_name" --force >/dev/null 2>&1 ) \
+        || echo "resolve-ticket #$N: worktree:rm $_wt_name (derived from the PR's head branch) failed — clean up manually" >&2
+    else
+      echo "resolve-ticket #$N: worktree:rm ticket-$N failed and no other worktree name was recoverable from the PR's head branch — clean up manually" >&2
+    fi
+  fi
 fi
 
 # ── 7. Record the outcome (govern-health.sh's only input) ──────────────────────────────────────
