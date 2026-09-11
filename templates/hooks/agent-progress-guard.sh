@@ -36,12 +36,22 @@
 #   `TeammateIdle` (fires when an agent-team teammate is about to go idle), running the SAME
 #   `govern::early_abort_reason` check against the SAME kind of transcript. Two differences from
 #   the SubagentStop path, both because idle is not a stop:
-#     - `TeammateIdle` is not in Claude Code's blockable-event set (no exit-2 / decision:block
-#       lever — the teammate isn't stopping, so there is nothing to "hold open"). Forcing a verdict
-#       here would be exactly the mistake G10 REFINED calls out: a legitimately blocked worker
-#       would be indistinguishable from a doomed one and get punished for waiting correctly. So
-#       this branch never prints a block decision, only the fleet-event alarm below.
-#     - the transcript field is unverified against a live TeammateIdle payload (undocumented at
+#     - this branch DELIBERATELY never blocks, and that is a design choice rather than a missing
+#       lever. Do not "restore" blocking here on discovering that the event supports it. Blocking
+#       idle would be exactly the mistake G10 REFINED calls out: a worker correctly waiting on a
+#       background task it must not poll emits the identical signal to a doomed one, so a block
+#       punishes waiting correctly. The remedy for a genuinely stuck child is the advisor
+#       establishing state from the repository (D8's first bullet), not holding a teammate open.
+#       UNVERIFIED, and deliberately not relied upon either way: whether `TeammateIdle` accepts an
+#       exit-2 / decision:block at all. Two sources checked on 2026-09-11 disagreed (one read the
+#       docs as listing it blockable like `SubagentStop`, one as not in the blockable set), and
+#       nothing here depends on the answer. `TeammateIdle` itself IS real and shipped: 16
+#       occurrences in the installed 2.1.246 binary, against a 1542-hit control for the version
+#       string, verified firsthand rather than relayed.
+#     - the transcript field: the official docs describe `transcript_path` for this event, while
+#       the SubagentStop path above needs `agent_transcript_path` (verified live 2026-09-10). The
+#       try-both order below therefore covers the documented answer and the neighbouring verified
+#       one. Still unverified against a real TeammateIdle payload (undocumented at
 #       this level of detail as of this writing): try `agent_transcript_path` first (the
 #       SubagentStop shape, in case the event is delivered to an observing parent), then fall back
 #       to `transcript_path` (the teammate's own, in case it fires inside the idling session
