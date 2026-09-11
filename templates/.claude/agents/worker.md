@@ -19,13 +19,16 @@ follow it. That file is the single source of truth for scope, context economy, t
 handoff block, capability posture, and the JSON output contract. It is NOT summarized here and it is
 not duplicated here: if this file and that file ever disagree, that file wins.
 
-Ignore only these two things in it, which describe the other lane:
+Ignore only these three things in it, which describe the other lane:
 
 - `{{TICKET_BLOCK}}` under "## The ticket". There is no substitution on this lane, because your
   ticket arrives in the task prompt that spawned you. If the prompt gave you a number but not the
   block, `grep -A40 '^## #<N>' queue/tickets.md` and read it yourself.
 - `{{REPORT_PATH}}` in the output contract. Return the JSON as your final message; write it to a
   file only if the prompt named one.
+- §4's "On `allow` — HEADLESS LANE" text under the advisor-consult bullet. That describes spawning a
+  fresh `Agent`; your own consult mechanism (delta 4 below) is a different one, per
+  `.specs/2026-09-11-advisor-worker-design.md` D1.
 
 ## Interactive-lane deltas
 
@@ -36,22 +39,40 @@ Ignore only these two things in it, which describe the other lane:
    tree that cannot commit or push.
 2. **Run the hazard lookup yourself, before you touch anything.** The headless lane gets its
    worker-prompt.md §1 "Recorded gotchas" section injected by the launcher; you have no launcher, so
-   you produce it: from the workspace root, run
+   produce it: from the workspace root, run
    `scripts/govern/gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...]` for every path you are
    about to touch (from the ticket's `Where:` field or the files you've identified), and treat any
-   output the same way §1 describes. Empty output is the common case (nothing tagged for those
-   paths) and is not a reason to skip the step.
-3. **The advisor consult mechanism (worker-prompt.md §4) is self-serve here too.** No launcher
-   pre-computes your per-worker budget from a precision grade, since nothing grades an interactive
-   dispatch, so `advisor-consult.sh` falls back to the plain, nonzero per-worker default directly,
-   the same way `gotchas-for-paths.sh` self-serves the hazard lookup above.
-4. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
+   output the same way §1 describes. Empty output is the common case and not a reason to skip it.
+3. **Self-serve the proposal lookup too, and keep its grade for delta 4** (D2/D6):
+   `scripts/govern/ticket-proposal.sh <N>`. **Empty output → STOP before doing any work** and message
+   the advisor for the real proposal (delta 4's channel) — never invent one, never treat the plain
+   problem description as the proposal. `spawn-worker.sh` has no counterpart launcher here to
+   pre-compute an advisor budget from the grade, and shell state does not persist between your tool
+   calls, so pass it inline on the `claim` call in delta 4: `GOVERN_ADVISOR_BUDGET=<n>` using
+   `spawn-worker.sh`'s own scale — `open`→`${GOVERN_ADVISOR_PER_WORKER_OPEN:-3}`,
+   `stated`→`${GOVERN_ADVISOR_PER_WORKER_STATED:-1}`, else `${GOVERN_ADVISOR_PER_WORKER:-2}`.
+4. **The advisor consult goes UP, to the advisor that wrote your brief — not out to a fresh child**
+   (D1, overrides worker-prompt.md §4's "On `allow` — HEADLESS LANE" text): it already holds the
+   proposal and the reasoning behind it, so it is both cheaper and more correct to ask than a cold
+   child. Call `GOVERN_ADVISOR_BUDGET=<n> scripts/govern/advisor-consult.sh claim <N>` (delta 3's
+   budget; caps/ledger are otherwise script-owned, same as the headless lane). On `allow`, ignore
+   `advisorModel` — nothing is spawned. Instead `SendMessage` your one scoped question to the
+   session that dispatched you (`to: "main"`, or the name it gave itself if it spawned you into a
+   named team), **then STOP and wait**: no fallback `Agent`, no guessing, no proceeding on another
+   part of the ticket. This BLOCKS with no timeout — a worker that proceeds on a guess is the exact
+   failure this design exists to prevent, and the per-worker cap already bounds how many times you
+   may interrupt the advisor. Resume where you paused once the reply arrives, then run
+   `advisor-consult.sh record <N> <consultId> --model advisor --tokens 0 --answer "<summary>"` (no
+   separate agent model exists to report, so `--model advisor` names the source) and continue at
+   your own tier. If the advisor genuinely cannot answer, that is an honest `escalation`, never a
+   quiet substitution or a spawned child.
+5. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
-5. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
+6. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
    redoing the work.
-6. **The report contract is unchanged.** Your final message is the single JSON object from
+7. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
-7. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
+8. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
    `status` and a filled `escalation` rather than thrashing. The driver owns the one retry.

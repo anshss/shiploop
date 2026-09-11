@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Design Layer 2 (.specs/2026-09-09-model-orchestration-design.md): "tier is chosen by how
-# well-specified the work is, not how hard it looks." `govern::warm_assertion` already implemented
-# the top of that scale (a parent that STATED the change gets the haiku shortcut) but it was a
-# single binary with nothing between "fully specified" and "ordinary dispatch". This locks in the
-# generalisation into the design's three grades: stated | scoped | open.
+# Design Layer 2 (.specs/2026-09-09-model-orchestration-design.md), tier corrected by
+# .specs/2026-09-11-advisor-worker-design.md D5: "tier is chosen by how well-specified the work is,
+# not how hard it looks." `govern::warm_assertion` already implemented the top of that scale (a
+# parent that STATED the change gets the execute-only shortcut) but it was a single binary with
+# nothing between "fully specified" and "ordinary dispatch". This locks in the generalisation into
+# the design's three grades: stated | scoped | open.
 #
 # Cases:
 #   1. No GOVERN_WARM, no GOVERN_PRECISION -> "scoped" (the ordinary, unasserted case), tier
 #      unchanged from the floor.
-#   2. GOVERN_WARM matching the ticket -> "stated", haiku (already covered by test-warm-dispatch.sh
-#      for the tier; this asserts the recorded GRADE too), and a NONZERO advisor_budget: this
-#      harness never dispatches a sonnet-solo unit of work, so even a fully-specified "stated"
-#      change keeps at least one consult for whatever the parent did not anticipate.
+#   2. GOVERN_WARM matching the ticket -> "stated", sonnet per D5 (already covered by
+#      test-warm-dispatch.sh for the tier; this asserts the recorded GRADE too), and a NONZERO
+#      advisor_budget: this harness never dispatches a sonnet-solo unit of work, so even a
+#      fully-specified "stated" change keeps at least one consult for whatever the parent did not
+#      anticipate.
 #   3. GOVERN_PRECISION="<N>|open" matching the ticket -> "open", the SAME model tier as scoped (the
 #      design's table puts both at sonnet, do not invent a model change for "open") but the LARGEST
 #      advisor_budget of the three grades (#127, design Layer 3): the grade scales HOW MANY
@@ -29,6 +31,15 @@
 #   9. The real invariant across all of this: open >= scoped >= stated >= 1. The specific numbers
 #      are a starting point (GOVERN_ADVISOR_PER_WORKER_OPEN/GOVERN_ADVISOR_PER_WORKER/
 #      GOVERN_ADVISOR_PER_WORKER_STATED are each independently overridable), the ordering is not.
+#
+# D6 (.specs/2026-09-11-advisor-worker-design.md, grading reaches the interactive lane):
+#   10. A ticket's own **Precision:** field, with NO env assertion at all, resolves the grade —
+#       source names the ticket field, not the default.
+#   11. The ticket field WINS OVER a conflicting GOVERN_PRECISION on the same ticket: the advisor's
+#       recorded judgment beats a per-invocation env override.
+#   12. The ticket field WINS OVER GOVERN_WARM too — it is checked first, unconditionally.
+#   13. A missing/unrecognized ticket field falls through to the env logic unchanged (govern::
+#       ticket_precision already drops it; this proves spawn-worker.sh's precedence chain does too).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -52,6 +63,26 @@ Done when: PR opens.
 **Severity:** Medium
 Observed: something else entirely.
 Done when: PR opens.
+
+---
+
+## #703: a ticket carrying its own Precision field
+**Severity:** Medium
+Observed: something small in one file.
+Done when: PR opens.
+
+**Proposed solution:** Change X to Y.
+**Precision:** stated
+
+---
+
+## #704: a ticket whose Precision field is unrecognized
+**Severity:** Medium
+Observed: something small in one file.
+Done when: PR opens.
+
+**Proposed solution:** Change X to Y.
+**Precision:** urgent
 
 ---
 EOF
@@ -88,7 +119,7 @@ assert_eq "$(printf '%s' "$d2" | jq -r '.precision_grade')" "stated" \
   "a matching GOVERN_WARM assertion -> the 'stated' grade"
 assert_contains "$(printf '%s' "$d2" | jq -r '.precision_source')" "GOVERN_WARM" \
   "the recorded source names GOVERN_WARM"
-assert_eq "$(printf '%s' "$d2" | jq -r '.model')" "haiku" "stated -> the cheapest existing tier"
+assert_eq "$(printf '%s' "$d2" | jq -r '.model')" "sonnet" "stated -> sonnet, never haiku (D5)"
 assert_eq "$(printf '%s' "$d2" | jq -r '.advisor_budget')" "1" \
   "stated carries the SMALLEST but still NONZERO advisor budget: no unit of work runs sonnet-solo"
 
@@ -143,9 +174,39 @@ assert_eq "$(printf '%s' "$d6c" | jq -r '.precision_grade')" "scoped" \
 d7="$(dry 701 both "GOVERN_WARM=701|$BRIEF" "GOVERN_PRECISION=701|open")"
 assert_eq "$(printf '%s' "$d7" | jq -r '.precision_grade')" "stated" \
   "'stated' is the strongest signal and wins over an 'open' assertion on the same ticket"
-assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "haiku" "and it still buys the cheapest tier"
+assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "sonnet" "and it still buys sonnet, never haiku (D5)"
 assert_eq "$(printf '%s' "$d7" | jq -r '.advisor_budget')" "1" \
   "and it still carries 'stated's own advisor budget (1), not 'open's, even though 'open' was also asserted"
+
+# ── 10. a ticket's own **Precision:** field, no env assertion at all -> resolves the grade (D6) ──
+d10="$(dry 703 ticket-field)"
+assert_eq "$(printf '%s' "$d10" | jq -r '.precision_grade')" "stated" \
+  "10. the ticket's own **Precision:** field resolves the grade with no env involved"
+assert_contains "$(printf '%s' "$d10" | jq -r '.precision_source')" "ticket **Precision:** field" \
+  "10. the recorded source names the ticket field, not the default or an env var"
+assert_eq "$(printf '%s' "$d10" | jq -r '.model')" "sonnet" "10. and it sizes exactly like any other 'stated' grade"
+
+# ── 11. the ticket field WINS OVER a conflicting GOVERN_PRECISION on the same ticket (D6) ────────
+d11="$(dry 703 ticket-vs-env "GOVERN_PRECISION=703|open")"
+assert_eq "$(printf '%s' "$d11" | jq -r '.precision_grade')" "stated" \
+  "11. the ticket's own field beats a conflicting GOVERN_PRECISION=open on the very same ticket"
+assert_contains "$(printf '%s' "$d11" | jq -r '.precision_source')" "ticket **Precision:** field" \
+  "11. the source still names the ticket field as the one that won"
+
+# ── 12. the ticket field WINS OVER GOVERN_WARM too — checked first, unconditionally (D6) ────────
+d12="$(dry 703 ticket-vs-warm "GOVERN_WARM=703|$BRIEF")"
+assert_eq "$(printf '%s' "$d12" | jq -r '.precision_grade')" "stated" \
+  "12. the ticket field wins even against GOVERN_WARM (same grade here, but the SOURCE must differ)"
+assert_contains "$(printf '%s' "$d12" | jq -r '.precision_source')" "ticket **Precision:** field" \
+  "12. proving it was the ticket field that won, not GOVERN_WARM landing on the same grade by coincidence"
+
+# ── 13. a missing/unrecognized ticket field falls through to the env logic unchanged (D6) ───────
+d13a="$(dry 704 ticket-unrecognized)"
+assert_eq "$(printf '%s' "$d13a" | jq -r '.precision_grade')" "scoped" \
+  "13a. an unrecognized ticket Precision ('urgent') is dropped -> falls through to the default"
+d13b="$(dry 704 ticket-unrecognized-env "GOVERN_PRECISION=704|open")"
+assert_eq "$(printf '%s' "$d13b" | jq -r '.precision_grade')" "open" \
+  "13b. and still falls all the way through to a GOVERN_PRECISION assertion when one is set"
 
 # ── 8. the live path: the ledger and the event log both carry the grade ──────────────────────────
 cat > "$TMP/wt.sh" <<EOF

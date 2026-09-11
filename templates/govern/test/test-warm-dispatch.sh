@@ -19,9 +19,10 @@
 #   4. GOVERN_EXECUTE_ONLY=0 → branch hard-disabled even with a well-formed assertion.
 #   5. A matching assertion → the brief reaches the worker prompt AND carries the mismatch-stop
 #      instruction (the entire safety property of this branch).
-#   6. A matching assertion → the worker runs at the cheapest EXISTING tier, from the existing
-#      coarse set — never a newly minted (model, effort) pair.
-#   7. A retry overrides the cheap execute-only tier (a failed cheap bet is never re-bet).
+#   6. A matching assertion → the worker runs at sonnet, never haiku (D5, corrected 2026-09-11):
+#      under the advisor/worker architecture `stated` is the COMMON path, not a rare verbatim case,
+#      so haiku would be a systematic quality cut rather than a narrow saving. Sonnet is the floor.
+#   7. A retry holds the execute-only tier (a failed cheap bet is never re-bet).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -124,11 +125,12 @@ assert_contains "$p5" "STOP" \
 assert_contains "$p5" "newTickets" \
   "the brief tells the worker to route adjacent findings to newTickets, not widen the diff"
 
-# 6. Cheaper tier — from the EXISTING coarse set. A new (model, effort) pair here would re-fragment
-# the cross-worker prompt cache the coarse set exists to protect.
+# 6. Sonnet, not haiku (D5). The floor in this file is opus (see _base), so this also proves the
+# shortcut lands at the literal sonnet tier rather than at whatever GOVERN_WORKER_MODEL happens to
+# be — it closes a hole below the floor, it does not track a floor an operator raised on purpose.
 d6="$(dry 601 warm-dry "GOVERN_WARM=601|$BRIEF")"
-assert_eq "$(printf '%s' "$d6" | jq -r '.model')" "haiku" \
-  "execute-only dispatch drops to the cheapest existing model tier"
+assert_eq "$(printf '%s' "$d6" | jq -r '.model')" "sonnet" \
+  "execute-only dispatch resolves to sonnet, never haiku (D5)"
 assert_eq "$(printf '%s' "$d6" | jq -r '.effort')" "low" \
   "execute-only dispatch drops to the cheapest existing effort tier"
 assert_contains "$(printf '%s' "$d6" | jq -r '.model_source')" "execute-only" \
@@ -136,15 +138,16 @@ assert_contains "$(printf '%s' "$d6" | jq -r '.model_source')" "execute-only" \
 
 # 7. A RETRY of an execute-only dispatch. This case used to assert the retry escalated OFF the cheap
 # tier to opus ("a failed cheap bet is never re-bet"). Automatic tier escalation is REMOVED, so that
-# behaviour is deliberately gone and the retry now HOLDS haiku. The tension is real and worth naming:
-# a failed execute-only attempt is the strongest case in the harness for buying a tier, because the
-# parent asserted the change was already decided and haiku still could not land it. The operator's
-# ruling is that this is exactly the signal that the ASSERTION was wrong, so it goes back to a person
-# as a re-specification request instead of being re-bet at a higher price.
+# behaviour is deliberately gone and the retry now HOLDS sonnet (D5: sonnet, not haiku). The tension
+# is real and worth naming: a failed execute-only attempt is the strongest case in the harness for
+# buying a tier, because the parent asserted the change was already decided and sonnet still could
+# not land it. The operator's ruling is that this is exactly the signal that the ASSERTION was
+# wrong, so it goes back to a person as a re-specification request instead of being re-bet at a
+# higher price.
 d7="$(dry 601 warm-retry "GOVERN_WARM=601|$BRIEF" "GOVERN_SPAWN_FORCE_RETRY=1")"
 assert_eq "$(printf '%s' "$d7" | jq -r '.is_retry')" "1" "the retry path is actually exercised"
-assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "haiku" \
-  "a retry of an execute-only dispatch HOLDS the cheap tier: no failure class buys a model"
+assert_eq "$(printf '%s' "$d7" | jq -r '.model')" "sonnet" \
+  "a retry of an execute-only dispatch HOLDS the tier: no failure class buys a model"
 assert_eq "$(printf '%s' "$d7" | jq -r '.respec_requested')" "true" \
   "it surfaces a re-specification request instead, which is where a failed warm assertion belongs"
 

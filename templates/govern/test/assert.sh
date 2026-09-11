@@ -84,6 +84,14 @@ export GOVERN_ADVISOR=0              # #127 design Layer 3: the advisor consult 
                                       # script's own default, restated here per the GOVERN_FIX_CI precedent
                                       # (a live governor session's exported env must never leak into a suite
                                       # run). Its own test (test-advisor-consult.sh) opts back in explicitly.
+export GOVERN_PROPOSAL_GATE=0        # .specs/2026-09-11-advisor-worker-design.md D2: unlike the knobs
+                                      # above, this gate's SHIPPED default is ON (rail 7/G7 — an
+                                      # inert-by-default gate is the defect this design is written
+                                      # against), so it is the one line here where the suite default
+                                      # genuinely diverges from production. Forced off so every
+                                      # pre-existing pre-dispatch-check.sh fixture (none of which
+                                      # carry a **Proposed solution:** section) keeps testing what it
+                                      # was written to test. Its own tests opt back in explicitly.
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

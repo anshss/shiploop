@@ -89,6 +89,20 @@ if [[ -n "$flow_op_field" ]]; then
 "
 fi
 
+# Proposed-solution + Precision placeholder (.specs/2026-09-11-advisor-worker-design.md D2/D6).
+# Filing is not specifying: the advisor fills these in AT DISPATCH TIME, after reading the ticket,
+# never at filing time — so every newly filed ticket carries the placeholder, not a guess. The
+# sentinel text ("(advisor: fill in before dispatch") is what govern::ticket_proposal /
+# govern::ticket_precision (lib/common.sh) recognise as "still unfilled," so an untouched
+# placeholder reads as NO proposal to the pre-dispatch gate (D2) rather than as one. Appended AFTER
+# the body (unlike Flow/Flow-op above): the proposal is the advisor's decision layered on top of the
+# problem description, not part of the filer's own field block, and this placement keeps it well
+# clear of the leading-field-block scan the Model:/Effort:/Flow: latches use.
+proposal_block="
+**Proposed solution:** _(advisor: fill in before dispatch — filing is not specifying)_
+**Precision:** _(advisor: stated | scoped | open — filled at dispatch time)_
+"
+
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
 BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
@@ -98,7 +112,7 @@ if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
   # (which takes the bookkeep lock itself) so the number stays collision-safe; just leaves the
   # append uncommitted for the caller to stage. Prefer the default atomic path while a run is active.
   n="$(govern::next_ticket_number "$TICKETS_FILE")"
-  printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
+  printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n%s\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" "$proposal_block" >> "$TICKETS_FILE"
   echo "$n"
   exit 0
 fi
@@ -167,7 +181,7 @@ if [[ -n "$dup_of" ]]; then
 $body"
 fi
 
-printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" >> "$TICKETS_FILE"
+printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n%s\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" "$proposal_block" >> "$TICKETS_FILE"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
 # can never be left uncommitted (and thus clobbered by a concurrent land-resolution.sh run). Mirrors

@@ -172,4 +172,25 @@ GOTCHA_SCRIPT="$(cd "$DIR/.." && pwd)/gotchas-for-paths.sh"
 assert_eq "$([ -f "$GOTCHA_SCRIPT" ] && echo yes || echo no)" "yes" \
   "7b. the script worker.md points at actually exists beside spawn-worker.sh"
 
+# ── 8. D1: the consult goes UP to the advisor, not out to a fresh child ────
+# .specs/2026-09-11-advisor-worker-design.md D1. The headless mechanism (spawn a fresh Agent) is
+# canonical-doctrine content that this lane must explicitly override, not silently inherit.
+assert_contains "$body" "HEADLESS LANE" \
+  "8a. worker.md names the specific worker-prompt.md bullet it overrides"
+assert_contains "$body" "advisor-consult.sh claim" \
+  "8b. the interactive lane still uses the same script-owned budget/ledger"
+assert_contains "$body" "SendMessage" \
+  "8c. worker.md instructs messaging the advisor directly, not spawning a child"
+assert_contains "$body" "STOP and wait" \
+  "8d. the consult BLOCKS -- explicit instruction to stop rather than proceed on a guess"
+assert_not_contains "$body" "spawn exactly ONE" \
+  "8e. worker.md never repeats the headless lane's spawn-a-fresh-child instruction"
+PROMPT_BODY="$(cat "$PROMPT_MD")"
+assert_contains "$PROMPT_BODY" "MUST carry the ticket's own" \
+  "8f. the headless lane's own consult text now hands the fresh child the proposal (D1's degraded-lane requirement)"
+
+# ── 9. D2: the ticket's proposal is implemented, in worker-prompt.md (lane-neutral, both lanes) ──
+assert_contains "$PROMPT_BODY" "Implement the ticket's" \
+  "9. worker-prompt.md states the implement-the-proposal doctrine (reached by both lanes: worker.md includes this file by reference)"
+
 assert_done

@@ -19,13 +19,19 @@ If you cannot tell whether something is in scope, it is not.
    below for you on the headless lane, or produced by you via `gotchas-for-paths.sh` as your own
    first step on the interactive lane (see its own delta) — a supplement, not a substitute: it never
    contains the file's untagged rules, so still read the file itself.
-2. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`.
-3. Commit per sub-repo (`cd` in first), then `gh pr create` against `<org>/<sub-repo>` on the branch
+2. **Implement the ticket's `**Proposed solution:**`, not your own read of the problem.** It was
+   written by the advisor before you were dispatched — injected below (see "Proposed solution"), or
+   readable directly in the ticket if you were handed a bare number. Implement it. If you conclude a
+   step in it is wrong, that is a finding for your report (`newTickets`/`escalation`), never a silent
+   substitution: a worker quietly doing something other than what was proposed is the exact failure
+   `.specs/2026-09-11-advisor-worker-design.md` D2 exists to prevent.
+3. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`.
+4. Commit per sub-repo (`cd` in first), then `gh pr create` against `<org>/<sub-repo>` on the branch
    the worktree gave you. Do NOT merge; do NOT edit `queue/tickets.md`. A PUBLIC-REPO PR HYGIENE
    section below, if present, overrides branch/PR-body rules.
-4. Found a NEW bug/gap? FIRST `grep '^## #' queue/tickets.md` here for a ticket with the same
+5. Found a NEW bug/gap? FIRST `grep '^## #' queue/tickets.md` here for a ticket with the same
    symptom/root cause: if one covers it use `crossRefs.overlaps`, else `newTickets`.
-5. Durable root-level lesson? Fill `lessonPatch` (contract in §5).
+6. Durable root-level lesson? Fill `lessonPatch` (contract in §5).
 
 ## 2. Context economy
 A tool call's real cost is `bytes × turns_remaining` — everything you pull in, your own prose and
@@ -55,6 +61,11 @@ test to be brief is a failed ticket.
 - **A child's claim is a LEAD** — subagents fabricate confidently, so spend the one `grep`/`Read`
   before acting on it. **Delegate reconnaissance, never the commit, the PR, or the report write**:
   its write policy is restrictive, so YOU persist its findings to disk.
+- **You are the EXECUTION child** in `.specs/2026-09-11-advisor-worker-design.md` D9's split — the
+  one that requires a proposal (item 2 above) and owns the branch/PR. A `lookup`/`investigator`
+  child you spawn for your OWN reconnaissance is the OTHER kind: read-only, no proposal, no PR, and
+  it never counts against a dispatch cap. Size it by TYPE (`lookup` for a single fact,
+  `investigator` for multi-file diagnosis), never by predicting how hard its answer will be.
 - **Validate in proportion:** docs/markdown → a lint/parse check; any executable file touched →
   the full suite, filtered.
 
@@ -96,16 +107,23 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
 - **Real UI → drive it headlessly via the project's browser tool** — the real user path.
 - **One judgment fork you cannot resolve → consult, don't guess or fail.** Run
   `scripts/govern/advisor-consult.sh claim <N>` (from the workspace root, the script decides, you
-  never do). `allow` names an `advisorModel` (already capped by `GOVERN_WORKER_ESCALATION_MODEL`,
-  the same cap an explicit ticket `Model:` request obeys) and a `maxTokens` ceiling: spawn exactly
-  ONE `Agent` at that model with a single scoped question, then run `advisor-consult.sh record <N>
-  <consultId> --model <m> --tokens <n> --answer "<summary>"` and continue at your own tier. This
-  never raises the tier for the rest of the ticket, only that one call. `deny` (budget exhausted, or
-  the mechanism is off) is not a cue to retry, reformulate, or consult anyway: note it and keep
-  going on your own judgment, or say so plainly in `escalation` if the fork is genuinely where you
-  are stuck. An exhausted budget surfaces to the operator, it never buys a bigger tier by itself. A
-  stuck agent looping on a broken command does not need this; that is a progress problem, not a
-  question to ask.
+  never do). `deny` (budget exhausted, or the mechanism is off) is not a cue to retry, reformulate,
+  or consult anyway: note it and keep going on your own judgment, or say so plainly in `escalation`
+  if the fork is genuinely where you are stuck. An exhausted budget surfaces to the operator, it
+  never buys a bigger tier by itself. A stuck agent looping on a broken command does not need this;
+  that is a progress problem, not a question to ask.
+  **On `allow` — HEADLESS LANE (this one; the interactive lane's `.claude/agents/worker.md`
+  overrides this bullet with a different mechanism, D1):** there is no live advisor session to ask —
+  this lane is degraded and slated for retirement (queue #123/G12), so it inherits the weaker
+  mechanism deliberately rather than driving the design. `allow` names an `advisorModel` (already
+  capped by `GOVERN_WORKER_ESCALATION_MODEL`, the same cap an explicit ticket `Model:` request
+  obeys) and a `maxTokens` ceiling: spawn exactly ONE `Agent` at that model with a single scoped
+  question, and that question MUST carry the ticket's own `**Proposed solution:**` (see "Proposed
+  solution" above) and the relevant brief verbatim — a fresh child that has never seen the proposal
+  pays a full cold start to re-derive what the advisor already decided, and can return an answer
+  that contradicts it. Do not paraphrase the proposal away; quote it. Then run `advisor-consult.sh
+  record <N> <consultId> --model <m> --tokens <n> --answer "<summary>"` and continue at your own
+  tier. This never raises the tier for the rest of the ticket, only that one call.
 
 **Escalate as human-only ONLY** with a concrete unworkable blocker — a credential you cannot
 self-grant, unrentable hardware, money beyond the test grant, subjective judgment. Hard/flaky/slow,
