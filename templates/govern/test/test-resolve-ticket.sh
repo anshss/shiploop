@@ -48,7 +48,21 @@ cat > "$T/bin/merge-pr.sh" <<'STUB'
 #!/usr/bin/env bash
 exit "${STUB_MERGE_RC:-0}"
 STUB
-chmod +x "$T/bin"/*.sh
+# $WS_ROOT/scripts/worktree/rm.sh is never stubbed here (no worktree:new/rm concern in THIS
+# file — see test-resolve-ticket-worktree-teardown.sh for that), so it's always "missing" and
+# the teardown step's `ticket-$N` attempt always falls through to the PR-head-branch fallback.
+# Stub `gh` (bare-name, PATH-resolved — unlike every other collaborator here, which resolve-
+# ticket.sh calls by absolute $DIR/ path) so that fallback's `gh pr view --json headRefName`
+# hits this stub instead of a live network call.
+cat > "$T/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  *headRefName*) echo "stub-branch" ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$T/bin"/*.sh "$T/bin/gh"
+export PATH="$T/bin:$PATH"
 export LANDED_LOG="$LANDED"
 
 cat > "$T/queue/tickets.md" <<'TIX'
