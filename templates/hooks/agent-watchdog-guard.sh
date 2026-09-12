@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# PreToolUse(*) hook, subagent-scoped: the headless-launcher wall-clock watchdog, the one ceiling
-# that has no stop/idle equivalent. agent-progress-guard.sh already ports the other two carried
-# signals (the early-abort signature and idle supervision); this ports the remaining one:
+# PreToolUse(*) hook, subagent-scoped: the one headless-launcher watchdog that has no stop/idle
+# equivalent. agent-progress-guard.sh already ports the other two carried signals (the early-abort
+# signature and idle supervision); this ports the remaining one:
 #   - wall-clock       (the launcher's GOVERN_WORKER_TIMEOUT)
 # The launcher's other remaining item, EXIT/INT/TERM cleanup traps, has NO hook equivalent and is
 # NOT ported here. See the comment at the bottom of this file for what does and does not cover it.
 #
-# There is deliberately NO per-agent token-volume ceiling here. A volume cap cannot pay for
-# itself: killing a warm child throws away its prompt cache, and the cold replacement pays
-# cache-creation (priced above input) plus full-price re-reads, so firing costs more than not
-# firing except against a child that would never have finished. That case is caught better by the
-# wall-clock rail below and by the stall, identical-command-loop and tool-error-rate detection
-# agent-progress-guard.sh carries.
+# DO NOT RE-ADD A PER-AGENT TOKEN-VOLUME CAP HERE. A cumulative token total sums cache reads, which
+# are re-paid every turn for the same prefix, so the number tracks turn count rather than spend.
+# And killing a warm child throws away its prompt cache: the cold replacement pays cache creation
+# (priced above input) plus full-price re-reads, so firing costs more than not firing except
+# against a child that would never have finished. That case belongs to the wall-clock cap below and
+# to the stall, identical-command-loop and tool-error-rate detection agent-progress-guard.sh
+# carries, both of which measure whether the child is getting anywhere rather than how much it read.
+#
+# The cap also emits the `watchdog-kill` lever event the headless launcher already emits, so bench
+# sees ONE watchdog stream across both lanes instead of crediting only the headless half. See
+# emit_watchdog_kill below for what this lane can and cannot fill in.
 #
 # WHY PreToolUse, not SubagentStop/TeammateIdle. Those two only fire when a child STOPS or
 # goes QUIET. A child that is busily doing the wrong thing for an hour does neither — it never
@@ -30,8 +35,21 @@
 # guarantee the constraint below asks for: an advisor/driver session's own tool calls never reach
 # past this line, so this hook can never deny the operator's own work.
 #
+# THE CHILD'S OWN TRANSCRIPT. PreToolUse does NOT carry an `agent_transcript_path` the way
+# SubagentStop does (verified live, same session as above: a subagent's PreToolUse payload
+# carries the identical `transcript_path` as the driver's own dispatching call — it is the shared
+# top-level transcript, not a per-child one). But the platform still writes each subagent's own
+# stream to a fixed, discoverable path alongside the parent's: for a parent transcript at
+# `<dir>/<session_id>.jsonl`, a spawned child's own turns land at
+# `<dir>/<session_id>/subagents/agent-<agent_id>.jsonl` — confirmed live by spawning a real
+# subagent and inspecting the `.jsonl`/`.meta.json` pair the platform actually wrote to disk.
+# Undocumented (the platform's own docs describe neither the directory layout nor a dedicated
+# field here), so this degrades to "no token check this call" rather than a wrong verdict when the
+# file isn't where expected — same "absence of data is never evidence of doom" contract every
+# other watchdog in this repo already holds to.
+#
 # HARD CONSTRAINT, same as every other watchdog here: every signal is DETERMINISTIC, read straight
-# off the hook payload and a local state file. No model call anywhere in this path.
+# off the child's own transcript file. No model call anywhere in this path.
 #
 # Response shape: a DENY, never a kill. A worker mid-task that is denied its next tool call can
 # still emit a final text response — its structured report, with an honest status and a filled
@@ -42,11 +60,11 @@
 # that installed it, not just the one call under test).
 #
 # THE CAP SHIPS ON, with its own kill switch (0 disables it): an inert-by-default watchdog is the
-# defect this whole design exists to close. The default is not a derived constant, it is a
-# starting point, tunable per fleet:
-#   GOVERN_AGENT_WALLCLOCK (seconds, default 3600): the SAME 1h starting point the launcher's
-#     own GOVERN_WORKER_TIMEOUT already ships, ported unchanged rather than inventing a new number
-#     for the identical question ("how long is too long for one child").
+# defect this whole design exists to close. The default is not a derived constant, it is a starting
+# point, tunable per fleet:
+#   GOVERN_AGENT_WALLCLOCK (seconds, default 3600): the SAME 1h starting point the launcher's own
+#     GOVERN_WORKER_TIMEOUT already ships, ported unchanged rather than inventing a new number for
+#     the identical question ("how long is too long for one child").
 # Deliberately its OWN switch, NOT GOVERN_AGENT_SUPERVISION (the idle-supervision knob).
 # Conflating them would mean one kill switch silently disables unrelated mechanisms.
 set -uo pipefail
@@ -59,16 +77,107 @@ agent_id="$(get agent_id)"
 [ -n "$agent_id" ] || exit 0   # no agent_id → this is the driver/advisor itself, never touch it
 
 agent_type="$(get agent_type)"
+transcript_path="$(get transcript_path)"
+session_id="$(get session_id)"
 
 # Sanitize for filename/path use — an agent_id is a platform-issued token in practice, but never
 # trust it into a path unescaped (same discipline router-posture-guard.sh applies to session_id).
 safe_id="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9._-' '_')"
 [ -n "$safe_id" ] || safe_id="unknown"
 
+SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ── the lever event (bench/LEVER-EVENTS.md `watchdog-kill`) ───────────────────────────────────
+# The headless launcher emits this on every one of its watchdog kills (spawn-worker.sh's
+# emit_watchdog_kill). This lane did not, so a bench that already credits the watchdog lever saw
+# only half the fleet's kills, and the interactive half read as "never fired" rather than
+# "unmeasured". Same event name, same field names (ctxTokens / turns / reason), so the two lanes
+# produce ONE event stream rather than two dialects that a reader has to reconcile.
+#
+# Differences from the headless emitter, both forced by what this lane actually knows:
+#   - `ticket` is null. A hook sees an agent_id, not a ticket: the interactive worker subagent is
+#     handed its ticket in a prompt this hook never reads. A guessed ticket number would be worse
+#     than an honest null.
+#   - `tier` is null. PreToolUse carries no model field for the child (verified against the payload
+#     fields this hook already parses), and inferring one from the parent would name the wrong
+#     model. The reader's own `driverTier` fallback covers a null tier already.
+#   - the file is NOT run-scoped: no GOVERN_RUN_DIR exists inside a live session, so the emitter's
+#     own fallback writes to $LOG_ROOT/lever-events.jsonl. replay.mjs counts those rows and credits
+#     them to no arm, on purpose (bench/KNOWN-LIMITS.md).
+# `agent_type` and `agentId` ride along as extra k=v fields; the contract's reader skips fields it
+# does not know, so adding them costs nothing.
+#
+# FAIL OPEN, always. A PreToolUse hook that dies denies every later tool call in the session that
+# installed it, so the whole emission runs in a subshell whose failure is swallowed, and the
+# `declare -F` check means a common.sh that is missing (a bare checkout, a hook installed without
+# the library) is a silent no-op rather than an error. GOVERN_LEVER_EVENTS is honoured exactly as
+# the headless path honours it: checked HERE too, so the sourcing work is skipped entirely when an
+# operator has opted out, not done and then discarded by the emitter's own gate.
+emit_watchdog_kill() { # <reason> <ctxTokens> <turns>
+  [ "${GOVERN_LEVER_EVENTS:-1}" = "1" ] || return 0
+  (
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    declare -F govern::emit_lever_event >/dev/null 2>&1 || exit 0
+    govern::emit_lever_event watchdog-kill - worker - \
+      ctxTokens="${2:-0}" turns="${3:-0}" reason="$1" \
+      lane=interactive agentType="${agent_type:-unknown}" agentId="${agent_id:-unknown}"
+  ) >/dev/null 2>&1 || true
+  return 0
+}
+
 deny() { # <reason text> -> emits the PreToolUse deny JSON and exits 0
   local esc; esc="$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$esc"
   exit 0
+}
+
+# The child's own transcript (derived path, see header). Read ONLY to fill the lever event's
+# ctxTokens/turns, never as a ceiling; empty when the payload does not carry enough to derive it,
+# which every caller below treats as "no reading", never as zero.
+child_transcript=""
+if [ -n "$transcript_path" ] && [ -n "$session_id" ]; then
+  child_transcript="$(dirname "$transcript_path")/$session_id/subagents/agent-${agent_id}.jsonl"
+  [ -f "$child_transcript" ] || child_transcript=""
+fi
+
+# Reach common.sh defensively, same idiom agent-progress-guard.sh already uses: if common.sh itself
+# is not found at either candidate path, `|| exit 0` degrades this to a silent no-op. A common.sh
+# that DOES load but whose own workspace-config source fails (a bare checkout with no
+# scripts/lib/workspace.sh) still defines every function that doesn't need that config,
+# govern::cumulative_tokens included, verified live: bash suppresses `set -e` for the whole
+# recursive execution of one member of an `A || B` list, so a failure deep inside common.sh's OWN
+# sourcing of workspace.sh does not stop the rest of common.sh from loading. That is a feature
+# here, not a gap to route around: a pure function over a transcript file has no business needing
+# repo/org config to answer a token count. SELF_ROOT (set above) mirrors agent-progress-guard.sh
+# exactly: this script installs to scripts/ (workspace) or lives at templates/hooks/ (hub repo /
+# hermetic tests).
+#
+# Called LAZILY, only on a path that is about to deny or emit: a scan of the child's transcript on
+# every single tool call would be a real per-call cost for a reading nothing reads.
+child_tokens() { # -> the child's cumulative tokens, or "" when unreadable
+  local t
+  [ -n "$child_transcript" ] || { printf ''; return 0; }
+  t="$(
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::cumulative_tokens >/dev/null 2>&1 || exit 0
+    govern::cumulative_tokens "$child_transcript"
+  )" || true
+  case "$t" in (*[!0-9]*|"") t="" ;; esac
+  printf '%s' "$t"
+  return 0
+}
+
+# Assistant turns so far, counted the same way the headless emitter counts them (a line-count of
+# `"type":"assistant"` over the frozen transcript), so `turns` means the same thing on both lanes.
+child_turns() { # -> assistant-turn count, 0 when unreadable
+  local n
+  [ -n "$child_transcript" ] || { printf '0'; return 0; }
+  n="$(grep -c '"type":"assistant"' "$child_transcript" 2>/dev/null || true)"
+  case "$n" in (*[!0-9]*|"") n=0 ;; esac
+  printf '%s' "$n"
+  return 0
 }
 
 # ── wall-clock ───────────────────────────────────────────────────────────────────────────────
@@ -90,6 +199,8 @@ if [ "$wallclock_cap" != "0" ]; then
   fi
   elapsed=$(( now - first ))
   if [ "$elapsed" -ge "$wallclock_cap" ] 2>/dev/null; then
+    # Same reason string the headless lane uses for the identical cap, so the two streams group.
+    emit_watchdog_kill "wall-clock-timeout" "$(child_tokens)" "$(child_turns)"
     deny "[AGENT WATCHDOG] wall-clock: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has been running ~${elapsed}s, past the ${wallclock_cap}s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_WALLCLOCK if this task genuinely needs longer."
   fi
 fi

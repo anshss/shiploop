@@ -1,0 +1,2 @@
+{"event":"watchdog-kill","ts":1806000040,"ticket":null,"session":"worker","tier":null,"ctxTokens":120000,"turns":44,"reason":"wall-clock-timeout","lane":"interactive"}
+{"event":"watchdog-kill","ts":1806000041,"ticket":null,"session":"worker","tier":null,"ctxTokens":200000,"turns":91,"reason":"wall-clock-timeout","lane":"interactive"}
