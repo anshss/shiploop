@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.19.5 - 2026-09-12
+
+### Removed
+
+**The per-agent token-volume rail is deleted (#189).** `GOVERN_AGENT_TOKEN_BUDGET` and the deny
+path it fed are gone from `templates/hooks/agent-watchdog-guard.sh`. It counted
+`input + output + cache_read + cache_creation`, and cache reads are re-paid every turn for the same
+prefix, so the total grew with turn count rather than with spend and was dominated by the cheapest
+token class. Worse, a volume cap cannot pay for itself: killing a warm subagent discards its cache
+and forces a cold replacement to pay cache creation above input price plus full-price re-reads, so
+firing costs more than not firing except against a worker that would never have finished. That case
+is already covered by two rails that stay and that measure the real failure instead of a proxy: the
+wall-clock ceiling in the same hook (`GOVERN_AGENT_WALLCLOCK`) and the stall, identical-command-loop
+and tool-error-rate detection carried to in-session children by `agent-progress-guard.sh`. The
+child's token count is still recorded as a field on the wall-clock kill event, so the measurement
+survives without the enforcement. `govern::cumulative_tokens` is kept: the headless launcher still
+calls it.
+
+**A worker can no longer buy an advisor (#188).** The instruction telling a headless worker to spawn
+an `Agent` at a capped opus model is deleted rather than softened, and the `advisorModel` field it
+consumed is removed from the consult `claim` response. A worker that reaches a fork it cannot
+resolve asks the advisor on the interactive lane, or reports an honest escalation. Nothing spawns
+an advisor.
+
+### Added
+
+**The proposed-solution gate now fires on the interactive lane (#188).** `GOVERN_PROPOSAL_GATE`
+already refused a headless dispatch on a ticket carrying no `**Proposed solution:**`, but nothing
+invoked it when a session dispatched a worker subagent, so on the lane people actually use it was a
+gate that read as configured and controlled nothing. `templates/hooks/router-posture-guard.sh` now
+denies that `Agent` call under the same switch, reusing `govern::ticket_proposal` rather than
+re-parsing the queue, and degrading to allow whenever it cannot resolve the ticket.
+
+**Advisor steers are bounded (#188).** New `templates/hooks/advisor-steer-guard.sh` caps how many
+messages an advisor sends down to workers it dispatched (`GOVERN_STEER_CAP`, default 12). Past the
+cap the next message is denied with instructions to rewrite the ticket's proposal and dispatch
+again, because turn-by-turn steering is the premium session implementing through a proxy. A worker
+messaging up, a message to `main`, and read-only data-collection children are never counted.
+
+**bench sees four mechanisms it was blind to (#187).** Per-attempt tier attribution
+(`precisionGrade`, `modelSource`, `effort` and their sources) was being loaded from `attempts.jsonl`
+and discarded except for `retryClass`, so the report could say which tier a ticket ran on but not
+why. Advisor consult spend was uncounted entirely; it is now priced and reported on its own line,
+as an upper bound at the answering tier's output rate, attributed to a run only when a ticket
+appears in exactly one run and reported as unattributed with a named reason otherwise. Interactive
+lane watchdog kills now emit `watchdog-kill` with the headless emitter's field names, so both lanes
+produce one comparable event stream. The idle-progress alarm is excluded deliberately, locked by a
+test: a lever this report credits must remove tokens from the counterfactual, and that one removes
+none.
+
+### Changed
+
+**The seed `CLAUDE.md` states the operating model and two rules against guessing (#188).** The
+routing table no longer presents a second lane as a peer option. The session is the advisor: it
+decides, it does not implement, nothing ever spawns an advisor, and the worker is a subagent
+precisely so it can message back and be steered mid-run. Alongside it: never state how code behaves
+without opening the file, and comments never cite documents, because a pointer that stops resolving
+sends a reader off to invent the answer.
+
 ## 1.19.4 — 2026-09-10
 
 ### Added
