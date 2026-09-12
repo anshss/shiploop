@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the #67 VALIDATION-EVIDENCE gate, resolve-ticket.sh's step 2, since the loop purge moved
+# Proves the VALIDATION-EVIDENCE gate, resolve-ticket.sh's step 2, since the loop purge moved
 # this check here, fires under HEADING WHITESPACE / PUNCTUATION variance. Previously the gate awk
 # required exactly `## #N ` (single space), so a ticket whose heading was `##  #N` (double-space) or
 # `## #N-Title` (em-dash with no space between `#N` and title) yielded an empty tblock, the

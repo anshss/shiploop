@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# status.sh's "by source" summary: per-session tier attribution grouped by model_source (rail 5 /
-# design doc Layer 2: .specs/2026-09-09-model-orchestration-design.md).
+# status.sh's "by source" summary: per-session tier attribution grouped by model_source.
 #
 # Why it exists: model_source was already logged (spawn-worker.sh's attempts.jsonl ledger) but
 # nothing aggregated it anywhere a person would look. Diagnosing a real overcharge took a dedicated

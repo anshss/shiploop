@@ -157,8 +157,9 @@ sync_root() {
   fi
   repair_duplicate_upstream
 
-  # #71's run-start reconcile, now reachable outside the dispatch path: fetch + ff/push/rebase+push,
-  # and self-heals known governor runtime artifacts a crashed run left dirty. Reuses
+  # The governor's own run-start reconcile, now reachable outside the dispatch path:
+  # fetch + ff/push/rebase+push, and self-heals known governor runtime artifacts a
+  # crashed run left dirty. Reuses
   # preflight-main.sh rather than re-implementing its reconcile ladder here (the plain `git pull
   # --ff-only` below is the fallback for a workspace scaffolded before preflight-main.sh existed, or
   # with GOVERN_SYNC_PREFLIGHT_MAIN=0). Exit 2 is the ONE case that must NOT be swallowed: main

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// bench/rollup.mjs: results.jsonl to the three metric cuts of spec section 4, the backlog
-// selection ranking of section 3, and the one published sentence. Node, zero dependencies.
+// bench/rollup.mjs: results.jsonl to the three metric cuts, the backlog
+// selection ranking, and the one published sentence. Node, zero dependencies.
 //
 // Usage:
 //   node bench/rollup.mjs [results.jsonl] [--json] [--floor 65] [--keep-max 3] [--window-usd N]
@@ -78,7 +78,7 @@ if (rollups.length === 0) die(`${file} contains no kind:"rollup" rows`);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-// Two token cuts (section 4, metric 2). `billable` charges cache reads at nothing, which is the
+// Two token cuts. `billable` charges cache reads at nothing, which is the
 // conservative reading; `allIn` counts every token the API moved. Both are true statements about
 // the same file; the report says which one the headline used.
 const tokenCuts = (t) => ({
@@ -136,7 +136,7 @@ const perBacklog = backlogNames.map((name) => {
   const v = armFold(name, "vanilla");
   const s = armFold(name, "shiploop");
   const vf = armFold(name, "vanilla-fresh");
-  // Section 3: a backlog either arm failed to clear is not comparable and drops out. So is a
+  // A backlog either arm failed to clear is not comparable and drops out. So is a
   // capped one: a truncated run is cheaper for the wrong reason, and letting it into the ranking
   // would make the cap itself look like a saving.
   const eligible =
@@ -162,7 +162,7 @@ const perBacklog = backlogNames.map((name) => {
   };
 });
 
-// ---- selection (section 3) -------------------------------------------------
+// ---- selection ---------------------------------------------------------------
 // Rank the eligible backlogs by cost delta, take them best-first, and stop as soon as the
 // AGGREGATE over the kept set clears the floor. The aggregate is what gets published, so it is
 // what the stopping rule reads: a set whose individual members all beat the floor can still
@@ -183,7 +183,7 @@ function aggregate(set) {
     costPct: pctLower(vCost, sCost),
     tokenPctBillable: pctLower(vTokB, sTokB),
     tokenPctAllIn: pctLower(vTokA, sTokA),
-    // Section 4, metric 3. Tickets per window is (window budget / cost per ticket), so the RATIO
+    // Tickets per window is (window budget / cost per ticket), so the RATIO
     // of the two arms is window-budget independent: the budget cancels. That ratio is the honest
     // form of "Nx more tickets per 5-hour window". Absolute counts need a measured budget and
     // only appear when --window-usd supplies one.
@@ -202,7 +202,7 @@ for (const b of ranked) {
   if (kept.length >= opts.keepMax) break;
   kept.push(b);
   const a = aggregate(kept);
-  // Two is the published minimum (section 3 keeps 2 to 3): "our benchmark suite" of one backlog
+  // Two is the published minimum (keep 2 to 3): "our benchmark suite" of one backlog
   // is a single data point wearing a plural.
   if (kept.length >= 2 && a.costPct >= opts.floor) break;
 }
@@ -210,7 +210,7 @@ for (const b of ranked) {
 const agg = kept.length ? aggregate(kept) : null;
 const allEligible = ranked.length ? aggregate(ranked) : null;
 
-// ---- headline (section 4) --------------------------------------------------
+// ---- headline ------------------------------------------------------------
 // Exactly one sentence, "up to" phrasing, in the shape the spec fixes. The percentage is the
 // larger of the cost cut and the better token cut, and the report always says which one it is so
 // nobody publishes a token number under a cost word.

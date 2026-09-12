@@ -158,7 +158,7 @@ Two properties this fixture exists to lock, beyond the arithmetic:
 ## The attempt-outcome fixture (`replay-outcome-fleet`)
 
 Built for `templates/govern/test/test-bench-outcome.sh`, which asserts the "present class, absent
-class" contract for `outcomeBreakdown()` (queue #108, "no attempt-outcome dimension"). Regenerate
+class" contract for `outcomeBreakdown()` ("no attempt-outcome dimension"). Regenerate
 with `node bench/fixtures/make-outcome-fixture.mjs`.
 
 Three tickets in `run-20260301-000000`, each exercising a different state of spawn-worker.sh's

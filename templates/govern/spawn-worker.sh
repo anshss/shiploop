@@ -9,7 +9,7 @@ govern::require jq
 
 N="${1:?ticket number required}"
 shift
-# #23 locality batching: any EXTRA ticket numbers after $1 are co-batched into this ONE worker —
+# locality batching: any EXTRA ticket numbers after $1 are co-batched into this ONE worker —
 # they share $N's worktree, branch and PR, and their outcomes come back per-ticket in the report's
 # `tickets` array. $N stays the PRIMARY: the worktree slug, the branch, the model/effort/flow latches
 # and the run-scoped log dir are all keyed on it, so a plain single-ticket spawn is byte-identical to
@@ -22,17 +22,17 @@ for _b in "$@"; do
   BATCH+=("$_b")
 done
 slug="ticket-$N"
-# #57: refuse a fixture/stub claude_bin write under the real, unconfigured log root before it can
+# refuse a fixture/stub claude_bin write under the real, unconfigured log root before it can
 # happen — see govern::guard_real_log_write in lib/common.sh.
 govern::guard_real_log_write "${GOVERN_CLAUDE_BIN:-claude}"
-# #75: run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set). Nothing sets
+# run-scoped log dir (logs/govern/run-<ts>/ticket-N/ when GOVERN_RUN_DIR is set). Nothing sets
 # it on the session lane, so the flat logs/govern/ticket-N/ fallback is the normal case; a caller
 # that wants run-scoped logs exports GOVERN_RUN_DIR itself (bench/arms.sh does exactly that), and a
 # re-run under a fresh run dir never reads a PRIOR run's worker.jsonl.
 logdir="$(govern::worker_logdir "$N")"; mkdir -p "$logdir"
 jsonl="$logdir/worker.jsonl"
 report_path="$logdir/report.json"; rm -f "$report_path"
-# #75: when run-scoped, truncate any LEGACY flat log so no consumer can tail a prior run's stale
+# when run-scoped, truncate any LEGACY flat log so no consumer can tail a prior run's stale
 # data from logs/govern/ticket-N/ (we never read it again, but other tails might).
 if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then rm -f "$LOG_ROOT/$slug/worker.jsonl" "$LOG_ROOT/$slug/report.json"; fi
 
@@ -86,7 +86,7 @@ export TICKET_MODEL MODEL_IS_RETRY
 # present whether or not lever events are enabled.
 export GOVERN_TICKET="$N"
 
-# #18: LATCH the per-ticket `Effort:` field the SAME anchored way as Model — reasoning effort is an
+# LATCH the per-ticket `Effort:` field the SAME anchored way as Model — reasoning effort is an
 # INDEPENDENT knob from model tier (raising effort is far cheaper than raising tier, so it's the
 # correct first rung on the escalation ladder). Reuses MODEL_IS_RETRY: a failed cheap bet (either
 # knob) shouldn't be re-bet on retry.
@@ -121,19 +121,18 @@ fi
 [[ -n "${GOVERN_EXECUTE_ONLY_BRIEF:-}" && -n "${GOVERN_EXECUTE_ONLY_BRIEF//[[:space:]]/}" ]] \
   || GOVERN_EXECUTE_ONLY_BRIEF=""
 
-# PRECISION GRADE (design Layer 2: .specs/2026-09-09-model-orchestration-design.md; reaches the
-# interactive lane and gains a ticket-field source per .specs/2026-09-11-advisor-worker-design.md
-# D6). `govern::precision_assertion` (lib/common.sh) is the scoped-vs-open sibling of
+# PRECISION GRADE. Three grades (stated / scoped / open) say how precisely the change was specified
+# before dispatch. `govern::precision_assertion` (lib/common.sh) is the scoped-vs-open sibling of
 # `govern::warm_assertion` above; "scoped" is the ordinary, unasserted case, so absence of every
 # signal below is not a gap in the record, it IS the scoped grade.
 #
-# PRECEDENCE (D6): the ticket's own `**Precision:**` field is the advisor's RECORDED judgment,
+# PRECEDENCE: the ticket's own `**Precision:**` field is the advisor's RECORDED judgment,
 # written into the ticket at dispatch time, and it wins over every per-invocation env var — an env
 # var is a fallback for when the ticket states nothing, never an override of what the advisor
 # actually wrote down. Checked first for exactly that reason. A missing/unrecognised ticket field
 # (govern::ticket_precision already drops anything outside stated|scoped|open, including the
 # filing-time placeholder) falls through to the GOVERN_WARM / GOVERN_PRECISION env signals
-# unchanged, and PRECISION_SOURCE records which of the three actually decided it (rail 11).
+# unchanged, and PRECISION_SOURCE records which of the three actually decided it.
 PRECISION_GRADE="scoped"; PRECISION_SOURCE="default (no explicit grade — ordinary dispatch)"
 TICKET_PRECISION="$(govern::ticket_precision "$N" "$TICKETS_FILE" 2>/dev/null || true)"
 if [[ -n "$TICKET_PRECISION" ]]; then
@@ -147,18 +146,15 @@ elif govern::precision_assertion "$N"; then
 fi
 export TICKET_PRECISION
 
-# ADVISOR BUDGET (#127, design Layer 3: completing Layer 2's inert half). The grade scales HOW MANY
-# consults a worker may buy; it never gates WHETHER it may ask. This harness never dispatches a
-# sonnet-solo unit of work in the first place: the premium (advisor) session and the sonnet worker
-# are a pair, and the pair is the unit, so a grade carrying ZERO budget would strand exactly the
-# configuration that is never acceptable. (An earlier version of this comment, and of the code, read
-# `stated`/`scoped` as zero-budget grades; that was the ticket's own mistake, corrected here. Layer
-# 3's prose has no grade qualifier ("a sonnet worker... spawns ONE opus Agent"), only Layer 2's table
-# gated it to `open`, and the two halves of the same design cannot both be authoritative.) The grade
-# still scales the NUMBER: `open` needs the most live judgment calls, `scoped` fewer, `stated` at
+# ADVISOR BUDGET. The grade scales HOW MANY consults a worker may buy; it never gates WHETHER it may
+# ask. This harness never dispatches a sonnet-solo unit of work in the first place: the premium
+# (advisor) session and the sonnet worker are a pair, and the pair is the unit, so a grade carrying
+# ZERO budget would strand exactly the configuration that is never acceptable. An earlier version of
+# this code read `stated`/`scoped` as zero-budget grades, which is why the floor below is one rather
+# than zero: never re-gate the budget to `open` only. The grade still scales the NUMBER: `open` needs the most live judgment calls, `scoped` fewer, `stated` at
 # least one (a worker executing an already-stated change can still hit something the parent did not
 # anticipate, and stranding it there is the exact failure this mechanism exists to prevent). Model
-# and effort are unchanged by any of this: the design's table puts every grade at the same tier.
+# and effort are unchanged by any of this: every grade runs at the same tier.
 # Exported below (near the live spawn) so the headless child's OWN advisor-consult.sh call (a
 # consult is a mid-session decision only the running worker can make, so nothing computes it FOR the
 # child in advance) sees the grade-appropriate cap without the script needing to know the grade
@@ -184,7 +180,7 @@ export GOVERN_ADVISOR_BUDGET="$ADVISOR_BUDGET"
 # more. The only axis a retry can move is EFFORT, and a capability failure is surfaced to the
 # operator as a re-specification request. See the case block and the table in lib/common.sh.
 #
-# §5.2 — THE SCOUT NO LONGER SIZES. It used to fold a cached `--verdict` in here (a deterministic
+# THE SCOUT NO LONGER SIZES. It used to fold a cached `--verdict` in here (a deterministic
 # re-score of its own scope measurement) and claim both axes. Measured over every verdict this
 # workspace ever cached: 4 of 5 were `opus/high`, and its HARD gate was a DISJUNCTION in which
 # `testsCover==false` alone forced opus — so in practice it rubber-stamped the top tier rather than
@@ -256,26 +252,24 @@ resolve_sizing_uncapped() {
       *) effort_source="${effort_source} (unknown ticket Effort: '$TICKET_EFFORT' ignored)" ;;
     esac
   fi
-  # (§5.2: the scout `--verdict` fold-in that used to sit here is GONE (see the header above). With
+  # (The scout `--verdict` fold-in that used to sit here is GONE (see the header above). With
   # automatic escalation removed, the ONLY remaining ways for a dispatch to end up above
   # GOVERN_WORKER_MODEL are the operator raising the floor itself, or the ticket `Model:` field under
   # GOVERN_MEASURED_SIZING=0, and that second one is capped by GOVERN_WORKER_ESCALATION_MODEL.)
-  # TIER FROM PRECISION (design Layer 2, corrected by .specs/2026-09-11-advisor-worker-design.md
-  # D5). PRECISION_GRADE was computed once, above, from the exact same signal
+  # TIER FROM PRECISION. PRECISION_GRADE was computed once, above, from the exact same signal
   # (GOVERN_EXECUTE_ONLY_BRIEF, set from a GOVERN_WARM assertion or directly by a caller) this
   # branch used to test directly — testing the grade instead of the raw brief cannot drift from it,
   # by construction. `stated` gets a lower tier than the floor's ceiling case, but no longer the
   # CHEAPEST tier in the coarse set: under the advisor/worker architecture the advisor always
-  # proposes the solution (D2), so `stated` stops being a rare verbatim case and becomes the common
-  # path, and routing the common path to haiku turned a narrow saving into a systematic quality cut
-  # (G6). SETTLED 2026-09-11, operator decision: `stated` resolves to sonnet, never haiku. Haiku
+  # proposes the solution, so `stated` stops being a rare verbatim case and becomes the common
+  # path, and routing the common path to haiku turned a narrow saving into a systematic quality cut.
+  # SETTLED 2026-09-11, operator decision: `stated` resolves to sonnet, never haiku. Haiku
   # remains reachable only through an explicit ticket `Model:` field (GOVERN_MEASURED_SIZING=0),
   # symmetric with the ceiling — nothing starts above sonnet automatically, and nothing starts below
-  # it automatically either (rail 4). `scoped` and `open` both fall through to the ordinary baseline
-  # below — the design's table puts them at the same tier (sonnet) today; `open`'s "+ advisor
-  # budget" half is layer 3 (see the ADVISOR BUDGET block above), so the grade is recorded (below,
-  # in the ledger and the event log) for the advisor mechanism to key on, and buys no sizing
-  # difference beyond that.
+  # it automatically either. `scoped` and `open` both fall through to the ordinary baseline below:
+  # they run at the same tier (sonnet) today, and `open` buys a larger advisor budget instead (see
+  # the ADVISOR BUDGET block above), so the grade is recorded (below, in the ledger and the event
+  # log) for the advisor mechanism to key on, and buys no sizing difference beyond that.
   #
   # "Sonnet" here means the literal tier, not "whatever GOVERN_WORKER_MODEL happens to be": the
   # shortcut used to punch a hole BELOW the floor (haiku < sonnet even when the floor was raised);
@@ -293,7 +287,7 @@ resolve_sizing_uncapped() {
   IFS=$'\t' read -r retry_class retry_reason < <(govern::retry_class "$N") || true
   [[ -n "${retry_class:-}" ]] || { retry_class="unknown"; retry_reason="classifier produced no verdict"; }
 
-  # ── §5.7 GUARD 1: a conflict-resolution re-dispatch is NOT a re-bet ──────────────────────────
+  # ── GUARD 1: a conflict-resolution re-dispatch is NOT a re-bet ───────────────────────────────
   # GOVERN_RESOLVE_CONFLICT re-spawns this worker to land an ALREADY-OPEN, already-green PR on a
   # moved origin/main: `git merge origin/main`, fix conflicts, push. The ticket was already SOLVED;
   # the failing axis is a textual merge, not judgment. But this spawn sees the preserved worktree,
@@ -304,10 +298,10 @@ resolve_sizing_uncapped() {
   # down, and the pin is still load-bearing for exactly the same reason.
   if [[ -n "${GOVERN_RESOLVE_CONFLICT:-}" ]]; then
     retry_class="ci"
-    retry_reason="conflict-resolution re-dispatch for ${GOVERN_RESOLVE_CONFLICT}: landing an existing green PR over a moved main is a merge job, not a re-bet on judgment; sizing unchanged [§5.7]"
+    retry_reason="conflict-resolution re-dispatch for ${GOVERN_RESOLVE_CONFLICT}: landing an existing green PR over a moved main is a merge job, not a re-bet on judgment; sizing unchanged"
   fi
 
-  # ── §5.7 GUARD 2 IS GONE, WITH THE MECHANISM IT BOUNDED ─────────────────────────────────────
+  # ── GUARD 2 IS GONE, WITH THE MECHANISM IT BOUNDED ──────────────────────────────────────────
   # A `.governor-escalated` stamp in the preserved worktree used to cap a ticket at ONE automatic
   # escalation, because escalation was a function of "a preserved worktree exists" (a boolean) and
   # every in-run re-dispatch rail could therefore buy the ceiling again under one failure count.
@@ -376,8 +370,7 @@ resolve_sizing_uncapped() {
 # ── model ceiling (the LAST choke point before --model) ─────────────────────────────────────────
 # resolve_sizing_uncapped above has THREE remaining paths that can set the tier (workspace floor, the
 # ticket field under GOVERN_MEASURED_SIZING=0, the execute-only haiku shortcut) plus two early
-# returns; the retry escalation to GOVERN_WORKER_ESCALATION_MODEL was the fourth and is now removed.
-# Clamping at each of them is three chances to miss one and a fourth the next time someone adds a
+# returns. Clamping at each of them is three chances to miss one and a fourth the next time someone adds a
 # path, so the clamp lives HERE, wrapping the whole resolver: whatever the selection logic decided,
 # this is the value that reaches the CLI.
 #
@@ -397,7 +390,7 @@ resolve_sizing_uncapped() {
 # empty whenever the clamp changed nothing. Both ceilings report through it.
 MODEL_CLAMPED_FROM=""
 # Which of the two ceilings actually bit: "session-ceiling" | "worker-request-cap" | "" (neither).
-# Rail 11: the input to the decision is recorded AT the decision, so the event log says which cap
+# The input to the decision is recorded AT the decision, so the event log says which cap
 # moved the tier instead of leaving a reader to infer it from the model_source prose.
 MODEL_CAP_SOURCE=""
 resolve_sizing() {
@@ -487,7 +480,7 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # `Monitor`, `ScheduleWakeup` and `SendMessage` were dropped in the original cut on the theory that
 # the worker prompt discourages them (in-turn poll loops instead of Monitor/ScheduleWakeup; no
 # multi-agent messaging peer). A scan of the 39 confirmed-real worker transcripts under
-# `logs/govern/` (ticket #73, 2026-07-26) showed workers invoke them anyway — Monitor 11x,
+# `logs/govern/` (2026-07-26) showed workers invoke them anyway — Monitor 11x,
 # ScheduleWakeup 6x, SendMessage 3x — so theory lost to measurement; they're kept. The `Task*`
 # tail (TaskCreate/TaskGet/TaskList/TaskOutput/TaskStop/TaskUpdate) and NotebookEdit are kept too
 # even though several of them measured zero invocations in that same scan (TaskGet/TaskList/
@@ -495,7 +488,7 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 # saving is worth the removal risk (see KEEP/PURGE GATE above); don't drop opportunistically.
 #
 # RE-DERIVED 2026-08-03 before flipping the default on, over all 125 worker transcripts under
-# `logs/govern/` (not just the 39 of the #73 scan). Every tool the fleet has ever invoked —
+# `logs/govern/` (not just the 39 of the earlier scan). Every tool the fleet has ever invoked —
 # Bash 2194, Read 267, Edit 240, Write 64, Agent 35, TaskUpdate 24, Monitor 14, ToolSearch 13,
 # TaskCreate 13, ScheduleWakeup 9, SendMessage 3 — is already in the list below; the measured
 # invocation set is a strict SUBSET of the allow-list, so default-on removes nothing in live use.
@@ -503,7 +496,7 @@ resolve_exclude_dynamic_prompt() { # <claude_bin>
 #   find logs/govern -name '*.jsonl' -print0 | xargs -0 grep -aoh \
 #     '"type":"tool_use","id":"[^"]*","name":"[^"]*"' | sed 's/.*"name":"//;s/"//' | sort | uniq -c
 #
-# #117: this list is now DERIVED from the interactive lane's own frontmatter
+# this list is now DERIVED from the interactive lane's own frontmatter
 # (.claude/agents/worker.md's `tools:` line) via govern::worker_agent_field, so there is exactly
 # one place a fleet edits the allow-list — the string literal below only fires as a fallback for a
 # fleet that hasn't synced that file yet (or a hermetic test's stub workspace, which never has
@@ -609,7 +602,7 @@ if [[ "${GOVERN_SPAWN_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-# 1b. #23: fold each co-batched ticket's block into $block so {{TICKET_BLOCK}} carries the WHOLE group
+# 1b. Fold each co-batched ticket's block into $block so {{TICKET_BLOCK}} carries the WHOLE group
 # (and the flow-staleness path scan below sees the group's paths too). Done AFTER the Model/Effort/Flow
 # latches so those still read $N's leading field block only, and after the dry-run seam so its output
 # is unchanged. A batched number that is no longer in tickets.md (a concurrent session resolved it) is
@@ -680,7 +673,7 @@ prompt="$prompt
 ## Operator doctrine
 $(cat "$PREFERENCES_FILE")"
 
-# #23: batch addendum. Appended AFTER the template and the doctrine so it overrides their "resolve
+# batch addendum. Appended AFTER the template and the doctrine so it overrides their "resolve
 # EXACTLY ONE ticket" / single-object report contract (last instruction wins). The per-ticket
 # `tickets` array is load-bearing: the governor's land-resolution.sh resolves (and DELETES) a batched ticket ONLY when
 # this array explicitly says that ticket resolved. Anything else — a different status, or the ticket
@@ -825,7 +818,8 @@ $_fb
     prompt="$prompt
 
 ## Flow(s) this ticket validates (from .claude/shiploop/validation/flows.md)
-This is a flow-registry validation. Drive the REAL path for each flow below (rule #12), then in your
+This is a flow-registry validation. Drive the REAL path for each flow below, never a scripted
+bypass, then in your
 report's \`validation\` object record: \`validatedShas\` (map each mapped sub-repo folder → its
 \`git rev-parse HEAD\` at validation time), \`environment\` (\"local\"|\"prod\"), \`gatePassed\`
 (effectiveness flows), \`measured\`, and \`flowIds\` (echo: $TICKET_FLOW). The governor stamps the
@@ -858,7 +852,7 @@ Not a validation ticket, but your change touches paths mapped by these currently
   fi
 fi
 
-# Gotcha injection (rail 9 / #118, #125): CLAUDE.md / learnings.md entries an author tagged
+# Gotcha injection: CLAUDE.md / learnings.md entries an author tagged
 # `**Paths:**` for the ROOT files and for each SUB-REPO the ticket's candidate paths name. The
 # candidate-path extraction below is duplicated from the flow heads-up block above deliberately
 # (this block never depends on that one's guard — flows.md existing — having been satisfied). The
@@ -886,8 +880,8 @@ $_gotcha_block"
   fi
 fi
 
-# Proposed-solution delivery (.specs/2026-09-11-advisor-worker-design.md D2, step 3: "delivery to
-# both lanes from one place"). By the time a live spawn reaches here, pre-dispatch-check.sh's gate
+# Proposed-solution delivery, from one place for both lanes. By the time a live spawn reaches here,
+# pre-dispatch-check.sh's gate
 # has already refused a ticket carrying none (GOVERN_PROPOSAL_GATE=0 bypasses that gate, not this
 # injection — a direct/test spawn still gets whatever the ticket actually carries, empty or not).
 # Reads through the SAME govern::ticket_proposal used by the gate; nothing here re-parses the file.
@@ -919,7 +913,7 @@ fi
 # trusted channel. The block therefore presents the notes as EVIDENCE TO EVALUATE — never as
 # instructions (a prior attempt must not be able to steer this one) and never as established fact.
 #
-# §4.4b: the notes file now carries, in addition to the freeform scratchpad, zero or more STRUCTURED
+# The notes file carries, in addition to the freeform scratchpad, zero or more STRUCTURED
 # HANDOFF BLOCKS fenced by `<!-- GOVERN:HANDOFF -->` … `<!-- /GOVERN:HANDOFF -->`. Each is a
 # *ruled out / stopped at / would try next* triple — the three facts that actually change what the
 # next attempt does, separated from the prose so the escalated (expensive) attempt does not have to
@@ -975,7 +969,7 @@ $notes_body
 </previous-attempt-notes>"
 fi
 
-# §4.4b: the STRUCTURED handoff, appended AFTER the freeform notes so it is the most proximate thing
+# The STRUCTURED handoff, appended AFTER the freeform notes so it is the most proximate thing
 # in the retry's context — it is the highest-signal-per-byte artifact the previous attempt produced.
 # Same untrusted framing as the notes above, for the same reason: it was written by an attempt that
 # did NOT finish, so its "ruled out" list is a claim, not a fact. The instruction to START from it is
@@ -1005,7 +999,7 @@ $handoff_block
 </previous-attempt-handoff>"
 fi
 
-# §4.6 (#13): CI-FIX re-dispatch — hand the worker the ACTUAL failing CI log.
+# CI-FIX re-dispatch — hand the worker the ACTUAL failing CI log.
 #
 # Workers verify on macOS; CI runs Linux. A PR that is correct locally fails on a portability
 # difference (a BSD-vs-GNU flag, `sed -i` without a backup arg, a case-insensitive filesystem) and the
@@ -1027,7 +1021,7 @@ if [[ -n "${GOVERN_FIX_CI:-}" ]]; then
     _ci_log="$("$DIR/ci-log.sh" "$_ci_repo" "$_ci_pr" 2>/dev/null || true)"
   fi
   if [[ -n "${_ci_log//[[:space:]]/}" ]]; then
-    govern::log "worker #$N: injecting failing CI log for $GOVERN_FIX_CI (§4.6 — the retry starts from the real Linux failure instead of rediscovering it)"
+    govern::log "worker #$N: injecting failing CI log for $GOVERN_FIX_CI (the retry starts from the real Linux failure instead of rediscovering it)"
     prompt="$prompt
 
 ## ⚠ CI-FIX MODE — this ticket's PR is open and its CI is RED
@@ -1043,7 +1037,7 @@ $_ci_log"
   fi
 fi
 
-# #191: conflict-resolution re-dispatch. When the governor's merge of an EXISTING ticket-N PR hit a
+# conflict-resolution re-dispatch. When the governor's merge of an EXISTING ticket-N PR hit a
 # real content conflict (CI was green; the merge + rebase retry both failed), the merge path re-spawns
 # this worker with GOVERN_RESOLVE_CONFLICT=<repo>#<pr>. The PR already exists — do NOT redo the ticket
 # or open a new PR; just land the existing one on top of the moved origin/main. Append an OVERRIDE
@@ -1084,7 +1078,7 @@ elif [[ -d "$wtpath" ]]; then
   # Resume: a preserved worktree from a prior failed/parked attempt already exists.
   # worktree:new hard-exits on an existing path → under set -e that aborts spawn-worker and
   # fast-fails the resume before the worker even runs. Reuse it, and re-run the project
-  # bootstrap hook (if any) to restore deps a slim/cleanup may have stripped (#53).
+  # bootstrap hook (if any) to restore deps a slim/cleanup may have stripped.
   govern::log "reusing preserved worktree for #$N at $wtpath (resume)"
   if [[ -x "$WS_ROOT/scripts/lib/worktree-bootstrap.sh" ]]; then
     wslot="$(awk -F= '/WORKTREE_SLOT/{gsub(/ /,"",$2);print $2}' "$wtpath/worktree.env" 2>/dev/null)"
@@ -1096,9 +1090,9 @@ else
   # v11 aborts in a non-TTY shell (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) before the script
   # runs, silently killing every worker at the worktree step. WORKTREE_ASSUME_YES=1: a headless
   # worker has no TTY to answer new.sh's <5GB disk prompt; without it the guard EOF-aborts and
-  # reads as a phantom worker failure (#48). Direct bash + assume-yes sidestep both.
+  # reads as a phantom worker failure. Direct bash + assume-yes sidestep both.
   #
-  # #76: capture worktree:new's output and DON'T let a non-zero exit `set -e`-abort spawn-worker.
+  # capture worktree:new's output and DON'T let a non-zero exit `set -e`-abort spawn-worker.
   # The driver runs us as `spawn-worker.sh N 2>/dev/null || true`, so a bare abort discards our
   # stderr and surfaces only an opaque "#N FAILED" with no cause. new.sh now self-heals a stale
   # ticket-<N> registry entry (registry path-gone self-heal), so the common re-open collision just
@@ -1125,7 +1119,7 @@ mode="${GOVERN_MODE:-live}"
 # bypassPermissions: a headless worker can't answer prompts; acceptEdits only covers file edits,
 # so git/gh/<pm>/build would stall. Operator-approved exception to the global "never
 # dangerously-skip-permissions" rule — scoped to throwaway worktrees; the doctrine hard-stops
-# (destructive git / prod-data) still gate the dangerous actions via self-park. #117: the
+# (destructive git / prod-data) still gate the dangerous actions via self-park. The
 # interactive lane declares the same default (`permissionMode: bypassPermissions` in
 # .claude/agents/worker.md) directly in its own frontmatter rather than through this env var, since
 # it has no per-run CLI invocation of its own to attach a flag to.
@@ -1149,7 +1143,7 @@ govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-no
 
 # bench/LEVER-EVENTS.md `resume`: this attempt is actually RESUMING (the notes/handoff block built
 # above, back in the RETRY CONTEXT section, is non-empty) rather than restarting cold. Both sides
-# must be captured HERE, before $jsonl gets rotated aside a little further down (the #19 per-attempt
+# must be captured HERE, before $jsonl gets rotated aside a little further down (the per-attempt
 # ledger block), because after that this attempt's PRIOR stream is gone and freshStartTokens becomes
 # unrecoverable, exactly as bench/LEVER-EVENTS.md warns.
 #   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
@@ -1229,7 +1223,7 @@ fi
 # Lean worker: a code-fix worker uses git/gh/<pm> via Bash, not MCP. Loading the operator's
 # inherited MCP fleet (often 8+ stdio servers / dozens of tools) just slows worker startup and
 # risks a teardown stall on exit. --strict-mcp-config = load ONLY --mcp-config files (we pass
-# none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers. #117: the
+# none) → zero MCP servers. Set GOVERN_WORKER_MCP=1 to keep the inherited servers. The
 # interactive lane gets the same zero-MCP posture from its own frontmatter (`disallowedTools:
 # mcp__*` plus never listing an `mcp__*` entry in `tools:`) rather than a connection-level flag —
 # see the "mcpServers" note in CLAUDE-APPENDIX.md for why the field itself stays undeclared there.
@@ -1260,14 +1254,14 @@ resolve_tools_flag "$claude_bin"
 # Optional per-attempt turn ceiling (GOVERN_WORKER_MAX_TURNS). Off unless set; capability-gated.
 resolve_max_turns_flag "$claude_bin"
 
-# #18: only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
+# only pass --effort when resolved to a non-empty value — an unset knob means the worker runs
 # at the CLI's session-default effort, exactly as before this ticket (no invented default).
 effort_flag=""; [[ -n "$effort" ]] && effort_flag="--effort $effort"
 
 to="${GOVERN_WORKER_TIMEOUT:-3600}"   # per-worker wall-clock cap (s); 0 = unbounded. Default 1h.
 worker_killed=0
 
-# #19: PER-ATTEMPT LEDGER. One ticket can be spawned MORE THAN ONCE against the same (run-scoped) log
+# PER-ATTEMPT LEDGER. One ticket can be spawned MORE THAN ONCE against the same (run-scoped) log
 # dir: an in-run infra/interrupted auto-retry, a GOVERN_FIX_CI re-dispatch, a GOVERN_RESOLVE_CONFLICT
 # re-dispatch. Each spawn used to just reopen worker.jsonl with a truncating `>`, which lost the prior
 # attempt's usage AND (when the prior attempt's fd was still open at a high offset) left a NUL hole at
@@ -1301,7 +1295,7 @@ record_attempt() { # status -> appends one ledger row
   attempt_row_written=1
   local st="${1:-unknown}" usage
   usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
-  # Rail 11: every INPUT to the sizing decision is recorded AT the moment the decision was made.
+  # Every INPUT to the sizing decision is recorded AT the moment the decision was made.
   # retryClass/retryReason are the classifier verdict this attempt was sized from, and respec
   # records the OUTCOME the new policy produced in place of an escalation. Without them the ledger
   # says which tier ran but not why, which is exactly the gap this change exists to close.
@@ -1331,7 +1325,7 @@ record_attempt() { # status -> appends one ledger row
   # CALLER, and record_attempt runs on the teardown path where an abort would lose the ledger row.
   local _ev_tok _ev_cost _ev_elapsed=0
   _ev_tok="$(printf '%s' "$usage" | jq -r '.tokens // "null"' 2>/dev/null || echo null)"
-  # Rail 11/rail 5: costUsd travels with the SAME worker_done event tokens does — status.sh's "by
+  # costUsd travels with the SAME worker_done event tokens does — status.sh's "by
   # source" summary (grouped by modelSource) sums this per session without opening attempts.jsonl.
   # null whenever the CLI's stream carried no final "type":"result" event (a hard-killed attempt);
   # see govern::stream_usage's header comment for why that is a data-availability limit, not a bug.
@@ -1345,7 +1339,7 @@ record_attempt() { # status -> appends one ledger row
   return 0
 }
 
-# #16: per-attempt cumulative TOKEN cap — wall-clock was the only ceiling before this; a worker that
+# per-attempt cumulative TOKEN cap — wall-clock was the only ceiling before this; a worker that
 # wanders can burn tens of millions of tokens before $to fires (tickets #3/#6: ~22M tokens/~$9.7
 # each). GOVERN_WORKER_MAX_TOKENS=0 is the DEFAULT and means unlimited, preserving current behavior
 # for anyone who does not opt in. When set >0, a watchdog polls the LIVE worker.jsonl every
@@ -1359,7 +1353,7 @@ tok_poll="${GOVERN_TOKEN_POLL_S:-20}"
 worker_budget_exceeded=0
 budget_marker="$logdir/budget-exceeded.marker"; rm -f "$budget_marker"
 
-# ── §4.4a EARLY ABORT — make failure cheap ──────────────────────────────────────────────────────
+# ── EARLY ABORT — make failure cheap ────────────────────────────────────────────────────────────
 # A worker session is ~218 assistant turns / ~138 tool calls. A DOOMED worker burns nearly that whole
 # budget before failing, because the only ceilings are wall-clock (1h) and the token budget (opt-in,
 # usually unset) — both of which a stuck worker reaches only at the very end. Measured: failed
@@ -1386,7 +1380,7 @@ budget_marker="$logdir/budget-exceeded.marker"; rm -f "$budget_marker"
 # the project anti-pattern is explicit — anything new there perturbs the stateful fake-`claude` stubs
 # the govern suite drives (precedent: GOVERN_FIX_CI). Opt in with GOVERN_EARLY_ABORT=1.
 #
-# #116: the three signals above are implemented ONCE, as govern::early_abort_signals() /
+# the three signals above are implemented ONCE, as govern::early_abort_signals() /
 # govern::early_abort_reason() in lib/common.sh, so templates/hooks/agent-progress-guard.sh (a
 # SubagentStop hook) can reach the identical shape for in-session `Agent` children — this watchdog
 # only ever sees a governor-spawned PROCESS via its pid and worker.jsonl, never an Agent-tool child.
@@ -1396,7 +1390,7 @@ ea_poll="${GOVERN_EARLY_ABORT_POLL_S:-20}"
 worker_early_abort=0
 early_abort_marker="$logdir/early-abort.marker"; rm -f "$early_abort_marker"
 
-# #116: the doom-signature detector itself (stall / identical-command loop / rising tool-error
+# the doom-signature detector itself (stall / identical-command loop / rising tool-error
 # rate) now lives in lib/common.sh as govern::early_abort_reason(), shared with
 # templates/hooks/agent-progress-guard.sh — the SubagentStop hook that reaches this same signal to
 # in-session `Agent` children, which have no pid and no worker.jsonl for THIS watchdog to see. Its
@@ -1408,14 +1402,14 @@ early_abort_reason() { # <jsonl> -> reason | empty
   govern::early_abort_reason "$f"
 }
 
-# #239: stamp the worker's start time. After the worker exits — for ANY reason, including a
+# stamp the worker's start time. After the worker exits — for ANY reason, including a
 # GOVERN_WORKER_TIMEOUT kill — we sweep every non-terminal external resource the worker may have
 # created since this epoch and close it (see run_deploy_sweep below), so a killed/timed-out worker
 # can never leave a billing orphan. 60s of slack absorbs minor clock skew without ever reaching back
 # into a PRIOR worker's window.
 worker_start_epoch=$(( $(date +%s) - 60 ))
 
-# #239: post-worker orphan sweep. Runs after EVERY worker (resolved / failed / parked / timed-out /
+# post-worker orphan sweep. Runs after EVERY worker (resolved / failed / parked / timed-out /
 # KILLED) — a killed/timed-out worker never runs its own cleanup, so without this any real resources
 # it created bill until a human finds them. This project ships NO deploy/cloud infra by default, so
 # the sweep is a no-op unless the operator wires GOVERN_DEPLOY_SWEEP_CMD — a command called with the
@@ -1428,7 +1422,7 @@ run_deploy_sweep() {
   # No seam configured → nothing to sweep (this template has no deploy infra). Default = disabled.
   [[ -n "$sweep" ]] || return 0
   # Skip only in DRY mode (no real worker, no resources). An explicitly-wired seam DOES fire under a
-  # test worktree-cmd override — that is exactly how the #239 trap wiring is regression-tested
+  # test worktree-cmd override — that is exactly how the trap wiring is regression-tested
   # (test-spawn-worker-sweep.sh). A live governor run never sets GOVERN_WORKTREE_CMD, so real
   # behavior is unchanged; do NOT re-add a `-z "${GOVERN_WORKTREE_CMD:-}"` clause here or the sweep
   # seam goes dead in tests and a removed trap can silently regress the #3001 kill-path leak.
@@ -1438,10 +1432,10 @@ run_deploy_sweep() {
   # windows overlap and this could close a sibling's in-flight resource — relying instead on the
   # worker's own tagged cleanup. Skip the broad time sweep in that mode.
   if [[ "${GOVERN_ALLOW_CONCURRENT:-0}" == "1" ]]; then
-    govern::log "post-worker orphan sweep SKIPPED for #$N — GOVERN_ALLOW_CONCURRENT=1 (time-window sweep is single-run-only) [#239]"
+    govern::log "post-worker orphan sweep SKIPPED for #$N — GOVERN_ALLOW_CONCURRENT=1 (time-window sweep is single-run-only)"
     return 0
   fi
-  govern::log "post-worker orphan sweep for #$N → GOVERN_DEPLOY_SWEEP_CMD closing resources created since $(date -r "$since" '+%H:%M:%S' 2>/dev/null || echo "$since") [#239]"
+  govern::log "post-worker orphan sweep for #$N → GOVERN_DEPLOY_SWEEP_CMD closing resources created since $(date -r "$since" '+%H:%M:%S' 2>/dev/null || echo "$since")"
   "$sweep" "$since" "$N" >>"$logdir/deploy-sweep.log" 2>&1 || true
   return 0
 }
@@ -1455,7 +1449,7 @@ otel_attrs="$(govern::otel_attrs "$slug")"
 govern::log "spawning worker for #$N (mode=$mode, model=$model, effort=${effort:-none} [$effort_source], timeout=${to}s) in $wtpath"
 govern::log "worker #$N OTel resource attrs: ${otel_attrs}"
 
-# #242: tear the worker subtree down on EVERY exit path so a stopped/killed governor never leaves an
+# tear the worker subtree down on EVERY exit path so a stopped/killed governor never leaves an
 # orphaned `claude -p` (+ any grandchildren it spawned) reparented to init and billing a box. $cpid is
 # launched under `set -m` below → it LEADS its own process group, so govern::kill_tree reaps the whole
 # tree (group kill + pid-walk) in one sweep. The EXIT trap covers a clean return (cpid already gone →
@@ -1466,12 +1460,12 @@ cpid=""; wd=""; twd=""; ead=""; _spawn_signalled=0
 spawn_worker_cleanup() {
   [[ -n "${wd:-}" ]] && { kill "$wd" 2>/dev/null || true; govern::_kill_tree_walk "$wd" TERM; }
   [[ -n "${twd:-}" ]] && { kill "$twd" 2>/dev/null || true; govern::_kill_tree_walk "$twd" TERM; }
-  # §4.4a: the early-abort watchdog is a third `sleep`-holding subshell — reap it on exactly the same
+  # The early-abort watchdog is a third `sleep`-holding subshell — reap it on exactly the same
   # paths as its two siblings. A leaked `sleep` here has bitten this file before (it inherits nothing
   # of our stdout, but it does outlive us and hold the process alive).
   [[ -n "${ead:-}" ]] && { kill "$ead" 2>/dev/null || true; govern::_kill_tree_walk "$ead" TERM; }
   [[ -n "${cpid:-}" ]] && govern::kill_tree "$cpid" "${GOVERN_KILL_GRACE_S:-10}"
-  # #19: account for an attempt torn down BEFORE it could reach the normal record_attempt call below —
+  # account for an attempt torn down BEFORE it could reach the normal record_attempt call below —
   # those are the expensive rows a sizing loop most needs. The tree is already dead here, so the stream
   # has stopped growing and its per-turn usage is final. Latched, so the normal exit path (which
   # already recorded the real status) makes this a no-op. The status distinguishes a forwarded stop
@@ -1481,7 +1475,7 @@ spawn_worker_cleanup() {
   return 0   # EXIT-trap body must end 0 — its last status would otherwise become the script's exit code
 }
 trap 'spawn_worker_cleanup' EXIT
-trap '_spawn_signalled=1; govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree [#242]"; spawn_worker_cleanup; exit 143' INT TERM
+trap '_spawn_signalled=1; govern::log "spawn-worker #'"$N"' received stop signal — tearing down worker tree"; spawn_worker_cleanup; exit 143' INT TERM
 
 set +e
 # --setting-sources user: drop the PROJECT .claude/settings.json hooks so a worker does NOT
@@ -1496,7 +1490,7 @@ set +e
 # drives the governor from a Claude session. Scrubbing them makes the worker self-contained and
 # terminate cleanly regardless of how the loop was launched. (CLAUDE_CODE_ENTRYPOINT is the
 # proven culprit; the rest are scrubbed defensively — none are needed by a fresh worker.)
-# #242 set -m: run `claude` as its OWN process-group leader (pgid==cpid) so the timeout watchdog /
+# set -m: run `claude` as its OWN process-group leader (pgid==cpid) so the timeout watchdog /
 # stop traps can `kill -- -cpid` the WHOLE subtree (claude + every grandchild) at once, including
 # descendants that reparent. macOS has no `setsid`; `set -m` is the portable equivalent. set +m
 # right after so the watchdog and the rest of the script stay in spawn-worker's own group.
@@ -1522,7 +1516,7 @@ set +m
 # visible: until now the only record of a live worker was $cpid in this shell's memory.
 WORKER_SPAWN_TS="$(date +%s)"; WORKER_PID="$cpid"
 # modelSource/precision travel on the SAME spawn event as model/effort (both known before the CLI
-# even runs) so a per-session summary grouped by model_source (rail 5) never has to join two rows
+# even runs) so a per-session summary grouped by model_source never has to join two rows
 # to answer "why was this tier picked" — see status.sh's "by source" section.
 govern::event worker_spawned "ticket=$N" "model=$model" "modelSource=$model_source" \
   "effort=${effort:-}" "precision=$PRECISION_GRADE" "advisorBudget=$ADVISOR_BUDGET" \
@@ -1530,7 +1524,7 @@ govern::event worker_spawned "ticket=$N" "model=$model" "modelSource=$model_sour
 if [[ "$to" -gt 0 ]]; then
   # 1>/dev/null: the watchdog (and its sleep child) must NOT inherit this script's stdout — that
   # pipe feeds the caller's $(...) capture, and an orphaned sleep holding it would hang the caller.
-  # #242: tear down the whole worker process GROUP (not just direct children) so a grandchild can't
+  # tear down the whole worker process GROUP (not just direct children) so a grandchild can't
   # outlive the timeout kill.
   ( sleep "$to"
     if kill -0 "$cpid" 2>/dev/null; then
@@ -1538,7 +1532,7 @@ if [[ "$to" -gt 0 ]]; then
       govern::kill_tree "$cpid" 10
     fi ) 1>/dev/null & wd=$!
 fi
-# #16: token-budget watchdog — same shape as the wall-clock one above, polling cumulative usage
+# token-budget watchdog — same shape as the wall-clock one above, polling cumulative usage
 # instead of a fixed deadline. 1>/dev/null for the same reason: it must not inherit this script's
 # stdout, which feeds the caller's $(...) capture.
 if [[ "$tok_budget" -gt 0 ]]; then
@@ -1547,14 +1541,14 @@ if [[ "$tok_budget" -gt 0 ]]; then
       kill -0 "$cpid" 2>/dev/null || break
       cur="$(govern::cumulative_tokens "$jsonl")"
       if [[ "${cur:-0}" -gt "$tok_budget" ]]; then
-        govern::log "worker #$N exceeded token budget (${cur} > ${tok_budget}) — terminating worker tree; worktree PRESERVED at $wtpath (re-run resumes) [#16]"
+        govern::log "worker #$N exceeded token budget (${cur} > ${tok_budget}) — terminating worker tree; worktree PRESERVED at $wtpath (re-run resumes)"
         : > "$budget_marker"
         govern::kill_tree "$cpid" 10
         break
       fi
     done ) 1>/dev/null & twd=$!
 fi
-# §4.4a: early-abort watchdog — same shape and the same 1>/dev/null discipline as the two above (it
+# Early-abort watchdog — same shape and the same 1>/dev/null discipline as the two above (it
 # must not inherit this script's stdout, which feeds the caller's $(...) capture). Polls the live
 # stream for a DETERMINISTIC doom signature and kills the tree at ~turn 30 instead of ~turn 218.
 # The worktree is PRESERVED exactly as the timeout path preserves it, so the escalated retry resumes
@@ -1565,7 +1559,7 @@ if [[ "$early_abort_on" -eq 1 ]]; then
       kill -0 "$cpid" 2>/dev/null || break
       ea_reason="$(early_abort_reason "$jsonl")"
       if [[ -n "$ea_reason" ]]; then
-        govern::log "worker #$N early-abort — $ea_reason; terminating worker tree; worktree PRESERVED at $wtpath (escalated retry resumes) [§4.4a]"
+        govern::log "worker #$N early-abort — $ea_reason; terminating worker tree; worktree PRESERVED at $wtpath (escalated retry resumes)"
         printf '%s\n' "$ea_reason" > "$early_abort_marker"
         govern::kill_tree "$cpid" 10
         break
@@ -1599,7 +1593,7 @@ emit_watchdog_kill() { # <reason>
   return 0
 }
 
-# #239: sweep this worker's orphan resources NOW — before report resolution and on EVERY exit path
+# sweep this worker's orphan resources NOW — before report resolution and on EVERY exit path
 # (resolved / failed / parked / timed-out / killed). A worker hard-killed by GOVERN_WORKER_TIMEOUT
 # after creating real external resources never ran its own cleanup, so they would bill until a human
 # found them. No-op unless GOVERN_DEPLOY_SWEEP_CMD is wired (see run_deploy_sweep above).
@@ -1608,7 +1602,7 @@ run_deploy_sweep "$worker_start_epoch"
 # 5. Resolve the report. The strict contract is "the final message is ONLY a JSON object", but a
 #    worker that DID the work sometimes emits "JSON + trailing prose" (or writes prose into
 #    report.json) — so rather than requiring the WHOLE text to parse, pull the last balanced
-#    JSON object carrying a `status` field out of each candidate source (#66). Prefer the file
+#    JSON object carrying a `status` field out of each candidate source. Prefer the file
 #    (live), then the last result event's .result (dry / no-file). govern::extract_report keeps
 #    the clean-object happy path as a fast short-circuit.
 report=""
@@ -1617,44 +1611,44 @@ if [[ -s "$report_path" ]]; then
 fi
 if [[ -z "$report" ]]; then
   # govern::stream_grep (not bare grep): a NUL-holed stream would otherwise hide a perfectly good
-  # report and get the attempt synthesized as `failed` (#19).
+  # report and get the attempt synthesized as `failed`.
   result_msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 | jq -r '.result // empty' 2>/dev/null || true)"
   [[ -n "$result_msg" ]] && report="$(printf '%s' "$result_msg" | govern::extract_report || true)"
 fi
 
 # 6. Validate; synthesize a report ONLY if no parseable status-bearing object exists anywhere.
 #    Four distinct no-report outcomes — never conflated, because each needs a different response:
-#      infra   — worker died on an auth/transport outage (#90): NOT the ticket's fault. The caller
+#      infra   — worker died on an auth/transport outage: NOT the ticket's fault. The caller
 #                decides how to proceed (typically halts rather than counting it as a ticket failure).
 #      usage-error — the CLI rejected the WORKER'S OWN INVOCATION, e.g. an unsupported flag/subcommand
-#                (#56, a harness-vs-installed-CLI version skew): NOT the ticket's fault, and every
+#                (a harness-vs-installed-CLI version skew): NOT the ticket's fault, and every
 #                subsequent worker would die identically. The caller decides how to proceed (typically
 #                halts), distinct from a genuine ticket failure and from an infra/auth outage (re-auth
 #                would not fix a bad flag).
-#      timeout — worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its verdict (#241):
+#      timeout — worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its verdict:
 #                NOT a genuine FAIL. The killed worker may have done real, green work and just never
 #                reached the report write — recording that as `failed` masks a working result as broken
 #                (a false launch-blocking signal) and wastes a re-run. So emit a DISTINCT
 #                status:"timeout" (incomplete, worktree preserved) so the caller can decide whether to
 #                re-run it.
 #      budget-exceeded — same kill-before-verdict shape, but HARD-KILLED by the GOVERN_WORKER_MAX_TOKENS
-#                watchdog instead of the wall-clock one (#16). Kept DISTINCT from "timeout" so a
+#                watchdog instead of the wall-clock one. Kept DISTINCT from "timeout" so a
 #                future evidence-based escalation can tell "ran out of budget while still exploring"
 #                apart from other failure modes.
 #      failed  — worker finished/errored on its own (no kill) yet produced no parseable report: a
 #                genuine ticket failure.
 if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; then
-  # #90: a real timeout (worker_killed) is a kill, not infra, so skip the infra signature check in
+  # a real timeout (worker_killed) is a kill, not infra, so skip the infra signature check in
   # that case (a genuine wall-clock timeout is the dominant cause and the timeout status is
   # recoverable either way). Same reasoning extends to usage-error: a kill-before-verdict never gets
   # the chance to reject its own invocation, so it can't be a usage error either.
   infra_sig=""; intr_sig=""; usage_sig=""
   if [[ "$worker_killed" -eq 0 ]]; then
     infra_sig="$(govern::infra_error_signature "$jsonl" || true)"
-    # #34: only when it's NOT a persistent infra/auth outage, check for a TRANSIENT mid-stream
+    # only when it's NOT a persistent infra/auth outage, check for a TRANSIENT mid-stream
     # connection drop (laptop sleep / network suspend) — that gets its own recoverable status.
     [[ -z "$infra_sig" ]] && intr_sig="$(govern::interrupted_error_signature "$jsonl" || true)"
-    # #56: only once BOTH infra and interrupted are ruled out, check for a CLI usage error (the CLI
+    # only once BOTH infra and interrupted are ruled out, check for a CLI usage error (the CLI
     # rejected its own invocation, e.g. an unsupported flag from a harness/CLI version skew) — this
     # must stay last among the three so a genuine transport outage or connection drop is never
     # misclassified as a usage error just because its stream also happens to lack a JSON result event.
@@ -1665,7 +1659,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     report="$(jq -nc --arg e "$infra_sig" --arg wt "$wtpath" \
       '{status:"infra",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},infra:{error:$e},escalation:null}')"
   elif [[ -n "$intr_sig" ]]; then
-    # #34: a TRANSIENT mid-response connection drop (e.g. the laptop slept mid-run and the OS
+    # a TRANSIENT mid-response connection drop (e.g. the laptop slept mid-run and the OS
     # suspended the process + dropped the network) — the worker exited on its OWN (worker_killed=0),
     # NOT the timeout watchdog. NOT a ticket fault and NOT a persistent infra outage: the worktree is
     # preserved + resumable, so emit a DISTINCT status:"interrupted" so the caller can retry the SAME
@@ -1676,14 +1670,14 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     report="$(jq -nc --arg e "$intr_sig" --arg wt "$wtpath" \
       '{status:"interrupted",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},interrupted:{error:$e},escalation:null}')"
   elif [[ -n "$usage_sig" ]]; then
-    # #56: the CLI rejected the invocation itself — a fleet-wide condition (every worker would die
+    # the CLI rejected the invocation itself — a fleet-wide condition (every worker would die
     # identically), not this ticket's fault. The caller should halt on this status instead of
     # continuing to burn the rest of the backlog as N indistinguishable `failed` tickets.
     govern::log "worker for #$N → USAGE-ERROR (CLI rejected its own invocation, not a ticket fault): $usage_sig"
     report="$(jq -nc --arg e "$usage_sig" --arg wt "$wtpath" \
       '{status:"usage-error",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},usageError:{error:$e},escalation:null}')"
   elif [[ "$worker_early_abort" -eq 1 ]]; then
-    # §4.4a: kill-before-verdict via the EARLY-ABORT watchdog. Placed FIRST among the three kill
+    # Kill-before-verdict via the EARLY-ABORT watchdog. Placed FIRST among the three kill
     # classes (before budget-exceeded and before timeout) deliberately:
     #   - It is the most SPECIFIC diagnosis available. `timeout` and `budget-exceeded` only say which
     #     ceiling the worker hit; early-abort names the actual pathology (stalled / looping /
@@ -1696,23 +1690,23 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
     # can easily look like a stall, and mislabelling one as a doomed worker would escalate the tier
     # for a problem no tier can fix.
     ea_detail="$(head -c 400 "$early_abort_marker" 2>/dev/null | tr -d '\n' || true)"
-    reason="worker was EARLY-ABORTED by the deterministic stall/loop/error watchdog and hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (the escalated retry resumes from it). Signature: ${ea_detail:-unspecified}. This attempt was going nowhere; the point of killing it at ~turn 30 rather than ~turn 218 is that the retry gets the budget instead (§4.4a)."
-    govern::log "worker for #$N → early-abort (killed before verdict; NOT recorded failed) [§4.4a]: $reason"
+    reason="worker was EARLY-ABORTED by the deterministic stall/loop/error watchdog and hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (the escalated retry resumes from it). Signature: ${ea_detail:-unspecified}. This attempt was going nowhere; the point of killing it at ~turn 30 rather than ~turn 218 is that the retry gets the budget instead."
+    govern::log "worker for #$N → early-abort (killed before verdict; NOT recorded failed): $reason"
     emit_watchdog_kill "stall/loop/error: ${ea_detail:-unspecified}"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"early-abort",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-dispatch the ticket to resume from "+$wt+" at the escalated tier (or set GOVERN_EARLY_ABORT=0 / raise GOVERN_EARLY_ABORT_TURNS if this ticket legitimately explores for a long time before its first edit)"),options:[]}}')"
   elif [[ "$worker_budget_exceeded" -eq 1 ]]; then
-    # #16: kill-before-verdict via the TOKEN watchdog — a DISTINCT outcome from a wall-clock timeout,
+    # kill-before-verdict via the TOKEN watchdog — a DISTINCT outcome from a wall-clock timeout,
     # not failed. The worktree is preserved; a re-run resumes it.
-    reason="worker exceeded the GOVERN_WORKER_MAX_TOKENS budget (${tok_budget} tokens) and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Distinct from a wall-clock timeout: this worker burned its token budget, which usually means it was still exploring/wandering (#16)."
-    govern::log "worker for #$N → budget-exceeded (killed before verdict; NOT recorded failed) [#16]: $reason"
+    reason="worker exceeded the GOVERN_WORKER_MAX_TOKENS budget (${tok_budget} tokens) and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Distinct from a wall-clock timeout: this worker burned its token budget, which usually means it was still exploring/wandering."
+    govern::log "worker for #$N → budget-exceeded (killed before verdict; NOT recorded failed): $reason"
     emit_watchdog_kill "context-cap"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"budget-exceeded",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_MAX_TOKENS if it legitimately needs a bigger budget)"),options:[]}}')"
   elif [[ "$worker_killed" -eq 1 ]]; then
-    # #241: kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
-    reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result (#241)."
-    govern::log "worker for #$N → timeout (killed before verdict; NOT recorded failed) [#241]: $reason"
+    # kill-before-verdict — NOT failed. The worktree is preserved; a re-run resumes it.
+    reason="worker exceeded ${to}s timeout and was hard-killed before it could write its verdict — INCOMPLETE, not a genuine failure; any real work is PRESERVED at $wtpath (a re-run resumes). Treating this as failed would mask a possibly-working result."
+    govern::log "worker for #$N → timeout (killed before verdict; NOT recorded failed): $reason"
     emit_watchdog_kill "wall-clock-timeout"
     report="$(jq -nc --arg r "$reason" --arg wt "$wtpath" \
       '{status:"timeout",pr:null,lessonPatch:null,newTickets:[],crossRefs:{},escalation:{reason:$r,question:("re-run the ticket to resume from "+$wt+" (or raise GOVERN_WORKER_TIMEOUT if it legitimately needs longer)"),options:[]}}')"
@@ -1724,7 +1718,7 @@ if [[ -z "$report" ]] || ! printf '%s' "$report" | jq empty >/dev/null 2>&1; the
   fi
 fi
 
-# ── §4.4b WARM ESCALATION — the dying attempt's findings must survive it ────────────────────────
+# ── WARM ESCALATION — the dying attempt's findings must survive it ──────────────────────────────
 # Retries are COLD. There is no `--resume`: a retry is a fresh `-p` in the PRESERVED worktree, so the
 # FILES attempt 1 wrote survive but its CONTEXT does not. Escalation is therefore a full-price second
 # attempt at the higher tier, re-deriving at opus rates exactly what a sonnet attempt already paid to
@@ -1768,13 +1762,13 @@ write_handoff_block() { # <status>
 case "$(printf '%s' "$report" | jq -r '.status // ""' 2>/dev/null || true)" in
   early-abort|timeout|budget-exceeded|failed|parked|interrupted)
     write_handoff_block "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
-    # #48: this spawn PRESERVED its worktree for a resume, so reclaim the regenerable bulk
+    # this spawn PRESERVED its worktree for a resume, so reclaim the regenerable bulk
     # (node_modules/.next/dist) without touching source or diffs. Moved here from the deleted
     # run-loop.sh: the process that preserves the worktree is the one that should slim it.
     govern::slim_worktree "$N" "$wtpath" ;;
 esac
 
-# #19: the outcome is now known — append this attempt's decision + measured usage to the ledger.
+# the outcome is now known — append this attempt's decision + measured usage to the ledger.
 # `status` comes from the report itself, so a killed attempt records `timeout`/`budget-exceeded` and
 # a genuine failure records `failed`, each with the tokens it actually burned.
 record_attempt "$(printf '%s' "$report" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"

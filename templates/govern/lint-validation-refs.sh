@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lint for DANGLING `.claude/shiploop/validation/*.md` references (#252). The committed validation
+# Lint for DANGLING `.claude/shiploop/validation/*.md` references. The committed validation
 # sink is cited as proof by founder-os context (`features.md` / `direction.md` / `product.md`) and
 # the root `CLAUDE.md`. A founder-os layout migration that DELETES a summary while live refs still
 # point at it → dangling proof. This is the cheap backstop: scan the pillar-claim files for any
@@ -36,7 +36,7 @@ done
 # A reference is the literal path `.claude/shiploop/validation/<name>.md`. The charset deliberately
 # EXCLUDES `<`, `*`, `(`, `)` so doc placeholders/globs (`ticket-<N>-*.md`, `.../*.md`) never match.
 # The legacy `.claude/context/validation/` prefix is matched too so a ref that survived the sink
-# migration (post-#252 layout move to `.claude/shiploop/`) is flagged as dangling, not skipped.
+# migration (the layout move to `.claude/shiploop/`) is flagged as dangling, not skipped.
 ref_re='\.claude/(context|shiploop)/validation/[A-Za-z0-9._-]+\.md'
 dangling=""
 while IFS= read -r hit; do
@@ -52,7 +52,7 @@ done < <(grep -nE "$ref_re" "${sources[@]}" 2>/dev/null || true)
 
 context_rc=0
 if [[ -n "$dangling" ]]; then
-  printf 'DANGLING .claude/shiploop/validation/*.md reference(s) — a cited evidence summary is missing (#252):\n' >&2
+  printf 'DANGLING .claude/shiploop/validation/*.md reference(s) — a cited evidence summary is missing:\n' >&2
   printf '%s' "$dangling" >&2
   printf 'A migration likely deleted the summary while a live ref still points at it. Restore the file\n' >&2
   printf '(e.g. from the pre-migration commit, `git show <migration>^:<path>`) or fix the reference.\n' >&2

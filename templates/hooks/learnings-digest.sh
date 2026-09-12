@@ -35,13 +35,13 @@ set -uo pipefail
 MAX_ENTRIES="${SHIPLOOP_LEARNINGS_MAX_ENTRIES:-3}"   # newest N entries
 MAX_LINES="${SHIPLOOP_LEARNINGS_MAX_LINES:-40}"      # hard ceiling on injected lines
 
-# TTL demotion (#87). Past the ~2-week window the seed documents, an entry degrades to a
+# TTL demotion. Past the ~2-week window the seed documents, an entry degrades to a
 # TITLE-ONLY line instead of being dropped: deleting a still-true measurement just makes a future
 # session re-derive it, while re-injecting its full body forever is the ratchet we're trying to
 # stop. Ships INERT — SHIPLOOP_LEARNINGS_TTL=0 is today's behaviour exactly; set it to 1 to enable.
 TTL_ON="${SHIPLOOP_LEARNINGS_TTL:-0}"                # 0 = off (no behaviour change)
 TTL_DAYS="${SHIPLOOP_LEARNINGS_TTL_DAYS:-14}"        # the window the seed documents
-# Structure lint (#87): ONE line, and only when the file is actually malformed. Ships INERT;
+# Structure lint: ONE line, and only when the file is actually malformed. Ships INERT;
 # set SHIPLOOP_LEARNINGS_LINT=1 to enable. Silent when healthy — that is the whole contract.
 LINT_ON="${SHIPLOOP_LEARNINGS_LINT:-0}"              # 0 = off (no behaviour change)
 # Test seam: pin "today" so TTL assertions don't drift with the wall clock.

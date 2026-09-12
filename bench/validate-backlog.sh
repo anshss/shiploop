@@ -26,7 +26,7 @@
 # guess about file names.
 #
 # A backlog with fewer than --min-tickets survivors is marked unusable. Its drop list is internal
-# record (spec section 6) and is never published.
+# record and is never published.
 #
 # Govern conventions: `set -euo pipefail`, every function ends `return 0`, dependent locals split
 # across statements.

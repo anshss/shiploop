@@ -47,7 +47,7 @@ case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exi
 [ -n "$cwd" ] || cwd="$PWD"
 [ -n "$session_id" ] || session_id="nosession"
 
-# --- collision backstop (#73): a duplicate `## #N` heading in tickets.md means two filings reused
+# --- collision backstop: a duplicate `## #N` heading in tickets.md means two filings reused
 # one number. Surface it the moment a session ends — independent of (and before) the new-ticket
 # reminder below, and NOT gated by the once-per-session marker, so a collision nags until fixed.
 # stop_hook_active (handled above) prevents an in-turn loop. Run as a subprocess so the lint's set
@@ -57,7 +57,7 @@ lint="$SELF_ROOT/scripts/govern/lint-tickets.sh"
 if [ -x "$lint" ]; then
   if ! dups="$("$lint" "$MAIN/queue/tickets.md" 2>/dev/null)" && [ -n "${dups:-}" ]; then
     dups_flat="$(printf '%s' "$dups" | tr '\n' ' ')"
-    reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number (#73): \
+    reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number: \
 ${dups_flat}. Renumber the LATER duplicate to live max+1 (file-ticket.sh prints the next safe \
 number), commit, then stop. Only blocker — do not start other work."
     esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -67,13 +67,13 @@ number), commit, then stop. Only blocker — do not start other work."
 fi
 
 # --- validation-lint backstop: lint-validation-refs.sh guards TWO independent things — a dangling
-# `.claude/shiploop/validation/*.md` reference (#252: a founder-os layout migration can DELETE a
+# `.claude/shiploop/validation/*.md` reference (a founder-os layout migration can DELETE a
 # summary while `features.md`/`direction.md`/`CLAUDE.md` still cite it as proof) AND the `validation/`
 # flow-registry lint matrix (govern::flows_lint — glob/Evidence-ref/logs-path/PII checks). Surface it
 # at session end: blocking, and UNgated by the once-per-session marker below, so it nags until fixed.
 # Run as a subprocess so the lint's set flags can't leak into this hook.
 #
-# This used to wrap EVERY failure in the #252 dangling-ref framing + founder-os remediation
+# This used to wrap EVERY failure in the dangling-ref framing + founder-os remediation
 # ("git show <migration>^:<path>"), which misdiagnosed a FLOWS LINT FAIL (wrong path — this workspace
 # uses validation/, not .claude/shiploop/validation/ — wrong cause, wrong fix). Branch on the lint's
 # own output shape instead of guessing: only the dangling-ref case gets that framing; anything else
@@ -86,7 +86,7 @@ if [ -x "$vlint" ]; then
     lint_flat="$(printf '%s' "$lint_out" | tr '\n' ' ')"
     case "$lint_out" in
       *'DANGLING .claude/shiploop/validation'*)
-        reason="A .claude/shiploop/validation/*.md evidence summary is MISSING but still cited (#252): \
+        reason="A .claude/shiploop/validation/*.md evidence summary is MISSING but still cited: \
 ${lint_flat} Restore it (git show <migration>^:<path>) or fix the reference, commit, then stop. \
 Likely a migration orphaned it. Only blocker."
         ;;
@@ -246,7 +246,7 @@ ${staled_ids}. Governor's staleness sweep records it next pass (or run /shiploop
   fi
 fi
 
-# --- queue-isolation advisory (#46): a SOFT, never-blocking note folded into the reconcile reason.
+# --- queue-isolation advisory: a SOFT, never-blocking note folded into the reconcile reason.
 # The queue admits exactly two scopes — this workspace's own sub-repos and the harness itself. A
 # ticket whose **Where:** line references NEITHER is likely about an EXTERNAL tool/skill/product that
 # merely shared this terminal (its follow-ups belong in its own tracker). govern::out_of_scope_tickets

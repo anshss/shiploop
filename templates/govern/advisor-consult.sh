@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# advisor-consult.sh claim|record: design Layer 3 (.specs/2026-09-09-model-orchestration-design.md).
+# advisor-consult.sh claim|record: gate and log a worker's advisor consult.
 # A worker that reaches ONE fork it cannot resolve may buy a single scoped opus answer instead of
 # guessing or failing outright.
 #
-# Same shape as gotchas-for-paths.sh (#125/#176): a thin CLI wrapper around the ONE implementation
+# Same shape as gotchas-for-paths.sh: a thin CLI wrapper around the ONE implementation
 # (govern::advisor_* in lib/common.sh) both worker lanes call. A consult is a LIVE decision only the
 # running worker can make mid-session, and nothing is known in advance about whether or when one
 # will fire, so unlike the gotchas mechanism there is no launcher-side injection at all: the
@@ -19,8 +19,8 @@
 #     that wrote the proposal, never SPAWNING one: nothing ever spawns an advisor.
 #       deny  (exit 1): {"decision":"deny","reason":"disabled|worker-budget-exhausted|
 #                         session-budget-exhausted","workerRemaining":N,"sessionRemaining":N}
-#     A deny is not a cue to retry, reformulate, or consult anyway: Layer 4 is explicit that an
-#     exhausted budget surfaces to the operator, it never buys a tier by itself.
+#     A deny is not a cue to retry, reformulate, or consult anyway: an exhausted budget surfaces
+#     to the operator, it never buys a tier by itself.
 #   advisor-consult.sh record <ticket-N> <consultId> --model <model> --tokens <n> --answer "<summary>"
 #     Closes the entry `claim` opened: the model that answered, tokens used, and a short summary.
 #     Best-effort observability, not a gate: always exits 0 once its arguments parse.
@@ -33,10 +33,10 @@
 # at least one consult): GOVERN_ADVISOR_PER_WORKER_OPEN's default 3, plain GOVERN_ADVISOR_PER_WORKER's
 # default 2 for scoped, GOVERN_ADVISOR_PER_WORKER_STATED's default 1. The headless launcher
 # (spawn-worker.sh) sets it from the ticket's precision grade before the live spawn; the interactive
-# lane has no launcher, so its own worker (`.claude/agents/worker.md` delta 3,
-# .specs/2026-09-11-advisor-worker-design.md D6) sets it inline on the `claim` invocation itself,
-# after reading the grade off the ticket the same way. Unset (grade genuinely unreadable) falls back
-# to plain GOVERN_ADVISOR_PER_WORKER, the same nonzero default every grade is built on top of.
+# lane has no launcher, so its own worker (`.claude/agents/worker.md`) sets it inline on the
+# `claim` invocation itself, after reading the grade off the ticket the same way. Unset (grade
+# genuinely unreadable) falls back to plain GOVERN_ADVISOR_PER_WORKER, the same nonzero default
+# every grade is built on top of.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"

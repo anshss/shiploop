@@ -13,7 +13,7 @@ gap (they PARK the ticket: clean exit, no PR). Format of an open entry:
 - **Make this a rule?:** _(yes + the rule text → appended to preferences.md)_
 ```
 
-## Lifecycle (#62 — escalations are no longer write-only)
+## Lifecycle (escalations are no longer write-only)
 
 `pre-dispatch-check.sh` skips any ticket # that has an entry under `## Open`, so a parked ticket sits
 here until answered. Session + relay close the loop automatically:
@@ -23,7 +23,7 @@ here until answered. Session + relay close the loop automatically:
    `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session dispatch still signals that decisions are
    waiting. Runnable by hand too: `npm run govern:escalations-emit`.
 2. **Ask (relay).** The launching session reads that JSON and presents the pending entries
-   in a **single batched `AskUserQuestion`** (#89 — `AskUserQuestion` takes up to **4 questions per
+   in a **single batched `AskUserQuestion`** (`AskUserQuestion` takes up to **4 questions per
    prompt**, so one entry → one question and a whole run's blocked tickets are asked **at once**;
    chunk into ceil(count/4) calls if >4, never one prompt per ticket), then writes each chosen
    **Answer** + a canonical **Disposition** token back into this file (and "Make this a rule?" if the

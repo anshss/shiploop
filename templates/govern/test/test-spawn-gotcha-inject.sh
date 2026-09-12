@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rail 9 / #118: a worker's cwd at session start is the meta-repo worktree root, so a sub-repo's own
+# A worker's cwd at session start is the meta-repo worktree root, so a sub-repo's own
 # CLAUDE.md is never auto-loaded, and worker-prompt.md's "read the sub-repo CLAUDE.md" line is a
 # pointer, not a handoff. govern::gotchas_in_file (lib/common.sh) + its spawn-worker.sh call site
 # closes that for entries an author explicitly tagged `**Paths:**`: a ticket naming those files gets

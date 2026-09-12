@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed CI verification (companion to #34b / #42), re-targeted at resolve-ticket.sh (the loop
+# Fail-closed CI verification, re-targeted at resolve-ticket.sh (the loop
 # purge moved this step here): when a resolved ticket's PR is on a merge-repo but its CI state cannot
 # be VERIFIED (merge-pr.sh returns rc=4, its "CI state unverifiable" exit), resolve-ticket.sh must
 # refuse to land, keep the tickets.md block untouched, exit non-zero, never merge blind. This is the

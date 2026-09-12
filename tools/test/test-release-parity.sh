@@ -196,8 +196,8 @@ assert_contains "$out" "passed" "7b. reports a pass"
 
 # 7c. --pre on an ordinary PR that does not bump anything: VERSION equals the newest
 # published release, which is where main sits for most of its life (a release is cut AFTER
-# merge). This is the case that makes the >= rule load-bearing: under queue #64's literal
-# "fails when VERSION <= the highest published tag" this fixture, and therefore every
+# merge). This is the case that makes the >= rule load-bearing: under a stricter literal
+# "fails when VERSION <= the highest published tag" rule this fixture, and therefore every
 # non-bumping pull request, would be red.
 d="$(mk_fixture f7-consistent-pre-nobump 2.0.0 "$CHANGELOG_2AND1")"
 out="$(run_tool --pre "$d" stubbed STUB_RELEASE_LIST_JSON='[{"tagName":"v1.0.0","isDraft":false},{"tagName":"v2.0.0","isDraft":false}]')"

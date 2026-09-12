@@ -11,7 +11,7 @@ mk_ws_stub "$TMP"  # hermetic workspace stub (independent of the live workspace.
 #   `gh pr checks … --json bucket`        → emits $FAKE_CHECKS (or exits 1 if FAKE_CHECKS_FAIL=1)
 #   `gh pr view … --json statusCheckRollup` → emits $FAKE_ROLLUP (or exits 1 if FAKE_ROLLUP_FAIL=1)
 # A non-zero exit with NO stdout models a real gh error (network/auth/5xx) — the case the old
-# `… 2>/dev/null || echo '[]'` conflated with "no checks" and auto-merged (#34b fail-open).
+# `… 2>/dev/null || echo '[]'` conflated with "no checks" and auto-merged (fail-open).
 cat > "$TMP/gh" <<'EOF'
 #!/usr/bin/env bash
 args="$*"

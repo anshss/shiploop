@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for the #87 learnings-digest TTL demotion and structure lint.
+# Regression for the learnings-digest TTL demotion and structure lint.
 #
 # Both are context-cost mechanisms whose output lands in EVERY session's window, so "emits nothing
 # extra by default" and "silent when the file is healthy" are correctness properties, not niceties.

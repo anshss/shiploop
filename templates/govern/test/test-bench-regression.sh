@@ -8,7 +8,7 @@
 #   1. Rows the tool emits aggregate back to the totals the run that emitted them reported, by the
 #      tool and independently by the jq recipe in METHODOLOGY.md. That is the recomputability claim
 #      any future publication will be held to, tested without needing a corpus to hold it against.
-#   2. `coreModel`, the pre-#108 carry-only same-mix model, is frozen on bench/fixtures/replay-fleet
+#   2. `coreModel`, the legacy carry-only same-mix model, is frozen on bench/fixtures/replay-fleet
 #      and invariant to --baseline and --partials. If a refactor moves it, it moved the legacy code
 #      path, which is a defect rather than acceptable drift.
 set -uo pipefail
@@ -76,7 +76,7 @@ node "$HUB/bench/replay.mjs" --rows-file "$T/no-such-file.jsonl" >/dev/null 2>&1
 assert_eq "$?" "2" "a missing rows file is a usage error, not a silent zero"
 
 # ── 2. the legacy code path, on the hand-derivable fixture ───────────────────
-# coreModel is the pre-#108 model: same-mix pricing, carry only, partials dropped, no harness
+# coreModel is the legacy model: same-mix pricing, carry only, partials dropped, no harness
 # overhead charged. It must be invariant to the flags, because it is a frozen reference and not a
 # view of the selected arm.
 core() { # baseline partials arm field

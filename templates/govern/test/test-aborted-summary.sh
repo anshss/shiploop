@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression for #151, re-targeted at resolve-ticket.sh (the loop purge moved this whole step here):
+# Regression, re-targeted at resolve-ticket.sh (the loop purge moved this whole step here):
 # a post-merge prod deploy/verify failure must be CLASSIFIED and must PARK the ticket, never silently
 # land it and never be confused with a set -e abort at the unguarded migrate-command capture. The
 # migrate-command capture is guarded with `|| true` precisely so `set -e` cannot abort the script at
 # that line: exit 7 proves the classify-and-refuse path was REACHED, whereas exit 1 would be the old
-# #151 bug (a bare abort that leaves a merged-but-unbookkept ticket looking like nothing happened).
+# bug (a bare abort that leaves a merged-but-unbookkept ticket looking like nothing happened).
 #
 # Reproduces the observed shape: #1's auto-merge-repo PR merges, then the additive-migration
 # deploy/verify step FAILS. resolve-ticket.sh must:
@@ -69,8 +69,8 @@ TIX
 HIST="$T/history.jsonl"
 report='{"status":"resolved","pr":{"repo":"alpha","number":901,"url":"http://pr/1"},"prs":[],"lessonPatch":null,"newTickets":[],"migration":{"needed":true,"destructive":false,"name":"20260623_add_index","note":"CREATE INDEX"}}'
 
-# GOVERN_MIGRATE_CMD succeeds, GOVERN_VERIFY_CMD FAILS → the post-merge verify step fails (the #151
-# shape). Pre-fix this aborted the whole script at the unguarded `mout=$(...)` assignment; post-fix
+# GOVERN_MIGRATE_CMD succeeds, GOVERN_VERIFY_CMD FAILS → the post-merge verify step fails. Pre-fix
+# this aborted the whole script at the unguarded `mout=$(...)` assignment; post-fix
 # the `|| true` lets control reach the verify → classify → PARK logic.
 : > "$LANDED"
 out="$( cd "$T" && printf '%s' "$report" \

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates bench/fixtures/replay-outcome-fleet/, the fixture for the attempt-outcome breakdown
-// (queue #108, "no attempt-outcome dimension"). Exercises the per-attempt LEDGER read
+// ("no attempt-outcome dimension"). Exercises the per-attempt LEDGER read
 // (spawn-worker.sh's `attempts.jsonl`, sibling of the transcript) that replay.mjs's
 // outcomeBreakdown() reads to say WHY an attempt happened, not just how many tokens it cost.
 //
@@ -128,7 +128,7 @@ fs.rmSync(ROOT, { recursive: true, force: true });
   fs.writeFileSync(path.join(dir, 'attempts.jsonl'), ledgerRow(2, 'claude-opus-4-8', 'infra', 'resolved', tok2, a2.cost));
 }
 
-// ── ticket-703: one attempt, NO ledger at all -- an uninstrumented / pre-#19 dispatch. Must land
+// ── ticket-703: one attempt, NO ledger at all -- an uninstrumented, pre-ledger dispatch. Must land
 // in `unclassified` (reason `no-ledger`), never silently folded into the classifier's own
 // `unknown` verdict.
 {

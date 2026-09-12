@@ -137,7 +137,7 @@ for repo in "${REPOS[@]}"; do
           echo "[$repo] --base '$BASE_OVERRIDE' not found (tried origin/$BASE_OVERRIDE and $BASE_OVERRIDE)" >&2; exit 2
         fi
       else
-        base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+        base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main
       fi
       echo "[$repo] creating branch '$NAME' from $base"
       git -C "$src" worktree add -b "$NAME" "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
@@ -153,7 +153,7 @@ for repo in "${REPOS[@]}"; do
     # UI) whenever --only scopes to a subset of repos: the others end up empty. A
     # detached-at-main checkout is runnable and never collides — the same pattern the
     # meta worktree uses above at the `worktree add --detach` line.
-    base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main (#29)
+    base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main
     echo "[$repo] not in --only, detached worktree at $base (read-only)"
     git -C "$src" worktree add --detach "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
   fi

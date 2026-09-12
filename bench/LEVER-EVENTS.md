@@ -1,7 +1,6 @@
 # Lever event contract
 
-Authoritative wire shape for the five instrumentation events in
-`.specs/2026-09-08-bench-multi-lever-design.md` section 4b. The governor emitter and the
+Authoritative wire shape for the five instrumentation events. The governor emitter and the
 `replay.mjs` reader are built against THIS FILE. Neither half may change a field name without
 changing it here first.
 
@@ -89,7 +88,7 @@ and skipped, never fatal.
   than the failed attempt's total spend. A retry has to redo the actual work either way; the
   only thing resuming avoids is re-reading its way back to context. Crediting total spend here
   would hand the resume lever the failed attempt's output tokens as savings, which is a lever
-  biased toward shiploop, and section 4a of the spec exists precisely to leave no such entry
+  biased toward shiploop, and this rule exists precisely to leave no such entry
   in the ledger. When in doubt this number is under-counted, never over-counted.
 - `scripted-action`: `class` keys into the per-class token estimate table in `replay.mjs`. An
   unknown class is counted and credited zero, and named in the report.

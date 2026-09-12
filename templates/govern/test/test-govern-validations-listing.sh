@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner (spec §4) — the live-jobs surface (`govern-validations.sh` / reader 3/3
+# Durable validation runner — the live-jobs surface (`govern-validations.sh` / reader 3/3
 # "on demand"). Proves the listing shows phase + heartbeat age for a still-running job, shows the
 # verdict (not a stale heartbeat) for a terminal job, and that running the CLI end-to-end also adopts
 # (applies + consumes) any pending result on the way, per its default on-demand-apply behavior.

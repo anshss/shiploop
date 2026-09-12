@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #122: reviewer input fidelity.
+# Regression: reviewer input fidelity.
 # govern-supervise.sh's ticket-bodies window is GOVERN_SUPERVISOR_BLOCKS_LINES-configurable and
 # defaults to 500 (it was a hardcoded head -260 that silently truncated conflict detection past
 # ~ticket 25).

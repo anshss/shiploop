@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# #191 — an un-parked ticket whose OWN open PR is in an auto-merge repo must be DRIVEN TO MERGE by the
-# governor, never routed into the #119 "waiting on PR" cross-run defer (which is for PRs a human / a
+# An un-parked ticket whose OWN open PR is in an auto-merge repo must be DRIVEN TO MERGE by the
+# governor, never routed into the "waiting on PR" cross-run defer (which is for PRs a human / a
 # different lane lands). Reproduces the observed failure: two un-parked, structurally-identical tickets
 # (#1, #2) each with a green+MERGEABLE open alpha PR, where a prior run mis-routed #2 into a pending
 # wait on its OWN PR. Hermetic + generic (alpha auto-merge, web frontend; org acme). Proves:
@@ -56,7 +56,7 @@ source "$DIR/../lib/common.sh"
 printf '{"waits":[{"ticket":2,"pr":201,"repo":"alpha"},{"ticket":3,"pr":777,"repo":"web"}]}\n' \
   > "$HT/governor/pending-waits.json"
 out="$(govern::waits_refresh)"
-assert_eq "$(printf '%s' "$out" | grep -c '^2	' || true)" "0" "#2's wait DROPPED — it owns alpha PR #201 (#191)"
+assert_eq "$(printf '%s' "$out" | grep -c '^2	' || true)" "0" "#2's wait DROPPED — it owns alpha PR #201"
 assert_contains "$out" "3	waiting on web PR #777" "#3's wait KEPT — frontend PR it does not own"
 assert_eq "$(jq '.waits | length' "$HT/governor/pending-waits.json")" "1" "only the non-owned wait persists in the file"
 assert_eq "$(jq -r '.waits[0].ticket' "$HT/governor/pending-waits.json")" "3" "the persisted wait is #3 (web), not #2 (alpha)"

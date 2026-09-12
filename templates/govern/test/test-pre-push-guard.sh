@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #301: the harness .githooks/pre-push guard must reject a feature branch whose name
+# Regression: the harness .githooks/pre-push guard must reject a feature branch whose name
 # isn't exactly `ticket-<N>` when GOVERN_RUN=1. A govern worker's branch MUST be ticket-<N> (#55) so
 # the governor can find + merge the PR; a wrong name silently orphans the PR and re-fails the ticket.
 # The hook turns that into a loud pre-push error.
@@ -46,7 +46,7 @@ assert_eq "$rc" "0" "GOVERN_RUN=1 + main is allowed"
 run_hook 1 refs/heads/fix/foo
 assert_eq "$rc" "1" "GOVERN_RUN=1 + fix/foo (wrong-name feature branch) is BLOCKED"
 assert_contains "$err" "not a governor-owned branch" "blocked message names the governor-owned-branch rule"
-assert_contains "$err" "#55" "blocked message cites the orphaned-PR failure (#55)"
+assert_contains "$err" "orphans it" "blocked message explains that a wrong branch name orphans the PR"
 
 run_hook 1 refs/heads/ticket-301-extra
 assert_eq "$rc" "1" "GOVERN_RUN=1 + ticket-301-extra (suffix) is BLOCKED — name must be exact"

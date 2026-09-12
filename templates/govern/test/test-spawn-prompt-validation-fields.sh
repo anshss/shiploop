@@ -3,7 +3,7 @@
 # `validation` field rule (worker-prompt.md, incl. the Flow subfields gatePassed/measured/
 # validatedShas/environment/flowIds).
 #
-# Why it exists (#83 Part 2, span A): that field rule sat AFTER the first
+# Why it exists (span A): that field rule sat AFTER the first
 # `<!-- GOVERN:END validation -->` (the "RUN THE REAL TEST" doctrine block), so it was unfenced and
 # always-on — sent to every worker even though only a validation/spike ticket can ever populate
 # those fields. `prompt_apply_sections()` (spawn-worker.sh) keeps/drops a fenced block by NAME,
@@ -14,7 +14,7 @@
 # span A is a real, named field list, and a stub could pass this test with a fence around fake
 # sentinel text while the real file's fence was still off by a line.
 #
-# Assertion style (post-#84): every check below targets a STRUCTURAL invariant, not an author's
+# Assertion style: every check below targets a STRUCTURAL invariant, not an author's
 # sentence. The Flow subfield names (`gatePassed`/`validatedShas`/`flowIds`) are the actual JSON
 # key names `lib/flows.sh` and `spawn-worker.sh` read off the worker's report — pinning them is
 # pinning the machine contract, not prose, and a maintainer is free to reword every sentence
@@ -29,7 +29,7 @@
 #   - the block being dropped from inside the fence (goes missing from the "validation ticket" and
 #     "kill switch" renders)
 # It would NOT catch a maintainer rewording that same line, or any other line in the block — which
-# is the point: rewording is exactly what #84 needs to stop breaking this test.
+# is the point: this is exactly the kind of rewording that must never break this test.
 #
 # Cases:
 #   1. Ordinary ticket → none of the Flow subfield names appear; the base doctrine block is ALSO

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# shiploop fleet monitor — the in-session channel for the fleet: governor-spawned workers AND,
-# since #116, in-session `Agent` children carrying the agent-progress-guard.sh SubagentStop hook
+# shiploop fleet monitor — the in-session channel for the fleet: governor-spawned workers AND
+# in-session `Agent` children carrying the agent-progress-guard.sh SubagentStop hook
 # (governor/events.jsonl's `agent_progress_alarm` type — see that hook + govern::early_abort_reason
 # in scripts/govern/lib/common.sh for what fires it).
 #
@@ -120,7 +120,7 @@ handle() { # <event line>
       t="$(jget "$line" ticket)"
       emit "park-$t" "shiploop fleet: #$t PARKED — needs a human decision" ;;
     agent_progress_alarm)
-      # #116 rails 6-8: agent-progress-guard.sh (SubagentStop) caught an in-session `Agent` child
+      # agent-progress-guard.sh (SubagentStop) caught an in-session `Agent` child
       # about to stop on a doom signature (stall/loop/rising errors) — its own completion claim,
       # whatever it turns out to be, is not evidence on its own. One line per (agent, reason) pair
       # inside the dedupe window, not per re-fire, so a child forced through several blocked stops

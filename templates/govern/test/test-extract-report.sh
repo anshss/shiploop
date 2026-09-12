@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit test for govern::extract_report / govern::_json_objects (#66): a worker that did the work
+# Unit test for govern::extract_report / govern::_json_objects: a worker that did the work
 # but emitted "JSON + trailing prose" must be parsed as its real status, not synthesized failed.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +12,7 @@ source "$DIR/../lib/common.sh"
 got="$(printf '%s' '{"status":"resolved","pr":null}' | govern::extract_report)"
 assert_eq "$got" '{"status":"resolved","pr":null}' "pure JSON object passes through"
 
-# 2. The exact #66 regression: valid JSON followed by trailing prose.
+# 2. The regression this covers: valid JSON followed by trailing prose.
 got="$(printf '%s' '{"status":"resolved","pr":{"repo":"alpha","number":116}}
 
 Ticket #12 resolved. PR #116 is open and ready for review.' | govern::extract_report)"

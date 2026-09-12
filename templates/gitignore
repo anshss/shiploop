@@ -5,14 +5,14 @@ __SUBREPO_IGNORES__
 node_modules/
 logs/
 
-# governor driver→relay escalation hand-off (#62) — regenerated every run-end, not source
+# governor driver→relay escalation hand-off — regenerated every run-end, not source
 governor/pending-escalations.json
 
-# governor runtime mkdir-mutexes (#41 — never commit; transient lock dirs)
+# governor runtime mkdir-mutexes — never commit; transient lock dirs
 governor/.govern.lock/
 governor/.bookkeep.lock/
 governor/.locks/
-# governor cross-run failure history (#60) — per-machine runtime state, not source
+# governor cross-run failure history — per-machine runtime state, not source
 governor/ticket-history.jsonl
 # governor TokenJam run id — per-run runtime state (one per loop invocation; removed on clean exit)
 governor/.run-id
