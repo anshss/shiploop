@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.19.9 - 2026-09-13
+
+### Changed
+
+**bench now measures two real sessions instead of modeling one.** The replay path is gone:
+`bench/replay.mjs`, `bench/gen-proof-table.mjs`, `bench/published-rows/` and their eight test
+suites are deleted, along with the replay fixture corpora. Replay reconstructed a counterfactual
+from transcripts, which structurally cannot see the levers that work by making a model call *not*
+happen, because an absence leaves no trace in a transcript.
+
+In its place both arms run for real. The without-shiploop arm is a plain checkout with the default
+toolset; the with-shiploop arm is the same checkout inside a workspace built by the real
+`scaffold.sh`, where the session follows installed doctrine and spawns its own workers. The only
+difference between the arms is which directory the session opens in. bench no longer shells out to
+`pre-dispatch-check.sh`, `spawn-worker.sh` or `resolve-ticket.sh`: it stops substituting a script
+for the session under test.
+
+The control arm no longer inherits `BENCH_TOOLS`, which had been granting it `Agent,Task` and the
+tool-schema trim. Whatever the old arms measured, it was not with-shiploop against without.
+
+bench also never sets a worker model. The treatment arm's tiers come from the scaffold's own agent
+frontmatter, because that routing is a lever under test.
+
+### Fixed
+
+**An empty backlog no longer reports success.** `0 cleared -eq 0 total` made a cell that dispatched
+nothing record identically to one that cleared everything. Zero-ticket cells now get their own
+status and a minimum count is asserted on the dispatch path, not only in the curation script.
+
+**A treatment arm that never spawned a worker now fails loudly.** A subagent refused for zero tools
+still exits 0 with `is_error:false`, so a cell that measured nothing was indistinguishable from one
+that worked. The arm asserts `subagent_stats.spawned > 0 && completed > 0` against the result event
+rather than trusting the exit code.
+
+**Readers skip non-JSON lines and count malformed ones.** Merged stderr could put a warning at the
+top of a stream; malformed transcript lines were previously swallowed with no tally.
+
+**`escalation-correction` is removed** — its emitter was deleted in 1.19.3, so the term could never
+fire. `model-clamp`, a live lever that was measured nowhere, is added to attribution.
+
+**Fourteen comments citing documents were replaced with the rationale itself**, six of which pointed
+at files this release deletes.
+
+### Removed
+
+**`/shiploop:bench` no longer replays logs.** There is nothing left to replay, so the command is
+rewritten: it prints the published benchmark result with its backlog and arms named, and prints the
+exact command to run a fresh A/B locally with its estimated cost. Running the A/B is explicit and
+spends nothing by default.
+
 ## 1.19.8 - 2026-09-13
 
 ### Fixed
