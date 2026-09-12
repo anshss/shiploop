@@ -71,16 +71,25 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 # such repo a wsp_repo_slug / wsp_repo_localdir override below.
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
 # ── Worker tier: a cheap FLOOR plus an escalation CEILING (two knobs, never one) ──
-# First attempts run at the FLOOR. On a failure the retry classifier attributes to judgment or
-# budget — never infra or CI — the ticket is re-bet ONCE at the CEILING. Measured over a real
-# backlog: opus $8.94/ticket, sonnet $2.22, haiku $0.59; three tickets sized opus resolved at
-# sonnet on attempt 1 for $1.34-$2.95 while the one dispatched at opus cost $20.18. Failures are
-# also cheap relative to successes (2.28M tokens vs 11.25M) because a worker out of its depth dies
-# early — so a wrong cheap bet costs far less than a right expensive one.
+# First attempts run at the FLOOR. Measured over a real backlog: opus $8.94/ticket, sonnet $2.22,
+# haiku $0.59; three tickets sized opus resolved at sonnet on attempt 1 for $1.34-$2.95 while the
+# one dispatched at opus cost $20.18. Failures are also cheap relative to successes (2.28M tokens
+# vs 11.25M) because a worker out of its depth dies early — so a wrong cheap bet costs far less
+# than a right expensive one.
 #
-# KEEP THESE TWO DIFFERENT. Setting the floor to the ceiling re-collapses them into one value and
-# turns escalation into a same-tier re-bet — which disables the very rail that makes a cheap floor
-# safe. If you raise the floor to opus, you have opted out of tier arbitrage entirely.
+# - Every first attempt runs at the FLOOR and stays there. Automatic tier escalation is removed: no
+#   failure class buys a bigger model.
+# - A retry still classifies why the prior attempt failed, but no class raises the tier. A judgment
+#   failure raises reasoning EFFORT instead, a cheaper knob that buys more reasoning per turn inside
+#   the same model at the same per-token price without moving the prompt-cache key, and files a
+#   re-specification request.
+# - GOVERN_WORKER_ESCALATION_MODEL is not an escalation destination, because nothing escalates. It
+#   is a cap on what an explicit request may ask for, applied only when a ticket's Model field
+#   actually decided the tier (GOVERN_MEASURED_SIZING=0). It deliberately does not clamp the floor:
+#   an operator setting GOVERN_WORKER_MODEL is configuring the harness directly, not asking it for
+#   something.
+# - A session ceiling applies unconditionally: nothing spawns above max(opus, the spawning
+#   session's model).
 GOVERN_WORKER_MODEL="${GOVERN_WORKER_MODEL:-sonnet}"                       # first-attempt FLOOR
 GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"   # CAP on explicit requests
 
