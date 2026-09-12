@@ -106,4 +106,56 @@ assert_eq "$out8" "" "no transcript_path/session_id on stdin → silent no-op, n
 out9="$(payload tok-nofile "$PROJ/s9.jsonl" s9 | env GOVERN_AGENT_TOKEN_BUDGET=10000000 bash "$GUARD")"
 assert_eq "$out9" "" "no transcript file yet for this child → silent no-op, never a crash"
 
+# ── 10-13. the `watchdog-kill` LEVER EVENT (bench/LEVER-EVENTS.md) ──────────────────────────────
+# The headless launcher emits this on every watchdog kill; this lane did not, so bench credited
+# only half the fleet's kills and read the interactive half as "never fired" rather than
+# "unmeasured". These exercise the hook's REAL code path (a payload in, the emitted file out), not
+# a fixture of its output. GOVERN_LEVER_EVENTS is pinned 0 in assert.sh, so each case turns it on
+# explicitly, which is also what makes case 12 a real kill-switch test rather than a tautology.
+EV="$TMP/lever-events.jsonl"
+
+# 10. wall-clock. Same event name and same reason string the headless lane uses for the same cap,
+#     so the two lanes produce ONE stream a reader can group, not two dialects.
+echo $(( $(date +%s) - 4000 )) > "$TMPDIR/metarepo-agent-watchdog-wallclock-wc-lever"
+rm -f "$EV"
+out10="$(payload wc-lever "$PROJ/s10.jsonl" s10 | env GOVERN_AGENT_TOKEN_BUDGET=0 \
+  GOVERN_LEVER_EVENTS=1 GOVERN_LEVER_EVENTS_FILE="$EV" bash "$GUARD")"
+assert_contains "$out10" '"permissionDecision":"deny"' "the wall-clock deny still fires with events on"
+assert_eq "$([ -f "$EV" ] && echo yes || echo no)" "yes" "a wall-clock deny emits a lever event"
+assert_contains "$(cat "$EV")" '"event":"watchdog-kill"' "under the SAME event name the headless watchdog uses"
+assert_contains "$(cat "$EV")" '"reason":"wall-clock-timeout"' "and the same reason string for the same cap"
+assert_contains "$(cat "$EV")" '"session":"worker"' "session names the transcript role, per the wire contract"
+assert_contains "$(cat "$EV")" '"ticket":null' "ticket is an honest null: a hook sees an agent_id, never a ticket number"
+assert_contains "$(cat "$EV")" '"lane":"interactive"' "and the lane is labelled so the two streams stay tellable apart"
+
+# 11. token budget. ctxTokens/turns carry the same field names the headless emitter uses, read off
+#     the child's own transcript at the instant of the deny.
+mk_child_transcript "$PROJ" s11 tok-lever 12000000
+rm -f "$EV"
+out11="$(payload tok-lever "$PROJ/s11.jsonl" s11 | env GOVERN_AGENT_WALLCLOCK=0 GOVERN_AGENT_TOKEN_BUDGET=10000000 \
+  GOVERN_LEVER_EVENTS=1 GOVERN_LEVER_EVENTS_FILE="$EV" bash "$GUARD")"
+assert_contains "$out11" '"permissionDecision":"deny"' "the token-budget deny still fires with events on"
+assert_contains "$(cat "$EV")" '"reason":"context-cap"' "the token path emits the headless token watchdog's own reason"
+assert_contains "$(cat "$EV")" '"ctxTokens":12000000' "ctxTokens is the measured total, as a JSON number"
+assert_contains "$(cat "$EV")" '"turns":1' "and turns is counted off the child's own transcript"
+
+# 12. the gate. GOVERN_LEVER_EVENTS=0 is honoured exactly as the headless path honours it.
+rm -f "$EV"
+out12="$(payload tok-lever "$PROJ/s11.jsonl" s11 | env GOVERN_AGENT_WALLCLOCK=0 GOVERN_AGENT_TOKEN_BUDGET=10000000 \
+  GOVERN_LEVER_EVENTS=0 GOVERN_LEVER_EVENTS_FILE="$EV" bash "$GUARD")"
+assert_contains "$out12" '"permissionDecision":"deny"' "the deny is NOT gated on the emitter: supervision still works"
+assert_eq "$([ -f "$EV" ] && echo yes || echo no)" "no" "GOVERN_LEVER_EVENTS=0 → nothing is written at all"
+
+# 13. FAIL OPEN. A hook runs in contexts where lib/common.sh is simply not there; a PreToolUse hook
+#     that dies denies every later tool call in the session that installed it. Run a copy with no
+#     library anywhere near it: the deny must still be produced, with no event and no crash.
+ORPHAN="$TMP/orphan/hooks"; mkdir -p "$ORPHAN"
+cp "$GUARD" "$ORPHAN/agent-watchdog-guard.sh"
+echo $(( $(date +%s) - 4000 )) > "$TMPDIR/metarepo-agent-watchdog-wallclock-wc-orphan"
+rm -f "$EV"
+out13="$(payload wc-orphan "$PROJ/s13.jsonl" s13 | env GOVERN_AGENT_TOKEN_BUDGET=0 \
+  GOVERN_LEVER_EVENTS=1 GOVERN_LEVER_EVENTS_FILE="$EV" bash "$ORPHAN/agent-watchdog-guard.sh")"
+assert_contains "$out13" '"permissionDecision":"deny"' "no common.sh reachable → the hook still denies, never breaks"
+assert_eq "$([ -f "$EV" ] && echo yes || echo no)" "no" "and emits nothing, rather than half a row or an error"
+
 assert_done
