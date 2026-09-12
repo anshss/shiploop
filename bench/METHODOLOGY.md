@@ -86,7 +86,7 @@ regardless of whether any of this succeeds.
   `claude --help` probe, an env kill switch, and a HARD STOP (not a degraded arm) when unsupported —
   see `README.md`.
 - **Lever events** (`logs/govern/<run>/lever-events.jsonl`, contract in `bench/LEVER-EVENTS.md`) are
-  read against an explicit five-name allow-list, counting a malformed line and an unrecognized event
+  read against an explicit three-name allow-list, counting a malformed line and an unrecognized event
   name separately rather than dropping either. This is a COUNT, not a price: there is currently no
   live per-class token-estimate table anywhere in this repository, so a lever's occurrence count is
   reported, never converted into a credited token or dollar figure. See `bench/KNOWN-LIMITS.md`.

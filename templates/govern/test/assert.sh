@@ -65,7 +65,6 @@ export GOVERN_SESSION_MODEL=opus
 # All of these already default to the same value in their scripts; setting them here is the seam that
 # stops a LIVE governor session's exported env from leaking into a suite run inside it (the documented
 # failure mode where GOVERN_ALLOW_CONCURRENT=1 leaks in and reddens the orphan sweep by design).
-export GOVERN_DETERMINISTIC=0        # zero-model resolution lane
 export GOVERN_STALENESS_GATE=0       # pre-dispatch staleness skip
 export GOVERN_STALENESS_RUN_TESTS=0  # never execute a queue-authored command in a test run
 export GOVERN_EARLY_ABORT=0          # in-flight worker watchdog

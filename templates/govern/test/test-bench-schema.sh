@@ -196,7 +196,7 @@ assert_eq "$(printf '%s' "$lv" | jq -r '.events."watchdog-kill"')" "1" \
 assert_eq "$(printf '%s' "$lv" | jq -r '.malformed')" "1" \
   "11. the non-JSON line is counted as malformed, never silently dropped"
 assert_eq "$(printf '%s' "$lv" | jq -r '.unrecognized')" "1" \
-  "11. an event name outside the five-name allow-list is counted as unrecognized, never silently dropped"
+  "11. an event name outside the three-name allow-list is counted as unrecognized, never silently dropped"
 absent="$(BENCH_STATE_DIR="$T/state" bash -c '
   source "'"$HUB"'/bench/record.sh"
   bench::load_govern_lib "'"$T"'/state"
