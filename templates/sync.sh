@@ -194,7 +194,7 @@ for sub in "${REPOS[@]}"; do
 done
 
 printf "\n%s── done ──%s\n" "$ANSI_DIM" "$ANSI_RESET"
-printf "  Run %s%s run status%s to see the final state.\n" "$ANSI_GREEN" "$ROOT_PM" "$ANSI_RESET"
+printf "  Run %s%s run doctor%s to check the workspace is healthy.\n" "$ANSI_GREEN" "$ROOT_PM" "$ANSI_RESET"
 
 if [ "${SYNC_HALT:-0}" = "1" ]; then
   fail "sync halted: reconcile root main manually (see above), then re-run"
