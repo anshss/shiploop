@@ -18,7 +18,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Interactive-lane branches are first-party (D7, #127/G8/G9): worker.md's own doctrine is
+# Interactive-lane branches are first-party: worker.md's own doctrine is
 # self-service `npm run worktree:new -- t<N>`, so `t127`, `t57-log-guard` etc are a SECOND
 # governor-owned naming scheme, not an external contribution — the login + non-fork factors
 # below already prove "opened by us, from our own repo"; this factor only recognizes ANOTHER

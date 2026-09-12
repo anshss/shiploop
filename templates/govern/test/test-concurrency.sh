@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #41: two govern drivers may run concurrently on disjoint tickets.
+# Regression: two govern drivers may run concurrently on disjoint tickets.
 # Safety rests on three primitives — this proves each:
 #   1. the mkdir-mutex helpers (lock_try / lock_release + stale reclaim),
 #   2. concurrent bookkeep doesn't lose a block-delete (the corruption the lock prevents),

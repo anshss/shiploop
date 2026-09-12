@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# govern-health.sh — governor self-ROI telemetry (#272).
+# govern-health.sh — governor self-ROI telemetry.
 #
 # Computes a governor-health summary from the cross-run outcome history
 # (governor/ticket-history.jsonl): park rate, self-referential/churn classification, and
 # token-per-ticket spend (from the tokenjam-tagged worker token usage folded into each history
-# entry by resolve-ticket.sh's history writer). Motivated by #115, a stretch where most tickets were
+# entry by resolve-ticket.sh's history writer). Motivated by a stretch where most tickets were
 # self-referential "port into templates" churn with near-zero product value, discovered only by
 # hand. This surfaces that waste class automatically instead of after it has dominated a run.
 #
-# It also breaks spend down BY MODEL (#19): the history rows carry the sizing decision (model /
+# It also breaks spend down BY MODEL: the history rows carry the sizing decision (model /
 # effort / attempt) that produced each cost, so outcomes-per-tier is readable off real runs instead
 # of a hand-tuned scope→tier table. Rows written before that field existed simply have no `model` and
 # drop out of the breakdown; every other metric is unaffected.
 #
-# It also flags STALE escalations (#312): any entry under "## Open" in governor/escalations.md that
+# It also flags STALE escalations: any entry under "## Open" in governor/escalations.md that
 # is still blank on BOTH Answer and Disposition more than GOVERN_ESCALATION_STALE_DAYS (default 3)
 # days after its stamped `Opened` date. Motivated by an escalation sitting fully unanswered across
 # multiple runs — the supervisor had to rediscover it by hand each run instead of it aging into view.
@@ -45,10 +45,10 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# ── stale open escalations (#312) ─────────────────────────────────────────────
+# ── stale open escalations ─────────────────────────────────────────────
 # An open escalation is STALE when it's still blank on BOTH Answer and Disposition and its stamped
-# `Opened` date is older than the threshold. Entries with no parseable `Opened` (they predate the
-# #312 field and are clearly aging) are flagged too, with ageDays=null. Output: JSON array of
+# `Opened` date is older than the threshold. Entries with no parseable `Opened` (they predate that
+# field and are clearly aging) are flagged too, with ageDays=null. Output: JSON array of
 # {ticket,title,opened,ageDays}, ordered oldest-first so the most-neglected surfaces at the top.
 # Computed independently of the outcome history, so it surfaces even before any run is recorded.
 STALE_DAYS="${GOVERN_ESCALATION_STALE_DAYS:-3}"
@@ -152,11 +152,12 @@ def pct($n; $d): if $d > 0 then (100 * $n / $d) else 0 end;
     selfRefTotalCostUsd: ([$tks[].costUsd | select(.!=null)] | add // 0),
     productTotalCostUsd: ([$tkp[].costUsd | select(.!=null)] | add // 0)
   }
-# per-model sizing breakdown (#19). The history rows now carry the sizing DECISION (model/effort/
+# per-model sizing breakdown. The history rows now carry the sizing DECISION (model/effort/
 # attempt) beside the cost, which is what makes the data learnable: this groups outcomes by the tier
 # that produced them so "does this class of ticket actually succeed at sonnet?" has an answer, instead
 # of a scope→tier table that must stay hand-tuned forever. Grouped over rows that carry a `model`
-# (pre-#19 rows have none → empty array, and every existing consumer is untouched); the token/cost
+# (older rows written before the model field existed have none → empty array, and every existing
+# consumer is untouched); the token/cost
 # aggregates within each group still only count rows that carry token data.
 | .byModel = (
     [$rows[] | select(.model != null)] | group_by(.model)
@@ -178,7 +179,7 @@ def pct($n; $d): if $d > 0 then (100 * $n / $d) else 0 end;
 JQ
 
 # Build the two scoped arrays (as a single JSON with .allTime + .run) then run the reducer on each.
-# OUTCOME rows = history entries WITHOUT a `kind` (the `kind:"validation-evidence"` rows are #252
+# OUTCOME rows = history entries WITHOUT a `kind` (the `kind:"validation-evidence"` rows are
 # evidence POINTERS, not outcomes — counting them would double-count resolves).
 scoped="$(jq -s \
   --arg runf "$RUN_FILTER" --arg lastn "$LAST_N" '
@@ -263,8 +264,9 @@ render() { # metrics-json  header
   else
     printf '  tokens   : (no token data in scope yet — populated going forward as workers finish)\n'
   fi
-  # per-model sizing breakdown (#19) — the tier that produced the spend, so the sizing table can be
-  # read off real outcomes. Silent for pre-#19 rows (no `model` field → empty array).
+  # per-model sizing breakdown — the tier that produced the spend, so the sizing table can be
+  # read off real outcomes. Silent for rows written before the model field existed (no `model`
+  # field → empty array).
   local nmodels lbl mm mo mp mt mc mrt
   nmodels="$(jq -r '.byModel | length' <<<"$m" 2>/dev/null || echo 0)"
   if [[ "${nmodels:-0}" -gt 0 ]]; then
@@ -331,7 +333,7 @@ render_flows() {
   printf '▸ flow registry\n  %s\n\n' "$sum"
 }
 
-echo "════════ Governor health (ROI telemetry · #272) ════════"
+echo "════════ Governor health (ROI telemetry) ════════"
 render "$run_m" "▸ $run_label"
 render "$all_m" "▸ all-time rolling"
 render_stale

@@ -40,7 +40,7 @@ assert_eq "$out2" "5" "picks highest-severity #5 when nothing parked"
 out3="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" GOVERN_ESCALATIONS_FILE="$TMP/none.md" sel1 "5,3" "2,3,5")"
 assert_eq "$out3" "2" "respects CLI exclude list"
 
-# #92: a ticket whose body carries a bold "NOT govern-automatable" marker is auto-skipped — even
+# A ticket whose body carries a bold "NOT govern-automatable" marker is auto-skipped — even
 # the highest-severity one — so the governor never burns a worker on it. A ticket that merely
 # MENTIONS the phrase in prose (no bold anchor) stays selectable.
 cat > "$TMP/na.md" <<'EOF'
@@ -66,7 +66,7 @@ assert_eq "$out5" "7" "with #6 excluded, marked #5 stays skipped → medium #7, 
 na="$(GOVERN_TICKETS_FILE="$TMP/na.md" bash -c 'source "'"$DIR"'/../lib/common.sh"; govern::not_automatable_tickets "'"$TMP/na.md"'"')"
 assert_eq "$na" "$(printf '5\tNOT govern-automatable')" "helper flags only the bold-marked ticket"
 
-# #314: a ticket that edits a file with an OPEN sync-port manual-port escalation is auto-skipped
+# A ticket that edits a file with an OPEN sync-port manual-port escalation is auto-skipped
 # (would collide with that in-progress port's sync-auto branch). Full-path match only — a bare
 # basename mention does NOT collide — and a RESOLVED sync-port escalation does NOT exclude.
 cat > "$TMP/sp-tickets.md" <<'EOF'

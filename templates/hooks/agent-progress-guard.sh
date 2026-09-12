@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # SubagentStop + TeammateIdle hook: reach the SAME deterministic doom signature the headless
 # watchdog uses (govern::early_abort_reason in scripts/govern/lib/common.sh) to in-session `Agent`
-# children, which have no pid and no worker.jsonl for that watchdog to see. Closes #116, rails 6-8 of
-# .specs/2026-09-09-model-orchestration-design.md, and (the TeammateIdle branch) D8/G10 of
-# .specs/2026-09-11-advisor-worker-design.md:
+# children, which have no pid and no worker.jsonl for that watchdog to see. Three behaviors, plus
+# the TeammateIdle branch below:
 #
-#   RAIL 6 — supervision spans every child, not only governor-spawned PROCESSES. This is a
+#   SCOPE — supervision spans every child, not only governor-spawned PROCESSES. This is a
 #            per-subagent frontmatter hook (worker.md/investigator.md/lookup.md `hooks:`) so it
 #            fires for any subagent that carries it, on the SAME transcript shape spawn-worker.sh
 #            already reads off a headless worker's worker.jsonl — `agent_transcript_path` on this
@@ -14,11 +13,11 @@
 #            SubagentStop event `transcript_path` is the PARENT session's own transcript — reading
 #            it would measure the driver's activity, not the child's. `agent_transcript_path` is
 #            the child's, at `.../<session>/subagents/agent-<agent_id>.jsonl`.
-#   RAIL 7 — progress, not liveness. A repeated identical Bash command, or a long run of
-#            read-only turns right before the child tries to stop, is the same STALL/LOOP/ERROR
-#            signature §4.4a already detects — reused via govern::early_abort_reason(), never
+#   PROGRESS, NOT LIVENESS — a repeated identical Bash command, or a long run of read-only turns
+#            right before the child tries to stop, is the same STALL/LOOP/ERROR signature the
+#            headless watchdog already detects: reused via govern::early_abort_reason(), never
 #            reimplemented.
-#   RAIL 8 — a completion notification is a CLAIM, not evidence. This fires at the moment a
+#   A COMPLETION NOTIFICATION IS A CLAIM, not evidence. This fires at the moment a
 #            subagent is ABOUT to stop, i.e. BEFORE whatever it is about to report reaches the
 #            parent as a finished result. A doom signature at that boundary means the "I'm done"
 #            (or "I'll wait for X to report back") the parent is about to receive is unearned:
@@ -27,21 +26,21 @@
 #            CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) ends the loop — never silently, and never via a
 #            notification the parent has no way to check.
 #
-# D8/G10 (.specs/2026-09-11-advisor-worker-design.md) — THE IDLE CASE, on TeammateIdle:
+# THE IDLE CASE, on TeammateIdle:
 #   SubagentStop only fires when a child tries to STOP. A child that goes quiet WITHOUT stopping —
 #   still running, mid-tool-call, or correctly blocked on a background task it must not poll —
-#   never reaches SubagentStop at all, so the rail-8 check above never runs for it. G10's finding,
-#   REFINED 2026-09-11: that silence is not evidence of misconduct. A worker mid-suite-run, healthy
+#   never reaches SubagentStop at all, so the unearned-claim check above never runs for it. That
+#   silence is not evidence of misconduct. A worker mid-suite-run, healthy
 #   and 128 tests in, presents identically to one that is dead. So this hook now ALSO answers
 #   `TeammateIdle` (fires when an agent-team teammate is about to go idle), running the SAME
 #   `govern::early_abort_reason` check against the SAME kind of transcript. Two differences from
 #   the SubagentStop path, both because idle is not a stop:
 #     - this branch DELIBERATELY never blocks, and that is a design choice rather than a missing
 #       lever. Do not "restore" blocking here on discovering that the event supports it. Blocking
-#       idle would be exactly the mistake G10 REFINED calls out: a worker correctly waiting on a
+#       idle would be exactly the wrong call: a worker correctly waiting on a
 #       background task it must not poll emits the identical signal to a doomed one, so a block
 #       punishes waiting correctly. The remedy for a genuinely stuck child is the advisor
-#       establishing state from the repository (D8's first bullet), not holding a teammate open.
+#       establishing state from the repository itself, not holding a teammate open.
 #       UNVERIFIED, and deliberately not relied upon either way: whether `TeammateIdle` accepts an
 #       exit-2 / decision:block at all. Two sources checked on 2026-09-11 disagreed (one read the
 #       docs as listing it blockable like `SubagentStop`, one as not in the blockable set), and
@@ -58,11 +57,11 @@
 #       itself) — same "absence of data is never evidence of doom" contract as everywhere else in
 #       this script, so an unrecognized shape degrades to silent exit 0 rather than a wrong verdict.
 #   The alarm is the whole remedy on this path: worker-prompt.md's doctrine (an idle notification
-#   is a question, never a result) is what actually closes G10 — this hook only gives the advisor
-#   something to check against instead of nothing.
+#   is a question, never a result) is what actually closes the idle case — this hook only gives
+#   the advisor something to check against instead of nothing.
 #
-# SHIPS ON: GOVERN_AGENT_SUPERVISION defaults to 1 as of D8 (rail 7 — an inert-by-default gate is
-# the defect this design is written against). GOVERN_AGENT_SUPERVISION=0 is the kill switch, same
+# SHIPS ON: GOVERN_AGENT_SUPERVISION defaults to 1, because an inert-by-default gate is the exact
+# defect this guard exists to avoid. GOVERN_AGENT_SUPERVISION=0 is the kill switch, same
 # idiom as GOVERN_EARLY_ABORT (root CLAUDE.md anti-pattern 12).
 #
 # HARD CONSTRAINT unchanged from spawn-worker.sh's watchdog: every signal is DETERMINISTIC, read

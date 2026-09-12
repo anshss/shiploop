@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...] — print the recorded-gotchas block
-# (rail 9, #125) for the given <sub-repo>/<path> tokens, or nothing if none of them are named by a
+# for the given <sub-repo>/<path> tokens, or nothing if none of them are named by a
 # **Paths:**-tagged CLAUDE.md/learnings.md entry.
 #
 # This is the interactive lane's entry point into the SAME lookup the headless launcher

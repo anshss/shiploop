@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# validation-record.sh: the standalone validation-evidence sink writer (#252, generalized). Proves:
+# validation-record.sh: the standalone validation-evidence sink writer (a generalized version of the
+# same idea). Proves:
 #   1. writes .claude/shiploop/validation/ticket-<N>-<slug>.md, with the PR(s) and evidence in it.
-#   2. the slug rule EXACTLY matches land-resolution.sh's #252 promotion (lowercase,
+#   2. the slug rule EXACTLY matches land-resolution.sh's promotion (lowercase,
 #      non-alphanumerics -> '-', collapse + trim, cap 60 chars, "validation" fallback).
 #   3. NEVER clobbers an existing file: a second call with different evidence leaves it untouched,
 #      but still prints the (unchanged) path.
@@ -28,7 +29,7 @@ out="$(bash "$VR" --gating machine --ticket 40 --title "VALIDATION: does cross-p
 rc=$?
 assert_eq "$rc" "0" "1. exits 0 on a fresh write"
 assert_eq "$out" ".claude/shiploop/validation/ticket-40-validation-does-cross-provider-restore-round-trip.md" \
-  "2. printed path uses the EXACT #252 slug rule"
+  "2. printed path uses the EXACT slug rule"
 vfile="$T/$out"
 assert_eq "$(test -f "$vfile" && echo y || echo n)" "y" "1. the file actually exists on disk"
 assert_contains "$(cat "$vfile")" "sha256 match, PASS" "1. file body carries the evidence"

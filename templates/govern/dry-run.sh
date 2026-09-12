@@ -35,7 +35,7 @@ status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || ech
 
 # 3. Echo the merge decision — for EVERY PR of the ticket (reported .pr/.prs[] + discovered open
 #    ticket-<N> heads), merge-repo-first, so a multi-repo ticket's siblings are previewed too, not
-#    just the single reported PR (#129).
+#    just the single reported PR.
 echo "[3/5] merge decision:"
 if [[ "$status" == "resolved" ]]; then
   pr_lines="$(govern::collect_ticket_prs "$N" "$report")"

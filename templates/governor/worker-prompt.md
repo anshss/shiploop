@@ -24,7 +24,7 @@ If you cannot tell whether something is in scope, it is not.
    readable directly in the ticket if you were handed a bare number. Implement it. If you conclude a
    step in it is wrong, that is a finding for your report (`newTickets`/`escalation`), never a silent
    substitution: a worker quietly doing something other than what was proposed is the exact failure
-   `.specs/2026-09-11-advisor-worker-design.md` D2 exists to prevent.
+   the proposal gate exists to prevent.
 3. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`.
 4. Commit per sub-repo (`cd` in first), then `gh pr create` against `<org>/<sub-repo>` on the branch
    the worktree gave you. Do NOT merge; do NOT edit `queue/tickets.md`. A PUBLIC-REPO PR HYGIENE
@@ -61,8 +61,8 @@ test to be brief is a failed ticket.
 - **A child's claim is a LEAD** — subagents fabricate confidently, so spend the one `grep`/`Read`
   before acting on it. **Delegate reconnaissance, never the commit, the PR, or the report write**:
   its write policy is restrictive, so YOU persist its findings to disk.
-- **You are the EXECUTION child** in `.specs/2026-09-11-advisor-worker-design.md` D9's split — the
-  one that requires a proposal (item 2 above) and owns the branch/PR. A `lookup`/`investigator`
+- **You are the EXECUTION child** of the two child kinds: the one that requires a proposal
+  (item 2 above) and owns the branch/PR. A `lookup`/`investigator`
   child you spawn for your OWN reconnaissance is the OTHER kind: read-only, no proposal, no PR, and
   it never counts against a dispatch cap. Size it by TYPE (`lookup` for a single fact,
   `investigator` for multi-file diagnosis), never by predicting how hard its answer will be.
@@ -107,9 +107,9 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
 - **About to wait on something long → say so in ONE line before you go quiet, naming what you wait
   on.** A background task you correctly must not poll (a test suite, a consult reply, a
   provisioning job) and a genuine stall look identical from outside: nobody watching your session
-  can tell "blocked correctly" from "stuck" without checking (.specs/2026-09-11-advisor-worker-design.md
-  D8/G10). This is not a discipline rule — a worker waiting correctly is behaving correctly, and
-  saying nothing does not make you wrong — it only reduces how often whoever is watching has to
+  can tell "blocked correctly" from "stuck" without checking. This is not a discipline rule — a
+  worker waiting correctly is behaving correctly, and saying nothing does not make you wrong — it
+  only reduces how often whoever is watching has to
   stop and read your transcript to find out which one you are; it never removes their need to look.
 - **Real UI → drive it headlessly via the project's browser tool** — the real user path.
 - **One judgment fork you cannot resolve → say so, don't guess.** Note it in `.governor-notes.md`.

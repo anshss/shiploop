@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #252: an autonomous validation's evidence must be promoted into the git-tracked sink
+# Regression: an autonomous validation's evidence must be promoted into the git-tracked sink
 # + a greppable pointer, and a dangling ref must fail a check. Hermetic + generic (org acme). Proves:
 #   (1) bookkeep on a PASS (validation.ranLiveTest=true + evidence) WRITES + commits
 #       .claude/shiploop/validation/ticket-<N>-<slug>.md and records a pointer in ticket-history.jsonl;

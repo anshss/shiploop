@@ -21,14 +21,14 @@
 #             - VERSION must be >= the highest published, non-draft release tag, and STRICTLY
 #               GREATER than every BURNED-VERSIONS.txt entry.
 #               The >= on the published side is deliberate and is the ONE place this script
-#               departs from queue #64's proposed "fails when VERSION <= the highest published
-#               tag". A release here is cut AFTER merge (CLAUDE.md rule 10), so main's VERSION
+#               departs from a stricter "fails when VERSION <= the highest published
+#               tag" rule. A release here is cut AFTER merge (CLAUDE.md rule 10), so main's VERSION
 #               equals the newest release for most of its life: verified 2026-09-12, VERSION
 #               was 1.19.4 and the newest published release was v1.19.4. A literal <= test
 #               would therefore red EVERY pull request that is not itself a version bump,
-#               which is a gate nobody can keep green. >= still catches every failure the
-#               ticket names (a rollback below a shipped version, and any reuse of a burned
-#               number), because no version above main's can already be published.
+#               which is a gate nobody can keep green. >= still catches every failure that
+#               stricter rule was meant to catch (a rollback below a shipped version, and any
+#               reuse of a burned number), because no version above main's can already be published.
 #             - CHANGELOG.unreleased.md must not exist with non-whitespace content. That ad
 #               hoc parking convention (commit d648211) either stays empty or is removed, and
 #               never silently carries notes past a release cut.

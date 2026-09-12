@@ -8,7 +8,7 @@
 #   --enforce-budgets flag) as its own entry point; the two share nothing but the lib/common.sh
 #   helpers, and neither calls the other.
 # Usage:  printf '%s' "$report" | land-resolution.sh <N>
-#   stdin  the worker's JSON report. Accepted `.pr` shapes (#120): absent/null (no PR); an OBJECT
+#   stdin  the worker's JSON report. Accepted `.pr` shapes: absent/null (no PR); an OBJECT
 #          {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"} (`.repo`+
 #          `.number` required); or a bare INTEGER `42` (repo resolved from workspace config, see
 #          govern::resolve_pr_repo). Anything else present is a hard refusal, before ANY edit.
@@ -18,22 +18,22 @@ govern::require jq
 
 N="${1:?ticket number required}"
 report="$(cat)"
-# #120: this script is the one that actually deletes the queue block and commits — normalize/
+# This script is the one that actually deletes the queue block and commits — normalize/
 # refuse on `.pr` HERE too, not just in resolve-ticket.sh's caller, since land-resolution.sh is
 # also a documented standalone entry point (the usage line above). A present-but-unparseable `.pr`
 # must never reach the commit-message builder below (it degraded to the literal string "?#0").
 _norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report" || {
-  echo "land-resolution #$N: .pr is present but not one of the accepted shapes (see the usage comment above) — refusing before any edit (#120)." >&2
+  echo "land-resolution #$N: .pr is present but not one of the accepted shapes (see the usage comment above) — refusing before any edit." >&2
   exit 9
 }
 # '|| true' so a MISSING queue dir yields "" (not an unreliable set -e abort with a confusing cd error);
-# the explicit assert below is the deterministic fail-closed guard (#28).
+# the explicit assert below is the deterministic fail-closed guard.
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # the queue/ folder (holds tickets.md)
-govern::assert_commit_dir "$commit_dir"                  # fail closed if the queue dir is missing (#28)
+govern::assert_commit_dir "$commit_dir"                  # fail closed if the queue dir is missing
 declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/vdoc) to `git add` below —
                               # holds the root lesson target AND, on an overflow split, CLAUDE-APPENDIX.md too.
 
-# ── Always-on context ratchet controls (#87) ────────────────────────────────────────────────────
+# ── Always-on context ratchet controls ────────────────────────────────────────────────────
 # Promotion into root CLAUDE.md is AUTOMATIC; removal is a human noticing. That asymmetry is a
 # ratchet: every individual promotion is defensible, and the aggregate is a permanent per-turn tax
 # charged to every session forever. GOVERN_LESSON_MAX_CHARS (below) only caps how BIG one lesson may
@@ -157,7 +157,7 @@ govern_bk::evict_entry() { # <file> <needle>
 }
 
 # Serialize the whole tickets.md read-modify-write + commit. Two concurrent govern drivers
-# (parallel sessions on disjoint tickets, #41) would otherwise race the mktemp→mv (lost
+# (parallel sessions on disjoint tickets) would otherwise race the mktemp→mv (lost
 # block-delete) and the git index. mkdir-mutex; reclaim if a crashed holder left it >5min.
 BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "bookkeep lock busy >60s — proceeding (degraded)"
@@ -165,20 +165,20 @@ trap 'govern::lock_release "$BK_LOCK"' EXIT
 
 # 0. Sync the local checkout's main to origin/main BEFORE editing tickets.md, so the block-delete
 # (and any newTickets/lesson appends) are computed against the FRESHEST origin/main — never a stale
-# base that still carries a block a CONCURRENT driver already deleted+pushed. #108: with parallel
-# drivers sharing one origin (GOVERN_ALLOW_CONCURRENT=1, #41) the bookkeep lock (BK_LOCK) serializes
+# base that still carries a block a CONCURRENT driver already deleted+pushed. With parallel
+# drivers sharing one origin (GOVERN_ALLOW_CONCURRENT=1) the bookkeep lock (BK_LOCK) serializes
 # writes WITHIN one checkout but does NOT serialize the cross-checkout git push/pull; a bookkeep that
 # committed a stale tickets.md and pushed could resurrect an already-resolved block on origin/main
 # (the other driver then re-selects it). The local-FS claim/bookkeep locks can't see another
 # checkout's push — only an origin sync can. Guarded + non-fatal: skipped without an origin
 # (local-only / test repo) and under GOVERN_NO_PUSH=1. ff-pull is the happy path; if local main
 # carries unpushed append-only bookkeep/filing commits (diverged), rebase them rather than give up.
-# #370: `-c rebase.autoStash=true` so a CO-TENANT session's unrelated dirty tracked files (e.g.
+# `-c rebase.autoStash=true` so a CO-TENANT session's unrelated dirty tracked files (e.g.
 # .claude/context/** WIP) never block this rebase — git transiently stashes them, rebases, then
 # restores them byte-identically. This does NOT mask a GENUINE content conflict (both sides edited
 # tickets.md/escalations.md): that still fails the rebase and falls through to the reconcile-manually
 # log line, unchanged.
-# #377: the rebase runs through govern::pull_rebase_autostash so the OVERLAPPING-same-file case — origin
+# The rebase runs through govern::pull_rebase_autostash so the OVERLAPPING-same-file case — origin
 # advancing a govern SCRIPT a co-tenant is concurrently editing — can NEVER wedge the shared index. That
 # case's autostash POP conflicts but git STILL exits 0 (only a warning), leaving unmerged index entries;
 # the old `|| { rebase --abort; }` fallback never fired (rc 0) and every later git add/commit failed
@@ -190,7 +190,7 @@ if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$commit_dir" remote get-url or
     || govern::log "bookkeep #$N: pre-edit ff-pull AND rebase-pull failed — local main diverged from origin/main; reconcile manually ('git pull --rebase origin main && git push') before the next ticket"
 fi
 
-# 0b. Capture the ticket TITLE before the block is deleted (#252) — the promoted validation
+# 0b. Capture the ticket TITLE before the block is deleted — the promoted validation
 # summary file is named ticket-<N>-<slug>.md, and the slug is derived from this title. Read it
 # now while the `## #N — <title>` heading still exists; an empty title falls back to "validation".
 # Portable sed (BSD/macOS awk lacks 3-arg match capture groups): strip the `## #N — ` prefix.
@@ -214,11 +214,11 @@ fi
 # the next `^##[[:space:]]+#<digits>` heading (or EOF), consuming the block's trailing `---`
 # separator so a doubled separator is never left behind AND a bare `---` inside the body no
 # longer terminates the delete early (leaving orphaned body lines under the next heading).
-# CAS check (#108): after the origin sync above, verify the block is still present. If a
+# CAS check: after the origin sync above, verify the block is still present. If a
 # concurrent driver already resolved+deleted it, the delete is a harmless no-op — but log it
 # so a double-processed ticket is VISIBLE here rather than silently re-bookkept.
 if ! grep -qE "^##[[:space:]]+#$N([^0-9]|\$)" "$TICKETS_FILE"; then
-  govern::log "bookkeep #$N: block already absent from tickets.md after origin sync (resolved by a concurrent driver?) — delete is a no-op (#108)"
+  govern::log "bookkeep #$N: block already absent from tickets.md after origin sync (resolved by a concurrent driver?) — delete is a no-op"
 fi
 govern::ticket_block_delete "$N" "$TICKETS_FILE"
 
@@ -230,7 +230,7 @@ govern::ticket_block_delete "$N" "$TICKETS_FILE"
 # compacts already-accumulated gaps. (Legitimate single blanks between blocks are unaffected.)
 tmp="$(mktemp)"; cat -s "$TICKETS_FILE" > "$tmp"; mv "$tmp" "$TICKETS_FILE"
 
-# 2. Append newTickets. Number each via the shared monotonic allocator (#54, #73):
+# 2. Append newTickets. Number each via the shared monotonic allocator:
 # govern::next_ticket_number returns max(persisted high-water mark in governor/.ticket-seq,
 # current tickets.md max) + 1 and bumps the seq, so deleting the highest `## #N` then filing leaves
 # a GAP instead of reclaiming the number, AND a number is never shared with a manual filing that
@@ -260,7 +260,7 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
     text="$(printf '%s' "$report" | jq -r '.lessonPatch.text')"
     insert_text="$text"   # what actually gets inserted into $target — overridden below on overflow
 
-    # ── Placement gate (#83 Part 1) ─────────────────────────────────────────
+    # ── Placement gate ─────────────────────────────────────────
     # A worker CLAIMS this lesson belongs at root (lessonPatch, not an in-PR sub-repo edit), but
     # worker-prompt.md's instruction to route sub-repo-scoped facts into the PR instead is text a
     # worker can get wrong — and it did, in measured practice (root CLAUDE.md growing monotonically
@@ -290,13 +290,13 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         if [[ ! -f "$subrepo_claude" ]] || ! git -C "$subrepo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
           govern::log "bookkeep #$N: placement gate picked '$placement_repo' but $placement_repo/CLAUDE.md or its git repo isn't present here — staying at root CLAUDE.md ($placement_reason)"
         elif [[ -n "$(git -C "$subrepo_dir" status --porcelain 2>/dev/null)" ]]; then
-          # SAFETY (#83 review): never write/commit into a sub-repo whose tree isn't already clean —
+          # SAFETY: never write/commit into a sub-repo whose tree isn't already clean —
           # an operator mid-edit in the main checkout, a concurrent session, or a worker's leftover
           # state could be sitting there, and this gate has no business touching any of it. A dirty
           # tree is exactly the situation where we must back off, not write behind someone's back.
           govern::log "bookkeep #$N: placement gate picked '$placement_repo' but its working tree is DIRTY (uncommitted changes present) — refusing to write/commit into it; staying at root CLAUDE.md ($placement_reason)"
         elif [[ "$(git -C "$subrepo_dir" symbolic-ref --short -q HEAD 2>/dev/null || true)" != "$(govern::subrepo_default_branch "$subrepo_dir")" ]]; then
-          # SAFETY (#83 review): land-resolution.sh runs against the MAIN checkout (resolve-ticket.sh
+          # SAFETY: land-resolution.sh runs against the MAIN checkout (resolve-ticket.sh
           # invokes it from the same tree that owns queue/tickets.md, never a worker's worktree,
           # which lives under a separate WORKTREE_BASE), and the workspace convention is that the
           # main checkout's sub-repos always sit on their default branch (root CLAUDE.md rule #8;
@@ -364,7 +364,7 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
       lesson_max_chars="${GOVERN_LESSON_MAX_CHARS:-600}"
       appendix="$meta_root/CLAUDE-APPENDIX.md"
 
-      # ── Admission gates (#87): sink inversion, ladder, forced eviction ────────────────────────
+      # ── Admission gates: sink inversion, ladder, forced eviction ────────────────────────
       # All three can only DEMOTE to the appendix, never lose a lesson, and all three are skipped
       # entirely when CLAUDE-APPENDIX.md is absent (there is nowhere to demote TO — the pre-existing
       # "insert everything into CLAUDE.md" behaviour is the fallback, exactly as for overflow below).
@@ -434,9 +434,9 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
   fi
 fi
 
-# 3b. PROMOTE a passing autonomous validation into the committed sink (#252), via the standalone
+# 3b. PROMOTE a passing autonomous validation into the committed sink, via the standalone
 # validation-record.sh: this resolve path and /validated (an interactive session) are now two
-# callers of ONE writer, generalizing the file's own #14 principle ("budgets are a property of
+# callers of ONE writer, generalizing that file's own principle ("budgets are a property of
 # the FILES, not of the run") to this capability too. The worker only writes the gitignored raw
 # artifacts under the machine-local investigations sink; nothing else populates the git-tracked
 # `.claude/shiploop/validation/` summary sink that founder-os context cites as proof. Gate unchanged:
@@ -465,12 +465,12 @@ if [[ "$ranlive" == "true" && -n "$evidence" ]]; then
     --ticket "$N" --title "${ticket_title:-validation}" --evidence "$evidence" \
     --source "governor resolve (run $(basename "${GOVERN_RUN_DIR:-manual}"))" --gating machine \
     ${vr_pr_args[@]+"${vr_pr_args[@]}"})" \
-    || { govern::log "bookkeep #$N: validation-record.sh failed, continuing the resolve without a sink record (#252)"; vdoc_rel=""; }
+    || { govern::log "bookkeep #$N: validation-record.sh failed, continuing the resolve without a sink record"; vdoc_rel=""; }
   if [[ -n "$vdoc_rel" ]]; then vdoc="$meta_root/$vdoc_rel"; fi
 fi
 
 # 4. Commit (in the dir holding tickets.md — the main checkout in real use), then publish.
-# #129: a multi-repo ticket reports several PRs (.pr + .prs[]); list them all in the commit message
+# A multi-repo ticket reports several PRs (.pr + .prs[]); list them all in the commit message
 # so the resolve commit records every PR, not just the first.
 pr="$(printf '%s' "$report" | jq -r '
   ([ .pr ] + (.prs // []))
@@ -480,20 +480,20 @@ pr="$(printf '%s' "$report" | jq -r '
 ( cd "$commit_dir"
   git add "$(basename "$TICKETS_FILE")"
   for pf in ${patched_files[@]+"${patched_files[@]}"}; do git add "$pf"; done   # lesson target + (on overflow) CLAUDE-APPENDIX.md
-  git add "$SEQ_FILE" 2>/dev/null || true  # #54 high-water mark (absolute path; no-op if outside repo, e.g. tests)
-  [[ -n "$vdoc" ]] && git add "$vdoc" 2>/dev/null || true  # #252 promoted validation summary (absolute path)
+  git add "$SEQ_FILE" 2>/dev/null || true  # high-water mark (absolute path; no-op if outside repo, e.g. tests)
+  [[ -n "$vdoc" ]] && git add "$vdoc" 2>/dev/null || true  # promoted validation summary (absolute path)
   git commit -q -m "docs(tickets): resolve #$N ($pr)" || true
 
   # Publish the bookkeep commit as a CAS-with-retry loop so a concurrent driver sharing one
   # origin/main can't resurrect this delete. If the push is rejected (origin advanced under us —
   # another driver pushed its own tickets.md edit), rebase our append-only commit onto the new
-  # origin/main and retry. #108: a LOOP (not a single retry) so two+ concurrent drivers racing the
+  # origin/main and retry. A LOOP (not a single retry) so two+ concurrent drivers racing the
   # same origin/main can't exhaust one retry and leave our delete unpushed (the resolved block then
   # resurfaces on origin → re-selected). The rebase replays our delete diff cleanly: the per-ticket
-  # claim lock (#41) guarantees a concurrent push is a DIFFERENT ticket's block, so there's no
+  # claim lock guarantees a concurrent push is a DIFFERENT ticket's block, so there's no
   # overlap to conflict on. Guarded + non-fatal: a pure no-op without an origin (local-only / test
   # repo) or under GOVERN_NO_PUSH=1; exhausting all retries logs one clear reconcile message.
-  # #370/#377: the rebase runs through govern::pull_rebase_autostash — same coexistence rationale as
+  # The rebase runs through govern::pull_rebase_autostash — same coexistence rationale as
   # the pre-edit sync above. A co-tenant's dirty tracked files never block this retry loop; an
   # OVERLAPPING-same-file autostash-pop conflict (rc 0 + unmerged index) is detected and recovered
   # (our commit is already rebased onto origin/main → the next push is a fast-forward; co-tenant WIP is
@@ -532,7 +532,7 @@ if [[ -n "$ticket_flow" ]] && command -v govern::flows_stamp_from_report >/dev/n
   fi
 fi
 
-# 6. POINTER ON RESOLVE (#252). The ticket block is now gone; reconstructing the evidence path from
+# 6. POINTER ON RESOLVE. The ticket block is now gone; reconstructing the evidence path from
 # the slug later is fragile. Persist an explicit, greppable pointer to the cross-run history file
 # recording the PR(s) AND the promoted validation-summary path, so a resolved validation ticket keeps
 # a durable, machine-readable link to its evidence even though the block was deleted. Append-only,
@@ -545,7 +545,7 @@ if [[ -n "$vdoc_rel" ]]; then
   printf '{"ticket":%s,"status":"resolved","kind":"validation-evidence","prs":%s,"validationDoc":%s,"evidence":%s,"ts":%s}\n' \
     "$N" "$pr_json" "$(jq -Rn --arg s "$vdoc_rel" '$s')" "$(jq -Rn --arg s "$evidence" '$s')" "$(date +%s)" \
     >> "$HISTORY_FILE" 2>/dev/null \
-    && govern::log "bookkeep #$N: recorded validation-evidence pointer → $vdoc_rel in $(basename "$HISTORY_FILE") (#252)" || true
+    && govern::log "bookkeep #$N: recorded validation-evidence pointer → $vdoc_rel in $(basename "$HISTORY_FILE")" || true
 fi
 
 echo "bookkept #$N: block deleted; +$count ticket(s); lesson=${target:-none}; validationDoc=${vdoc_rel:-none}; pr=$pr"

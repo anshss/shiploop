@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pre-dispatch-check.sh's proposed-solution gate (.specs/2026-09-11-advisor-worker-design.md D2,
-# queue #130's full text recoverable at `git show 912e4be:queue/tickets.md`). Ships ON by default —
+# pre-dispatch-check.sh's proposed-solution gate (the originating queue entry's full text is
+# recoverable at `git show 912e4be:queue/tickets.md`). Ships ON by default —
 # unlike every other knob in test/assert.sh, this one's SHIPPED default genuinely diverges from the
 # suite default, so assert.sh forces it off for every OTHER test and this file opts back in.
 #
@@ -12,10 +12,10 @@
 #   3. A ticket with a real, multi-paragraph proposal (and no **Precision:**) -> proceed.
 #   4. GOVERN_PROPOSAL_GATE=0 -> proceed even on the no-proposal ticket (the documented kill switch).
 #   5. Exactly one verdict line on stdout, the same posture every other gate holds.
-#   6. D9 (.specs/2026-09-11-advisor-worker-design.md, corrected 2026-09-11): this gate is scoped to
+#   6. This gate is scoped to
 #      a TICKET-NUMBER dispatch and can never become a prompt-shape check — that distinction is
-#      router-posture-guard.sh's job (D4), not this script's. Pinned here so a later "improvement"
-#      cannot quietly widen this gate into the #126 false positive from a second direction: a
+#      router-posture-guard.sh's job, not this script's. Pinned here so a later "improvement"
+#      cannot quietly widen this gate into a false positive from a second direction: a
 #      non-numeric (prompt-shaped) argument is a usage error, not a verdict, and the gate's decision
 #      comes ONLY from the ticket file for that number — there is no second argument for a prompt
 #      or an agent type to travel through.
@@ -93,7 +93,7 @@ assert_eq "$out" "proceed" "4. GOVERN_PROPOSAL_GATE=0 bypasses the gate entirely
 lines="$(GOVERN_PROPOSAL_GATE=1 "$PDC" 60 | wc -l | tr -d ' ')"
 assert_eq "$lines" "1" "5. exactly one line of verdict on stdout"
 
-# ── 6. D9: scoped to a ticket-number dispatch, never a prompt shape ─────────────────────────────
+# ── 6. scoped to a ticket-number dispatch, never a prompt shape ─────────────────────────────
 # A prompt-shaped (non-numeric) "argument" is a usage error -- there is no path from an arbitrary
 # string to a verdict. This is what keeps the read-only-child exemption entirely OUT of this
 # script: nothing here ever receives a prompt to classify in the first place.

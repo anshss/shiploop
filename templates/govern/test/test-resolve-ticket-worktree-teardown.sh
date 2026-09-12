@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # resolve-ticket.sh's worktree-teardown step must never ASSUME the worktree is named
-# `ticket-$N` (#127/G8/G9 — the interactive lane is self-service, worker.md's own convention is
+# `ticket-$N` (the interactive lane is self-service, worker.md's own convention is
 # `t<N>`, and a non-ticket session can name it anything). This is a REGRESSION test for the fix:
 # derive the name from the recorded `ticket-$N` convention FIRST (verified via worktree/rm.sh's
 # own registry check, never assumed), and fall back to the merged PR's headRefName when that

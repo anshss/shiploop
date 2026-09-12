@@ -20,35 +20,35 @@
 #      (transcript under .../subagents/) are both silent. Workers hold the Agent tool for
 #      their own sub-delegation, so nagging them is wrong AND would break sub-delegation.
 #   7. The deny never consumes the shared per-session warn cap (a deny is not an advisory).
-#   8. (#115) A write marker under a NEGATION ("do not open a PR", "not create a
+#   8. A write marker under a NEGATION ("do not open a PR", "not create a
 #      worktree") does not count against the exemption, for EVERY write marker, not
 #      just the "do not edit/commit" pair the first fix special-cased. A genuine,
 #      non-negated write verb still defeats it.
-#   9. (#115) AUTHORING is its own two-signal exemption: an authoring verb
+#   9. AUTHORING is its own two-signal exemption: an authoring verb
 #      (draft/author) PLUS a content-artifact noun (prose, write-up, entries) reads
 #      as producing text about a ticket, not dispatching it -- even though the
 #      quoted/drafted text is full of ticket references and "Fix:"-shaped headers.
 #      Either signal alone, or a real non-negated write verb anywhere, still denies.
-#  10. (#115) Item-shaped NAME/DESCRIPTION (`t1004`, `ticket-955`, `w973`) carries
+#  10. Item-shaped NAME/DESCRIPTION (`t1004`, `ticket-955`, `w973`) carries
 #      ticket-shaped + dispatch intent on its own, even when the PROMPT body never
 #      says "ticket" or a dispatch verb. A single-digit `t1`/`t2` is a step label,
 #      not a ticket number, and stays untouched; an item-shaped name doing
 #      genuinely read-only work is still exempt.
-#  11. (D9, 2026-09-11) subagent_type "lookup"/"investigator" is exempt from the deny
+#  11. subagent_type "lookup"/"investigator" is exempt from the deny
 #      even on a GENUINELY ticket-shaped, non-read-only-framed dispatch -- proven from
 #      the type alone, the same as "worker" already was, never from prompt shape. The
 #      identical prompt with no subagent_type (or a stock type) is still denied: the
 #      type is what changed, not the words.
-#  12. (#126, 2026-09-11) A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166")
+#  12. A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166")
 #      is not a ticket reference: it must not make an otherwise non-ticket prompt
 #      ticket-shaped. A genuine ticket reference elsewhere in the same prompt still
 #      denies, so the fix narrows the false positive without widening the exemption.
-#  13. (#126, 2026-09-11) One negator governs a whole LIST in English -- "do not
+#  13. One negator governs a whole LIST in English -- "do not
 #      edit, commit, or create anything" negates BOTH edit and commit -- but the
 #      first negation fix only stripped ONE write verb per trigger, so a read-only
 #      audit prompt (read-only, audit, explain, report back, do not edit) was denied
 #      anyway because "commit" survived un-negated later in the same sentence.
-#  14. (D4, 2026-09-11) the fan-out cap: nothing previously counted a genuine
+#  14. the fan-out cap: nothing previously counted a genuine
 #      subagent_type "worker" dispatch, so a session could spawn unbounded workers.
 #      Past MAX_WORKERS_PER_SESSION, an advisory (never a deny) is attached; the
 #      kill switch is GOVERN_WORKER_FANOUT_NUDGE=0.
@@ -179,7 +179,7 @@ clear_counter "$sid"
 
 # ── 8. negated write verbs beyond edit/commit don't count against the exemption ─────
 # The first fix only special-cased "do not (edit|commit)"; a prohibition worded
-# "do not open a PR" / "do not create a worktree" slipped straight past it (#115).
+# "do not open a PR" / "do not create a worktree" slipped straight past it.
 sid="ticketroute-negwrite"; clear_counter "$sid"
 payload "" "Audit ticket #42, fix it. Do not open a PR, do not create a worktree, and do not merge." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
@@ -216,7 +216,7 @@ assert_contains "$out" '"permissionDecision": "deny"' "9c. authoring framing wit
 clear_counter "$sid"
 
 # ── 10. named-child blind spot: an item-shaped name/description carries both signals ─
-# #115: item-named children measured since 2026-09-04 outnumbered subagent_type
+# Item-named children measured since 2026-09-04 outnumbered subagent_type
 # "worker" ones roughly 4 to 1, and the prompt-only scan saw none of them because the
 # PROMPT never says "ticket" or a dispatch verb -- only the NAME/description does.
 payload_named() { # <name> <description> <prompt> <session_id>
@@ -260,7 +260,7 @@ out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "10e. an item-shaped name doing genuinely read-only work is still exempt"
 clear_counter "$sid"
 
-# ── 11. D9: subagent_type lookup/investigator is a read-only data child, exempt by
+# ── 11. subagent_type lookup/investigator is a read-only data child, exempt by
 #          TYPE ALONE, even on a prompt that would otherwise deny ────────────────
 # Same prompt, two directions: no subagent_type denies (this is genuine ticket
 # dispatch, per test 1's shape), lookup/investigator does not, because the type
@@ -283,7 +283,7 @@ out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "11c. subagent_type investigator passes untouched on the same genuinely-dispatch-shaped prompt"
 clear_counter "$sid"
 
-# ── 12. #126: a "#NNN" that prose marks as a PULL REQUEST is not a ticket reference ─
+# ── 12. a "#NNN" that prose marks as a PULL REQUEST is not a ticket reference ─
 sid="ticketroute-prref-only"; clear_counter "$sid"
 payload "" "Reference: PR #166. Finish the migration end to end." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
@@ -303,11 +303,11 @@ assert_contains "$out" '"permissionDecision": "deny"' "12c. a genuine ticket ref
 assert_contains "$out" 'govern:pre-dispatch -- 200' "12d. the recovered ticket number is the real ticket (200), never the PR number (166)"
 clear_counter "$sid"
 
-# ── 13. #126: one negator governs a whole LIST, not just the first write verb ───
+# ── 13. one negator governs a whole LIST, not just the first write verb ───
 sid="ticketroute-neglist"; clear_counter "$sid"
 payload "" "Audit ticket #126 read-only and fix the root-cause writeup: investigate why the guard denies audits, explain the finding, and report back. Do not edit, commit, or create anything." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
-assert_eq "$out" "" "13. a read-only framing with a NEGATED LIST of write verbs (edit, commit) is exempt -- the exact reproduction from G4/D4"
+assert_eq "$out" "" "13. a read-only framing with a NEGATED LIST of write verbs (edit, commit) is exempt"
 clear_counter "$sid"
 
 sid="ticketroute-neglist-mixed"; clear_counter "$sid"
@@ -316,7 +316,7 @@ out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_contains "$out" '"permissionDecision": "deny"' "13b. a real (non-negated) write verb OUTSIDE the negated list is still DENIED"
 clear_counter "$sid"
 
-# ── 14. D4: the fan-out cap on genuine WORKER dispatches, advisory only ─────────
+# ── 14. the fan-out cap on genuine WORKER dispatches, advisory only ─────────
 # MAX_WORKERS_PER_SESSION=5 in the script under test. This is a SEPARATE counter
 # file from the Read/Bash advisory one (contract item 7's cap must stay untouched).
 clear_fanout() { rm -f "${TMPDIR:-/tmp}/metarepo-router-posture-worker-fanout-$1" 2>/dev/null || true; }
@@ -349,7 +349,7 @@ sid="ticketroute-fanout-datachild"; clear_fanout "$sid"
 for i in 1 2 3 4 5 6 7; do
   payload "lookup" "Resolve ticket #$((950 + i)) end to end and open a PR." "$sid" "/tmp/fake-transcript-fd-$i.jsonl"
   out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
-  assert_eq "$out" "" "14f.$i a lookup dispatch is silent regardless of count (data children are not capped, D9)"
+  assert_eq "$out" "" "14f.$i a lookup dispatch is silent regardless of count (data children are not capped)"
 done
 clear_fanout "$sid"
 

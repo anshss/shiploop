@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #239: spawn-worker.sh must run the post-worker orphan-resource sweep on
+# Regression: spawn-worker.sh must run the post-worker orphan-resource sweep on
 # EVERY exit path — including a worker hard-KILLED by GOVERN_WORKER_TIMEOUT (the #3001 leak: a
 # killed worker never ran its own cleanup). We use the GOVERN_DEPLOY_SWEEP_CMD test seam to record
 # that the sweep fired, and assert it fires both when the worker resolves cleanly AND when it is
@@ -70,10 +70,10 @@ EOF
 chmod +x "$TMP/fake-claude-killed.sh"
 
 out2="$(run_spawn "$TMP/fake-claude-killed.sh" killed)"
-# #241: a worker hard-killed before writing a verdict is now `timeout` (incomplete → re-run), NOT
+# A worker hard-killed before writing a verdict is now `timeout` (incomplete → re-run), NOT
 # `failed` — a kill-before-verdict can mask a possibly-working result, so it must not read as a
-# genuine feature failure. (The #239 orphan-resource sweep below still fires regardless of status.)
-assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "timeout" "killed worker → synthesized timeout report (not failed) [#241]"
+# genuine feature failure. (The orphan-resource sweep below still fires regardless of status.)
+assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "timeout" "killed worker → synthesized timeout report (not failed)"
 assert_eq "$(grep -c . "$SWEEPLOG")" "1" "sweep fires after a KILLED/timed-out worker (the #3001 leak fix)"
 
 # The sweep was handed a numeric start epoch (so the real sweep can window by --created-after).

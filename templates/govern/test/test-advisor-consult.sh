@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# #127, design Layer 3 (.specs/2026-09-09-model-orchestration-design.md): "a sonnet worker that
-# reaches a decision it cannot make spawns ONE opus Agent with a scoped question... continues at
-# sonnet." advisor-consult.sh is the thin CLI wrapper both worker lanes call into govern::advisor_*
-# (lib/common.sh), same shape as gotchas-for-paths.sh/test-gotchas-for-paths.sh (#125/#176).
+# A sonnet worker that reaches a decision it cannot make spawns ONE opus Agent with a scoped
+# question... continues at sonnet. advisor-consult.sh is the thin CLI wrapper both worker lanes
+# call into govern::advisor_* (lib/common.sh), same shape as
+# gotchas-for-paths.sh/test-gotchas-for-paths.sh.
 #
 # Cases:
 #   1. GOVERN_ADVISOR unset (default OFF) -> claim denies "disabled" and writes NOTHING: a true
@@ -17,7 +17,7 @@
 #      never silently unbounded.
 #   6. GOVERN_ADVISOR_BUDGET (spawn-worker.sh's precision-grade export) overrides
 #      GOVERN_ADVISOR_PER_WORKER for that dispatch; set to 0 it denies immediately (the
-#      stated/scoped grades' "carries ZERO budget" behavior, #127/test-precision-grade.sh), and
+#      stated/scoped grades' "carries ZERO budget" behavior, test-precision-grade.sh), and
 #      when UNSET entirely (the interactive lane, which has no launcher and no grade) falls back to
 #      the plain per-worker default rather than being permanently zero-budgeted.
 #   7. An `allow` names NO model. Nothing ever spawns an advisor, so the response carries no model
@@ -124,7 +124,7 @@ rec="$(jq -c 'select(.event=="record")' "$TMP/logs/ticket-760/advisor.jsonl")"
 assert_contains "$rec" '"model":"opus"' "9a. the closing row records the model that answered"
 assert_contains "$rec" '"tokens":1234' "9b. and the tokens used"
 assert_contains "$rec" "use govern::retry_class for this" "9c. and the answer summary"
-assert_contains "$rec" '"workerRemaining"' "9d. and the budget state after (rail 4: consults emit events the dispatching side can read)"
+assert_contains "$rec" '"workerRemaining"' "9d. and the budget state after (consults emit events the dispatching side can read)"
 
 # ── 10. usage errors ───────────────────────────────────────────────────────────────────────────
 rc=0; run -- >/dev/null 2>&1 || rc=$?; assert_eq "$rc" "2" "10a. no verb at all -> exit 2"

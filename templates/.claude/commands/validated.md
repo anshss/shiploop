@@ -1,5 +1,5 @@
 ---
-description: Record durable, git-tracked evidence that a ticket was actually validated (interactive-session twin of the governor's #252 auto-promotion).
+description: Record durable, git-tracked evidence that a ticket was actually validated (interactive-session twin of the governor's auto-promotion).
 allowed-tools: Bash, Read
 ---
 
@@ -12,7 +12,7 @@ e.g. `/validated 94 the restore round-tripped clean`).
 
 **Load-bearing division of labor:** you gather and state the evidence; the write itself goes through
 `scripts/govern/validation-record.sh`, the SAME script the governor's resolve path calls on a
-passing autonomous validation (#252). This command is the interactive twin: before it existed, a
+passing autonomous validation. This command is the interactive twin: before it existed, a
 ticket you validated BY HAND in a live session recorded nothing durable, since only a
 governor-dispatched resolve ever populated the committed sink founder-os context cites as proof.
 

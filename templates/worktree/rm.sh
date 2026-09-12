@@ -103,7 +103,7 @@ fi
 # `git worktree remove` deletes the tree but leaves any dev process (orchestrator /
 # server / Next.js) that was booted inside it running — a prod-pointed process then
 # outlives its worktree as a zombie squatting the slot's port. The kill is
-# OWNERSHIP-scoped (anti-pattern #10): a process on a slot port is killed ONLY if its
+# OWNERSHIP-scoped: a process on a slot port is killed ONLY if its
 # cwd is under THIS worktree, so a parallel session on a colliding slot is never
 # cross-killed. Ports come from the worktree's own worktree.env (the WORKTREE_<REPO>_PORT
 # vars written by new.sh: slot × SLOT_PORT_STEP offset). If worktree.env is gone we can't

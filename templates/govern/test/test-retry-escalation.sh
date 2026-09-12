@@ -21,7 +21,7 @@
 #   -----------|---------------------------------------------------|---------------------------
 #   infra      | GOVERN_RETRY_CLASS=infra (driver-declared)        | SAME tier + SAME effort
 #   ci         | GOVERN_FIX_CI set, or history retryClass=ci       | SAME tier + SAME effort
-#   budget     | history status=budget-exceeded (#16)              | SAME tier + SAME effort
+#   budget     | history status=budget-exceeded                    | SAME tier + SAME effort
 #   judgment   | history failed/parked WITH a PR (repos non-empty) | SAME tier, effort bumped, RESPEC
 #   unknown    | anything else (timeout, no PR, no history)        | SAME tier + SAME effort, RESPEC
 #

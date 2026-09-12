@@ -3,7 +3,7 @@
 # ("Validation / test / 'does X actually work' tickets"). The recognizer and the prompt had
 # drifted: the gate's inline grep matched tells 1-2 and only the "live-verif" half of tell 3, so
 # an informally-worded validation ticket was validation-required BY THE WORKER but invisible to
-# the #67/#73 safety net — a worker resolving it on static analysis sailed straight through the
+# the safety net — a worker resolving it on static analysis sailed straight through the
 # gate that exists to stop exactly that. A silent fail-OPEN.
 #
 # The recognizer is deliberately fail-CLOSED, so this file asserts BOTH directions: every tell is

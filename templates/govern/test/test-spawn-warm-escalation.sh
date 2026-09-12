@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# §4.4b WARM ESCALATION — the dying attempt's findings must survive it.
+# WARM ESCALATION — the dying attempt's findings must survive it.
 #
 # Retries are COLD: there is no `--resume`, so a retry is a fresh `-p` in the PRESERVED worktree. The
 # FILES attempt 1 wrote survive; its CONTEXT does not. Escalation is therefore a full-price second
@@ -105,7 +105,7 @@ printf '{"attempt":1,"model":"sonnet","tokens":{"input":100,"output":50,"cacheRe
 run_spawn "$TMP/logs1" "$TMP/fake-claude-capture.sh" >/dev/null
 seen="$(cat "$TMP/seen-prompt.txt")"
 
-assert_contains "$seen" "STRUCTURED HANDOFF" "the retry prompt carries a dedicated structured-handoff section [§4.4b]"
+assert_contains "$seen" "STRUCTURED HANDOFF" "the retry prompt carries a dedicated structured-handoff section"
 assert_contains "$seen" "RULEDOUT-MARKER"  "the handoff's 'ruled out' reaches the escalated attempt"
 assert_contains "$seen" "STOPPEDAT-MARKER" "the handoff's 'stopped at' reaches the escalated attempt"
 assert_contains "$seen" "NEXT-MARKER"      "the handoff's 'would try next' reaches the escalated attempt"
@@ -148,7 +148,7 @@ out="$(run_spawn "$TMP/logs3" "$TMP/fake-claude-hang.sh" GOVERN_WORKER_TIMEOUT=3
 assert_eq "$(printf '%s' "$out" | jq -r '.status')" "timeout" "the hung worker is killed before it can write a handoff"
 nf="$TMP/wt/ticket-7/.governor-notes.md"
 [[ -f "$nf" ]] && wrote=yes || wrote=no
-assert_eq "$wrote" "yes" "the GOVERNOR writes a handoff when the killed worker could not [§4.4b]"
+assert_eq "$wrote" "yes" "the GOVERNOR writes a handoff when the killed worker could not"
 notes="$(cat "$nf" 2>/dev/null || true)"
 assert_contains "$notes" "<!-- GOVERN:HANDOFF -->" "the synthesized block uses the same fenced format"
 assert_contains "$notes" "written by the GOVERNOR" "it declares that the worker did not write it"

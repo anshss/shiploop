@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# push v2 (#45) — the auto-fork contribution funnel in sync-port.sh.
+# push v2 — the auto-fork contribution funnel in sync-port.sh.
 #
 # sync-port derives the templates-repo access posture from git+GitHub (not from
 # workspace config) and routes the push + PR accordingly, so an adopter's port

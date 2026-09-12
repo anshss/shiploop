@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proof for #72, re-targeted at resolve-ticket.sh (the loop purge moved this step here): on a
+# Proof, re-targeted at resolve-ticket.sh (the loop purge moved this step here): on a
 # LOCAL-FIRST repo an ADDITIVE migration ships as auto-applying code (no deployed prod DB), so the
 # governor must NOT park it "apply migration to prod manually", it lands normally. A DESTRUCTIVE
 # migration on the same repo STILL escalates. Hermetic, resolve-ticket.sh sandboxed next to stubs of
@@ -51,10 +51,10 @@ L1="$T1/landed.log"; : > "$L1"
 report1='{"status":"resolved","pr":{"repo":"web","number":101,"url":"http://pr/1"},"prs":[],"migration":{"needed":true,"destructive":false,"name":"20260610_add_x","note":"ADD TABLE"}}'
 add_out="$( cd "$T1" && printf '%s' "$report1" | LANDED_LOG="$L1" bash "$T1/bin/resolve-ticket.sh" 1 2>&1 )"
 add_rc=$?
-assert_contains "$add_out" "ships as auto-applying code on local-first repo" "#72: additive local-first migration is NOT parked"
-assert_eq "$(printf '%s' "$add_out" | grep -c 'no GOVERN_MIGRATE_CMD is configured')" "0" "#72: no spurious manual-apply escalation (GOVERN_MIGRATE_CMD gate never fires)"
-assert_eq "$add_rc" "0" "#72: additive local-first ticket resolves (exit 0)"
-assert_eq "$(landed_count "$L1")" "1" "#72: additive local-first ticket lands (normal PR)"
+assert_contains "$add_out" "ships as auto-applying code on local-first repo" "additive local-first migration is NOT parked"
+assert_eq "$(printf '%s' "$add_out" | grep -c 'no GOVERN_MIGRATE_CMD is configured')" "0" "no spurious manual-apply escalation (GOVERN_MIGRATE_CMD gate never fires)"
+assert_eq "$add_rc" "0" "additive local-first ticket resolves (exit 0)"
+assert_eq "$(landed_count "$L1")" "1" "additive local-first ticket lands (normal PR)"
 rm -rf "$T1"
 
 # ── DESTRUCTIVE migration on the SAME local-first repo → STILL escalates (parked) ──────────────────
@@ -63,9 +63,9 @@ L2="$T2/landed.log"; : > "$L2"
 report2='{"status":"resolved","pr":{"repo":"web","number":101,"url":"http://pr/1"},"prs":[],"migration":{"needed":true,"destructive":true,"name":"20260610_drop_x","note":"DROP COLUMN"}}'
 destr_out="$( cd "$T2" && printf '%s' "$report2" | LANDED_LOG="$L2" bash "$T2/bin/resolve-ticket.sh" 1 2>&1 )"
 destr_rc=$?
-assert_contains "$destr_out" "DESTRUCTIVE prod migration" "#72: destructive migration still escalates on a local-first repo"
-assert_eq "$destr_rc" "6" "#72: destructive local-first ticket exits 6"
-assert_eq "$(landed_count "$L2")" "0" "#72: destructive local-first ticket is parked (never lands)"
+assert_contains "$destr_out" "DESTRUCTIVE prod migration" "destructive migration still escalates on a local-first repo"
+assert_eq "$destr_rc" "6" "destructive local-first ticket exits 6"
+assert_eq "$(landed_count "$L2")" "0" "destructive local-first ticket is parked (never lands)"
 rm -rf "$T2"
 
 assert_done

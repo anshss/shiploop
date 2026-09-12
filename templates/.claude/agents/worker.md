@@ -40,7 +40,7 @@ Ignore only these two things in it, which describe the other lane:
    `scripts/govern/gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...]` for every path you are
    about to touch (from the ticket's `Where:` field or the files you've identified), and treat any
    output the same way §1 describes. Empty output is the common case and not a reason to skip it.
-3. **Self-serve the proposal lookup too, and keep its grade for delta 4** (D2/D6):
+3. **Self-serve the proposal lookup too, and keep its grade for delta 4:**
    `scripts/govern/ticket-proposal.sh <N>`. **Empty output → STOP before doing any work** and message
    the advisor for the real proposal (delta 4's channel) — never invent one, never treat the plain
    problem description as the proposal. `spawn-worker.sh` has no counterpart launcher here to

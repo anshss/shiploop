@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #75: the worker log must be RUN-SCOPED so a re-run of ticket N never reads
+# Regression: the worker log must be RUN-SCOPED so a re-run of ticket N never reads
 # a PRIOR run's stale worker.jsonl. Asserts:
 #   1. with GOVERN_RUN_DIR set, spawn-worker writes under $GOVERN_RUN_DIR/ticket-N/ (NOT flat).
 #   2. a pre-existing legacy flat logs/govern/ticket-N/worker.jsonl is ROTATED away at spawn, so no
@@ -10,7 +10,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 SPAWN="$DIR/../spawn-worker.sh"
 
-# #127: be HERMETIC. When this test runs UNDER the governor (e.g. as part of the suite during a
+# Be HERMETIC. When this test runs UNDER the governor (e.g. as part of the suite during a
 # govern run, or in a worker worktree) the loop has exported GOVERN_RUN_DIR / GOVERN_RUN / GOVERN_*
 # into the environment. Case 3 below asserts the STANDALONE fallback (no GOVERN_RUN_DIR → flat
 # path); an inherited GOVERN_RUN_DIR leaks into that spawn and the worker writes to the run-scoped

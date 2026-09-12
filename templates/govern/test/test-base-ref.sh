@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #29: wt_subrepo_base_ref must branch a NEW sub-repo worktree off the freshly-fetched origin/main
+# wt_subrepo_base_ref must branch a NEW sub-repo worktree off the freshly-fetched origin/main
 # (so a stale, behind local `main` in the read-only main checkout can't produce PRs born conflicting),
 # and fall back to local `main` only when there's no reachable origin. Hermetic: real temp git repos,
 # no network. gh is never touched.

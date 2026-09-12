@@ -2,7 +2,7 @@
 # Leak B regression: `worktree:rm` must kill the dev stack (orchestrator/server/Next.js) a governor
 # worker booted INSIDE the worktree BEFORE removing the dir — otherwise a prod-pointed dev process
 # outlives its removed worktree as a zombie squatting the slot's port. The kill MUST be
-# OWNERSHIP-scoped (anti-pattern #10): a process on a slot port is killed ONLY if its cwd is under
+# OWNERSHIP-scoped: a process on a slot port is killed ONLY if its cwd is under
 # THIS worktree, so a parallel session on a colliding slot is never cross-killed.
 #
 # This is a focused function-level test: it extracts the REAL `kill_worktree_stack` function from
@@ -83,7 +83,7 @@ wait_gone "$owned_pid" 50
 dead_o=no; kill -0 "$owned_pid" 2>/dev/null || dead_o=yes
 alive_f=no; kill -0 "$foreign_pid" 2>/dev/null && alive_f=yes
 assert_eq "$dead_o"   "yes" "OWNED stack process (cwd under worktree) is killed"
-assert_eq "$alive_f"  "yes" "FOREIGN process on a worktree port (cwd OUTSIDE) is NOT killed — ownership-scoped (anti-pattern #10)"
+assert_eq "$alive_f"  "yes" "FOREIGN process on a worktree port (cwd OUTSIDE) is NOT killed — ownership-scoped"
 
 # --- worktree.env gone → skip gracefully, never an unscoped kill ---
 GONE="$T/gone"; mkdir -p "$GONE"

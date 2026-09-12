@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #241 regression: a validation worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its
+# Regression: a validation worker HARD-KILLED by GOVERN_WORKER_TIMEOUT before it could write its
 # verdict must NOT be recorded as `failed` (which masks a possibly-working feature as broken) — it is
 # a DISTINCT `timeout` (incomplete, re-run) outcome. The classification lives in spawn-worker.sh, so
 # it is what this file proves. The cross-attempt consequence of a `timeout` row (it feeds the
@@ -48,7 +48,7 @@ out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
   GOVERN_WORKER_TIMEOUT=1 \
   "$SPAWN" 7 </dev/null)"
 
-assert_eq "$(printf '%s' "$out" | jq -r '.status')" "timeout" "killed-before-verdict → status:timeout (NOT failed) [#241]"
+assert_eq "$(printf '%s' "$out" | jq -r '.status')" "timeout" "killed-before-verdict → status:timeout (NOT failed)"
 assert_contains "$out" "INCOMPLETE" "timeout report explains it is incomplete, not a genuine failure"
 
 assert_done

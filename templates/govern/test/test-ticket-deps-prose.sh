@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #29 — govern::ticket_deps must not harvest #N from PROSE that merely mentions "depends on" or
+# govern::ticket_deps must not harvest #N from PROSE that merely mentions "depends on" or
 # other tickets by number. Proves:
 #   (A) a ticket whose body contains a real `**Depends on:** #K` line PLUS a separate prose
 #       sentence beginning "Depends on ..." that also mentions unrelated `#N` tickets returns
@@ -59,7 +59,7 @@ Follow-up prose on the very next line mentioning #10 and #13.
 EOF
 
 deps22="$(govern::ticket_deps 22 "$ROOT/tickets.md" | tr '\n' ',')"
-assert_eq "$deps22" "16," "A: #22 resolves ONLY the declared #16, not the prose-mentioned #13/#10 (#29)"
+assert_eq "$deps22" "16," "A: #22 resolves ONLY the declared #16, not the prose-mentioned #13/#10"
 
 deps30="$(govern::ticket_deps 30 "$ROOT/tickets.md" | tr '\n' ',')"
 assert_eq "$deps30" "16,13," "B: a **Depends on:** line with multiple comma-separated numbers still parses all of them"

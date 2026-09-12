@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# `govern validations` — driver-facing live-jobs surface for the durable validation runner (spec §4,
-# reader 3/3: "flows status / govern validations, on demand"). Lists every job under
-# logs/govern/validations/<job>/: job-id, current phase, deploy-ids, and heartbeat age (a terminal job
+# `govern validations` — driver-facing live-jobs surface for the durable validation runner, usable
+# on demand. Lists every job under logs/govern/validations/<job>/: job-id, current phase,
+# deploy-ids, and heartbeat age (a terminal job
 # shows its verdict instead of a heartbeat, since the runner stops touching the heartbeat once it
 # writes the terminal record). On-demand checks also double as an adoption pass — by default this
 # scans + applies any unconsumed pending-results on the way (same mutex-serialized path the supervisor

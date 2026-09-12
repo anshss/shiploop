@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #242 regression: stopping/killing a worker must leave ZERO surviving
+# Regression: stopping/killing a worker must leave ZERO surviving
 # spawn-worker / claude children. Before the fix, SIGTERM on spawn-worker.sh left its
 # child `claude -p` (and tool grandchildren) ALIVE — reparented to init, needing a manual `kill -9`
 # sweep; a worker orphaned mid-task could keep holding a billable resource. The fix runs the worker
@@ -42,7 +42,7 @@ else printf 'FAIL - kill_tree: tree never came up\n'; ASSERT_FAILS=$((ASSERT_FAI
 govern::kill_tree "$lead" 3
 wait_gone "$lead" 50; [[ -n "$grand" ]] && wait_gone "$grand" 50
 assert_dead "$T0/marks/leader.pid" "kill_tree reaps the process-group leader"
-assert_dead "$T0/marks/grand.pid"  "kill_tree reaps the GRANDCHILD (subtree teardown) [#242]"
+assert_dead "$T0/marks/grand.pid"  "kill_tree reaps the GRANDCHILD (subtree teardown)"
 rm -rf "$T0"
 
 # ── End-to-end: SIGTERM the spawn-worker → claude + grandchild torn down ──
@@ -59,8 +59,8 @@ EOF
 chmod +x "$TMP/wt.sh"
 
 # Fake claude modelling a real worker tree: records its own pid, forks a long-lived GRANDCHILD (a
-# tool/deploy child) recording ITS pid, then sleeps far past teardown. An orphaned grandchild is the
-# #242 leak.
+# tool/deploy child) recording ITS pid, then sleeps far past teardown. An orphaned grandchild is
+# the leak this regression closes.
 cat > "$TMP/fake-claude" <<EOF
 #!/usr/bin/env bash
 echo \$\$ > "$TMP/marks/claude.pid"
@@ -98,7 +98,7 @@ wait_gone "$sw_pid" 100
 
 if kill -0 "$sw_pid" 2>/dev/null; then printf 'FAIL - spawn-worker.sh survived its own SIGTERM\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); kill -KILL "$sw_pid" 2>/dev/null || true
 else printf 'ok   - spawn-worker.sh exits on SIGTERM\n'; fi
-assert_dead "$TMP/marks/claude.pid"     "SIGTERM to worker → child claude killed (no orphan) [#242]"
-assert_dead "$TMP/marks/grandchild.pid" "SIGTERM to worker → GRANDCHILD killed (process-group teardown) [#242]"
+assert_dead "$TMP/marks/claude.pid"     "SIGTERM to worker → child claude killed (no orphan)"
+assert_dead "$TMP/marks/grandchild.pid" "SIGTERM to worker → GRANDCHILD killed (process-group teardown)"
 
 assert_done

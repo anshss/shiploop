@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #331 regression in the escalation safety machinery:
+# Regression in the escalation safety machinery:
 #   escalations_open_ndjson used `/^### +#[0-9]+/` for entry headings, so ANY body line an operator
 #       pasted that began `### #N` (a cross-ref in a multi-line Reason/Answer) was mis-parsed as a NEW
 #       entry. The heading match now requires the `— ` title separator every writer emits, and the

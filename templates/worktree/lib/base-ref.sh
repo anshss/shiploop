@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # wt_subrepo_base_ref <repo-dir> — echo the git ref a NEW sub-repo worktree should branch off.
 #
-# #29: cut sub-repo worktrees off the freshly-fetched origin/main, NOT the main checkout's LOCAL
+# Cut sub-repo worktrees off the freshly-fetched origin/main, NOT the main checkout's LOCAL
 # `main`. The main checkout is read-only / rarely-pulled (worktree-only workflow), so each sub-repo's
 # local `main` drifts behind its remote; branching a ticket/feature worktree off that stale base makes
 # PRs born CONFLICTING against current origin/main even when the change is trivial (an upstream commit

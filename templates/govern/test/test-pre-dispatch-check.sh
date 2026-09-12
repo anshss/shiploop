@@ -12,7 +12,7 @@
 #   5. an unknown ticket number does not refuse work: fail-open to "proceed".
 #   6. the depends-on gate: an item whose **Depends on:** blocker is still in the queue skips, and
 #      the blocker itself still proceeds.
-#   7. the failure-streak breaker (#60, ported from the deleted run-loop.sh): GOVERN_MAX_TICKET_FAILS
+#   7. the failure-streak breaker (ported from the deleted run-loop.sh): GOVERN_MAX_TICKET_FAILS
 #      consecutive failed/timeout/budget-exceeded/early-abort outcomes in ticket-history.jsonl skip
 #      the dispatch and file ONE systemic-blocker escalation. A history whose trailing outcome is
 #      resolved (or that has no history at all) never trips it, and a resolved outcome RESETS the
@@ -87,7 +87,7 @@ assert_contains "$out52" "skip" "6. an item whose Depends on: blocker is still q
 assert_contains "$out52" "#50"  "6. ...and the skip names the unmet blocker"
 assert_contains "$out50" "proceed" "6. ...while the blocker itself still dispatches"
 
-# ── 7. the failure-streak breaker (#60) ──────────────────────────────────────────────────────────
+# ── 7. the failure-streak breaker ──────────────────────────────────────────────────────────
 # The counter's only input is governor/ticket-history.jsonl, written by resolve-ticket.sh and by
 # spawn-worker's own ledger. Drive it to threshold with real rows and assert the gate fires; then
 # prove a clean history (and a streak a `resolved` outcome broke) does NOT withhold a dispatch.
@@ -112,7 +112,7 @@ printf '{"ticket":50,"run":"r1","status":"failed","ts":1}
 {"ticket":50,"run":"r2","status":"timeout","ts":2}
 ' > "$HIST"
 out_streak="$(run_streak)"
-assert_contains "$out_streak" "skip" "7. two consecutive failed/timeout outcomes skip the dispatch (#60)"
+assert_contains "$out_streak" "skip" "7. two consecutive failed/timeout outcomes skip the dispatch"
 assert_contains "$out_streak" "systemic blocker" "7. ...and the verdict says WHY (systemic blocker, not another retry)"
 assert_eq "$(printf '%s
 ' "$out_streak" | grep -c .)" "1" "7. the streak verdict is still exactly one line"

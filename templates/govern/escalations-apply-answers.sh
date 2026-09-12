@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #62 — close the escalation lifecycle. Run at run-START: read the operator answers the relay
+# Close the escalation lifecycle. Run at run-START: read the operator answers the relay
 # recorded into escalations.md and DRIVE an action so a decision never sits as inert file text:
 #   • Disposition "do-the-work" → UN-PARK: move the `### #N` entry from "## Open" to "## Resolved"
 #       so select-ticket stops skipping it → the governor retries the ticket this run.
@@ -7,7 +7,7 @@
 #       ticket: move its `## #N` block from tickets.md to tickets-parked.md (renumber to that queue's
 #       max+1) AND move the escalation to "## Resolved", so tickets.md stays the live workable set
 #       and doesn't silently fill with decided-but-undead escalations.
-#   • Disposition "mitigated" (#121) → CLOSE as accepted-current-state: the situation is already
+#   • Disposition "mitigated" → CLOSE as accepted-current-state: the situation is already
 #       acceptable / harm is zero but the literal done-condition needs out-of-band action. Mechanically
 #       like "defer" (the `## #N` block leaves tickets.md), but the ticket is NOT parked as still-todo —
 #       it's just removed, and the escalation moves to "## Resolved" with a "resolved — mitigated" note.
@@ -28,7 +28,7 @@ DATE="$(date +%Y-%m-%d)"
 entries="$(govern::escalations_open_ndjson | jq -s '.' 2>/dev/null || echo '[]')"
 [[ -n "$entries" ]] || entries='[]'
 n_entries="$(printf '%s' "$entries" | jq 'length' 2>/dev/null || echo 0)"
-# #3: regenerate pending-escalations.json even on the no-op paths, so a stale/ghost snapshot is
+# Regenerate pending-escalations.json even on the no-op paths, so a stale/ghost snapshot is
 # corrected against escalations.md whether or not we act (a manual resolution / crashed prior run can
 # leave pending listing a closed entry or missing a still-open one). Cheap, idempotent.
 if [[ "$n_entries" -le 0 ]]; then
@@ -78,7 +78,7 @@ migrate_to_parked() { # N -> M
   echo "$M"
 }
 
-# Delete a ticket block from tickets.md WITHOUT parking it (#121 — the `mitigated` disposition).
+# Delete a ticket block from tickets.md WITHOUT parking it (used by the `mitigated` disposition).
 # Mechanically the same removal migrate_to_parked does, but the block is NOT appended to
 # tickets-parked.md: the ticket is closed as accepted-current-state, not parked as still-todo.
 # Returns 0 if a block was removed, 1 if no `## #N` block was present.
@@ -95,15 +95,15 @@ delete_ticket_block() { # N -> 0 removed | 1 not found
   return 0
 }
 
-# Append an operator-confirmed rule to preferences.md (grows the doctrine slowly, #62).
+# Append an operator-confirmed rule to preferences.md (grows the doctrine slowly).
 append_rule() { # N text
   local N="$1" text="$2" sect="## Auto-added rules (from answered escalations)"
   grep -qF "$sect" "$PREFERENCES_FILE" 2>/dev/null || printf '\n%s\n' "$sect" >> "$PREFERENCES_FILE"
   printf -- '- (#%s, %s) %s\n' "$N" "$DATE" "$text" >> "$PREFERENCES_FILE"
 }
 
-# 2. Reconcile a PR-shaped escalation against reality BEFORE it ever gets to an operator (D7/#127,
-#    #129) — a PR the auto-merge guard refused sits here waiting for a human to merge it by hand;
+# 2. Reconcile a PR-shaped escalation against reality BEFORE it ever gets to an operator — a PR
+#    the auto-merge guard refused sits here waiting for a human to merge it by hand;
 #    once that PR is merged or closed, the reason it's open is gone, but nothing checked, so a
 #    2026-09-08 entry for shiploop#159 was still printing three days after that PR merged. Scoped to
 #    entries no operator has touched (an actual answer always wins) that name a `repo#N` PR anywhere
@@ -130,7 +130,7 @@ if command -v gh >/dev/null 2>&1; then
     case "$rstate" in
       MERGED|CLOSED)
         resolved_csv+="$rtk,"
-        printf '%s\t%s\n' "$rtk" "auto-resolved — $rref is already $rstate; reconciled against reality, no operator answer needed (D7/#127)" >> "$notes_file"
+        printf '%s\t%s\n' "$rtk" "auto-resolved — $rref is already $rstate; reconciled against reality, no operator answer needed" >> "$notes_file"
         n_reconciled=$((n_reconciled+1)); acted=1
         govern::log "apply-answers: #$rtk auto-resolved — $rref is $rstate (reconciled against reality)"
         ;;
@@ -153,7 +153,7 @@ while IFS= read -r row; do
 
   # Read the canonical token from the Disposition field (skip it if still the placeholder — its
   # help text embeds the option words and would otherwise parse as a real disposition).
-  # #87: anchor on the LEADING token first (govern::disposition_lead_token), so a clarifying
+  # Anchor on the LEADING token first (govern::disposition_lead_token), so a clarifying
   # parenthetical that names another canonical token (e.g. `keep-open _(NOT do-the-work)_`) is not
   # misclassified by norm_disposition's anywhere-in-string match.
   if govern::is_placeholder "$dispraw"; then disp=""; else disp="$(govern::norm_disposition "$(govern::disposition_lead_token "$dispraw")")"; fi
@@ -194,7 +194,7 @@ while IFS= read -r row; do
           command -v govern::flows_mark_kill_pending >/dev/null 2>&1 \
             && GOVERN_BOOKKEEP_LOCK_HELD=1 govern::flows_mark_kill_pending "$_kf" "$_kmeta" || true
           # NO_COMMIT: append only; apply-answers' own step-5 commit (under this lock) publishes it with
-          # the tickets.md block-deletion, so the removal ticket can't be clobbered (mirrors #240).
+          # the tickets.md block-deletion, so the removal ticket can't be clobbered.
           _rn="$(printf 'Where: flow %s (.claude/shiploop/validation/flows.md) — measured INEFFECTIVE, operator dispositioned KILL.\nObserved: the feature is measured worthless; this is a DELETION, not a fix.\nFix direction: remove the feature end-to-end (code + UI + dead config) in the mapped sub-repo(s) and open a PR. Normal code ticket — NOT a validation run.\nDone when: the feature is deleted and a PR is open; the governor tombstones flow %s on resolve.\n' "$_kf" "$_kf" \
             | GOVERN_FILE_TICKET_NO_COMMIT=1 GOVERN_BOOKKEEP_LOCK_HELD=1 "$DIR/file-ticket.sh" \
                 --flow "$_kf" --flow-op remove "KILL: remove $_kf (measured INEFFECTIVE)" Medium 2>/dev/null || true)"
@@ -329,7 +329,7 @@ rm -f "$notes_file"
 #    is plain ff-only (never forced) and is skipped with no remote (local-only / test repo) and
 #    under GOVERN_NO_PUSH=1.
 commit_dir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"   # '|| true' → "" if dir missing
-govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing (#28)
+govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is missing
 ( cd "$commit_dir"
   # Stage only files that EXIST — the externalization review queue + ledger (edited by the approve-all /
   # move-back dispositions under GOVERN_EXTERNALIZE_NO_COMMIT=1) are absent on a run with no externalize
@@ -339,7 +339,7 @@ govern::assert_commit_dir "$commit_dir"   # fail closed if the queue dir is miss
     [[ -e "$_f" ]] && _addfiles+=("$_f")
   done
   git add -- "${_addfiles[@]}" 2>/dev/null || true
-  # #375 sweep-guard: commit ONLY the governor's own paths. A bare pathspec-less `git commit` here
+  # Sweep-guard: commit ONLY the governor's own paths. A bare pathspec-less `git commit` here
   # committed the ENTIRE staged index — in a shared checkout a co-tenant's staged .claude/context WIP
   # got swept onto origin/main under this message (incident 2026-07-17). Scope to "${_addfiles[@]}"
   # (the exact files staged just above) so it is structurally incapable of it.

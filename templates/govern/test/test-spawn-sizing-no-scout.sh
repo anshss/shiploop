@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# §5.2: the scout no longer decides the TIER, and the retry rail no longer decides it either.
+# The scout no longer decides the TIER, and the retry rail no longer decides it either.
 #
-# §5.2: the scout used to fold a cached `--verdict` into resolve_sizing and claim both axes. Measured
+# The scout used to fold a cached `--verdict` into resolve_sizing and claim both axes. Measured
 # over every verdict this workspace ever cached, 4 of 5 were opus/high and its HARD gate was a
 # disjunction in which `testsCover==false` alone forced opus — a rubber stamp, not arbitrage. Tier now
 # comes from ONE knob, the cheap floor GOVERN_WORKER_MODEL. ABSENCE OF EVIDENCE ROUTES DOWN.
 #
-# The §5.7 half of this file used to lock in "escalation fires exactly once per ticket", enforced by a
+# The escalation-spend half of this file used to lock in "escalation fires exactly once per ticket", enforced by a
 # `.governor-escalated` stamp in the preserved worktree. AUTOMATIC ESCALATION IS REMOVED, so there is
 # no spend left to bound: the stamp, GOVERN_ESCALATE_ONCE and the escalation-spent class are all gone
 # with it, and those cases are replaced below by their successors: a retry HOLDS the floor, and a
@@ -59,11 +59,11 @@ dry() { # <ticket> [extra env...]
       "$SPAWN" "$n"
 }
 
-# ── §5.2 ────────────────────────────────────────────────────────────────────────────────────────
+# ── tier sizing ─────────────────────────────────────────────────────────────────────────────────
 # 1. Even with GOVERN_SCOUT=1 and a cached opus/high verdict sitting right there, the tier is the floor.
 out1="$(dry 101 GOVERN_SCOUT=1)"
 assert_eq "$(printf '%s' "$out1" | jq -r '.model')" "sonnet" \
-  "a cached opus verdict no longer raises the tier — the floor GOVERN_WORKER_MODEL decides [§5.2]"
+  "a cached opus verdict no longer raises the tier — the floor GOVERN_WORKER_MODEL decides"
 assert_eq "$(printf '%s' "$out1" | jq -r '.model_source')" "GOVERN_WORKER_MODEL" \
   "the sizing decision attributes itself to the floor knob, never to the scout"
 assert_not_contains "$out1" "scout" "no dispatch field is sourced from the scout any more"
@@ -71,7 +71,7 @@ assert_not_contains "$out1" "scout" "no dispatch field is sourced from the scout
 # 2. Absence of evidence routes DOWN, not up: a ticket with NO scout cache at all is identical.
 out2="$(dry 102 GOVERN_SCOUT=1)"
 assert_eq "$(printf '%s' "$out2" | jq -r '.model')" "sonnet" \
-  "no scout cache → the floor, not the ceiling (absence of evidence routes DOWN) [§5.2]"
+  "no scout cache → the floor, not the ceiling (absence of evidence routes DOWN)"
 assert_eq "$(printf '%s' "$out1" | jq -r '.model')" "$(printf '%s' "$out2" | jq -r '.model')" \
   "a ticket WITH a cached verdict and one WITHOUT now size identically"
 
@@ -102,7 +102,7 @@ assert_not_contains "$(cat "$SPAWN")" "GOVERN_ESCALATE_ONCE:-1" \
 # failure, so it must not file a re-specification request against an already-solved ticket.
 out8="$(dry 102 GOVERN_SPAWN_FORCE_RETRY=1 GOVERN_RESOLVE_CONFLICT="alpha#7")"
 assert_eq "$(printf '%s' "$out8" | jq -r '.model')" "sonnet" \
-  "a GOVERN_RESOLVE_CONFLICT re-dispatch keeps the floor tier [§5.7]"
+  "a GOVERN_RESOLVE_CONFLICT re-dispatch keeps the floor tier"
 assert_eq "$(printf '%s' "$out8" | jq -r '.retry_class')" "ci" \
   "it is classified ci (non-model cause), the same pin GOVERN_FIX_CI already had"
 assert_eq "$(printf '%s' "$out8" | jq -r '.respec_requested')" "false" \

@@ -55,7 +55,7 @@ assert_eq "$(sed -n 's/^model: *//p' <<<"$fm")" "$headless_model" \
 # Compare as normalized comma lists so `a, b` and `a,b` are the same list.
 norm_tools() { tr -d ' ' <<<"$1" | tr ',' '\n' | sed '/^$/d' | paste -sd, - ; }
 spawn_body="$(cat "$SPAWN")"
-# #117: GOVERN_WORKER_TOOLS_DEFAULT is now DERIVED from worker.md at runtime (see
+# GOVERN_WORKER_TOOLS_DEFAULT is now DERIVED from worker.md at runtime (see
 # govern::worker_agent_field) — the quoted literal below is only the fallback for a fleet that
 # hasn't synced .claude/agents/worker.md yet, so `tail -1` grabs that fallback rather than the
 # `$(...)` derive expression (which also textually matches `="…"` and would sort first).
@@ -116,8 +116,8 @@ assert_contains "$body" "npm run govern:resolve --" \
 assert_contains "$body" "queue/tickets.md" \
   "5e. the queue-bookkeeping boundary is stated"
 
-# ── 6. Capability posture ported from spawn-worker.sh (#117) ──────────────
-# Genuine delegation, not a second hardcoded copy that happens to match: the failure mode #117
+# ── 6. Capability posture ported from spawn-worker.sh ──────────────
+# Genuine delegation, not a second hardcoded copy that happens to match: the failure mode this fix
 # closes is two independently-maintained tool lists kept in sync only by test 3 above. Pin that
 # spawn-worker.sh actually CALLS the reader rather than restating the list.
 assert_contains "$spawn_body" "govern::worker_agent_field tools" \
@@ -162,8 +162,8 @@ assert_not_contains "$fm" "isolation:" \
 assert_not_contains "$fm" "hooks:" \
   "6i. worker.md does not declare hooks -- SubagentStop supervision is owned once, at settings.json"
 
-# ── 7. Hazard handoff reaches this lane too (rail 9 / #125) ────────────────
-# spawn-worker.sh gets its "Recorded gotchas" section injected FOR it (#118/#174); this lane has no
+# ── 7. Hazard handoff reaches this lane too ────────────────
+# spawn-worker.sh gets its "Recorded gotchas" section injected FOR it; this lane has no
 # launcher to do that, so worker.md must tell it to run the SAME lookup itself, on the paths it is
 # about to touch, as an explicit step -- not leave it as a passive "go read the file" pointer.
 assert_contains "$body" "gotchas-for-paths.sh" \
@@ -193,7 +193,7 @@ assert_not_contains "$PROMPT_BODY" "advisorModel" \
 assert_contains "$PROMPT_BODY" "escalation" \
   "8h. the headless lane's answer to an unresolvable fork is an honest escalation"
 
-# ── 9. D2: the ticket's proposal is implemented, in worker-prompt.md (lane-neutral, both lanes) ──
+# ── 9. the ticket's proposal is implemented, in worker-prompt.md (lane-neutral, both lanes) ──
 assert_contains "$PROMPT_BODY" "Implement the ticket's" \
   "9. worker-prompt.md states the implement-the-proposal doctrine (reached by both lanes: worker.md includes this file by reference)"
 

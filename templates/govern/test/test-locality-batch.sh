@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #23 — locality batching. Exploration is the dominant cost of a resolved ticket (~98% cacheRead), so
+# Locality batching. Exploration is the dominant cost of a resolved ticket (~98% cacheRead), so
 # tickets touching the same area are grouped into ONE worker that explores once. Proves:
 #   (A) govern::ticket_paths returns MEASURED file paths only (`Files:`, or the scout's verified
 #       targetPaths), ignores shell-variable interpolations and globs, and returns "" for a ticket

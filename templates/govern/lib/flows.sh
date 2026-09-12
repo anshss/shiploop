@@ -419,7 +419,7 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
   printf '%s' "$v" | grep -oE "(^|[^A-Za-z0-9._-])${repo}@[0-9a-f]+" 2>/dev/null | sed -n '1p' | sed -E "s/.*${repo}@//" || true
 }
 
-# ── Runner-facing entry point (durable validation runner, spec §5) ──────────
+# ── Runner-facing entry point (durable validation runner) ───────────────────
 # A caller with a settled terminal verdict and no ticket-resolve workflow context (the durable
 # validation runner has a job's terminal PASS/FAIL, not a report.json/resolve-or-gate-park outcome) —
 # stamp the registry directly. Translates PASS→resolve / FAIL→gate-park and hands off to
@@ -427,7 +427,7 @@ govern::flow_recorded_sha() { # id repo [file] -> sha | ""
 # ancestor-verify + squash-merge substitution, PII-park, evidence promotion, cas_edit under the
 # bookkeep mutex) applies identically regardless of which caller (governor's land-resolution.sh or the runner)
 # produced the verdict. ABORT/ERROR are not registry-stampable (a job that never settled PASS/FAIL
-# carries no verdict to record — it routes to the pending-results escalation path, spec §4, instead):
+# carries no verdict to record — it routes to the pending-results escalation path instead):
 # rc 1, nothing written. <record-json> is the same {pr, prs, validation:{…}} shape
 # govern::flows_stamp_from_report already parses — validatedShas, evidence, environment, and (for an
 # effectiveness-kind flow) gatePassed/measured.
@@ -747,7 +747,7 @@ govern::flows_matching_paths() { # <meta-root> <max> <path> [path…] -> ranked 
 # validation needs. The generic layer maps each capability KEY to the env-var KNOB the workspace wires;
 # the knob's VALUE (a gstack command, a PostHog query wrapper, …) lives ONLY in scripts/lib/workspace.sh.
 # An absent knob means the flow cannot be validated headlessly → it files as BLOCKED with a named blocker
-# (anti-pattern #15), never silently as a runnable-then-billable row.
+# (a loud refusal), never silently as a runnable-then-billable row.
 govern::flow_cap_knob() { # <capability-key> -> env-var name | "" (unknown key we don't manage)
   case "$1" in
     browser)      printf 'WSP_BROWSER_CMD' ;;

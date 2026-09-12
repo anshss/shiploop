@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #139 - dispatch-time overlap nudge, zero model calls. Named dispatch (post-#137) batches overlap
+# Dispatch-time overlap nudge, zero model calls. Named dispatch batches overlap
 # WITHIN the named set (govern::locality_groups), but has no visibility into a ticket the operator
 # did not name. Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45%
 # of overlapping pairs were both ALREADY QUEUED at dispatch - batchable if the operator had known.

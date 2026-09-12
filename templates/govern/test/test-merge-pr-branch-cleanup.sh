@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression for ticket #91: the post-merge local ticket-<N> branch delete in merge-pr.sh must NOT
+# Regression: the post-merge local ticket-<N> branch delete in merge-pr.sh must NOT
 # log "could not delete local branch ... (checked out in a worktree?)" on every merge. At merge time
 # the worker's worktree still has ticket-<N> checked out, so `branch -D` is a guaranteed no-op — the
 # delete is tied to worktree TEARDOWN (`worktree:rm`) instead. merge-pr.sh now:
 #   (a) skips silently when the branch is checked out in a worktree (no noise), and
-#   (b) still deletes a genuinely-lingering local branch (no worktree) — the #76 backstop.
+#   (b) still deletes a genuinely-lingering local branch (no worktree) — the backstop.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -12,7 +12,7 @@ MERGE="$DIR/../merge-pr.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/scripts/lib"
-# Bypass the external-PR auto-merge safety guard: this test targets #91 (branch cleanup), not the
+# Bypass the external-PR auto-merge safety guard: this test targets branch cleanup, not the
 # guard. The guard has its own dedicated tests (test-automerge-guard.sh).
 export _GOVERN_ASSUME_MERGE_ALLOWED=1
 
@@ -53,35 +53,35 @@ run_merge() { # $1=head-branch
     bash "$MERGE" alpha 123 2>&1
 }
 
-# ── Scenario A: branch checked out in a worktree → skip SILENTLY, no #91 noise, branch survives ──
+# ── Scenario A: branch checked out in a worktree → skip SILENTLY, no noise, branch survives ──
 ( cd "$REPODIR" && git branch ticket-91 \
     && git worktree add -q "$T/wt-91" ticket-91 >/dev/null 2>&1 )
 outA="$(run_merge ticket-91)"
 
 if printf '%s' "$outA" | grep -qF "could not delete local branch"; then
-  assert_eq "noisy" "silent" "#91: no 'could not delete local branch' noise when branch is checked out"
+  assert_eq "noisy" "silent" "A: no 'could not delete local branch' noise when branch is checked out"
 else
-  assert_eq "silent" "silent" "#91: no 'could not delete local branch' noise when branch is checked out"
+  assert_eq "silent" "silent" "A: no 'could not delete local branch' noise when branch is checked out"
 fi
 if printf '%s' "$outA" | grep -qF "deleted lingering local branch"; then
-  assert_eq "deleted" "skipped" "#91: a checked-out branch is NOT deleted at merge (worktree:rm handles it)"
+  assert_eq "deleted" "skipped" "A: a checked-out branch is NOT deleted at merge (worktree:rm handles it)"
 else
-  assert_eq "skipped" "skipped" "#91: a checked-out branch is NOT deleted at merge (worktree:rm handles it)"
+  assert_eq "skipped" "skipped" "A: a checked-out branch is NOT deleted at merge (worktree:rm handles it)"
 fi
 if ( cd "$REPODIR" && git rev-parse --verify ticket-91 >/dev/null 2>&1 ); then
-  assert_eq "exists" "exists" "#91: checked-out branch survives the merge (torn down later by worktree:rm)"
+  assert_eq "exists" "exists" "A: checked-out branch survives the merge (torn down later by worktree:rm)"
 else
-  assert_eq "gone" "exists" "#91: checked-out branch survives the merge (torn down later by worktree:rm)"
+  assert_eq "gone" "exists" "A: checked-out branch survives the merge (torn down later by worktree:rm)"
 fi
 
-# ── Scenario B: a genuinely-lingering branch (no worktree) → backstop still deletes it (#76) ──
+# ── Scenario B: a genuinely-lingering branch (no worktree) → backstop still deletes it ──
 ( cd "$REPODIR" && git branch ticket-76 )   # exists, not checked out anywhere
 outB="$(run_merge ticket-76)"
-assert_contains "$outB" "deleted lingering local branch ticket-76" "#76 backstop: lingering branch IS deleted"
+assert_contains "$outB" "deleted lingering local branch ticket-76" "B: lingering branch IS deleted"
 if ( cd "$REPODIR" && git rev-parse --verify ticket-76 >/dev/null 2>&1 ); then
-  assert_eq "exists" "gone" "#76 backstop: lingering branch removed after merge"
+  assert_eq "exists" "gone" "B: lingering branch removed after merge"
 else
-  assert_eq "gone" "gone" "#76 backstop: lingering branch removed after merge"
+  assert_eq "gone" "gone" "B: lingering branch removed after merge"
 fi
 
 assert_done

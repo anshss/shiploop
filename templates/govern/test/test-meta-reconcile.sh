@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #71: the run-start preflight must reconcile the meta checkout's local main
+# Regression: the run-start preflight must reconcile the meta checkout's local main
 # with origin/main BEFORE the harness lane cuts any PR — auto-reconciling a stale/ahead/diverged
 # local main, or HALTING with one clear message when it genuinely can't. Exercises preflight-main.sh
 # against a real bare-origin + local-clone pair across every branch. No network, no real harness repo.
@@ -27,7 +27,7 @@ setup() {
     git push -q -u origin main ) >/dev/null 2>&1
   printf '%s' "$lc"
 }
-# Add a LOCAL-only (unpushed) commit — like a pre-existing #69 filing / bookkeep commit.
+# Add a LOCAL-only (unpushed) commit — like a pre-existing filing / bookkeep commit.
 local_commit() { ( cd "$1"; printf '%s\n' "$2" >> notes.md; git add notes.md; git commit -q -m "$2" ) >/dev/null 2>&1; }
 # Advance ORIGIN via a throwaway clone — like a squash-merged harness PR landing on origin/main.
 origin_commit() {
@@ -42,7 +42,7 @@ origin_commit() {
 converged() { ( cd "$1"; git fetch -q origin main 2>/dev/null; git rev-list --left-right --count origin/main...HEAD | awk '{print $1"/"$2}' ); }
 run() { OUT="$(bash "$PF" "$1" 2>&1)" && RC=0 || RC=$?; }   # sets OUT, RC
 
-# ── A. ahead-only — the exact #71 trigger: one pre-existing UNPUSHED commit ──
+# ── A. ahead-only — the exact trigger: one pre-existing UNPUSHED commit ──
 LA="$(setup "$ROOT/a")"; local_commit "$LA" "unpushed-69-filing"
 run "$LA"
 assert_eq "$RC" "0" "A ahead-only: preflight reconciles (exit 0)"

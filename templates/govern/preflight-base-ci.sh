@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# #49: run-start preflight — refuse to dispatch a wave of workers onto an unambiguously CI-red
-# base branch. MEASURED: ticket #46 was dispatched while main was CI-red; its PR (a one-line
+# Run-start preflight: refuse to dispatch a wave of workers onto an unambiguously CI-red
+# base branch. MEASURED: a ticket was dispatched while main was CI-red; its PR (a one-line
 # markdown change that could not possibly have failed the suite) inherited the broken baseline,
 # went red, and was recorded 'failed' — after a full worker session. Under --parallel (the
 # default), a red baseline fails EVERY concurrent worker in the wave, not just one ticket. A
@@ -56,7 +56,7 @@ for repo in ${GOVERN_MERGE_REPOS:-} ${GOVERN_FRONTEND_REPOS:-}; do
   url="$(jq -r '.[0].url // ""' <<<"$json" 2>/dev/null)"
 
   if [[ "$status" == "completed" && "$conclusion" == "failure" ]]; then
-    govern::log "preflight: base branch $slug#$BRANCH is CI-RED ($url) — refusing to dispatch this run (#49). Fix it first (or dispatch the ticket that fixes it), or set GOVERN_SKIP_BASE_CHECK=1 to proceed anyway."
+    govern::log "preflight: base branch $slug#$BRANCH is CI-RED ($url): refusing to dispatch this run. Fix it first (or dispatch the ticket that fixes it), or set GOVERN_SKIP_BASE_CHECK=1 to proceed anyway."
     exit 2
   fi
   govern::log "preflight: base-CI check on $slug#$BRANCH — status=${status:-none} conclusion=${conclusion:-none} (not an unambiguous red; proceeding)"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #28: land-resolution.sh must FAIL CLOSED when TICKETS_FILE's directory is MISSING.
+# Regression: land-resolution.sh must FAIL CLOSED when TICKETS_FILE's directory is MISSING.
 # Otherwise commit_dir resolves to "" and the later `cd "$commit_dir"` (= `cd ""`, a no-op) leaves git
 # running against the CURRENT working directory — so bookkeep could commit/push into the WRONG repo
 # (it actually did, twice, during the queue/ refactor). The guard must abort and touch NO repo.
@@ -27,7 +27,7 @@ code=$?
 set -e
 
 assert_eq "$code" "1" "bookkeep aborts (exit 1) when the queue dir is missing"
-assert_contains "$out" "not a git work-tree" "aborts with the #28 fail-closed message"
+assert_contains "$out" "not a git work-tree" "aborts with the fail-closed message"
 after="$( cd "$REAL" && git rev-parse HEAD )"
 assert_eq "$after" "$before" "made NO commit into the current-directory repo"
 

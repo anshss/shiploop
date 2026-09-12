@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regression for #377: the OVERLAPPING-same-file half of the co-tenant-coexistence problem that #370's
+# Regression: the OVERLAPPING-same-file half of the co-tenant-coexistence problem that the existing
 # autostash could NOT auto-merge. When origin/main advances a govern SCRIPT that a co-tenant session is
 # CONCURRENTLY editing (uncommitted WIP in the shared checkout — e.g. the flows feature's edits to
 # spawn-worker.sh), bookkeep's `-c rebase.autoStash=true pull --rebase` rebases cleanly (it only replays
 # OUR append-only meta diffs) but the autostash POP hits a real content conflict on that same file+region.
 # git reports the pop conflict as a mere WARNING and STILL EXITS 0 ("Successfully rebased and updated"),
-# leaving the SHARED index with UNMERGED entries and the autostash preserved. Before #377 the old
+# leaving the SHARED index with UNMERGED entries and the autostash preserved. Before this fix the old
 # `pull --rebase … || { rebase --abort; }` fallback never fired (rc 0) and `rebase --abort` was a no-op
 # anyway, so the shared checkout was WEDGED: every later `git add`/`git commit` failed "you have unmerged
 # files"; the resolved ticket's block-delete never committed and healthy tickets false-FAILED
@@ -38,7 +38,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
 ROOT="$(mktemp -d)"; trap 'rm -rf "$ROOT"' EXIT
 gitcfg() { git -C "$1" config user.email t@t; git -C "$1" config user.name t; }
 # Part B calls govern::pull_rebase_autostash DIRECTLY (in-process), so source common.sh once here.
-# common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh" on load, so seed a stub first (#255);
+# common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh" on load, so seed a stub first;
 # later per-part mk_ws_stub calls just re-point GOVERN_WS_ROOT — the function stays defined. Part A
 # runs the REAL land-resolution.sh as a subprocess (it sources common.sh itself), so this is inert
 # for Part A. (Part A passes GOVERN_WS_ROOT explicitly to that subprocess.)
@@ -52,7 +52,7 @@ A="$ROOT/a"; mkdir -p "$A"
 ORIGIN="$A/origin.git"; LC="$A/local"
 git init -q --bare "$ORIGIN"
 git init -q "$LC"; gitcfg "$LC"
-mk_ws_stub "$LC"   # hermetic scripts/lib/workspace.sh stub (#255)
+mk_ws_stub "$LC"   # hermetic scripts/lib/workspace.sh stub
 ( cd "$LC"
   git checkout -q -b main
   printf '# Tickets\n\n## Open\n\n## #50 — overlap autostash-pop regression\n\n**Severity:** High\n\nbody\n\n---\n' > tickets.md
@@ -63,7 +63,7 @@ mk_ws_stub "$LC"   # hermetic scripts/lib/workspace.sh stub (#255)
   git remote add origin "$ORIGIN"; git push -q -u origin main
 ) >/dev/null 2>&1
 
-# origin-side advance of spawn-worker.sh's line2, from a second clone (e.g. #371 merging a change).
+# origin-side advance of spawn-worker.sh's line2, from a second clone (e.g. a peer session merging a change).
 TMPA="$(mktemp -d)"; git clone -q "$ORIGIN" "$TMPA/c" >/dev/null 2>&1
 ( cd "$TMPA/c"; gitcfg .
   printf 'script line1\nORIGIN-ADVANCED-LINE2\nscript line3\n' > spawn-worker.sh

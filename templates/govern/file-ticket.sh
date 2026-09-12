@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Append ONE ticket to tickets.md with a collision-safe number (#73) AND persist it atomically —
-# commit + CAS-push to origin/main under the SAME bookkeep lock the governor's land-resolution.sh uses
-# (#240). The number comes from the LIVE max via govern::next_ticket_number — max(tickets.md's
+# Append ONE ticket to tickets.md with a collision-safe number AND persist it atomically —
+# commit + CAS-push to origin/main under the SAME bookkeep lock the governor's land-resolution.sh uses.
+# The number comes from the LIVE max via govern::next_ticket_number — max(tickets.md's
 # highest `## #N`, governor/.ticket-seq) + 1, allocated under the bookkeep lock and persisted to
 # .ticket-seq — so a manual filing can never silently reuse a number a concurrent session (or the
 # governor) already took. This is THE supported manual-filing path: never hand-append `## #N` with a
 # guessed/hardcoded number, and never let two sessions append to tickets.md unserialized.
 #
-# #240 — atomic persist: the append used to be left UNCOMMITTED for the caller to stage, which made
+# Atomic persist: the append used to be left UNCOMMITTED for the caller to stage, which made
 # it trivial to lose. While a governor run is active, a concurrent driver's land-resolution.sh
 # rewrites and pushes tickets.md on its OWN base; an uncommitted manual append was silently
 # clobbered by that rewrite. Now file-ticket.sh holds the bookkeep lock for the whole
@@ -33,7 +33,8 @@
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
 # behavior (leaves the append uncommitted for the caller to stage inside a larger filing commit) —
-# but be aware that path is the #240 race and must only be used when no governor run is active.
+# but be aware that path reopens the race described above and must only be used when no governor
+# run is active.
 # Honors GOVERN_NO_PUSH=1 (commit locally, skip the push) and no-ops the commit entirely outside a
 # git repo (tests / offline), in which case the append is left on disk like the legacy path.
 set -euo pipefail
@@ -89,12 +90,12 @@ if [[ -n "$flow_op_field" ]]; then
 "
 fi
 
-# Proposed-solution + Precision placeholder (.specs/2026-09-11-advisor-worker-design.md D2/D6).
+# Proposed-solution + Precision placeholder.
 # Filing is not specifying: the advisor fills these in AT DISPATCH TIME, after reading the ticket,
 # never at filing time — so every newly filed ticket carries the placeholder, not a guess. The
 # sentinel text ("(advisor: fill in before dispatch") is what govern::ticket_proposal /
 # govern::ticket_precision (lib/common.sh) recognise as "still unfilled," so an untouched
-# placeholder reads as NO proposal to the pre-dispatch gate (D2) rather than as one. Appended AFTER
+# placeholder reads as NO proposal to the pre-dispatch gate rather than as one. Appended AFTER
 # the body (unlike Flow/Flow-op above): the proposal is the advisor's decision layered on top of the
 # problem description, not part of the filer's own field block, and this placement keeps it well
 # clear of the leading-field-block scan the Model:/Effort:/Flow: latches use.
@@ -118,7 +119,7 @@ if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
 fi
 
 # Hold the bookkeep lock across the ENTIRE allocate→append→commit→push so a concurrent
-# land-resolution.sh run can't read tickets.md on a stale base and clobber our append (#240).
+# land-resolution.sh run can't read tickets.md on a stale base and clobber our append.
 # mkdir-mutex; reclaim a crashed holder's lock after 5min. Non-fatal if busy >60s — proceed degraded,
 # same as land-resolution.sh.
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "file-ticket: bookkeep lock busy >60s — proceeding (degraded)"
@@ -130,7 +131,7 @@ RUN_LOCK="${GOVERN_LOCK:-$GOVERNOR_DIR/.govern.lock}"
 if [[ -d "$RUN_LOCK" ]]; then
   _hpid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' "$RUN_LOCK/holder" 2>/dev/null || true)"
   if [[ -n "$_hpid" ]] && kill -0 "$_hpid" 2>/dev/null; then
-    govern::log "file-ticket: a live governor run holds $RUN_LOCK (pid $_hpid) — filing under the bookkeep lock and committing+pushing atomically so the new ticket survives its resolve (#240)"
+    govern::log "file-ticket: a live governor run holds $RUN_LOCK (pid $_hpid) — filing under the bookkeep lock and committing+pushing atomically so the new ticket survives its resolve"
   fi
 fi
 

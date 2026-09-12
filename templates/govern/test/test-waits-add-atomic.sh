@@ -2,7 +2,7 @@
 # Proves govern::waits_add is ATOMIC: a jq failure (corrupt pre-existing pending-waits.json,
 # malformed entry) never empties the file. The old code did `printf '%s' "$cur" | jq -c … > $f`
 # which truncates $f BEFORE jq runs — a jq exit non-zero left $f as an EMPTY file, evaporating
-# every #119 deferral. The fix is tmp+mv (matches na_skip_bump / waits_remove).
+# every deferral. The fix is tmp+mv (matches na_skip_bump / waits_remove).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"

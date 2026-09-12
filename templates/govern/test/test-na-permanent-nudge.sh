@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #120, a ticket auto-skipped as NOT-govern-automatable for K consecutive DISPATCHES must surface a
+# A ticket auto-skipped as NOT-govern-automatable for K consecutive DISPATCHES must surface a
 # ONE-TIME escalation recommending the operator escalate+defer it permanently (→ tickets-parked.md),
 # instead of churning a skip note every time forever. The streak counter is file-backed
 # (governor/na-skip-counts.json, govern::na_skip_bump), so it survived the deletion of the loop it
@@ -24,7 +24,7 @@ mkdir -p "$T/bin" "$T/governor" "$T/logs"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
 # A single NOT-automatable ticket. The gate sees the marker, refuses the dispatch, and bumps the
-# consecutive-skip counter. (#92 is the skip itself; this file exercises the #120 nudge on top.)
+# consecutive-skip counter. (the skip itself is tested elsewhere; this file exercises the nudge on top.)
 cat > "$T/tickets.md" <<'EOF'
 # Tickets
 ---
@@ -63,7 +63,7 @@ open_count() { # how many open ### #45 escalations
 }
 
 # Attempts 1 and 2, below the K=3 threshold: skip verdict but NO escalation yet.
-out1="$(run_gate)"; assert_contains "$out1" "not govern-automatable" "attempt 1: #45 auto-skipped with a stated reason (#92)"
+out1="$(run_gate)"; assert_contains "$out1" "not govern-automatable" "attempt 1: #45 auto-skipped with a stated reason"
 assert_eq "$(open_count)" "0" "attempt 1: below threshold → no permanent-park escalation yet"
 run_gate >/dev/null 2>&1
 assert_eq "$(open_count)" "0" "attempt 2: still below threshold → no escalation"
@@ -72,7 +72,7 @@ assert_eq "$cnt" "2" "consecutive-skip count persisted across runs (2 after atte
 
 # Attempt 3, the K-th consecutive auto-skip: fire the one-time nudge.
 out3="$(run_gate)"
-assert_contains "$out3" "filing a one-time escalation to PERMANENTLY remove it" "attempt 3: the K-th skip fires the nudge (#120)"
+assert_contains "$out3" "filing a one-time escalation to PERMANENTLY remove it" "attempt 3: the K-th skip fires the nudge"
 assert_eq "$(open_count)" "1" "attempt 3: exactly one permanent-park escalation filed"
 block="$(awk '/^### +#45/{g=1} g{print} g&&/^### +#[0-9]+/&&!f{f=1;next} g&&/^- \*\*Make this a rule/{exit}' "$T/governor/escalations.md")"
 assert_contains "$block" "**Disposition:**" "escalation carries a Disposition field (apply-answers can act)"

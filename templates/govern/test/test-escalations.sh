@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #62 — escalation lifecycle: emit-pending (driver→relay hand-off) + apply-answers (the feedback
+# Escalation lifecycle: emit-pending (driver→relay hand-off) + apply-answers (the feedback
 # loop that un-parks / migrates-to-parked / grows preferences). Pure sandbox: no auth, no network.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,7 +134,7 @@ assert_contains "$(grep -A50 '^## Resolved' "$T/escalations.md")" "#7" "#7 escal
 still7="$(grep -c '^## #7' "$T/tickets.md" || true)"
 assert_eq "$still7" "1" "#7 ticket REMAINS in tickets.md (un-parked → governor retries)"
 
-# #6 mitigated → ticket REMOVED from tickets.md, NOT parked, escalation Resolved with mitigated note (#121)
+# #6 mitigated → ticket REMOVED from tickets.md, NOT parked, escalation Resolved with mitigated note
 gone6="$(grep -c '^## #6' "$T/tickets.md" || true)"
 assert_eq "$gone6" "0" "#6 ticket REMOVED from tickets.md (mitigated → closed)"
 assert_eq "$(grep -c 'body of six' "$T/tickets-parked.md" || true)" "0" "#6 NOT parked (mitigated ≠ defer — not migrated to tickets-parked.md)"
@@ -187,7 +187,7 @@ assert_eq "$recovered_count" "1" "no-op apply reconciled stale pending.json coun
 assert_contains "$recovered_tickets" "8" "reconciled pending.json still lists genuinely-open #8"
 assert_eq "$(printf '%s' "$recovered_tickets" | grep -c 999 || true)" "0" "reconciled pending.json no longer lists the ghost #999"
 
-# ── #337: GOVERN_SUPPRESS_EMIT_PENDING=1 makes emit-pending a hard-skip no-op (defense-in-depth
+# ── GOVERN_SUPPRESS_EMIT_PENDING=1 makes emit-pending a hard-skip no-op (defense-in-depth
 # against a sync-port sub-run clobbering the parent run's pending snapshot). File is untouched.
 before_sha="$(shasum "$T/pending.json" 2>/dev/null | awk '{print $1}')"
 env "${env_common[@]}" GOVERN_SUPPRESS_EMIT_PENDING=1 bash "$EMIT" some-run >/dev/null 2>&1

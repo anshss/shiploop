@@ -99,7 +99,7 @@ function jget(line, key,   pat, i, s, c, out, esc, n) {
   else if (typ == "worker_escalated") { t = jget($0,"ticket"); if (t in mod) mod[t] = jget($0,"to") }
   else if (typ == "worker_done") {
     t = jget($0,"ticket"); st[t] = 0; answered++
-    # Tier mix (rail 5, the terse counterpart of `status.sh`s full "by source" — this stays a raw
+    # Tier mix (the terse counterpart of `status.sh`s full "by source": this stays a raw
     # MODEL tally, not the full model_source string, on purpose: one more awk pass is affordable,
     # but the segment must stay a single glance, and model_source prose is not.
     dm = jget($0,"model"); if (dm != "") doneModel[dm]++

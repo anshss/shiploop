@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guard test for router-posture-guard.sh's GOVERN_RUN exemption (#95).
+# Guard test for router-posture-guard.sh's GOVERN_RUN exemption.
 #
 # This PreToolUse hook nudges the DRIVER to delegate heavy inline work (a large Read, a verbose
 # build/dev/install run) instead of doing it inline. It already exempted a governor worker
@@ -11,7 +11,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-# GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in (#255): templates/hooks
+# GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in: templates/hooks
 # in the template repo, <root>/scripts in a scaffolded workspace.
 GUARD="$GOVERN_HOOKS_DIR/router-posture-guard.sh"
 

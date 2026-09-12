@@ -3,7 +3,7 @@
 set -euo pipefail
 ASSERT_FAILS=0
 
-# ── Layout resolver (#255) ──────────────────────────────────────────────────
+# ── Layout resolver ──────────────────────────────────────────────────────────
 # These tests run in TWO layouts: a live workspace (govern at scripts/govern/, prompt
 # files at <root>/governor/, hooks at <root>/scripts/) and the template repo itself
 # (govern at templates/govern/, prompts at templates/governor/, hooks at templates/hooks/).
@@ -35,7 +35,7 @@ export _GOVERN_ASSUME_MERGE_ALLOWED=1
 # it explicitly per case.
 unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
 
-# Hermetic sizing: the #21 scout runs a REAL `claude -p` pass on the dispatch path, so leaving it on
+# Hermetic sizing: the scout runs a REAL `claude -p` pass on the dispatch path, so leaving it on
 # would (a) make every dispatch test issue an implicit model call and (b) burn one invocation of the
 # stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"
 # fixture by one and failing tests that have nothing to do with sizing. Off by default here; the
@@ -65,35 +65,35 @@ export GOVERN_SESSION_MODEL=opus
 # All of these already default to the same value in their scripts; setting them here is the seam that
 # stops a LIVE governor session's exported env from leaking into a suite run inside it (the documented
 # failure mode where GOVERN_ALLOW_CONCURRENT=1 leaks in and reddens the orphan sweep by design).
-export GOVERN_DETERMINISTIC=0        # §4.2 zero-model resolution lane
-export GOVERN_STALENESS_GATE=0       # §4.5 pre-dispatch staleness skip
-export GOVERN_STALENESS_RUN_TESTS=0  # §4.5 never execute a queue-authored command in a test run
-export GOVERN_EARLY_ABORT=0          # §4.4 in-flight worker watchdog
-export GOVERN_RUN_MAX_TOKENS=0       # §5.7 run-level spend ceiling (0 = off)
+export GOVERN_DETERMINISTIC=0        # zero-model resolution lane
+export GOVERN_STALENESS_GATE=0       # pre-dispatch staleness skip
+export GOVERN_STALENESS_RUN_TESTS=0  # never execute a queue-authored command in a test run
+export GOVERN_EARLY_ABORT=0          # in-flight worker watchdog
+export GOVERN_RUN_MAX_TOKENS=0       # run-level spend ceiling (0 = off)
 export GOVERN_EVENTS=0               # fleet event log (lib/common.sh): OFF for the whole suite
-export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter (spec 4b): its own test opts in
-export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge (#139): its own test opts back in
-export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush (#95): its own test opts back in
-export GOVERN_GOTCHA_INJECT=0        # #118 rail 9: CLAUDE.md/learnings.md **Paths:** gotcha injection — several
+export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter: its own test opts in
+export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge: its own test opts back in
+export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush: its own test opts back in
+export GOVERN_GOTCHA_INJECT=0        # CLAUDE.md/learnings.md **Paths:** gotcha injection — several
                                       # existing tests (test-claudemd-trim.sh etc.) write their OWN CLAUDE.md at
                                       # the stub root for unrelated reasons; a coincidental `### `+`**Paths:**`
                                       # match there must never leak into an unrelated test's assembled prompt.
                                       # Its own test (test-spawn-gotcha-inject.sh) opts back in.
-export GOVERN_ADVISOR=0              # #127 design Layer 3: the advisor consult kill switch. Already the
+export GOVERN_ADVISOR=0              # the advisor consult kill switch. Already the
                                       # script's own default, restated here per the GOVERN_FIX_CI precedent
                                       # (a live governor session's exported env must never leak into a suite
                                       # run). Its own test (test-advisor-consult.sh) opts back in explicitly.
-export GOVERN_PROPOSAL_GATE=0        # .specs/2026-09-11-advisor-worker-design.md D2: unlike the knobs
-                                      # above, this gate's SHIPPED default is ON (rail 7/G7 — an
+export GOVERN_PROPOSAL_GATE=0        # unlike the knobs
+                                      # above, this gate's SHIPPED default is ON (an
                                       # inert-by-default gate is the defect this design is written
                                       # against), so it is the one line here where the suite default
                                       # genuinely diverges from production. Forced off so every
                                       # pre-existing pre-dispatch-check.sh fixture (none of which
                                       # carry a **Proposed solution:** section) keeps testing what it
                                       # was written to test. Its own tests opt back in explicitly.
-export GOVERN_AGENT_SUPERVISION=1    # .specs/2026-09-11-advisor-worker-design.md D8: same shape
+export GOVERN_AGENT_SUPERVISION=1    # same shape
                                       # of divergence as GOVERN_PROPOSAL_GATE just above — this
-                                      # hook's SHIPPED default is ON (rail 7, closing #116/G10).
+                                      # hook's SHIPPED default is ON.
                                       # Pinned explicitly (not left ambient) so a live governor
                                       # session's own GOVERN_AGENT_SUPERVISION=0 export can't leak
                                       # into a suite run and mask a regression. Unlike the knobs
@@ -107,7 +107,7 @@ export GOVERN_STEER_CAP=12           # advisor-steer-guard.sh's per-session cap 
                                       # never spawns, so no dispatch fixture is perturbed by it.
                                       # Explicit so a live session's own override cannot leak in.
 
-# §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
+# Index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
 export GOVERN_INDEX=0
@@ -130,7 +130,7 @@ export _GOVERN_MAXBUDGETUSD_SUPPORTED=0
 # externalize lane doesn't exist, required where it does so the externalize lane doesn't fire under the stub).
 #   mk_ws_stub "$T"                     # alpha auto-mergeable, web PR-only
 #   mk_ws_stub "$T" "alpha,api"         # alpha + api auto-mergeable
-#   mk_ws_stub "$T" "" "alpha"          # alpha PR-only AND local-first (#72)
+#   mk_ws_stub "$T" "" "alpha"          # alpha PR-only AND local-first
 mk_ws_stub() { # <root> [merge-csv] [local-first-csv]
   local root="$1" merge="${2:-alpha}" localfirst="${3:-}"
   export GOVERN_WS_ROOT="$root"
@@ -162,12 +162,12 @@ assert_eq() { # actual expected message
 assert_contains() { # haystack needle message
   # `grep <<<"$1"` (here-string), NOT `printf "$1" | grep -q`: a -q grep exits on first match and
   # SIGPIPEs the printf, which `set -o pipefail` then reports as a pipeline failure once the haystack
-  # exceeds the 64KB pipe buffer (e.g. cat of a large script) — a false "not found" (#183).
+  # exceeds the 64KB pipe buffer (e.g. cat of a large script) — a false "not found".
   if grep -qF "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
   else printf 'FAIL - %s\n       [%s] not found in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
 }
 assert_not_contains() { # haystack needle message
-  # Same here-string reasoning as assert_contains (#183) — never pipe the haystack into a -q grep.
+  # Same here-string reasoning as assert_contains — never pipe the haystack into a -q grep.
   if grep -qF "$2" <<<"$1"; then
     printf 'FAIL - %s\n       [%s] unexpectedly PRESENT in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1))
   else printf 'ok   - %s\n' "$3"; fi

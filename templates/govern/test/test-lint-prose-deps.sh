@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #309 — non-blocking prose-dependency lint. Proves:
+# Non-blocking prose-dependency lint. Proves:
 #   (A) govern::prose_dep_warnings flags a ticket that states a dep in PROSE ("Blocks #306",
 #       "blocked by #N", "depends on #N") with NO bold **Depends on:**/**Blocks:** marker.
 #   (B) a ticket carrying the canonical bold marker is SUPPRESSED (no warning), even if it also

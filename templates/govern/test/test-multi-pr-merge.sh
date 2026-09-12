@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #129: a worker for a MULTI-REPO ticket can open N PRs, but the resolved path used to
+# Regression: a worker for a MULTI-REPO ticket can open N PRs, but the resolved path used to
 # act only on the single reported `report.pr` — so sibling PRs were orphaned unmerged. The fix:
 # collect EVERY PR for the ticket (reported `.pr`/`.prs[]` UNION every open `ticket-<N>` head
 # discovered across all repos), merge every auto-merge-repo PR backend-first on green/none, and leave
@@ -85,9 +85,9 @@ out="$( cd "$T" && printf '%s' "$report" | GOVERN_HISTORY_FILE="$HIST" bash "$T/
 rc=$?
 
 # A. every auto-merge-repo PR reached merge-pr.sh; the frontend PR is surfaced as left-open
-assert_contains "$(cat "$MERGE_ORDER")" "alpha#281" "alpha (auto-merge repo) reached merge-pr.sh (#129)"
-assert_contains "$(cat "$MERGE_ORDER")" "api#66"     "api (auto-merge repo) reached merge-pr.sh (#129)"
-assert_contains "$out" "web#266 left open (frontend is PR-only)" "frontend sibling left open + surfaced (#129), does NOT block the land"
+assert_contains "$(cat "$MERGE_ORDER")" "alpha#281" "alpha (auto-merge repo) reached merge-pr.sh"
+assert_contains "$(cat "$MERGE_ORDER")" "api#66"     "api (auto-merge repo) reached merge-pr.sh"
+assert_contains "$out" "web#266 left open (frontend is PR-only)" "frontend sibling left open + surfaced, does NOT block the land"
 
 # B. alpha reaches merge-pr.sh BEFORE api (merge-repo-first: alpha precedes api in GOVERN_MERGE_REPOS)
 apos="$(grep -n '^alpha#281$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"

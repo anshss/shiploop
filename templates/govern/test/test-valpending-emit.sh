@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner (spec §4) — pending-result EMISSION. Proves: a terminal PASS record and
+# Durable validation runner — pending-result EMISSION. Proves: a terminal PASS record and
 # a terminal FAIL record each get a pending-result.json emitted atomically (tmp+mv — no partial file
 # ever observable, mirrors escalations-emit-pending.sh); emission is idempotent (a second scan of an
 # already-emitted job is a no-op, never clobbers consumed:true); a job with no terminal record yet

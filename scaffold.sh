@@ -747,9 +747,9 @@ component_package_json_merge() {
 #
 # workspace.sh is the one file /update must never regenerate (it holds the operator's
 # answers). But that also meant a new GOVERN_* knob shipped in the hub seed reached
-# only NEW fleets — ticket #44's finding: GOVERN_PARALLEL_DEFAULT landed in v1.11.0 and
-# every upgrading workspace silently kept running serial. Appending only absent knob
-# names is safe: the operator's values, ordering, and comments are all preserved.
+# only NEW fleets: GOVERN_PARALLEL_DEFAULT landed in v1.11.0 and every upgrading
+# workspace silently kept running serial. Appending only absent knob names is safe:
+# the operator's values, ordering, and comments are all preserved.
 component_workspace_sh_merge() {
   log "component: workspace-sh-merge (append knobs new since this workspace was scaffolded)"
   local target="scripts/lib/workspace.sh"

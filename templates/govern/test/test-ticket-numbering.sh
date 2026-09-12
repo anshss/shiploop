@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #73: ticket numbering must be collision-safe across the GOVERNOR path
+# Regression: ticket numbering must be collision-safe across the GOVERNOR path
 # (land-resolution.sh) AND any MANUAL filing (file-ticket.sh / govern::next_ticket_number). The bug:
 # a manual append read a stale .ticket-seq (which only bookkeep ever bumped), didn't read the live
 # tickets.md max, didn't bump the seq, and wasn't serialized — so two sessions reused #67.
@@ -51,7 +51,7 @@ n2="$(govern::next_ticket_number "$T/tickets.md")"
 assert_eq "$n2" "7" "next_ticket_number: consecutive calls never collide (6 -> 7)"
 assert_eq "$(cat "$T/governor/.ticket-seq")" "7" "next_ticket_number: seq bumped to 7"
 
-# seq AHEAD of filemax (the #73 scenario: a prior filing bumped seq past the live max) → seq governs.
+# seq AHEAD of filemax (a prior filing bumped seq past the live max) → seq governs.
 mk_tickets                                # filemax back to 5
 printf '20\n' > "$T/governor/.ticket-seq" # seq = 20
 n="$(govern::next_ticket_number "$T/tickets.md")"

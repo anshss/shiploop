@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #120: a worker report carrying a bare integer `.pr` (e.g. `"pr": 169`) used to silently fall
+# A worker report carrying a bare integer `.pr` (e.g. `"pr": 169`) used to silently fall
 # through resolve-ticket.sh's "no PR found" branch — and that branch LANDS. It deleted a queue
 # block while the real PR sat open, green and mergeable, and the exit status was SUCCESS. The same
 # fall-through fires for ANY present-but-unparseable `.pr` (a malformed object, a non-numeric

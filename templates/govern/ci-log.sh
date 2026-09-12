@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ci-log.sh <repo> <pr> — print a BOUNDED excerpt of the failing CI job's log for a PR.
 #
-# §4.6 "verify in CI's environment". Workers verify on macOS; CI runs Linux (#13). A PR that is
-# correct locally fails on a portability difference — a `sed -i` without a backup arg, a BSD-vs-GNU
+# Workers verify on macOS; CI runs Linux. A PR that is correct locally fails on a portability
+# difference — a `sed -i` without a backup arg, a BSD-vs-GNU
 # flag, a case-insensitive filesystem — and the governor dispatches a SECOND FULL WORKER for something
 # entirely deterministic. A caller can re-dispatch by setting `GOVERN_FIX_CI=<repo>#<pr>` on a
 # spawn-worker.sh call, but the re-dispatched worker is handed the SAME ticket prompt as the first

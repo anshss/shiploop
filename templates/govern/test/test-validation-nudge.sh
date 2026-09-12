@@ -10,7 +10,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 # The hook lives at templates/hooks (template) | <root>/scripts (workspace); GOVERN_HOOKS_DIR
-# (from assert.sh) resolves whichever layout we're in (#255).
+# (from assert.sh) resolves whichever layout we're in.
 SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
 
 # Build a sandbox "main checkout": a git repo owning queue/tickets.md, plus a hermetic
@@ -29,7 +29,7 @@ mk_main() {
 # case below writes) counts as this-session work, so the hook fires and we can inspect the
 # reconcile reason. Private TMPDIR per call so the once-per-session marker never collides across
 # cases. GOVERN_WS_ROOT points at the sandbox for the same reason test-ticket-sweep.sh and
-# test-queue-isolation-advisory.sh do (#255-class layout gotcha with the earlier lint subshells).
+# test-queue-isolation-advisory.sh do (a layout gotcha with the earlier lint subshells).
 sweep() { # <T> <session_id> [extra env assignment...]
   local T="$1" sid="$2" td; shift 2
   td="$(mktemp -d)"

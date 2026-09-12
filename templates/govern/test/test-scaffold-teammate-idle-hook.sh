@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression for D8/G10's interactive-lane idle supervision (#181) actually being WIRED, not just
-# reachable by agent-progress-guard.sh's own tests. PR #181 taught the hook to handle a
+# Regression for interactive-lane idle supervision actually being WIRED, not just
+# reachable by agent-progress-guard.sh's own tests. The hook was taught to handle a
 # `TeammateIdle` event, but nothing ever registered that event with the CLI — SubagentStop is the
 # ONLY place either lane's supervision gets wired (test-worker-agent-doctrine.sh's own case 6i:
 # "SubagentStop supervision is owned once, at settings.json"), so a TeammateIdle branch with no

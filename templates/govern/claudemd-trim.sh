@@ -181,7 +181,7 @@ ct::roots() {
 # resolving under any sub-repo's templates/ tree reads LIVE as a plain side effect of the same
 # suffix match, no separate templates-specific lookup required. `test/assert.sh` matches the
 # `…/shiploop/templates/govern/test/assert.sh` index line by the `/test/assert.sh` suffix test below,
-# which is exactly the hub-only-by-design false positive #110 exists to fix (govern's test suite
+# which is exactly the hub-only-by-design false positive this fix addresses (govern's test suite
 # ships only inside the hub's templates/, never copied into a scaffolded workspace).
 ct::path_index() {
   [[ -z "${CT_PATH_INDEX:-}" ]] || return 0

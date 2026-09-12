@@ -146,7 +146,7 @@ printf '%s' "$out" | jq -e '.helpers.next_ticket_number == "51"' >/dev/null 2>&1
   printf 'ok   - 14. peeked value reflects max(hwm 50, tickets.md #9) + 1 = 51\n' || \
   { printf 'FAIL - 14. unexpected peeked next_ticket_number\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
-# ── #119 (rail 12): hub-default knob drift + named-but-missing scripts ─────
+# ── hub-default knob drift + named-but-missing scripts ─────
 # A fake "hub" clone, pointed at via GOVERN_UPSTREAM_HARNESS_DIR — the same
 # knob a real operator's local fork clone uses (commands/update.md). Every
 # case below also pins CLAUDE_PLUGIN_ROOT="" and HOME="$ROOT" so an ambient

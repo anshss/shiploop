@@ -3,7 +3,7 @@
 # history (only state.jsonl entries added since ITS OWN previous pass this run, plus its own
 # previous verdict as a carried-forward compressed summary) instead of re-sending the whole,
 # steadily-growing state.jsonl on every pass. Must stay lossless: nothing dropped by a window,
-# only not re-sent once already reviewed (the #56 regression this must not reintroduce).
+# only not re-sent once already reviewed (the regression this must not reintroduce).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"

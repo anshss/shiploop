@@ -76,7 +76,7 @@ if [[ "$floor_rank" -ge "$ceiling_rank" ]]; then
   problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (the explicit-request cap, rank $ceiling_rank): a cap at or below the floor is inert, since every dispatch already runs at or above the highest tier a ticket Model: field may ask for")
 fi
 
-# ── Named-but-missing scripts (rail 12 / #119) — a HARD problem ──
+# ── Named-but-missing scripts — a HARD problem ──
 # Nothing checked whether a rule or an npm script naming an installed script
 # still points at a real file. Two live instances the same session: (a)
 # package.json's OWN "govern:pre-dispatch" entry named
@@ -123,7 +123,7 @@ if [[ -f "$pkg_json" ]] && command -v jq >/dev/null 2>&1; then
   fi
 fi
 
-# ── Hub-default knob drift (rail 12 / #119) — a WARNING, never a hard problem ──
+# ── Hub-default knob drift — a WARNING, never a hard problem ──
 # A local knob running a different value than the hub ships is not itself a
 # bug: a fleet may deliberately pin a floor/ceiling the hub no longer
 # defaults to. The bug is drift NOBODY NOTICED — scripts/lib/workspace.sh is

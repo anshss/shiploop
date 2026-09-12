@@ -21,7 +21,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 
-# Two layouts (#255): scripts/agent-watchdog-guard.sh in a scaffolded workspace,
+# Two layouts: scripts/agent-watchdog-guard.sh in a scaffolded workspace,
 # templates/hooks/agent-watchdog-guard.sh in the hub repo.
 GUARD="$GOVERN_HOOKS_DIR/agent-watchdog-guard.sh"
 [ -f "$GUARD" ] || { echo "SKIP: agent-watchdog-guard.sh not found under $GOVERN_HOOKS_DIR"; exit 77; }

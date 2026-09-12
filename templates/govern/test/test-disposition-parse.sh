@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #87 — the Disposition field must be classified by its LEADING token only. A clarifying
+# The Disposition field must be classified by its LEADING token only. A clarifying
 # parenthetical that mentions another canonical token (e.g. keep-open _(NOT do-the-work)_)
 # must NOT misfire. Pure unit test over the lib helpers + one apply-answers integration case.
 set -euo pipefail
@@ -21,16 +21,16 @@ assert_eq "$(govern::disposition_lead_token '  do-the-work  ')" \
 assert_eq "$(govern::disposition_lead_token 'defer(x)')" \
   "defer" "leading token handles a paren attached with no space"
 
-# ── disposition classification is anchored to the leading token (#87 core) ────────────────
+# ── disposition classification is anchored to the leading token ────────────────
 norm() { govern::norm_disposition "$(govern::disposition_lead_token "$1")"; }
 assert_eq "$(norm 'keep-open _(deliberately NOT do-the-work: parked on purpose)_')" \
-  "keep-open" "#87: keep-open w/ do-the-work parenthetical classifies as keep-open (not do-the-work)"
+  "keep-open" "keep-open w/ do-the-work parenthetical classifies as keep-open (not do-the-work)"
 assert_eq "$(norm 'defer (not do-the-work)')" "defer" "defer w/ do-the-work parenthetical → defer"
 assert_eq "$(norm 'keep-open (not defer)')" "keep-open" "keep-open w/ defer parenthetical → keep-open"
 assert_eq "$(norm 'do-the-work')" "do-the-work" "bare do-the-work still classifies as do-the-work"
 assert_eq "$(norm 'defer')" "defer" "bare defer still classifies as defer"
 
-# #121: `mitigated` is its own canonical token, distinct from defer/do-the-work/keep-open.
+# `mitigated` is its own canonical token, distinct from defer/do-the-work/keep-open.
 assert_eq "$(norm 'mitigated')" "mitigated" "bare mitigated classifies as mitigated"
 assert_eq "$(norm 'mitigated _(harm already zero — accept current state)_')" "mitigated" \
   "mitigated w/ a clarifying parenthetical classifies as mitigated"
@@ -61,7 +61,7 @@ ph='_(operator: do-the-work | defer | mitigated | keep-open)_'
 govern::is_placeholder "$ph" && phflag=yes || phflag=no
 assert_eq "$phflag" "yes" "the Disposition placeholder is treated as unanswered (not parsed as a token)"
 
-# ── integration: apply-answers respects the leading token (#81 reproduction) ──────────────
+# ── integration: apply-answers respects the leading token ──────────────
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
@@ -77,7 +77,7 @@ body of eighty-one
 EOF
 printf '# Parked tickets\n\n---\n' > "$T/tickets-parked.md"
 
-# #81 Disposition is keep-open but its parenthetical names do-the-work — the #81 bug.
+# Disposition is keep-open but its parenthetical names do-the-work — the bug this reproduces.
 cat > "$T/escalations.md" <<'EOF'
 # Escalations
 

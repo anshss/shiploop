@@ -34,7 +34,7 @@
 # leaves that ticket staged and the script exits non-zero, which the caller swallows so the loop never
 # stalls.
 #
-# OPERATOR REQUIREMENT (#26): for auto-labels to actually apply, the gh account the governor is authed
+# OPERATOR REQUIREMENT: for auto-labels to actually apply, the gh account the governor is authed
 # as needs ≥ Triage on GOVERN_EXTERNALIZE_REPO. `gh issue create --label …` is a COMPOSITE op — it
 # creates the issue, then applies labels via a SEPARATE GraphQL `addLabelsToLabelable` mutation that a
 # pull-only account is denied. The create still returns the URL, so the lane no longer infers full

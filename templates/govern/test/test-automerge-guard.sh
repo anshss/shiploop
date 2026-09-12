@@ -11,7 +11,7 @@
 #   D. gh api user   FAILS                                    → BLOCK exit 5, reason lookup-failed
 #   E. Own author    + own branch + own repo + green CI       → ALLOW  exit 0, guard silent
 #   F. Own author    + sync-auto-* branch (sync-port lane)    → ALLOW  exit 0
-#   G. Own author    + t<N> branch (interactive lane, #127)   → ALLOW  exit 0
+#   G. Own author    + t<N> branch (interactive lane)         → ALLOW  exit 0
 #   H. Own author    + t<N>-<label> branch (interactive lane) → ALLOW  exit 0
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -123,10 +123,10 @@ run_merge
 assert_eq "$rc" "0" "F: sync-port lane branch (sync-auto-*) is ALLOWED"
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "F: gh pr merge WAS invoked once"
 
-# ── G. t<N> branch (interactive lane's own worktree:new convention, worker.md) → ALLOW (D7/#127) ──
+# ── G. t<N> branch (interactive lane's own worktree:new convention, worker.md) → ALLOW ──
 pr_json "acme" "t127" "acme" "acme"
 run_merge
-assert_eq "$rc" "0" "G: interactive-lane t<N> branch is ALLOWED (D7 — recognized as first-party)"
+assert_eq "$rc" "0" "G: interactive-lane t<N> branch is ALLOWED (recognized as first-party)"
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "G: gh pr merge WAS invoked once"
 
 # ── H. t<N>-<label> branch (e.g. t57-log-guard, observed live) → ALLOW ──

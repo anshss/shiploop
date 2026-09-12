@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for ticket #108: two concurrent govern drivers sharing one origin/main must not
+# Regression: two concurrent govern drivers sharing one origin/main must not
 # resurrect or re-process a ticket one of them already resolved+pushed. The bookkeep lock
 # (govern/.locks/bookkeep) serializes writes WITHIN one driver but NOT the cross-driver git
 # push/pull — so the guards live at the git level:
