@@ -18,12 +18,18 @@
 #   6. RE-ENTRANCY — stop_hook_active:true on a doomed transcript → no block (never adds a THIRD
 #                    loop turn on top of Claude Code's own stop-hook block cap)
 #   7. MISSING agent_transcript_path → no block, no crash
-#   15. BASH WRITES — 40 turns whose only file changes are shell writes (`cat >`, `sed -i`) and
-#       zero Edit tool_use → NOT blocked. A worker told to change files through the shell used to
-#       read as stalled while converging perfectly, and then had its stop refused.
+#   15. TREE CHANGED — 40 turns whose only file changes came from a heredoc piped into an
+#       interpreter, so zero Edit tool_use: blocked while the tree is clean, ALLOWED once the tree
+#       actually changes. The filesystem is the signal, not the shape of the command.
 #   16. WATCHDOG-CAPPED — a stalled transcript whose last turns carry the wall-clock watchdog's own
 #       deny text → NOT blocked. The watchdog has already denied every tool call and told the child
 #       to stop and report; refusing the stop on top of that leaves it no legal move at all.
+#   17. DIRTY TREE, NO BASELINE — uncommitted work on disk on the first look → allowed.
+#   18. READ-ONLY AGENT TYPES — a lookup and an investigator are never stalled, however read-only
+#       their turns look: producing no diff is what success looks like for them.
+#   19. UNRESOLVABLE TREE — cwd is not a git checkout, so the tree check cannot tell → allowed.
+#       A check that cannot tell must never be the thing that denies a stop.
+#   20. THE GATES DO NOT WIDEN — a lookup child in an identical-command loop is still blocked.
 #   8. SAME SIGNAL, both callers — the STALL reason text this hook emits for a transcript is
 #      byte-identical to what spawn-worker.sh's watchdog emits for the SAME transcript shape,
 #      because both call govern::early_abort_reason() rather than each having their own copy.
@@ -83,17 +89,35 @@ gen_loop() {
 }
 gen_loop > "$TMP/loop.jsonl"
 
-# BASH-WRITE transcript: the same 40 turns as the STALL one, but every turn is a shell command that
-# WRITES a file. Not one Edit/Write tool_use anywhere — this is the shape that used to trip STALL.
-gen_bash_writes() {
+# HEREDOC transcript: the same 40 turns as the STALL one, but every turn pipes a heredoc into an
+# interpreter, which is the dominant file-writing idiom in a shell-first environment. Not one
+# Edit/Write tool_use anywhere, and nothing in the command TEXT can tell you whether the program
+# inside the heredoc writes a file. This is the shape that used to trip STALL.
+gen_heredoc() {
   for i in $(seq 1 40); do
-    jq -cn --arg c "cat > /tmp/part-$i.txt <<EOF
-chunk
-EOF" '{type:"assistant",message:{content:[{type:"tool_use",name:"Bash",input:{command:$c}}],usage:{input_tokens:1,output_tokens:1}}}'
+    jq -cn --arg c "python3 - <<'PY'
+open('part-$i.txt','w').write('chunk')
+PY" '{type:"assistant",message:{content:[{type:"tool_use",name:"Bash",input:{command:$c}}],usage:{input_tokens:1,output_tokens:1}}}'
     printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","is_error":false,"content":"ok"}]}}\n'
   done
 }
-gen_bash_writes > "$TMP/bash-writes.jsonl"
+gen_heredoc > "$TMP/heredoc.jsonl"
+
+# ── the working trees the guard fingerprints ───────────────────────────────────────────────────
+# mk_git_repo <dir> — a real git checkout with one commit, left CLEAN. The guard resolves the tree
+# from the payload's cwd, so every case below points cwd at one of these.
+mk_git_repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q .
+  git -C "$1" config user.email t@test; git -C "$1" config user.name t
+  printf 'seed\n' > "$1/seed.txt"
+  git -C "$1" add -A; git -C "$1" commit -qm init
+}
+mk_git_repo "$TMP/tree-clean"    # stays clean for every case that must still block
+mk_git_repo "$TMP/tree-work"     # case 15 changes this one between two guard invocations
+mk_git_repo "$TMP/tree-dirty"
+printf 'uncommitted\n' > "$TMP/tree-dirty/scratch.txt"   # case 17: work on disk, never committed
+mkdir -p "$TMP/not-a-repo"       # case 19: cwd the guard cannot resolve a tree from
 
 # WATCHDOG-CAPPED transcript: a genuinely stalled run (so the progress check DOES fire) whose last
 # tool_result is the wall-clock watchdog's own denial, verbatim from agent-watchdog-guard.sh.
@@ -109,11 +133,22 @@ gen_bash_writes > "$TMP/bash-writes.jsonl"
 # `agent_transcript_path` is the child's. This fixture mirrors the real payload shape exactly (it
 # also carries a `transcript_path` pointing somewhere else, to catch a regression that reads the
 # wrong field back).
+# GUARD_CWD is the tree the guard will fingerprint (the payload's cwd). It defaults to a CLEAN
+# checkout so the stall cases below still reach a block: the tree check can only ever suppress a
+# stall, so a case that asserts a block has to be standing somewhere that genuinely has no work in
+# it. GUARD_AGENT_TYPE drives the read-only exemption.
+GUARD_CWD="$TMP/tree-clean"
+GUARD_AGENT_TYPE="general-purpose"
+# The guard stores its per-agent tree fingerprint under ${TMPDIR:-/tmp}, so point TMPDIR into this
+# run's own scratch directory. Without it the SECOND run of this file would read the FIRST run's
+# fingerprints back for the same agent ids, see a different tree, and read every block case as
+# progress. Hermetic per run, and it exercises the real state path rather than stubbing it out.
+mkdir -p "$TMP/state"
 run_guard() {
   local transcript="$1" agent_id="$2" active="$3"; shift 3
-  printf '{"session_id":"s-%s","cwd":"%s","transcript_path":"%s/PARENT-not-the-childs.jsonl","agent_transcript_path":"%s","agent_id":"%s","agent_type":"general-purpose","stop_hook_active":%s}' \
-      "$agent_id" "$TMP" "$TMP" "$transcript" "$agent_id" "$active" \
-    | env "$@" bash "$GUARD"
+  printf '{"session_id":"s-%s","cwd":"%s","transcript_path":"%s/PARENT-not-the-childs.jsonl","agent_transcript_path":"%s","agent_id":"%s","agent_type":"%s","stop_hook_active":%s}' \
+      "$agent_id" "$GUARD_CWD" "$TMP" "$transcript" "$agent_id" "$GUARD_AGENT_TYPE" "$active" \
+    | env TMPDIR="$TMP/state" "$@" bash "$GUARD"
 }
 
 # run_guard_idle <transcript> <agent_id> <via> [extra env assignments...]
@@ -126,12 +161,12 @@ run_guard_idle() {
   local transcript="$1" agent_id="$2" via="$3"; shift 3
   if [ "$via" = "agent" ]; then
     printf '{"session_id":"s-%s","cwd":"%s","hook_event_name":"TeammateIdle","agent_transcript_path":"%s","agent_id":"%s","agent_type":"worker"}' \
-        "$agent_id" "$TMP" "$transcript" "$agent_id" \
-      | env "$@" bash "$GUARD"
+        "$agent_id" "$GUARD_CWD" "$transcript" "$agent_id" \
+      | env TMPDIR="$TMP/state" "$@" bash "$GUARD"
   else
     printf '{"session_id":"s-%s","cwd":"%s","hook_event_name":"TeammateIdle","transcript_path":"%s","agent_id":"%s","agent_type":"worker"}' \
-        "$agent_id" "$TMP" "$transcript" "$agent_id" \
-      | env "$@" bash "$GUARD"
+        "$agent_id" "$GUARD_CWD" "$transcript" "$agent_id" \
+      | env TMPDIR="$TMP/state" "$@" bash "$GUARD"
   fi
 }
 
@@ -248,14 +283,32 @@ assert_contains "$(cat "$events14")" "agent_progress_alarm" "the idle alarm IS s
 [ -f "$lever14" ] && haslev14=yes || haslev14=no
 assert_eq "$haslev14" "no" "and is NOT a lever event: it removes no tokens, so bench must not credit it"
 
-# ── 15. BASH WRITES, supervision ON — must NOT fire ────────────────────────────────────────────
-# Same turn count as the STALL transcript, same absence of any Edit tool_use. The only difference
-# is that these turns change files through the shell, which is a diff like any other.
+# ── 15. TREE CHANGED — the heredoc worker, blocked while clean and allowed once it writes ──────
+# Same turn count as the STALL transcript and the same absence of any Edit tool_use. Run twice
+# against the SAME agent id: the first look establishes the fingerprint, then a real file lands in
+# the tree and the second look must see it. This is the case the command-shape approach could not
+# answer, because the command text says nothing about whether the embedded program writes.
+GUARD_CWD="$TMP/tree-work"
+out15a="$(run_guard "$TMP/heredoc.jsonl" a15 false GOVERN_AGENT_SUPERVISION=1)"
+assert_contains "$out15a" '"decision":"block"' \
+  "first look, clean tree: a heredoc-only run with nothing on disk to show for it is still blocked"
+assert_contains "$out15a" "working tree has not changed" \
+  "and the block reason says so, instead of claiming only Edit/Write/NotebookEdit count"
+
+printf 'real work\n' > "$TMP/tree-work/part-1.txt"
 events15="$TMP/events-15.jsonl"
-out15="$(run_guard "$TMP/bash-writes.jsonl" a15 false GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events15")"
-assert_eq "$out15" "" "a subagent whose only file changes are shell writes is NOT blocked"
+out15b="$(run_guard "$TMP/heredoc.jsonl" a15 false GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events15")"
+assert_eq "$out15b" "" \
+  "the tree changed between the two looks, so the child is converging and its stop goes through"
 [ -s "$events15" ] && has15=yes || has15=no
-assert_eq "$has15" "no" "no fleet alarm either — it was never stalling"
+assert_eq "$has15" "no" "no fleet alarm either: it was never stalling"
+
+# A THIRD look with nothing further written must block again, so case 15 proves the fingerprint is
+# what changed the outcome rather than the agent id having been seen before.
+GUARD_CWD="$TMP/tree-work"
+out15c="$(run_guard "$TMP/heredoc.jsonl" a15 false GOVERN_AGENT_SUPERVISION=1)"
+assert_contains "$out15c" '"decision":"block"' "an unchanged tree on the next look is a stall again"
+GUARD_CWD="$TMP/tree-clean"
 
 # ── 16. WATCHDOG-CAPPED — a stalled child that has already been denied its tools ────────────────
 # The stop must go through. This child cannot land a diff (every tool call is denied) and the
@@ -272,5 +325,48 @@ assert_contains "$(cat "$events16" 2>/dev/null || true)" '"type":"agent_progress
 # what changed the outcome and not the transcript shape.
 out16b="$(run_guard "$TMP/stall.jsonl" a16b false GOVERN_AGENT_SUPERVISION=1)"
 assert_contains "$out16b" '"decision":"block"' "without the watchdog marker the same stalled shape is still blocked"
+
+# ── 17. DIRTY TREE, NO BASELINE — the first look at a child that already has work on disk ───────
+# There is no previous fingerprint to compare against on a child's first check, and uncommitted work
+# is the honest evidence that it has produced something. Fail open and believe it.
+GUARD_CWD="$TMP/tree-dirty"
+out17="$(run_guard "$TMP/stall.jsonl" a17 false GOVERN_AGENT_SUPERVISION=1)"
+assert_eq "$out17" "" "uncommitted work on disk on the first look → the stop is allowed"
+GUARD_CWD="$TMP/tree-clean"
+
+# ── 18. READ-ONLY AGENT TYPES are never stalled ────────────────────────────────────────────────
+# The SAME read-only transcript and the SAME clean tree that blocks a general-purpose child. A
+# lookup and an investigator are not supposed to produce a diff, so "no diff" is success for them.
+# This fired on two real children in one day; both spent their last message arguing they were not
+# stuck instead of delivering findings, and both sets of findings were lost.
+events18="$TMP/events-18.jsonl"
+GUARD_AGENT_TYPE="lookup"
+out18a="$(run_guard "$TMP/stall.jsonl" a18a false GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events18")"
+assert_eq "$out18a" "" "a lookup child is never stalled, however read-only its turns"
+[ -s "$events18" ] && has18=yes || has18=no
+assert_eq "$has18" "no" "and raises no alarm either: there is nothing wrong with it"
+GUARD_AGENT_TYPE="investigator"
+out18b="$(run_guard "$TMP/stall.jsonl" a18b false GOVERN_AGENT_SUPERVISION=1)"
+assert_eq "$out18b" "" "an investigator child is never stalled either"
+GUARD_AGENT_TYPE="worker"
+out18c="$(run_guard "$TMP/stall.jsonl" a18c false GOVERN_AGENT_SUPERVISION=1)"
+assert_contains "$out18c" '"decision":"block"' "a worker on the SAME transcript and tree IS still blocked"
+GUARD_AGENT_TYPE="general-purpose"
+
+# ── 19. UNRESOLVABLE TREE degrades to allow ────────────────────────────────────────────────────
+# cwd is a plain directory, not a git checkout, so the tree question cannot be answered at all. A
+# check that cannot tell must never be the thing that denies a stop.
+GUARD_CWD="$TMP/not-a-repo"
+out19="$(run_guard "$TMP/stall.jsonl" a19 false GOVERN_AGENT_SUPERVISION=1)"
+assert_eq "$out19" "" "no resolvable working tree → the guard allows the stop rather than guessing"
+GUARD_CWD="$TMP/tree-clean"
+
+# ── 20. THE GATES DO NOT WIDEN ─────────────────────────────────────────────────────────────────
+# Both gates are scoped to STALL. A child fighting its own tools is fighting them whatever its type
+# and whatever the filesystem says, so LOOP is unchanged for a read-only type too.
+GUARD_AGENT_TYPE="lookup"
+out20="$(run_guard "$TMP/loop.jsonl" a20 false GOVERN_AGENT_SUPERVISION=1 GOVERN_EARLY_ABORT_REPEATS=5)"
+assert_contains "$out20" "LOOP" "the loop signature still fires for a read-only agent type"
+GUARD_AGENT_TYPE="general-purpose"
 
 assert_done

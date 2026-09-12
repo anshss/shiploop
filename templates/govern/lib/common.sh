@@ -3444,34 +3444,8 @@ govern::usage_error_signature() { # worker-jsonl -> signature|""
 # awk pass over a tiny tab-separated projection instead of repeated jq scans.
 #   T            one assistant turn
 #   X            one file-mutating tool_use (Edit/Write/NotebookEdit)
-#   W            one Bash tool_use whose command WRITES a file (see bashwrite below)
 #   C <command>  one Bash command string
 #   E 0|1        one tool_result, flagged with whether it was an error
-#
-# W exists because "edited a file" and "used the Edit tool" are not the same thing. An agent told to
-# prefer shell for file changes (python3 heredocs, `cat >`, `sed -i`) mutates files on nearly every
-# turn and emits ZERO X tokens, so a stall check keyed on X alone reads a converging worker as a
-# stalled one and then blocks its stop. W resets the same counter X does, off the command text
-# already carried on the C token, so no new projection or second transcript pass is needed.
-#
-# bashwrite() is deliberately conservative, and asymmetric on purpose: a MISSED write only keeps
-# today's behavior (the detector still fires, as it always did), while a wrongly-matched read
-# silences the detector for the whole run. So when a shape is ambiguous it is left OUT. Counted:
-#   - a redirect (`>` / `>>`) whose target looks like a path. Covers `cat > f`, `printf ... >> f`,
-#     and a heredoc redirected to a file (`cat > f <<EOF`), which is that same redirect. Redirects
-#     to /dev/* and fd dups (`2>&1`, `>&2`) are stripped BEFORE the test, so they never count, and
-#     the target must start with a path-ish character so `a -> b` and `[ x > y ]` do not match.
-#   - `tee` / `tee -a` to a path (same /dev/* strip).
-#   - `sed -i` / `perl -i`, matched only when the flag belongs to THAT command, so the very common
-#     `grep -i foo | sed ...` is not read as an in-place edit.
-#   - `mv`, `cp`, `truncate`, `git apply`, `git commit`.
-# Deliberately NOT counted, each because the shape is indistinguishable from a non-write:
-#   - `install`: the anchor cannot tell `install -m 755 a b` from `npm install` / `pip install`,
-#     and the package-manager sense is overwhelmingly the common one.
-#   - a heredoc fed to an interpreter's STDIN (`python3 - <<PY` … `open(f,"w")` … `PY`): whether the
-#     script writes anything is knowable only by reading the embedded program, not its shell shape.
-#     A worker doing that AND nothing else for 30 straight turns still trips STALL.
-#   - pure reads (`grep`, `cat` with no redirect, `ls`, `find`) and test/build runs.
 # `.message.content` is guarded with a type check: some events carry it as a STRING, and iterating a
 # string aborts the whole jq program (taking every already-parsed line with it). A partial last line
 # mid-write is tolerated the same way govern::cumulative_tokens tolerates it — jq stops there, and
@@ -3482,22 +3456,10 @@ govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
   [[ -n "$f" && -s "$f" ]] || return 0
   { govern::stream_grep "$f" -e '"type":"assistant"' -e '"type":"user"' || true; } \
     | jq -r '
-        def bashwrite($cmd):
-          ($cmd
-            | gsub("[0-9]?>>?&[0-9-]"; " ")
-            | gsub(">>?[[:space:]]*/dev/[A-Za-z0-9_]+"; " ")
-            | gsub("tee[[:space:]]+(-a[[:space:]]+)?/dev/[A-Za-z0-9_]+"; " ")) as $c
-          | ($c | test("(^|[[:space:]])>>?[[:space:]]*[\"\u0027A-Za-z0-9_.$~/-]"))
-            or ($c | test("(^|[|;&[:space:]])tee([[:space:]]+-a)?[[:space:]]+[\"\u0027A-Za-z0-9_.$~/-]"))
-            or ($c | test("(^|[|;&[:space:]])(sed|perl)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-i"))
-            or ($c | test("(^|[|;&[:space:]])(mv|cp)[[:space:]]"))
-            or ($c | test("(^|[|;&[:space:]])truncate[[:space:]]"))
-            or ($c | test("(^|[|;&[:space:]])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*(apply|commit)([[:space:]]|$)"));
         (if ((.message.content? | type) == "array") then .message.content else [] end) as $c
         | if .type == "assistant" then
             ( ["T"]
               + [ $c[] | select(.type? == "tool_use" and (.name? == "Edit" or .name? == "Write" or .name? == "NotebookEdit")) | "X" ]
-              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | select(bashwrite((.input.command? // "") | tostring)) | "W" ]
               + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | "C\t" + ((.input.command? // "") | tostring) ]
             ) []
           elif .type == "user" then
@@ -3521,12 +3483,12 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
     -v turns="${GOVERN_EARLY_ABORT_TURNS:-30}" -v reps="${GOVERN_EARLY_ABORT_REPEATS:-5}" \
     -v epct="${GOVERN_EARLY_ABORT_ERROR_PCT:-60}" -v ewin="${GOVERN_EARLY_ABORT_ERROR_WINDOW:-20}" '
     $1=="T" { t++; since++ }
-    $1=="X" || $1=="W" { since=0; edits++ }
+    $1=="X" { since=0; edits++ }
     $1=="C" { n_c++; cmd[$2]++; if (cmd[$2] > maxrep) { maxrep = cmd[$2]; maxcmd = $2 } }
     $1=="E" { ne++; err[ne] = ($2+0) }
     END {
       if (turns+0 > 0 && t+0 >= turns+0 && since+0 >= turns+0) {
-        printf "STALL: no file change (Edit/Write/NotebookEdit, or a Bash command that writes a file) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
+        printf "STALL: no file edit (Edit/Write/NotebookEdit) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
         exit
       }
       if (reps+0 > 0 && maxrep+0 >= reps+0) {
@@ -3545,6 +3507,92 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
         }
       }
     }' || true
+  return 0
+}
+
+# ── working-tree fingerprint: did the child actually change any files? ────────────────────
+# The stall signature above asks "did an Edit/Write/NotebookEdit tool_use happen", which is not the
+# same question as "did the tree change". An agent that changes files through the shell (a heredoc
+# piped into an interpreter is the dominant idiom) emits none of those tool_uses and reads as
+# stalled while converging perfectly, and then has its stop refused. Classifying the COMMAND cannot
+# fix that: whether `python3 - <<PY ... PY` writes anything is knowable only from the program inside
+# the heredoc. So ask the filesystem instead. A fingerprint that moved between two checks is
+# progress, whatever idiom produced it, and no shell-shape heuristic can be wrong about it.
+#
+# WHICH TREES. A worker runs in a worktree of a sub-repo, not in the session's own checkout, so a
+# single `git status` where the hook happens to stand answers about the wrong directory. Resolved
+# deterministically from one starting directory, using git's own bookkeeping rather than a guess:
+#   - the enclosing repo of the start dir (`rev-parse --show-toplevel`),
+#   - every immediate subdirectory of that toplevel that is itself a git checkout. A meta-repo's
+#     sub-repos are nested checkouts, and a parent's `git status` never reports a nested repo's
+#     files, so without this the one tree that actually changes is the one nobody looked at.
+#   - every LINKED WORKTREE of each of those repos (`git worktree list`). This is the case that
+#     matters: the session stands in the main checkout while the child works in a worktree
+#     elsewhere on disk, and git is the only thing that knows where that worktree is.
+#
+# A UNION, AND WHY THAT IS THE RIGHT DIRECTION. The fingerprint covers every resolved tree at once,
+# so a change anywhere in the set reads as progress. Two consequences, both deliberate: work by a
+# CONCURRENT sibling in another worktree can look like this child's progress, and the answer is
+# therefore only ever "something moved" rather than "this child moved something". That is the
+# fail-open direction. The cost of the alternative is the failure being fixed here, a converging
+# child denied its exit, and there is nothing on a stop-hook payload that identifies which worktree
+# a given child was working in.
+#
+# COST AND FAILURE. One `git status` per tree, and callers run this ONLY once a stall signature has
+# already fired, never per tool call: reaching that point takes ~30 consecutive read-only turns, so
+# a healthy session pays nothing. Measured at ~1.2s across 30 trees on a real workspace.
+# GOVERN_PROGRESS_TREE_MAX (default 64) bounds a pathological fan-out: past it this returns nothing,
+# which every caller must read as "cannot tell" and therefore ALLOW. Same for an unresolvable start
+# dir, a missing git, or any git failure. A check that cannot tell must never be the thing that
+# denies.
+govern::progress_trees() { # <start-dir> -> one absolute tree path per line
+  local start="${1:-}" top d
+  [[ -n "$start" && -d "$start" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  top="$(git -C "$start" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" && -d "$top" ]] || return 0
+  local -a roots=("$top")
+  for d in "$top"/*/; do
+    [[ -e "${d}.git" ]] || continue
+    roots+=("${d%/}")
+  done
+  for d in "${roots[@]}"; do
+    git -C "$d" worktree list --porcelain 2>/dev/null | awk '$1=="worktree"{ $1=""; sub(/^ /,""); print }'
+  done
+  return 0
+}
+
+# Prints TWO lines when it can answer, and NOTHING when it cannot:
+#   <fingerprint>     a hash over every resolved tree's porcelain status and HEAD
+#   <dirty 0|1>       whether any tree currently holds uncommitted or unpushed work
+#
+# The status is taken with --untracked-files=all, because a brand new file is the single most
+# common shape of real progress and the default summarises a new directory as one line. `-b` and
+# the HEAD sha ride along so a COMMIT registers as a change too: committing empties the porcelain
+# output, and without those a worker that committed its work would fingerprint back to the value it
+# had before it started.
+#
+# `dirty` exists for the first check of an agent's life, where there is no previous fingerprint to
+# compare against. Absent a baseline, uncommitted work on disk is the honest evidence that the child
+# has produced something, and the fail-open direction is to believe it.
+govern::tree_probe() { # <start-dir> -> "<fingerprint>\n<0|1>" | empty when unresolvable
+  local start="${1:-}" trees n raw dirty=0 p st sum
+  trees="$(govern::progress_trees "$start" | sort -u)"
+  [[ -n "$trees" ]] || return 1
+  n="$(printf '%s\n' "$trees" | grep -c .)"
+  [[ "$n" -le "${GOVERN_PROGRESS_TREE_MAX:-64}" ]] || return 1
+  raw=""
+  while IFS= read -r p; do
+    [[ -n "$p" && -d "$p" ]] || continue
+    st="$(git -C "$p" status --porcelain --untracked-files=all -b 2>/dev/null)" || return 1
+    raw+="$p"$'\n'"$st"$'\n'"$(git -C "$p" rev-parse HEAD 2>/dev/null || true)"$'\n'
+    if printf '%s\n' "$st" | grep -qv '^## '; then dirty=1; fi
+    case "$st" in *'[ahead '*) dirty=1 ;; esac
+  done <<< "$trees"
+  [[ -n "$raw" ]] || return 1
+  sum="$(printf '%s' "$raw" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null; } | awk '{print $1}')"
+  [[ -n "$sum" ]] || return 1
+  printf '%s\n%s\n' "$sum" "$dirty"
   return 0
 }
 
