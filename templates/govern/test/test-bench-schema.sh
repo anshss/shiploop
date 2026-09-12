@@ -16,6 +16,10 @@
 #      records one ledger line per ticket
 #  10. a test_patch that will not apply records the distinct sentinel and leaves the ticket
 #      unresolved: no 3-way merge, no fuzz, no silent repair of the oracle
+#  11. every rollup row carries a checksum over its own numeric fields, so a hand-edited row is
+#      detectable; a row's subagent activity is asserted off its OWN result event, never the exit
+#      code; and the lever-events reader uses an explicit allow-list, counting a malformed line and
+#      an unrecognized event name rather than silently dropping either
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -52,8 +56,8 @@ missing="$(for k in run backlog task arm rep model cli_version status resolved t
   done)"
 assert_eq "$missing" "" "3. no session row is missing a ticket-history field"
 
-assert_eq "$(jq -sr '[ .[] | select(.kind=="session") ] | length' "$R")" "8" \
-  "3. dry run recorded 8 sessions (1 vanilla + 1 shiploop driver + 6 shiploop workers)"
+assert_eq "$(jq -sr '[ .[] | select(.kind=="session") ] | length' "$R")" "2" \
+  "3. dry run recorded 2 sessions (1 vanilla + 1 shiploop — each arm is one whole-backlog session)"
 
 # ── 4. rollup rows add the four fold fields ─────────────────────────────────
 missing="$(for k in sessions ticketsCleared costUsdTotal tokensTotal; do
@@ -98,9 +102,8 @@ assert_eq "$(printf '%s' "$row" | jq -r '.tokens.total')" "397674" \
 # is a truncated snapshot that undercounts real output by a median factor of 33 in the corpus.
 # govern::stream_usage is a shared harness primitive, so this row's output is left as it is and
 # the defect is recorded in bench/METHODOLOGY.md rather than patched from a bench change.
-# bench/replay.mjs never uses this path: it recovers the input side only and sets output to 0.
 assert_eq "$(printf '%s' "$row" | jq -r '.tokens.output')" "6" \
-  "7. the recovered OUTPUT is the truncated snapshot sum, which is why replay.mjs never uses it"
+  "7. the recovered OUTPUT is the truncated snapshot sum — a known undercount, disclosed, not silently trusted as a real total"
 
 # The fixture backlog is for the suite only. A real run must refuse it rather than failing halfway
 # through a clone, and it must never be counted toward a published backlog total.
@@ -151,5 +154,55 @@ applies="$(grep -e 'git apply' "$HUB/bench/run.sh" | grep -v -e '^ *#')"
 assert_contains "$applies" "git apply -" "10. the verify path does apply the golden patch"
 assert_eq "$(printf '%s' "$applies" | grep -c -e '3way' -e 'apply -3' -e 'reject' -e 'unidiff-zero')" "0" \
   "10. and never 3-way merges, fuzzes, or partially applies it"
+
+# ── 11. rollup checksum, subagent activity, and the lever-events reader ─────
+assert_eq "$(jq -sr '[ .[] | select(.kind=="rollup") | select(has("checksum")|not) ] | length' "$R")" "0" \
+  "11. every rollup row carries a checksum"
+recheck="$(jq -sr '[ .[] | select(.kind=="rollup") ][0]' "$R")"
+recomputed="$(RECHECK="$recheck" BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::row_checksum "$RECHECK"
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$recheck" | jq -r '.checksum')" "$recomputed" \
+  "11. the checksum is exactly bench::row_checksum's own function applied to the row"
+
+got="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  set +e
+  bench::stream_had_subagent_activity "'"$HUB"'/bench/fixtures/shiploop-session.jsonl"
+  echo "rc=$?"
+' 2>&1)"
+assert_contains "$got" "rc=0" "11. the shiploop fixture's own result event shows completed subagent activity"
+
+mkdir -p "$T/levers"
+{
+  printf '{"event":"output-suppression","ts":1,"ticket":1,"session":"worker","tier":null,"withheldBytes":10,"withheldLines":1,"outcome":"pass"}\n'
+  printf '{"event":"watchdog-kill","ts":2,"ticket":1,"session":"worker","tier":"sonnet","ctxTokens":1,"turns":1,"reason":"x"}\n'
+  printf 'not json at all\n'
+  printf '{"event":"some-future-event","ts":3,"ticket":1,"session":"worker","tier":null}\n'
+} > "$T/levers/lever-events.jsonl"
+lv="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::read_lever_events "'"$T"'/levers/lever-events.jsonl"
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$lv" | jq -r '.instrumented')" "true" "11. a present lever-events.jsonl is instrumented"
+assert_eq "$(printf '%s' "$lv" | jq -r '.events."output-suppression"')" "1" \
+  "11. the allow-listed output-suppression event is counted by name"
+assert_eq "$(printf '%s' "$lv" | jq -r '.events."watchdog-kill"')" "1" \
+  "11. and so is watchdog-kill"
+assert_eq "$(printf '%s' "$lv" | jq -r '.malformed')" "1" \
+  "11. the non-JSON line is counted as malformed, never silently dropped"
+assert_eq "$(printf '%s' "$lv" | jq -r '.unrecognized')" "1" \
+  "11. an event name outside the five-name allow-list is counted as unrecognized, never silently dropped"
+absent="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::read_lever_events "'"$T"'/levers/does-not-exist.jsonl"
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$absent" | jq -r '.instrumented')" "false" \
+  "11. a run with no lever-events.jsonl is uninstrumented, never zero-saving"
 
 assert_done

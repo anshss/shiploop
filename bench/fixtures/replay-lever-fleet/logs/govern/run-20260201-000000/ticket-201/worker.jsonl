@@ -1,4 +1,0 @@
-{"type":"system","subtype":"init","model":"claude-sonnet-5","claude_code_version":"2.1.246","session_id":"sess-201"}
-{"type":"assistant","message":{"id":"msg_201_0","model":"claude-sonnet-5","usage":{"input_tokens":10000,"cache_read_input_tokens":70000,"cache_creation_input_tokens":20000,"output_tokens":4}}}
-{"type":"assistant","message":{"id":"msg_201_1","model":"claude-sonnet-5","usage":{"input_tokens":0,"cache_read_input_tokens":200000,"cache_creation_input_tokens":0,"output_tokens":4}}}
-{"type":"result","subtype":"success","session_id":"sess-201","num_turns":2,"total_cost_usd":0.254,"usage":{"input_tokens":10000,"output_tokens":10000,"cache_read_input_tokens":270000,"cache_creation_input_tokens":20000,"cache_creation":{"ephemeral_1h_input_tokens":20000,"ephemeral_5m_input_tokens":0}},"modelUsage":{"claude-sonnet-5":{"inputTokens":10000,"outputTokens":10000,"cacheReadInputTokens":270000,"cacheCreationInputTokens":20000}}}

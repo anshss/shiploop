@@ -1,3 +1,0 @@
-{"type":"system","subtype":"init","model":"claude-opus-4-8","claude_code_version":"2.1.246","session_id":"sess-orch"}
-{"type":"assistant","message":{"id":"msg_orch_0","model":"claude-opus-4-8","usage":{"input_tokens":20000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":4}}}
-{"type":"result","subtype":"success","session_id":"sess-orch","num_turns":1,"total_cost_usd":0.225,"usage":{"input_tokens":20000,"output_tokens":5000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0}},"modelUsage":{"claude-opus-4-8":{"inputTokens":20000,"outputTokens":5000,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}

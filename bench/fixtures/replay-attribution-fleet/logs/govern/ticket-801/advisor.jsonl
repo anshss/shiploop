@@ -1,2 +1,0 @@
-{"ts":1806000010,"event":"claim","consultId":1,"sessionId":"sess-a","question":"which seam?","turn":"12"}
-{"ts":1806000011,"event":"record","consultId":1,"model":"claude-opus-4-8","tokens":4000,"answer":"the wire shape, not the helper","workerRemaining":0,"sessionRemaining":5}

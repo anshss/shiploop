@@ -1,21 +1,15 @@
 ---
-description: Replay this workspace's own governor logs and print its token and cost reduction against one long Claude Code session. Read-only, no model spend.
+description: Print the published shiploop benchmark result (backlog and arms named) and the exact command to run a fresh with-shiploop-vs-without-shiploop A/B locally. Never spends by default.
 allowed-tools: Bash, Read
 ---
 
 # /shiploop:bench
 
-Computes **your** number, not the published one, from the transcripts your governor already wrote.
+Two things, neither of which spends anything:
 
-It reads `logs/govern/**/*.jsonl` and `governor/ticket-history.jsonl`, sums the measured billed
-usage of every worker session, and models what the same tickets would have cost inside one
-accumulating Claude Code session. Read-only. No `claude` process is spawned, nothing is written
-into the workspace, and it spends nothing.
-
-**The number it prints is a modeled counterfactual.** The shiploop arm is measured. The vanilla arm
-never ran: it is a model. The tool says so on its own first line, and you should repeat that
-wherever you quote it. Method, every assumption, and which arm each assumption flatters:
-`bench/METHODOLOGY.md` in the hub.
+1. **The published result**, if one exists, with the backlog and both arms named.
+2. **The exact command to run a fresh A/B yourself**, with its estimated cost, so running it stays
+   an explicit, deliberate act rather than something this command does on your behalf.
 
 ## Phase 0 — Locate the hub
 
@@ -25,12 +19,12 @@ priority order:
 1. `${CLAUDE_PLUGIN_ROOT}` (plugin run)
 2. `${GOVERN_UPSTREAM_HARNESS_DIR}` from `scripts/lib/workspace.sh` (operator's local fork clone)
 3. `~/.claude/skills/shiploop/` (legacy clone-into-skills)
-4. Glob `~/.claude/plugins/**/shiploop/bench/replay.mjs` (plugin-cache install)
+4. Glob `~/.claude/plugins/**/shiploop/bench/run.sh` (plugin-cache install)
 
 If none resolve, STOP and print:
 
 ```
-Cannot locate the shiploop hub, so bench/replay.mjs is not reachable.
+Cannot locate the shiploop hub, so bench/ is not reachable.
 
 Options:
   - Install as a plugin (recommended):
@@ -41,75 +35,58 @@ Options:
       GOVERN_UPSTREAM_HARNESS_DIR=/path/to/shiploop   (workspace.sh)
 ```
 
-Confirm `$HUB/bench/replay.mjs` exists and `node --version` works. `node` is the only requirement.
+## Phase 1 — The published result
 
-## Phase 1 — Run it
+**There is currently no published result.** `bench/backlogs/` holds only the test fixture; no
+backlog meeting the design's own 6-ticket usability bar (`bench/validate-backlog.sh --min-tickets`,
+default 6) has been curated yet. Say this plainly, and point at `bench/KNOWN-LIMITS.md` ("There is
+no published (6+ ticket) live backlog yet") for the full reason — do not soften it into "results
+coming soon" or invent a placeholder figure.
 
-Default, from the workspace root:
+If this ever changes, the published result will be a committed `bench/results/<run-id>/results.jsonl`
+(or an explicit path an operator names) this phase reads with:
 
 ```bash
-node "$HUB/bench/replay.mjs" --fleet "$PWD" --arm all
+node "$HUB/bench/rollup.mjs" <path-to-results.jsonl>
 ```
 
-By default this scopes to sessions stamped with the newest shiploop version this workspace has run
-(`run-.../shiploop-version`, written at dispatch) — not the workspace's entire history. It reports
-how much of the corpus that kept, and how much it excluded, split into older-stamped versions and
-unstamped-legacy runs. If nothing in the corpus is stamped, it says so and falls back to the full
-sweep on its own.
+and relays verbatim: the headline sentence, which metric produced it, the backlog(s) and ticket
+count behind it, and the model/tier each arm ran on. Never restate a percentage without the arm and
+backlog it belongs to.
 
-`$ARGUMENTS` passes through verbatim, with one substitution: the **bare word `all`** as the whole
-argument (`/shiploop:bench all`) maps to `--all` before the rest of `$ARGUMENTS` is appended — do
-not confuse it with the `--arm all` flag already in the default command above. The flags:
+## Phase 2 — Run your own A/B
 
-| Flag | Meaning |
-|---|---|
-| `--fleet <path>` | a workspace to read, repeatable. Omit it entirely and the tool discovers the current workspace and its siblings |
-| `--arm 200k\|1m\|uncapped\|all` | which counterfactual session to model. Default `all` |
-| `--baseline same-mix\|driver-tier\|all` | which MODEL that session runs on: the same tiers the work actually ran on, or the dispatching session's tier throughout. Default `driver-tier`. Composes with `--arm` as a matrix |
-| `--partials price\|drop` | count a session killed before its result event from the usage it did record, or drop it. Default `price`. Both totals print either way |
-| `--scope all\|resolved` | count every ticket the loop paid for, or only the ones `ticket-history.jsonl` marks resolved. Default `all` |
-| `--rows-file <path>` | aggregate a published rows file instead of reading transcripts; touches no workspace |
-| `--all` | use every run this workspace has, spanning every shiploop version, instead of the default newest-version-only scope. `/shiploop:bench all` maps here |
-| `--since YYYYMMDD[-HHMMSS]` | the older run-directory-timestamp cutoff; still works and composes with either version scope |
-| `--json` | machine-readable, same numbers |
+Print this verbatim, filled in with the values below, and STOP. Do not run it. Running a real A/B
+spends real quota — that has to be the user's own explicit next command, never something this
+command does on their behalf.
 
-The default baseline is `driver-tier`, not the same model mix the work ran on. That is deliberate:
-the real alternative to the harness is one interactive session on the model the operator chose,
-doing everything itself, so routing work to a cheaper tier is a saving and the counterfactual has
-to price it as one. `--baseline same-mix` is the older, stricter arm and is kept: it is what the
-published historical figures were computed on.
+```bash
+bash "$HUB/bench/run.sh" --reps 2
+node "$HUB/bench/rollup.mjs"
+```
 
-A workspace with no `logs/govern` transcripts exits non-zero and says so. That is the correct
-outcome, not a failure to explain away: there is nothing to replay until the governor has run.
+**Estimated cost**, stated as an estimate and never as a bill: each real arm is one whole-backlog
+session capped at `BENCH_SESSION_USD` (default equal to `BENCH_MAX_USD`, itself default $60 for the
+whole run). With `--reps 2` over N backlogs that is up to `2 x N x 2 x $60` in the worst case if
+every session ran to its own cap, which it will not in the ordinary case — the real cost is
+whatever the backlog's own tickets take, bounded by the caps. Name `BENCH_MAX_USD` explicitly as the
+hard ceiling on total spend for the run, and say that a dry run (`bash "$HUB/bench/run.sh" --dry-run`)
+exercises the whole pipeline for zero dollars first, if the user wants to see the shape of the
+output before spending anything.
 
-## Phase 2 — Report
+Also name, plainly, what running it actually measures: one with-shiploop session (the advisor,
+using the native Agent tool to spawn worker subagents through the installed doctrine) against one
+without-shiploop session (the same checkout, no `.claude/`, the CLI's own default toolset), over
+whichever backlog(s) `bench/backlogs/` currently has — today, only the test fixture, which
+`bash "$HUB/bench/run.sh"` refuses to run for real (it exits non-zero and says why, rather than
+spending on a fixture that could never be counted toward a published backlog).
 
-Relay the tool's output as it stands. Do not restate a percentage without the arm it belongs to,
-and do not drop the modeled-counterfactual line. The things in the output worth pointing at are
-explicitly, because they are the parts a reader would otherwise have to be told:
+## What changed here
 
-- **Which shiploop version the number covers.** The report's `shiploop version:` line names the
-  version it scoped to (or says it fell back to the full history, and why). Repeat that line
-  alongside any percentage quoted from this run; a number from `all` mixes every harness version
-  the workspace has run and reads differently than a number scoped to one.
-- **Ticket 1 saves exactly 0%.** Nothing has been carried into it yet. The whole saving is context
-  that one session accumulates and a fresh worker never loads, so the number is a property of
-  backlog length, not of any one ticket.
-- **The arm changes the number more than the corpus does.** Against a 200k session with compaction
-  the reduction is far smaller than against a 1M one, because a 200k window cannot hold much carry
-  in the first place. Quote the arm or quote nothing.
-- **Which levers the corpus could actually see.** The lever table prints per-lever coverage. Four
-  levers (watchdog, resume, skip-the-model, escalation) are read from `lever-events.jsonl` and read
-  `uninstrumented` on any run dispatched before that file existed. `uninstrumented` is not `0%`:
-  do not relay it as evidence that a lever saves nothing. Two more are `absorbed`, meaning both arms
-  already have them, and three are `unmeasured` by choice with the reason printed.
-- **How much of the harness's own overhead the corpus covered.** Governor and scout transcripts are
-  charged INTO the shiploop arm, which lowers the number. Where a run wrote no such transcript it
-  is counted as `overhead-uncovered`, and the cost figure is then a lower bound on what the harness
-  really cost. Say which.
-- **The reconciliation ratio** is the self-check. It is computed cost over the cost the CLI itself
-  reported, per session. A median far from 1.000 means the rate table no longer matches what the
-  user is actually billed, and every dollar figure in the report should be treated as stale.
-
-If the user asks for the published figure rather than their own, say plainly that it comes from the
-same tool over the author's fleets, name the arm, and point at `bench/METHODOLOGY.md`.
+This command used to replay a workspace's own `logs/govern/**` transcripts and model a
+counterfactual vanilla session from them — read-only, no spend, an instant number. That path is
+retired: several of shiploop's own levers work by making a model call *not happen*, and an absence
+leaves no trace in a transcript to model from, so a single observed arm plus modeling could never
+see the levers it was crediting. The only way to measure the combination is to run both arms for
+real, which is exactly what Phase 2 above prints the command for, and exactly why this command no
+longer produces a free number the way it used to.

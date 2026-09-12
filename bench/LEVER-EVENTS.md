@@ -1,8 +1,8 @@
 # Lever event contract
 
-Authoritative wire shape for the five instrumentation events. The governor emitter and the
-`replay.mjs` reader are built against THIS FILE. Neither half may change a field name without
-changing it here first.
+Authoritative wire shape for the five instrumentation events. The governor emitter and every
+reader built on top of it are built against THIS FILE. Neither half may change a field name
+without changing it here first.
 
 ## Location
 
@@ -12,11 +12,10 @@ changing it here first.
 resolves its file as `${GOVERN_LEVER_EVENTS_FILE:-${GOVERN_RUN_DIR:-$LOG_ROOT}/lever-events.jsonl}`,
 so an emitter with no `GOVERN_RUN_DIR` in scope lands at `logs/govern/lever-events.jsonl`: flat,
 beside the run directories, not inside one. A live interactive session is exactly that case, since
-nothing exports `GOVERN_RUN_DIR` there (the autonomous dispatch loop that used to is retired).
-`replay.mjs` reads that flat file in `readUnscopedLeverEvents()` and reports it as a census under
-`instrumentation.unscoped` with `credited:false`: counted, named per event type, and credited to no
-arm. Guessing a run for those rows (newest, only, nearest timestamp) would attach a real saving to
-an arbitrary arm, so they are disclosed instead of credited. See `bench/KNOWN-LIMITS.md`.
+nothing exports `GOVERN_RUN_DIR` there (the autonomous dispatch loop that used to is retired). A
+reader can still count and name these rows by event type, but it cannot attach them to one arm or
+run without guessing which — guessing (newest, only, nearest timestamp) would attach a real saving
+to an arbitrary arm, so a correct reader discloses them uncredited instead of credited.
 
 **Not `state.jsonl`.** That file is a per-ticket outcome log (`{ticket,status,note}`), tailed by
 cursor in `govern-supervise.sh` and read raw by any reviewer prompt built from a run. Interleaving
@@ -90,8 +89,12 @@ and skipped, never fatal.
   would hand the resume lever the failed attempt's output tokens as savings, which is a lever
   biased toward shiploop, and this rule exists precisely to leave no such entry
   in the ledger. When in doubt this number is under-counted, never over-counted.
-- `scripted-action`: `class` keys into the per-class token estimate table in `replay.mjs`. An
-  unknown class is counted and credited zero, and named in the report.
+- `scripted-action`: `class` names which deterministic-apply.sh pattern fired. There is currently no
+  live per-class token-estimate table anywhere in the tree — a would-be counterfactual constant
+  here was calibrated on the wrong worker shape and was deleted rather than carried forward
+  unfixed. A reader that wants to PRICE this lever needs its own corpus-derived estimate per class;
+  until then, a correct reader counts occurrences by class and reports an unknown class as counted
+  and named, never silently dropped, but prices nothing.
 - `output-suppression`: emitted by `verify-filter.sh` when it withholds a PASSING command's output
   from the transcript. `withheldBytes` / `withheldLines` are measured from the capture file at the
   instant of suppression, immediately before the EXIT trap deletes it. This is the only moment the
@@ -107,16 +110,18 @@ and skipped, never fatal.
   non-blocking advice. So this lever measures suppression that HAPPENED, never suppression that
   could have happened, and an uncredited session is not evidence that nothing was withheld.
 
-  The reader converts bytes to tokens at `SUPPRESSION_BYTES_PER_TOKEN` (4) and credits the result
-  ONCE. Crediting once is a deliberately loose floor: the real saving is that those bytes would have
-  been re-sent on every later turn, which is the entire reason the wrapper exists.
+  A reader that wants to PRICE this lever should convert bytes to tokens at roughly 4 bytes per
+  token and credit the result ONCE per event, never per later turn: crediting once is a
+  deliberately loose floor, because the real saving is that those bytes would otherwise have been
+  re-sent on every later turn, which is the entire reason the wrapper exists.
 
 - `escalation`: **RETIRED, no longer emitted.** Automatic tier escalation was removed from the
   dispatch path (no failure class buys a tier), so there is no escalation event left to emit. The
   schema is kept documented because historical `lever-events.jsonl` files still carry these rows and
-  replay must keep reading them: `failedTokens` is what the failed attempt burned, replay SUBTRACTS
-  it from routing credit, and the row carries `failedTier` instead of `tier`. Do not add a new
-  emitter for it.
+  a reader walking one must keep recognising them rather than counting them as unrecognized:
+  `failedTokens` is what the failed attempt burned, a reader that credits routing should SUBTRACT it
+  from routing credit, and the row carries `failedTier` instead of `tier`. Do not add a new emitter
+  for it.
 
 ## Deliberate exclusions
 

@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# bench: both arm shapes, and the --max-turns capability gate.
+# bench: both arm shapes, and the --max-turns / --forward-subagent-text capability gates.
 #
 # Contract:
-#   1. the vanilla arm is ONE session for the whole backlog; the shiploop arm is a driver plus one
-#      session per ticket, and every one of them lands in the cost total
-#   2. `task` is recorded per row: the backlog name for the single vanilla session, the ticket for
-#      each shiploop worker
+#   1. the vanilla arm is ONE session for the whole backlog; the shiploop arm is ALSO one session
+#      for the whole backlog now — the only difference between arms is which directory the session
+#      opens in, never the shape of the dispatch
+#   2. `task` is recorded per row: the backlog name for both the vanilla and the shiploop session
 #   3. ticket text is byte-identical across arms (an asymmetric prompt voids even true numbers)
-#   4. neither arm can reach the network: no WebFetch, no WebSearch in the tool list
+#   4. NEITHER arm is handed a curated --tools list any more: no `--tools` flag on the spawn path at
+#      all, and the shiploop arm sets no GOVERN_WORKER_TOOLS / GOVERN_WORKER_MODEL either — the
+#      tool-schema trim and the worker's model are levers under test, not something bench hands out
+#      or withholds from either arm
 #   5. --max-turns is gated on a cached --help probe with a _GOVERN_MAXTURNS_SUPPORTED pre-seed
 #      seam and a BENCH_MAX_TURNS_FLAG kill switch, never a version compare; --max-budget-usd is
 #      the fallback ceiling, gated on its own probe/seam, for a CLI with no --max-turns
 #   6. a CLI with NEITHER flag is a HARD STOP, not a silent uncapped spawn; BENCH_ALLOW_UNCAPPED_TURNS=1
 #      is the only way past it
-#   7. the shiploop arm seeds one queue ticket per backlog line, numbered so the arm can walk the
-#      whole set, and it drives the SHIPPED session lane per item (pre-dispatch-check.sh, then
-#      spawn-worker.sh, then resolve-ticket.sh). Skipping the gate script or the resolve script
-#      would measure something that is not the product, and it stamps its own run directory so
-#      bench/replay.mjs still finds shiploop-version and driver-model
+#   7. the shiploop arm seeds one queue ticket per backlog line, hands the advisor the SAME
+#      whole-backlog prompt as vanilla, and runs NO scripted dispatch shell-outs of its own — the
+#      session invokes whatever the doctrine tells it to. It scopes the run to one directory so
+#      lever-events.jsonl is findable, and it never sets a worker's model or tools.
 #   8. the seeded queue is really dispatchable: the shipped select-ticket.sh orders every ticket.
 #      Without this the arm could scaffold, seed a queue the selector rejects, record zero cost,
 #      and have the rollup report that as a 100% saving
+#   9. --forward-subagent-text is gated exactly like --max-turns (cached probe, pre-seed seam, kill
+#      switch) but with NO degraded fallback: an unsupported CLI is a hard stop for the shiploop arm
+#  10. subagent_stats.spawned>0 && completed>0 is asserted directly off the arm's own result event,
+#      never the exit code — a subagent refused for zero tools still exits 0
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -41,22 +47,21 @@ R="$T/r/arms-dry/results.jsonl"
 
 assert_eq "$(jq -sr '[ .[] | select(.kind=="session" and .arm=="vanilla") ] | length' "$R")" "1" \
   "1. vanilla is exactly one session for the whole backlog"
-assert_eq "$(jq -sr '[ .[] | select(.kind=="session" and .arm=="shiploop") ] | length' "$R")" "7" \
-  "1. shiploop is a driver plus one session per ticket"
+assert_eq "$(jq -sr '[ .[] | select(.kind=="session" and .arm=="shiploop") ] | length' "$R")" "1" \
+  "1. shiploop is ALSO exactly one session for the whole backlog now"
 assert_eq "$(jq -sr '[ .[] | select(.kind=="session" and .arm=="vanilla-fresh") ] | length' "$R")" "6" \
   "1. vanilla-fresh is one session per ticket, no driver"
-assert_eq "$(jq -r 'select(.kind=="rollup" and .arm=="shiploop") | .sessions' "$R")" "7" \
-  "1. the shiploop rollup counts every session the loop spent, driver included"
+assert_eq "$(jq -r 'select(.kind=="rollup" and .arm=="shiploop") | .sessions' "$R")" "1" \
+  "1. the shiploop rollup counts the one session the arm spent"
 
 assert_eq "$(jq -r 'select(.kind=="session" and .arm=="vanilla") | .task' "$R")" "fixture-backlog" \
   "2. the vanilla session's task is the backlog"
-assert_eq "$(jq -sr '[ .[] | select(.kind=="session" and .arm=="shiploop") | .task ] | join(",")' "$R")" \
-  "driver,worker-t1,worker-t2,worker-t3,worker-t4,worker-t5,worker-t6" \
-  "2. each shiploop session records the ticket it worked"
+assert_eq "$(jq -r 'select(.kind=="session" and .arm=="shiploop") | .task' "$R")" "fixture-backlog" \
+  "2. the shiploop session's task is ALSO the backlog — it is one whole-backlog session, not a per-ticket loop"
 
-# ── 3 + 4 + 5 + 6. the arm library, loaded directly ─────────────────────────
+# ── 3 + 4 + 5 + 6 + 9. the arm library, loaded directly ─────────────────────
 armsh() { # <script body> -> stdout+stderr, rc preserved
-  BENCH_STATE_DIR="$T/state" BENCH_TURNS_VANILLA=200 BENCH_TURNS_WORKER=80 \
+  BENCH_STATE_DIR="$T/state" BENCH_TURNS=200 \
   BENCH_CLAUDE_BIN=/bin/true bash -c '
     source "'"$HUB"'/bench/record.sh"
     bench::load_govern_lib "'"$T"'/state"
@@ -101,12 +106,26 @@ assert_not_contains "$leak" "tests/t1.sh" "3. and never the gold test file name"
 [ -n "$patch" ] && printf 'ok   - 3. (the fixture really does carry a non-empty test_patch to leak)\n' || \
   { printf 'FAIL - 3. fixture has no test_patch, so the leak checks prove nothing\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 
-# 4. One tool list, shared by both arms, with the two web tools removed.
-tools="$(armsh 'printf "%s" "$BENCH_TOOLS"')"
-assert_not_contains "$tools" "WebFetch" "4. WebFetch is not in either arm's tool list"
-assert_not_contains "$tools" "WebSearch" "4. WebSearch is not in either arm's tool list"
-assert_contains "$tools" "Bash" "4. the working tools are still there"
-assert_contains "$tools" "Edit" "4. the working tools are still there (Edit)"
+# 4. No curated tool list on the spawn path at all, for either arm, and no worker-tier override
+# from the shiploop arm either — every one of those was a lever under test (spec section 3a/3b).
+# grep -F treats a leading-dash NEEDLE as a flag (the OLD suite hit this on --version), so a literal
+# "--xyz" needle is counted with an explicit -e pattern rather than pushed through assert_*_contains.
+spawn_body="$(sed -n '/^bench::spawn()/,/^}/p' "$HUB/bench/arms.sh")"
+assert_eq "$(printf '%s' "$spawn_body" | grep -c -e '\-\-tools')" "0" \
+  "4. bench::spawn passes no --tools flag at all"
+assert_not_contains "$(cat "$HUB/bench/arms.sh")" "BENCH_TOOLS" \
+  "4. BENCH_TOOLS does not exist any more — a curated tool list was itself one of the levers under test"
+# The var names are named in the arm's own explanatory comment (to say they are deliberately
+# absent), so the assertion is on `export NAME`, the only form that would actually set one.
+shiploop_body="$(sed -n '/^bench::arm_shiploop()/,/^}/p' "$HUB/bench/arms.sh")"
+assert_not_contains "$shiploop_body" "export GOVERN_WORKER_TOOLS" \
+  "4. the shiploop arm sets no GOVERN_WORKER_TOOLS — the scaffolded worker.md's own frontmatter is the only source"
+assert_not_contains "$shiploop_body" "export GOVERN_WORKER_MODEL" \
+  "4. and no GOVERN_WORKER_MODEL — the worker's tier is a lever under test, never pinned by bench"
+assert_not_contains "$shiploop_body" "export GOVERN_WORKER_MAX_TURNS" \
+  "4. nor GOVERN_WORKER_MAX_TURNS — no scripted spawn-worker.sh call exists here to hand a flag to"
+assert_eq "$(printf '%s' "$shiploop_body" | grep -c -e '\-\-agents')" "0" \
+  "4. no --agents flag: the project's own .claude/agents/*.md load with none"
 
 # 5. The probe: pre-seed supported, pre-seed unsupported, kill switch, and the --max-budget-usd
 # FALLBACK for a CLI that has neither turns support nor... has budget support but not turns. No
@@ -126,7 +145,8 @@ got="$(armsh 'BENCH_MAX_TURNS_FLAG=0 _GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUD
 assert_contains "$got" "[]" "5. the kill switch also suppresses the budget fallback"
 # The probes are NOT bench-local reimplementations: they live in common.sh beside the --tools and
 # --exclude-dynamic-system-prompt-sections probes, so the vanilla arm and the shiploop arm's
-# workers (which reach them through spawn-worker.sh) can never disagree about CLI support.
+# workers (which reach them through spawn-worker.sh, if the session chooses that path) can never
+# disagree about CLI support.
 probe="$(sed -n '/^govern::claude_supports_max_turns/,/^}/p' "$HUB/templates/govern/lib/common.sh")"
 assert_contains "$probe" "_bounded_help_grep" "5. the max-turns probe is a bounded --help grep"
 assert_contains "$probe" "_GOVERN_MAXTURNS_SUPPORTED" "5. with the pre-seed test seam"
@@ -141,15 +161,6 @@ assert_contains "$(cat "$HUB/templates/govern/lib/common.sh")" "_GOVERN_MAXBUDGE
 # pattern argument rather than pushing "--version" through assert_not_contains.
 assert_eq "$(printf '%s' "$probe" | grep -c -e '--version')" "0" \
   "5. the probe never shells out to --version"
-spawn_worker_resolve="$(sed -n '/^resolve_max_turns_flag/,/^}/p' "$HUB/templates/govern/spawn-worker.sh")"
-assert_contains "$spawn_worker_resolve" "govern::claude_supports_max_turns" \
-  "5. spawn-worker gates GOVERN_WORKER_MAX_TURNS on the same probe"
-assert_contains "$spawn_worker_resolve" "govern::claude_supports_max_budget_usd" \
-  "5. and GOVERN_WORKER_MAX_BUDGET_USD on the matching budget probe"
-assert_contains "$spawn_worker_resolve" 'GOVERN_WORKER_MAX_TURNS:-0' \
-  "5. both knobs default to 0 (off), so an unset fleet spawns exactly as it did before"
-assert_contains "$spawn_worker_resolve" 'GOVERN_WORKER_MAX_BUDGET_USD:-0' \
-  "5. same default-off shape for the budget knob"
 
 # 6. Refusal.
 got="$(armsh 'bench_max_turns_flag=""; bench::require_turn_ceiling vanilla; echo "rc=$?"')"
@@ -161,7 +172,7 @@ assert_contains "$got" "running UNCAPPED" "6. and the override is logged"
 got="$(armsh '_GOVERN_MAXTURNS_SUPPORTED=0 _GOVERN_MAXBUDGETUSD_SUPPORTED=1 bench::resolve_max_turns_flag /bin/true 200 5; bench::require_turn_ceiling vanilla; echo "rc=$?"')"
 assert_contains "$got" "rc=0" "6. the budget fallback alone satisfies the ceiling requirement, no override needed"
 
-# ── 7. the shiploop arm seeds a real queue ──────────────────────────────────
+# ── 7. the shiploop arm seeds a real queue and scripts no dispatch loop ─────
 assert_eq "$slug" "bench" "7. the sub-repo slug is a NAME derived from the repo, not the clone URL"
 armsh "bench::seed_tickets '$BL' '$T/tickets.md' '$slug'" >/dev/null
 seeded="$(cat "$T/tickets.md")"
@@ -175,30 +186,22 @@ assert_not_contains "$seeded" "Verify with" "7. and carries no verify_cmd, same 
 # that as a 100% saving. This is the assertion that stops a silent 100%.
 assert_contains "$seeded" "Repo: bench" "7. Repo: is the sub-repo name the selector matches on"
 assert_not_contains "$seeded" "Repo: fixture://" "7. never the clone URL"
-# All three lane scripts, in order. The pre-spawn gates (dependency, cross-session re-verify,
-# failure-streak breaker, upstream drift) live ONLY in pre-dispatch-check.sh, and the await-CI +
-# merge + land path lives ONLY in resolve-ticket.sh: an arm that called spawn-worker.sh alone would
-# measure a worker, not the product.
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'pre-dispatch-check.sh" "$n"' \
-  "7. the arm runs the pre-spawn gate for every item"
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'spawn-worker.sh" "$n"' \
-  "7. the arm spawns the real worker"
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'resolve-ticket.sh" "$n"' \
-  "7. the arm feeds the worker report to the real resolve path"
-# The run-dir stamps bench/replay.mjs reads (shiploop-version, driver-model) are written by the
-# arm itself now: nothing on the interactive lane sets GOVERN_RUN_DIR any more, so the ONE consumer
-# that actually feeds replay.mjs has to establish it. See bench/KNOWN-LIMITS.md.
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'export GOVERN_RUN_DIR="$rundir"' \
-  "7. the arm scopes every worker log to one run directory"
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'govern::stamp_driver_model "$rundir"' \
-  "7. and stamps it, so replay.mjs is not left guessing the driver tier"
-# The shiploop arm carries the SAME two rails as the vanilla arm, through the governor's own knobs.
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_TURNS="$worker_turns"' \
-  "7. the per-worker turn ceiling reaches the loop's workers"
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget"' \
-  "7. and so does the budget fallback, whichever one the probe resolved"
-assert_contains "$(cat "$HUB/bench/arms.sh")" 'GOVERN_WORKER_TOOLS="$BENCH_TOOLS"' \
-  "7. and so does the web-free tool list"
+# The three scripted dispatch shell-outs are GONE: the session invokes whatever the doctrine tells
+# it to, like a real operator's session, never a bash loop bench runs on its behalf.
+assert_not_contains "$shiploop_body" "pre-dispatch-check.sh" \
+  "7. no scripted pre-dispatch-check.sh loop — the session decides whether and when to run it"
+assert_not_contains "$shiploop_body" "spawn-worker.sh" \
+  "7. no scripted spawn-worker.sh call — workers are the session's own Agent tool calls"
+assert_not_contains "$shiploop_body" "resolve-ticket.sh" \
+  "7. no scripted resolve-ticket.sh call — landing a worker's report is the session's own choice"
+# It IS scoped to one run directory, so lever-events.jsonl (still emitted, spec section 9) is
+# findable afterward instead of landing in the unscoped flat file a live interactive session uses.
+assert_contains "$shiploop_body" 'export GOVERN_RUN_DIR="$rundir"' \
+  "7. the arm still scopes the session to one run directory so lever-events.jsonl is findable"
+# The advisor gets the SAME whole-backlog prompt bench::backlog_prompt renders for vanilla, not a
+# per-ticket loop — this is what makes it directly comparable to the vanilla arm's one session.
+assert_contains "$shiploop_body" 'bench::backlog_prompt "$backlog"' \
+  "7. the shiploop arm is handed the SAME whole-backlog prompt as vanilla"
 
 # ── 8. the seeded queue is really selectable by the shipped governor ────────
 # Spawn-free end-to-end check of the seam: scaffold a throwaway workspace the way the arm does,
@@ -218,5 +221,43 @@ else
   printf 'FAIL - 8. scaffold_workspace produced no lane scripts (ws=%s)\n' "$ws"
   ASSERT_FAILS=$((ASSERT_FAILS+1))
 fi
+
+# ── 9. --forward-subagent-text: the same probe shape as --max-turns, no degraded fallback ──
+got="$(armsh '_GOVERN_FWDSUBAGENT_SUPPORTED=1 bench::resolve_forward_subagent_flag /bin/true; printf "%s" "$bench_fwd_subagent_flag"')"
+assert_eq "$got" "--forward-subagent-text" "9. probe seam 1 puts the flag on the command line"
+# bench::die exits the whole subshell immediately (never a `return`), so nothing after the call
+# runs — the message itself, captured on stderr, is the only evidence of the hard stop.
+got="$(armsh '_GOVERN_FWDSUBAGENT_SUPPORTED=0 bench::resolve_forward_subagent_flag /bin/true; echo "UNREACHABLE"')"
+assert_contains "$got" "does not support --forward-subagent-text" "9. an unsupported CLI says so"
+assert_not_contains "$got" "UNREACHABLE" "9. and HARD STOPS — there is no degraded-arm fallback for attribution"
+got="$(armsh 'BENCH_FORWARD_SUBAGENT_TEXT=0 _GOVERN_FWDSUBAGENT_SUPPORTED=0 bench::resolve_forward_subagent_flag /bin/true; echo "rc=$?"')"
+assert_contains "$got" "rc=0" "9. the kill switch is the only way past an unsupported CLI"
+assert_contains "$got" "BENCH_FORWARD_SUBAGENT_TEXT=0" "9. and it is logged when used"
+fwd_probe_body="$(sed -n '/^bench::claude_supports_forward_subagent_text/,/^}/p' "$HUB/bench/arms.sh")"
+assert_contains "$fwd_probe_body" "_bounded_help_grep" "9. the forward-subagent-text probe is also a bounded --help grep"
+assert_contains "$fwd_probe_body" "_GOVERN_FWDSUBAGENT_SUPPORTED" "9. with its own pre-seed test seam"
+assert_eq "$(printf '%s' "$fwd_probe_body" | grep -c -e '--version')" "0" \
+  "9. and it never shells out to --version either"
+
+# ── 10. subagent-activity assertion, off the arm's own result event ────────
+got="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  set +e
+  bench::stream_had_subagent_activity "'"$HUB"'/bench/fixtures/shiploop-session.jsonl"
+  echo "rc=$?"
+' 2>&1)"
+assert_contains "$got" "rc=0" "10. the checked-in shiploop fixture shows real subagent activity"
+got="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  set +e
+  bench::stream_had_subagent_activity "'"$HUB"'/bench/fixtures/vanilla-session.jsonl"
+  echo "rc=$?"
+' 2>&1)"
+assert_contains "$got" "rc=1" \
+  "10. a stream with no subagent_stats at all (the vanilla fixture) reports NO activity, never a false pass"
+assert_contains "$shiploop_body" "bench::stream_had_subagent_activity" \
+  "10. the arm asserts subagent activity directly, never trusting the spawn's exit code"
 
 assert_done

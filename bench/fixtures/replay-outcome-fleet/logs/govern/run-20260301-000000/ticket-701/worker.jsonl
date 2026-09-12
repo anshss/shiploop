@@ -1,3 +1,0 @@
-{"type":"system","subtype":"init","session_id":"fixture-701-2","model":"claude-sonnet-5"}
-{"type":"assistant","message":{"id":"fixture-701-2-msg-0","model":"claude-sonnet-5","usage":{"input_tokens":5000,"cache_creation_input_tokens":8000,"cache_read_input_tokens":30000,"output_tokens":3}},"session_id":"fixture-701-2"}
-{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"fixture-701-2","total_cost_usd":0.088,"usage":{"input_tokens":5000,"cache_creation_input_tokens":8000,"cache_read_input_tokens":30000,"output_tokens":4000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":8000}}}

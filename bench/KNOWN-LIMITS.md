@@ -1,65 +1,23 @@
 # Known limits
 
-Led by the least flattering true facts, per the operator's own instruction. If a number
-in `README.md` or `METHODOLOGY.md` looks better than this file, this file is right and the number
+Led by the least flattering true facts, per the operator's own instruction. If a number in
+`README.md` or `METHODOLOGY.md` looks better than this file, this file is right and the number
 needs another look.
-
-## The interactive driver session is excluded, and the baseline now overlaps it
-
-Added 2026-09-10. `bench/replay.mjs` walks `logs/govern/<run>/**` only. The interactive
-driver session -- the one that turns a conversation into tickets, decides scope, dispatches
-workers and reviews the PRs -- writes no transcript there, so none of its tokens are in this
-report, in either arm, under any flag.
-
-This was a survivable gap while the governor itself spent near-zero context (`run-loop.sh` era):
-the uncounted cost was small and roughly constant. It stopped being survivable the moment the
-specification work moved INTO the driver, because now the uncounted cost is exactly the thing the
-harness is supposed to be making cheaper, and it GROWS as the harness gets better: the more work a
-driver correctly delegates to disposable workers instead of doing itself, the larger a share of the
-real total cost sits in the one session this report cannot see.
-
-Worse than merely uncounted: the vanilla arm this entire tool models is defined as "one long Claude
-Code session doing the work." The driver session, under the current architecture, **is** one long
-Claude Code session doing real work on the same tickets. The baseline this report compares against
-and the treatment it is crediting are, at the specification layer, the same kind of session. Nothing
-in `replay.mjs` can currently tell them apart, because neither one is instrumented at all.
-
-**This is a stated exclusion, not a partial instrumentation.** The alternative -- reading whatever
-driver transcript happens to exist and calling the resulting figure "complete" -- would be worse
-than saying nothing, because a half-covered driver charge reads as a measurement and is not one.
-Instrumenting the driver honestly is separate, larger work (deciding what counts as
-"specification" tokens versus incidental exploration, capturing a transcript for a session type
-that currently has no run-scoped log directory of its own -- see "Run-scoped stamps" below) and is
-not done here.
-
-**What the report actually claims, stated plainly.** The honest counterfactual left standing is:
-one premium session doing the work itself, versus one premium session specifying while cheaper
-workers execute the tickets. The delta this tool computes is confined to the EXECUTION half of that
-comparison -- the workers' tokens against what one session's tokens would have been for the same
-execution. The specification half (turning intent into tickets, reviewing results) is real work,
-happens identically in both arms of the honest comparison, and this report does not measure it in
-either one. Read every percentage in this repository with that scope in mind: it is a claim about
-execution cost, not about total cost of ownership of either way of working.
-
-This exclusion is stated in four places so it cannot be missed by reading only one of them:
-`replay.mjs`'s human report (an unmissable block right after the "no vanilla session was ever run"
-disclaimer, before any number), its JSON (`driverScope`), this file, and `METHODOLOGY.md`'s
-"Flatters shiploop" list.
 
 ## There is no published (6+ ticket) live backlog yet
 
 `bench/backlogs/` holds only the test fixture. Building a real SWE-bench-shaped backlog (a merged
 PR whose diff cleanly separates into a source fix and test-only changes, with the fail-to-pass
-property holding at the pinned ref) is real curation work that this ticket did not have time to do
-at the design's own 6-ticket usability bar (`bench/validate-backlog.sh --min-tickets`, default 6).
+property holding at the pinned ref) is real curation work, not yet done, at the design's own
+6-ticket usability bar (`bench/validate-backlog.sh --min-tickets`, default 6).
 
-The honest live run this ticket produced used a **2-ticket pilot backlog**,
-`bench/pilot-backlogs/shiploop-mini/` (gitignored, never published), mined from two of shiploop's
-own past commits against shiploop's own repo — a real fail-to-pass pair each, validated offline by
-`bench/validate-backlog.sh` before the live run touched a single dollar. It is below the design's
-own bar for a *published* backlog and is reported as a small pilot, not the full benchmark. A wider
-backlog (more tickets, ideally against an external repo so shiploop is never grading its own commit
-messages) is the next real piece of work here, not a nice-to-have.
+The one live run to date used a **2-ticket pilot backlog**, `bench/pilot-backlogs/shiploop-mini/`
+(gitignored, never published), mined from two of shiploop's own past commits against shiploop's own
+repo — a real fail-to-pass pair each, validated offline by `bench/validate-backlog.sh` before the
+live run touched a single dollar. It is below the design's own bar for a *published* backlog and is
+reported as a small pilot, not the full benchmark. A wider backlog (more tickets, ideally against an
+external repo so shiploop is never grading its own commit messages) is the next real piece of work
+here, not a nice-to-have.
 
 ## The offline guard closes git remotes, not the network
 
@@ -70,10 +28,10 @@ does **not** sandbox raw network syscalls issued from a worker's Bash tool: noth
 worker from running `curl` or `git clone` against a real host, or adding a brand-new remote and
 pushing to it, if it chose to. The mitigations in place are all indirect — no working credential for
 a real target exists in the spawned environment (GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/
-GH_REPO are scrubbed from every spawned session), the tool list excludes WebFetch/WebSearch, and the
-ticket text never names a real org/repo — but none of that is a kernel-level sandbox. A future
-tightening should run each arm in an actual network namespace or firewalled container; this run does
-not.
+GH_REPO are scrubbed from every spawned session), the ticket text never names a real org/repo, and
+neither arm gets a curated tool list any more that could have removed WebFetch/WebSearch — but none
+of that is a kernel-level sandbox. A future tightening should run each arm in an actual network
+namespace or firewalled container; this design does not.
 
 A real `gh` CLI that is authenticated on the host is not made unreachable by anything here either:
 `gh`'s auth is host-scoped, not workspace-scoped, so it could in principle answer a call naming a
@@ -85,9 +43,9 @@ directly, no PR), so the same real-`gh`-on-PATH risk is likewise dormant there, 
 ## The local `gh` shim is narrow by construction, and its bypasses are benchmark-only
 
 `bench/local-gh.sh` implements exactly the `gh` surface this repo's shipped governor scripts call in
-a single-repo, `--serial`, no-external-actor run: `pr create/list/checks/view/merge`, one `api`
-path, and a no-op `pr update-branch`. Everything else exits 1. It works entirely off a flat JSONL
-ledger and local git operations against one known repo directory — no push, no network, ever.
+a single-repo, no-external-actor run: `pr create/list/checks/view/merge`, one `api` path, and a
+no-op `pr update-branch`. Everything else exits 1. It works entirely off a flat JSONL ledger and
+local git operations against one known repo directory — no push, no network, ever.
 
 To keep that surface small, `bench::arm_shiploop` sets three things that are real safety mechanisms
 in production and are **only** safe to skip here because the offline guard makes them structurally
@@ -109,192 +67,50 @@ The scaffolded workspace's CLAUDE.md gets one appended line saying not to `git p
 nowhere to push to). Nothing enforces that a worker reads and follows it. If it tries anyway, the
 push fails immediately and harmlessly (no remote configured) and the worker moves on — at the cost
 of a small number of wasted turns/tokens. This is a bias **against** the shiploop arm's own number
-in the live run (it makes shiploop look slightly more expensive than a workspace with a real remote
-would), never in its favor, and it is a benchmark-only artifact: a real installed workspace has a
-real remote and this friction does not exist there.
+(it makes shiploop look slightly more expensive than a workspace with a real remote would), never in
+its favor, and it is a benchmark-only artifact: a real installed workspace has a real remote and
+this friction does not exist there.
 
-## `await-ci` genuinely polls; it is not shortcut
+## `await-ci`, if the session reaches for it, genuinely polls; it is not shortcut
 
-The shiploop arm does **not** set `GOVERN_SKIP_CI` (that knob is an internal optimization for a
-caller that just confirmed green itself, not a top-level bypass). `await-ci.sh` really
-calls the local `gh pr checks`/`gh pr view` twice, `GOVERN_CI_NONE_GRACE` seconds apart (default 6s),
-before it verifies "checkless" and lets the merge proceed. That is ~12-18 real wall-clock seconds
-per ticket that a genuinely CI-less installed workspace would also pay — it is not simulated away,
-and it is not free, but it is honest: a repo with no CI provider configured gets the identical
-`none`-verified path in production.
+If the with-shiploop session's own choice of dispatch reaches `resolve-ticket.sh` /
+`await-ci.sh`, it does **not** set `GOVERN_SKIP_CI` (an internal optimization for a caller that
+just confirmed green itself, not a top-level bypass). `await-ci.sh` really calls the local
+`gh pr checks`/`gh pr view` twice, `GOVERN_CI_NONE_GRACE` seconds apart (default 6s), before it
+verifies "checkless" and lets the merge proceed. That is real wall-clock seconds per ticket that a
+genuinely CI-less installed workspace would also pay — it is not simulated away, and it is not free,
+but it is honest: a repo with no CI provider configured gets the identical `none`-verified path in
+production.
 
-## A mixed-model session biases the COST figure (not the token one) slightly in shiploop's favor
+## Lever attribution counts occurrences; it does not price them
 
-`bench/replay.mjs` prices the measured ship-side cost and the modeled vanilla-side overhead/credit
-at different granularities. `sessionCost()` (`replay.mjs:282-317`) prices a session's real cost per
-model, walking `sess.modelUsage` and applying each model's own tier rate to its own tokens: a
-session that escalated from a cheaper model to a pricier one is billed at the accurate blend.
-`dominantTier()` (`replay.mjs:330-345`) instead resolves ONE tier for the WHOLE session (the model
-with the largest token volume) and that single tier's rate prices ALL of that session's modeled
-overhead-read and re-prime-credit (`replay.mjs:482-484`, consumed at lines 491-492 and 499-501).
+Section "Attribution inside the treatment arm" (`README.md`) reads `lever-events.jsonl` against an
+explicit five-name allow-list, and separately counts a malformed line and an unrecognized event
+name — never silently dropping either. It does **not** convert any of those counts into a token or
+dollar credit: there is currently no live per-class token-estimate table anywhere in this
+repository (a would-be constant for exactly that was calibrated on the wrong worker shape and was
+deleted rather than carried forward unfixed — see `bench/LEVER-EVENTS.md`'s `scripted-action` entry).
+A run with no `lever-events.jsonl` at all is reported as uninstrumented, never as a measured zero.
 
-A session's later, heavier-context turns tend to carry the largest accumulated cache-read volume,
-which tends to pull `dominantTier` toward whichever model handled those later turns. When that is
-the pricier escalated tier, the entire session's modeled overhead is priced at the pricier rate,
-including turns that were actually run on a cheaper model earlier in the same session. That inflates
-the modeled vanilla cost, which biased the COST reduction slightly in shiploop's favor.
-
-**This did not touch the TOKEN reduction.** The token path (`vanTokens = shipTokens +
-overheadTokens - creditTokens`) sums raw token counts and never multiplies by a rate, mixed-model or
-otherwise, so it is immune to this by construction. Full mechanism and the "Flatters shiploop"
-classification: `bench/METHODOLOGY.md`. A cost reduction must never be quoted with the same
-confidence as a token reduction; `README.md`'s "Tokens vs. cost" section states why.
-
-**FIXED 2026-09-08.** `dominantTier()` is removed. The modeled side is now priced at the
-session's own input-side token mix blended across the tiers that actually ran it
-(`sessionInputRate()`), so the whole-session single-tier rounding described above no longer happens.
-For a single-model session the two rules agree to the cent, which is why the frozen fixtures and the
-published rows reproduce unchanged. What survives from this entry is the weaker claim, and it still
-stands: a cost figure depends on the rate table and on the corpus's model mix, and a token figure
-does not. Never quote a cost reduction with the same confidence as a token reduction.
-
-## The headline is a composite of several counterfactuals, not one session
-
-The reported saving sums per-lever components, and those levers do not all share one
-counterfactual. Carry and routing are measured against "one accumulating session on the driver's
-tier", which is the arm's stated definition. Cache-prefix, watchdog, resume and skip-the-model are
-measured against "the same harness WITHOUT that lever": a single session would never have spawned a
-second worker, so it would not have paid the cache write the prefix lever credits, nor the restart
-the resume lever credits.
-
-This is deliberate (the levers exist and their spend is real) and it is the design the multi-lever
-spec asked for, but it means the headline is **the harness's total avoided spend**, not a strict
-one-session A/B. The strict one-session comparison is still computed and still printed on every arm
-as `coreModel` / "carry-only legacy model". When a reader wants the conservative apples-to-apples
-figure, that is the one, and it is always lower.
-
-## Five levers are credited only where the corpus carries instrumentation
-
-`watchdog`, `resume-not-restart`, `skip-the-model` and `escalation-correction` are read from
-`logs/govern/<run>/lever-events.jsonl` (contract: `bench/LEVER-EVENTS.md`). The emitter ships **on**
-by default at runtime (`GOVERN_LEVER_EVENTS=0` is the kill switch), but runs dispatched before that
-shipped carry none, so on any corpus collected before then those five levers report
-`uninstrumented` and contribute nothing. That is an understatement of the harness, not a measurement
-that it saves nothing there, and the report prints the coverage count next to every one of them. A
-corpus mixing instrumented and uninstrumented runs reports a number weighted toward the
-uninstrumented ones, because the levers can only be credited where the events exist.
-
-`output-suppression` is weaker still: it has no event in the wire contract at all, and the bytes it
-withholds are by construction absent from every transcript. It is listed in the lever table with a
-zero and the reason, so it can never be mistaken for a measured zero.
-
-## The attempt-outcome breakdown is `unclassified` wherever the per-attempt ledger is missing
-
-Added 2026-09-10. `outcomeBreakdown()` reads spawn-worker.sh's per-attempt ledger
-(`attempts.jsonl`, sibling of the transcript) to say why an attempt happened
-(`infra`/`ci`/`budget`/`judgment`/`unknown`/`first-attempt`), the same way the lever levers above
-read `lever-events.jsonl`. A ticket directory with no `attempts.jsonl` at all -- any corpus
-predating the ledger, or a hand-run dispatch outside the normal spawn path -- reports every one of
-its attempts `unclassified` (reason `no-ledger`), not a measured zero and not folded into the
-classifier's own `unknown` verdict. Expect this to be the common case for a while, exactly as the
-five event-derived levers were when they first shipped: the ledger has to accumulate real corpus
-history before this breakdown says much on any given fleet.
-
-## Two instrumented levers are under-counted on purpose, and one is partial
-
-`resume-not-restart` credits only context reconstruction (the failed attempt's input plus cache
-creation, output excluded), because a retry redoes the work either way and only the re-reading is
-avoided. `skip-the-model` credits only a worker's first-turn context, a provisional floor set from the low
-end of observed first turns and rounded down, not the whole session a deterministic apply actually
-replaced. That floor is a calibration parameter awaiting re-derivation from an instrumented corpus. Both understate. `escalation-correction` fires only where a retry changed tier,
-not on infra or CI retries at the same tier, so it corrects some wasted cheap-tier spend and not
-all of it. None of the three is a measurement of the lever's true size; each is a bound in the
-direction that does not flatter shiploop, except the escalation one, which is a correction that
-does not go far enough and therefore leaves a little credit in place that a fuller model would
-remove.
-
-## The harness-overhead charge is bounded by what the corpus recorded
-
-This charges orchestration-side transcripts into the shiploop arm, which is the fix for
-METHODOLOGY's old "largest known bias". It can only charge what exists. On a corpus where the
-governor wrote no transcript of its own model calls, every run is `overhead-uncovered`, the charge
-is zero, and the shiploop arm's cost is a stated LOWER bound rather than a measurement. The report
-prints the covered/uncovered split for exactly this reason. The interactive session that dispatched
-the run is not counted by this path and never will be: it writes no transcript into `logs/govern`.
-
-## Advisor consult spend is attributed by ticket, and only when a ticket appears in exactly one run
-
-`templates/govern/advisor-consult.sh` buys a worker ONE scoped answer from a higher tier at a fork
-it cannot resolve. Those tokens are real dispatch spend and they land in no transcript this report
-walks: the consult is a separate call, ledgered at `logs/govern/ticket-N/advisor.jsonl`. They are
-now read (`readAdvisorLedgers`), reported as a top-level `advisorSpend`, and charged INTO the
-shiploop arm as a negative `advisor-consult` lever, the same direction and shape as
-`harness-overhead`. Two limits come with that, both stated in the report where it prints them.
-
-**The ledger is FLAT, not run-scoped.** There is no `GOVERN_RUN_DIR` to scope it under any more
-(the dispatch loop that exported one is retired, see the last section here), so a ledger names a
-ticket and never a run. Attribution is therefore sound only where a ticket appears in EXACTLY ONE
-run of the corpus. Where it appears in several, the spend is reported `unattributed` with reason
-`ticket-in-multiple-runs`; where the corpus contains no run touching it at all, `ticket-not-in-corpus`.
-Unattributed spend is real money counted in the totals and charged to no arm, never dropped and
-never guessed onto the nearest run. On a corpus that re-runs the same tickets across arms, expect
-most or all advisor spend to land there.
-
-**The cost is an upper bound by construction.** A `record` row carries ONE `tokens` figure with no
-input/output split, so it cannot be priced the way a transcript is. `advisorRowCost()` prices the
-whole figure at the answering tier's OUTPUT rate, the most expensive reading available. That is
-deliberate and it is the conservative direction HERE specifically, because this is a cost on the
-shiploop side only: over-stating it lowers shiploop's own reduction. The pricing goes through the
-same `RATES` / `QUOTA_WEIGHTS` / `tierOf()` the rest of the report uses, never a second table.
-
-Advisor tokens are folded into `shipBreakdown.output`, so the four parts of the breakdown still sum
-to `shiploopTokens` with the new cost included.
-
-## Run-less lever events are counted and credited to no arm
-
-The interactive lane's watchdog (`templates/hooks/agent-watchdog-guard.sh`) now emits the same
-`watchdog-kill` event the headless launcher emits, so bench sees one watchdog stream across both
-lanes. But a live session exports no `GOVERN_RUN_DIR`, so the emitter's fallback writes those rows
-to `logs/govern/lever-events.jsonl`: flat, beside the run directories, naming no run.
-
-`replay.mjs` reads that file (`readUnscopedLeverEvents`) and reports it as a census under
-`instrumentation.unscoped`, `credited:false`. Every event-derived lever is credited PER RUN, and
-these rows name no run. Picking one for them (newest run, only run, nearest timestamp) would attach
-a real saving to an arbitrary arm, which is worse than a visible gap. So the interactive lane's
-kills are disclosed and contribute zero credit. That is an understatement of the watchdog lever on
-any fleet that does interactive work, not a measurement that interactive kills save nothing.
+A live interactive session (the shape the with-shiploop arm's advisor and its worker subagents run
+under) exports no `GOVERN_RUN_DIR` of its own for a mechanism it invokes outside `bench::arm_shiploop`'s
+own scope, so an event like `watchdog-kill` from `templates/hooks/agent-watchdog-guard.sh`'s
+PreToolUse hook can land in the flat, unscoped `logs/govern/lever-events.jsonl` rather than the
+run-scoped file bench reads. Where that happens, the count is real but cannot be attached to one
+cell without guessing which — guessing (newest run, only run, nearest timestamp) would attach a real
+event to an arbitrary arm, so a correct reader discloses it uncredited to any arm rather than
+guessing.
 
 ## The idle-progress alarm is a named exclusion, not an unmeasured lever
 
 `templates/hooks/agent-progress-guard.sh` raises `agent_progress_alarm` on the fleet event log. It
-is deliberately NOT a lever event and bench credits it nothing, which is a decision and not a gap.
-A lever bench credits must REMOVE tokens from the counterfactual, and this one removes none: the
-`TeammateIdle` branch cannot block by construction (there is no stop to hold open), so it terminates
-nothing and truncates nothing, and the `SubagentStop` branch blocks a stop, which makes the child
-work LONGER, not shorter. Crediting it would be crediting an observation as a saving. Locked by case
-14 of `templates/govern/test/test-agent-progress-guard.sh` and recorded in the deliberate-exclusions
-section of `bench/LEVER-EVENTS.md`.
-
-## The replay ("best-case") number's corpus is thin for the current version
-
-No transcript event carries the shiploop *package* version — only the Claude Code CLI version
-(`claude_code_version` on the session's `init` event) and the model. The package version instead
-comes from a sibling file next to the transcript: whoever creates a run directory stamps it with
-`run-.../shiploop-version`, the workspace's synced hub version
-(`govern::stamp_run_version`, `templates/govern/lib/common.sh`). Since the dispatch loop was
-retired, that caller is `bench::arm_shiploop` (see "Run-scoped stamps" below). The write is best-effort, an
-unreadable or absent version marker never blocks a dispatch, it just leaves that run unstamped.
-
-`bench/replay.mjs` uses the stamp to scope its default corpus: it keeps only the runs stamped with
-the newest version present, reports how many runs and sessions that kept versus excluded (split
-into older-stamped and unstamped-legacy, since those are different situations), and prints which
-version it selected. `--all` restores the full, unscoped sweep across every version a workspace has
-ever run; `--since` is the older, coarser proxy this replaces for a version-scoped read (filtering
-by each run directory's own `run-YYYYMMDD-HHMMSS-<pid>` timestamp against a caller-supplied cutoff,
-in practice a release commit timestamp) and still composes with either mode.
-
-This does not retroactively version-tag history: a run from before the stamp shipped, or a
-workspace whose `scaffold.sh` never wrote a version marker, has no `shiploop-version` file and is
-counted as unstamped-legacy, reachable only via `--all`. If NOTHING in a corpus is stamped (a pure
-pre-stamp workspace), there is no "newest version" to select, so the default falls back to the full
-sweep automatically and says so, rather than reporting a phantom zero-run corpus. See `README.md`
-for the exact cutoff, session count, and date range behind the published figure, itself entirely
-unstamped history predating this mechanism.
+is deliberately NOT a lever event and this design credits it nothing, which is a decision and not a
+gap. A lever this design would credit must REMOVE tokens from the counterfactual, and this one
+removes none: the `TeammateIdle` branch cannot block by construction (there is no stop to hold
+open), so it terminates nothing and truncates nothing, and the `SubagentStop` branch blocks a stop,
+which makes the child work LONGER, not shorter. Crediting it would be crediting an observation as a
+saving. Locked by case 14 of `templates/govern/test/test-agent-progress-guard.sh` and recorded in
+the deliberate-exclusions section of `bench/LEVER-EVENTS.md`.
 
 ## Golden-test-patch quality is bounded by whoever mines the backlog
 
@@ -312,25 +128,21 @@ mechanism does not stop a differently-authored backlog from getting this wrong.
 `bench::prepare_workdir`'s `git clone` of a LOCAL path (the common case when a backlog is mined
 from a repo already on the machine, as the pilot backlog here is) brings every other ref along:
 branches, remote-tracking branches, AND tags. If the source repo is still under active development
-past the pinned `ref` — true for this pilot, since it was mined from shiploop's own history — one
-of those refs can point at the exact commit the ticket was mined from, or a release tag cut after
-it. `git log --all` / `git branch -a` / `git tag` then lists it, and `git show <sha>` prints the
-real fix verbatim. This was FOUND live, mid-run, by inspecting what a worker actually ran (it used
-`git grep`/`git show` on unrelated hashes, not the leaking one, in the run this shipped with — but
-the exposure was real and the fix landed before the published honest number was measured, not
-after). `bench::prepare_workdir` now deletes every ref except `refs/heads/main`, expires the
-reflog, and runs `git gc --prune=now` immediately after checkout — verified by hand: `git cat-file
--e <the-real-fix-sha>` fails afterward. **Any backlog mined from a repo that is not fully static
-(most real ones) should assume this was a live risk until this fix, and should re-audit their own
-clone step if they predate it.**
+past the pinned `ref` — true for the pilot, since it was mined from shiploop's own history — one of
+those refs can point at the exact commit the ticket was mined from, or a release tag cut after it.
+`git log --all` / `git branch -a` / `git tag` then lists it, and `git show <sha>` prints the real fix
+verbatim. This was FOUND live, mid-run, by inspecting what a worker actually ran. `bench::prepare_workdir`
+now deletes every ref except `refs/heads/main`, expires the reflog, and runs `git gc --prune=now`
+immediately after checkout — verified by hand: `git cat-file -e <the-real-fix-sha>` fails afterward.
+**Any backlog mined from a repo that is not fully static (most real ones) should assume this was a
+live risk until this fix, and should re-audit their own clone step if they predate it.**
 
 ## The pilot's own ticket bodies are more prescriptive than a real issue report
 
 Both pilot tickets' bodies were written by summarizing the real commit message that fixed them,
 which — because a commit message explains its own fix — ended up describing the SHAPE of the
-correct change (e.g. "add coverage for the id-charset and status-enum checks, including a negative
-case") rather than only the symptom. A real upstream issue report is usually more naive than a
-post-hoc commit message. This does not hand over test names or exact code (the golden-test-patch
+correct change rather than only the symptom. A real upstream issue report is usually more naive than
+a post-hoc commit message. This does not hand over test names or exact code (the golden-test-patch
 oracle still applies at verify time only), but it likely makes both arms' job easier than a
 genuinely blind bug report would, in a way that is NOT quantified here. Treat the pilot's absolute
 success rate as upper-bound-flattering for this reason, independent of anything else in this file.
@@ -341,28 +153,26 @@ The live A/B run (`bench/pilot-backlogs/shiploop-mini`, 2 tickets, model default
 applied) finished with **neither arm clearing either ticket** by `verify_cmd` + the golden
 `test_patch`:
 
-- **flows-grammar**: both arms wrote a real fix; both arms' own test additions to
-  `test-flows-lint.sh`/`test-flows-parser.sh` conflict with the golden patch's exact context lines,
-  so `git apply` fails (sentinel 90) for both — the documented, intended behavior when an arm edits
-  a file the patch also touches, not a harness bug. A source-level read of the shiploop arm's merged
-  fix shows it implements the same mechanism the real historical fix did; the exact wording of its
-  own added test cases differs enough to break a byte-exact patch apply.
-- **validation-gate**: the shiploop arm's worker was PARKED before it could merge anything.
-  Ironically, **this ticket's own body — which explains the validation-gate recognizer bug by
-  quoting the exact trigger phrases as an illustrative example ("Done when: a PASS/FAIL table from
-  an actual run against the sandbox")** — tripped the CURRENT (pre-fix) validation gate on the
-  ticket text itself: the harness refused to auto-resolve because "the worker gave no live-test
-  evidence." This is a real, if unintended, demonstration that the existing gate does substring-
-  match on ticket text, but it makes this specific ticket unusable for a clean pass/fail bench
-  measurement. A backlog ticket about the validation gate should never quote a validation-triggering
-  phrase in its own body.
+- **flows-grammar**: both arms wrote a real fix; both arms' own test additions conflict with the
+  golden patch's exact context lines, so `git apply` fails (sentinel 90) for both — the documented,
+  intended behavior when an arm edits a file the patch also touches, not a harness bug. A
+  source-level read of the shiploop arm's merged fix shows it implements the same mechanism the real
+  historical fix did; the exact wording of its own added test cases differs enough to break a
+  byte-exact patch apply.
+- **validation-gate**: the shiploop arm's worker was PARKED before it could merge anything. This
+  ticket's own body — which explains a validation-gate recognizer bug by quoting the exact trigger
+  phrases as an illustrative example — tripped the CURRENT (pre-fix) validation gate on the ticket
+  text itself: the harness refused to auto-resolve because "the worker gave no live-test evidence."
+  A real, if unintended, demonstration that the gate does substring-match on ticket text, and it
+  makes this specific ticket unusable for a clean pass/fail measurement. A backlog ticket about the
+  validation gate should never quote a validation-triggering phrase in its own body.
 
 Because neither arm cleared either ticket, **no resolution-rate or token/cost REDUCTION percentage
 can be honestly reported from this run**: a reduction is only meaningful between two arms that did
 comparable work to a comparable (successful) end.
 
 The raw spend each arm put into those two tickets was recorded, and it is **not published** either.
-The direction is: the harness arm spent MORE tokens than the single long session, and less money,
+The direction is: the harness arm spent MORE tokens than the single long session, and less money —
 the latter confounded by the arms not being on the same model (next section). The magnitudes are
 withheld for the same reason every favourable magnitude in this directory is withheld: nothing in
 the current corpus is instrumented well enough to quote, and a figure is either publishable or it is
@@ -372,53 +182,27 @@ not, whichever way it points.
 than deleted, so the absence of bad numbers is never mistakable for the absence of bad results. The
 bad result stands on the record: both arms failed the oracle, and on tokens the harness lost.
 
-## The honest run's arms were not on the same model, contrary to the ticket's own requirement
+## The honest run's arms were not on the same model, contrary to the design's own requirement
 
-`bench::arm_shiploop` never sets `GOVERN_WORKER_MODEL`, so the governor's own per-ticket model
-sizing chose the model for each worker (observed: sonnet for one ticket, opus for the other). The
-vanilla arm's single session ran on `claude -p`'s own default, observed as opus throughout. The
-resulting cost comparison therefore partially reflects a MODEL-CHOICE difference (shiploop's
-own cheap-tier dispatch feature, which is real product behavior) tangled with the architecture
-difference the run was meant to isolate. Pin `GOVERN_WORKER_MODEL` to match the vanilla arm's
-observed default before trusting a future run's cost delta as an apples-to-apples number.
+`bench::arm_shiploop` never set `GOVERN_WORKER_MODEL` in the run that produced this result, so the
+governor's own per-ticket model sizing chose the model for each worker (observed: sonnet for one
+ticket, opus for the other). The vanilla arm's single session ran on `claude -p`'s own default,
+observed as opus throughout. The resulting cost comparison therefore partially reflected a
+MODEL-CHOICE difference (shiploop's own cheap-tier dispatch feature, which is real product
+behavior) tangled with the architecture difference the run was meant to isolate. This is not a bug
+to fix by equalizing tiers — the rebuilt design's own rail is the opposite: let the control run on
+the operator's own tier and let the treatment route freely, and always name which tier each arm
+ran on in the report, so a reader can see this confound rather than have it hidden by forced
+equality.
 
-## Small "ticket" fragments neither dispatched ticket ever named
+## Run scope: `GOVERN_RUN_DIR` is set by the arm, nothing is stamped for a modeling tool any more
 
-Every real dispatch observed during this ticket's live runs wrote a handful of
-tiny (single-digit-KB, near-zero-token) `ticket-5`, `ticket-7`, `ticket-8`, `ticket-9` (and, on a
-resume, `ticket-301`/`ticket-401`) directories under `logs/govern/run-*/` with attempt-log-shaped
-JSON, for ticket numbers never named in `--serial`. They were traced far enough to confirm they are
-NOT test-suite contamination (no such content exists anywhere in `templates/govern/test/`) and
-contribute negligible tokens (~150 each) and null cost, so they do not materially affect the numbers
-here — but their exact source inside the governor (a self-check the dispatcher runs at startup is
-the leading guess) was not identified before this ticket's time ran out. Filed as a new ticket
-rather than solved here.
-
-## Run-scoped stamps now come from the bench arm, not from the product
-
-`GOVERN_RUN_DIR` used to be exported in exactly one place, by the autonomous dispatch loop, right
-after it created `logs/govern/run-<ts>-<pid>/`. Everything run-scoped hung off it: each worker's log
-directory (`govern::worker_logdir`), the five capability-probe caches, `lever-events.jsonl`, and the
-two sibling stamps `shiploop-version` and `driver-model` that `bench/replay.mjs` reads (replay.mjs
-lines 688 and 883).
-
-The loop is retired, and the replacement session lane deliberately does NOT set it. A plain
-interactive session running `pre-dispatch-check.sh`, then a worker, then `resolve-ticket.sh` falls
-back to the documented flat layout, `logs/govern/ticket-N/`, and writes no version or driver-model
-stamp at all.
-
-**What that costs, stated plainly.** For an ordinary interactive session: a re-attempt on the same
-item reads and overwrites the previous attempt's `worker.jsonl` at the flat path instead of getting
-a fresh run-scoped directory, and nothing records which harness version or which driver tier that
-attempt ran under. For bench: nothing, because `bench::arm_shiploop` mints its own per-arm run
-directory, exports `GOVERN_RUN_DIR` into the lane, and calls `govern::stamp_run_version` and
-`govern::stamp_driver_model` on it before spawning anything. The one consumer that actually feeds
-`replay.mjs` is therefore still fully stamped.
-
-**Why that way round.** The alternative was to have `spawn-worker.sh` mint a run directory whenever
-`GOVERN_RUN_DIR` is unset. That puts run-scope creation inside the worker boundary, mints one "run"
-per item (so the identifier stops meaning what its consumers assume it means), and breaks the flat
-fallback that `test-worker-log-runscope.sh` and `test-log-guard.sh` exist to pin. Since this
-directory already states that nothing in the published corpus is instrumented, paying that to stamp
-sessions nobody replays was the worse trade. Any caller that wants the old layout back gets it by
-exporting `GOVERN_RUN_DIR` before the lane runs, exactly as the bench arm does.
+`bench::arm_shiploop` still mints its own per-arm run directory and exports `GOVERN_RUN_DIR` before
+spawning, so `lever-events.jsonl` lands somewhere the attribution reader can find it. It no longer
+calls a version- or driver-model-stamping function on that directory: the two stamps that mechanism
+used to write (`shiploop-version`, `driver-model`) existed to feed a corpus-modeling reader, and this
+design's own reader gets the model directly off the session's `result` event and forwarded subagent
+messages instead of a sibling stamp file. `govern::stamp_run_version` / `govern::stamp_driver_model`
+(`templates/govern/lib/common.sh`) themselves are unchanged and still called from
+`spawn-worker.sh`'s own dispatch path — they are a general governor mechanism, not bench's to
+retire, and whether they still have a live consumer outside bench is tracked separately.

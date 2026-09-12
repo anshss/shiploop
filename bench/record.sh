@@ -166,6 +166,8 @@ bench::record_rollup() {
          costUsdTotal: ($s | map(.costUsd) | map(select(. != null)) | if length==0 then null else add end),
          tokensTotal: ($s | map(.tokens.total // 0) | add // 0) }' "$out" 2>/dev/null || true)"
   if [[ -z "$row" ]]; then return 1; fi
+  local sum; sum="$(bench::row_checksum "$row")"
+  row="$(printf '%s' "$row" | jq -c --arg sum "$sum" '. + {checksum:$sum}' 2>/dev/null || printf '%s' "$row")"
   printf '%s\n' "$row" >> "$out"
   return 0
 }
@@ -211,5 +213,102 @@ bench::spent_usd() { # <results.jsonl>
   if [[ ! -s "$out" ]]; then printf '0\n'; return 0; fi
   jq -s '[ .[] | select(.kind=="session") | .costUsd | select(. != null) ] | add // 0' "$out" \
     2>/dev/null || printf '0\n'
+  return 0
+}
+
+# rc 0 if the arm's own top-level stream shows a completed subagent. A subagent refused for zero
+# tools, or a parent that never spawned one at all, still exits 0 with is_error:false on the
+# result event — the exit code cannot tell a treatment arm that measured something from one that
+# measured nothing, only subagent_stats can.
+bench::stream_had_subagent_activity() { # <jsonl> -> rc 0 spawned>0 && completed>0, 1 otherwise
+  local jsonl="$1" spawned completed
+  spawned="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
+    | jq -r '.subagent_stats.spawned // 0' 2>/dev/null || true)"
+  completed="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
+    | jq -r '.subagent_stats.completed // 0' 2>/dev/null || true)"
+  [[ "$spawned" =~ ^[0-9]+$ ]] || spawned=0
+  [[ "$completed" =~ ^[0-9]+$ ]] || completed=0
+  [[ "$spawned" -gt 0 && "$completed" -gt 0 ]]
+}
+
+# Reads a lever-events.jsonl file against an EXPLICIT allow-list of the five contract event names
+# (bench/LEVER-EVENTS.md), never a `*.jsonl` glob minus a deny-list: attempts.jsonl and state.jsonl
+# carry their own unrelated schemas, and feeding them to a reader built for one schema was only ever
+# harmless by accidental non-overlap. A line that fails to parse as JSON, or whose `event` is not
+# one of the five, is counted and never silently dropped. Prints one JSON object; never fails the
+# caller (a run with no lever-events.jsonl is uninstrumented, not zero-saving).
+bench::read_lever_events() { # <lever-events.jsonl> -> {instrumented, events:{name:count}, malformed, unrecognized}
+  local f="$1" malformed=0 unrecognized=0 ev tmp
+  if [[ ! -f "$f" ]]; then
+    printf '{"instrumented":false,"events":{},"malformed":0,"unrecognized":0}\n'
+    return 0
+  fi
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    if ! ev="$(printf '%s' "$line" | jq -r '.event // empty' 2>/dev/null)"; then
+      malformed=$((malformed+1)); continue
+    fi
+    [[ -n "$ev" ]] || { malformed=$((malformed+1)); continue; }
+    case "$ev" in
+      output-suppression|watchdog-kill|resume|scripted-action|escalation)
+        printf '%s\n' "$ev" >> "$tmp" ;;
+      *) unrecognized=$((unrecognized+1)) ;;
+    esac
+  done < "$f"
+  local by_event="{}"
+  if [[ -s "$tmp" ]]; then
+    by_event="$(sort "$tmp" | uniq -c | awk '{print $2, $1}' \
+      | jq -Rn '[inputs | split(" ") | {(.[0]): (.[1] | tonumber)}] | add // {}' 2>/dev/null || echo '{}')"
+  fi
+  rm -f "$tmp"
+  jq -nc --argjson events "$by_event" --argjson malformed "$malformed" --argjson unrecognized "$unrecognized" \
+    '{instrumented:true, events:$events, malformed:$malformed, unrecognized:$unrecognized}'
+  return 0
+}
+
+# `worker_model_clamped` is a FLEET event (govern::event, GOVERN_EVENTS), never a lever event — it
+# is emitted from spawn-worker.sh's own model-ceiling check, not from govern::emit_lever_event, so
+# it never appears in lever-events.jsonl. It is the exact mirror of the retired `escalation` lever
+# (spec section 7 item 4) and was measured nowhere before this: a run that has GOVERN_EVENTS=1 set
+# gets a real count here, one that does not gets an honest 0, never a guess.
+bench::count_model_clamps() { # <governor/events.jsonl> -> count of worker_model_clamped rows
+  local f="$1" n
+  [[ -f "$f" ]] || { printf '0\n'; return 0; }
+  n="$(grep -ac '"type":"worker_model_clamped"' "$f" 2>/dev/null || true)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
+  return 0
+}
+
+# Attribution inside the treatment arm (section 4): NEVER the headline, logged for the record only.
+# subagent_stats and modelUsage come straight off the advisor session's own result event (the SAME
+# event bench::session_row already reads for the headline cost, so this never double-reads a
+# different source); lever/model-clamp counts come from the run directory bench::arm_shiploop
+# scoped this cell to. Printed via bench::log, never written into results.jsonl: rollup.mjs's cost
+# cuts are computed from usage/costUsd alone and must never depend on whether attribution succeeded.
+bench::report_attribution() { # <workspace> <jsonl> <rundir> <name>
+  local ws="$1" jsonl="$2" rundir="$3" name="$4"
+  local top levers clamps
+  top="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
+    | jq -c '{subagentStats: (.subagent_stats // null), modelUsage: (.modelUsage // null)}' 2>/dev/null || echo '{}')"
+  [[ -n "$top" ]] || top='{}'
+  levers="$(bench::read_lever_events "$rundir/lever-events.jsonl")"
+  clamps="$(bench::count_model_clamps "$ws/governor/events.jsonl")"
+  bench::log "arm shiploop ($name) attribution: $(jq -nc --argjson top "$top" --argjson levers "$levers" --argjson clamps "$clamps" \
+    '$top + {leverEvents:$levers, modelClamps:$clamps}' 2>/dev/null || echo '{}')"
+  return 0
+}
+
+# sha256 over just a rollup row's own numeric fields, first 16 hex chars. Embedded as the row's
+# `checksum` so a hand-edited results.jsonl regenerates a self-consistent false table no longer:
+# the numbers and the checksum would disagree. A row with no `checksum` (every fixture predating
+# this) is unverified, not invalid — rollup.mjs skips the check rather than failing on it.
+bench::row_checksum() { # <row-json> -> 16 hex chars
+  local row="$1" canon
+  canon="$(printf '%s' "$row" | jq -cS '{turns, tokens, costUsd, sessions, costUsdSessions,
+    ticketsCleared, ticketsTotal, costUsdTotal, tokensTotal}' 2>/dev/null)"
+  [[ -n "$canon" ]] || { printf 'null'; return 0; }
+  printf '%s' "$canon" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null; } | awk '{print substr($1,1,16)}'
   return 0
 }

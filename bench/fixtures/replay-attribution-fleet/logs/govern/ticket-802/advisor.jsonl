@@ -1,2 +1,0 @@
-{"ts":1806000020,"event":"claim","consultId":1,"sessionId":"sess-a","question":null,"turn":null}
-{"ts":1806000021,"event":"record","consultId":1,"model":"claude-opus-4-8","tokens":1000,"answer":"ambiguous","workerRemaining":1,"sessionRemaining":4}
