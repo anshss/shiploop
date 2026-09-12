@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #76 regression: re-running govern on a previously-resolved/re-opened ticket must spawn a fresh
+# Regression: re-running govern on a previously-resolved/re-opened ticket must spawn a fresh
 # worker cleanly (no manual branch/worktree cleanup), and any GENUINE collision must surface its
 # real cause instead of an opaque "#N FAILED".
 #

@@ -5,10 +5,10 @@
 # Two row kinds land in the SAME results.jsonl:
 #   kind:"session" is one per spawned claude session. The vanilla arm emits exactly one; the
 #                    shiploop arm emits one per session the loop spawned (driver, scouts,
-#                    workers, escalations), because section 2 says cost is everything the loop spends.
+#                    workers, escalations), because cost is everything the loop spends.
 #   kind:"rollup"  is one per (backlog, arm, rep), folding that cell's session rows.
 #
-# Session field names are the ticket-history.jsonl names (spec section 5) so `govern-health.sh --bench`
+# Session field names are the ticket-history.jsonl names so `govern-health.sh --bench`
 # can fold either file: run, backlog, task, arm, rep, model, cli_version, status, resolved,
 # turns, tokens{input,output,cacheRead,cacheCreation,total}, costUsd, usageSource, wallMs,
 # verifyExit, startedAt. The rollup row adds sessions, ticketsCleared, costUsdTotal, tokensTotal.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #16 regression: a worker HARD-KILLED by GOVERN_WORKER_MAX_TOKENS before it could write its verdict
+# Regression: a worker HARD-KILLED by GOVERN_WORKER_MAX_TOKENS before it could write its verdict
 # must NOT be recorded as `failed` (masks a possibly-working feature as broken) and must NOT be
 # conflated with a wall-clock `timeout` — it is a DISTINCT `budget-exceeded` (incomplete, re-run)
 # outcome, because a future evidence-based escalation needs to tell "ran out of budget while still
@@ -52,7 +52,7 @@ out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
   GOVERN_TOKEN_POLL_S=1 \
   "$SPAWN" 7 </dev/null)"
 
-assert_eq "$(printf '%s' "$out" | jq -r '.status')" "budget-exceeded" "killed-before-verdict via token budget → status:budget-exceeded (NOT timeout/failed) [#16]"
+assert_eq "$(printf '%s' "$out" | jq -r '.status')" "budget-exceeded" "killed-before-verdict via token budget → status:budget-exceeded (NOT timeout/failed)"
 assert_contains "$out" "INCOMPLETE" "budget-exceeded report explains it is incomplete, not a genuine failure"
 assert_contains "$out" "GOVERN_WORKER_MAX_TOKENS" "budget-exceeded report names the knob that fired"
 

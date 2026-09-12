@@ -2,7 +2,7 @@
 # Capability adapters (validations Phase 5): a flow declaring `Requires:` a workspace capability whose
 # knob is UNSET can't be validated headlessly — the generic layer maps capability KEYS to env KNOB names
 # (values only ever in workspace.sh) and `flows-file.sh` degrades such a flow to BLOCKED with a NAMED
-# blocker (anti-pattern #15) instead of queuing a runnable-then-billable ticket. Unknown keys are ignored
+# blocker (never silently queue work that cannot run) instead of queuing a runnable-then-billable ticket. Unknown keys are ignored
 # (never blocks a flow on a capability the mechanism can't reason about).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

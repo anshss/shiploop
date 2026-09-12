@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #57: a stubbed/fake claude_bin must not be able to write worker logs under the
+# Regression: a stubbed/fake claude_bin must not be able to write worker logs under the
 # REAL, unconfigured log root ($WS_ROOT/logs/govern). That combination — a hand-wired fake `claude`
 # plus no GOVERN_WS_ROOT/GOVERN_LOG_ROOT override — is exactly how ~500 fixture-shaped
 # worker.jsonl files ended up under the live workspace's logs/govern/.
@@ -18,7 +18,7 @@ GOVERN_SRC="$(cd "$DIR/.." && pwd)"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
 
-# #127: be hermetic — a governor session (or a worker worktree) exports GOVERN_RUN_DIR / GOVERN_WS_ROOT
+# Be hermetic — a governor session (or a worker worktree) exports GOVERN_RUN_DIR / GOVERN_WS_ROOT
 # / GOVERN_LOG_ROOT into the environment, any one of which would make the fallback path this test
 # targets unreachable (the very thing under test).
 while IFS='=' read -r v _; do [[ -n "$v" ]] && unset "$v"; done < <(env | sed -n 's/^\(GOVERN_[A-Za-z0-9_]*\)=.*/\1/p')

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #19 regression: the cross-run history must record the sizing DECISION next to the cost it already
+# Regression: the cross-run history must record the sizing DECISION next to the cost it already
 # records, and a KILLED/failed attempt must record the tokens it burned instead of null.
 #
 # Three parts:
@@ -14,7 +14,8 @@
 #   3. resolve-ticket.sh's rt_history_enrich() (the loop purge moved run-loop's record()/
 #      history_enrich() here) → ticket-history.jsonl rows carry model/effort/attempt/usageSource when
 #      a per-attempt ledger (attempts.jsonl) exists in the worker log dir; govern-health.sh still
-#      runs and reports, exposes the per-model breakdown, and pre-#19 rows (no model) don't break it.
+#      runs and reports, exposes the per-model breakdown, and rows from before this change (no model)
+#      don't break it.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -158,13 +159,13 @@ r2="$(tail -1 "$LEDGER")"
 assert_eq "$(jq -r '.attempt' <<<"$r2")" "2"        "attempt number increments across spawns"
 assert_eq "$(jq -r '.isRetry' <<<"$r2")" "true"     "attempt 2 is flagged as a retry"
 assert_eq "$(jq -r '.model' <<<"$r2")"   "sonnet"   "a retry HOLDS the floor tier: nothing escalates automatically any more"
-assert_eq "$(jq -r '.retryClass' <<<"$r2")" "unknown" "rail 11: the ledger records the classifier verdict the sizing was derived from"
-assert_eq "$(jq -r '.respecRequested' <<<"$r2")" "true" "rail 11: and records that the outcome was a re-specification request, not a tier purchase"
+assert_eq "$(jq -r '.retryClass' <<<"$r2")" "unknown" "the ledger records the classifier verdict the sizing was derived from"
+assert_eq "$(jq -r '.respecRequested' <<<"$r2")" "true" "and records that the outcome was a re-specification request, not a tier purchase"
 [[ -n "$(jq -r '.retryReason // empty' <<<"$r2")" ]] \
   && printf 'ok   - %s\n' "the ledger row carries the reason string too" \
   || { printf 'FAIL - %s\n' "the ledger row carries the reason string too"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
 assert_eq "$(jq -r '.status' <<<"$r2")"  "timeout"  "the killed attempt records its real outcome"
-assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null (#19)"
+assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null"
 assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt's usage came from per-turn events"
 [[ -f "$RUNDIR/ticket-7/worker.attempt1.jsonl" ]] \
   && printf 'ok   - %s\n' "attempt 1's stream is rotated aside, not clobbered" \
@@ -238,12 +239,12 @@ row="$(jq -c 'select(.ticket == 1 and .kind == null)' "$HIST" | tail -1)"
 assert_eq "$(jq -r '.status' <<<"$row")"       "resolved" "history row records the outcome (unchanged)"
 assert_eq "$(jq -r '.tokens.total' <<<"$row")" "1500"     "history row still records tokens (unchanged consumer contract)"
 assert_eq "$(jq -r '.costUsd' <<<"$row")"      "0.0123"   "history row still records costUsd (unchanged consumer contract)"
-assert_eq "$(jq -r '.model' <<<"$row")"        "sonnet"   "history row records the MODEL that produced the cost (#19)"
-assert_eq "$(jq -r '.effort' <<<"$row")"       "high"     "history row records the EFFORT (#19)"
-assert_eq "$(jq -r '.attempt' <<<"$row")"      "1"        "history row records the 1-based ATTEMPT (#19)"
+assert_eq "$(jq -r '.model' <<<"$row")"        "sonnet"   "history row records the MODEL that produced the cost"
+assert_eq "$(jq -r '.effort' <<<"$row")"       "high"     "history row records the EFFORT"
+assert_eq "$(jq -r '.attempt' <<<"$row")"      "1"        "history row records the 1-based ATTEMPT"
 assert_eq "$(jq -r '.usageSource' <<<"$row")"  "result"   "history row records where the usage came from"
 
-# A pre-#19 row (no model/effort/attempt) must not break any consumer.
+# A row from before this change (no model/effort/attempt) must not break any consumer.
 printf '{"ticket":99,"run":"run-legacy","status":"resolved","ts":10,"tokens":{"input":1,"output":1,"cacheRead":0,"cacheCreation":0,"total":2},"costUsd":0.5,"churn":true,"repos":["harness"]}\n' >> "$HIST"
 
 hj="$(GOVERN_HISTORY_FILE="$HIST" bash "$HEALTH" --json)"

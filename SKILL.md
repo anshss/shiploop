@@ -112,7 +112,7 @@ A durable, file-based backlog the whole harness reads.
 - **Close-out discipline** — when the PR opens: promote the durable lesson, delete the entry, then
   sweep the session diff for newly-discovered gaps (fold into open tickets by default; mint a new
   number only for independently dispatchable work).
-- **Placement gate on `lessonPatch` (#83)** — root `CLAUDE.md` is re-sent every turn of every
+- **Placement gate on `lessonPatch`** — root `CLAUDE.md` is re-sent every turn of every
   session, so a lesson that is really one sub-repo's internals permanently taxes sessions that never
   touch that sub-repo. `land-resolution.sh` doesn't trust the reporting worker's placement claim: it
   re-derives scope from the lesson text itself (`govern::lesson_placement` in `lib/common.sh`) and
@@ -193,7 +193,7 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
 - **Always ends:** `GOVERN_WORKER_TIMEOUT` (1h) and `GOVERN_WORKER_MAX_TOKENS` (0 = unlimited by
   default; killed on cross as `budget-exceeded`) bound one worker. Across attempts,
   `GOVERN_MAX_TICKET_FAILS` (default 2 consecutive failed/timed-out/budget-exceeded dispatches) makes
-  `pre-dispatch-check.sh` file an escalation and skip re-spawning instead of retrying forever (#60).
+  `pre-dispatch-check.sh` file an escalation and skip re-spawning instead of retrying forever.
 - **Progress-preserving:** only a cleanly-landed worktree is torn down (by `resolve-ticket.sh`);
   failed/parked/timed-out worktrees are kept and an existing `ticket-<N>` PR is reused on re-run.
 - **Manual audit** (`npm run govern:audit`, zero model spend unless invoked) reviews recent dispatch
@@ -302,11 +302,11 @@ here on purpose (each easy to port the day you hit its failure mode):
 
 | Feature | Reference harness has | The baseline does instead | Why safe to omit at first |
 |---|---|---|---|
-| **Monotonic ticket numbering** (#54) | `land-resolution.sh` allocates new numbers above a persisted high-water mark — deleting the top ticket then filing a new one leaves a gap | `this-file max + 1` — reuses a number if the previous top ticket was just deleted | Id reuse only bites when an in-flight PR references a now-recycled number; rare below high churn |
-| **Tolerant PR-head matching + same-run adoption** (#55) | `find_pr` tries exact `ticket-N` head, falls back to a tolerant regex, adopts a PR opened earlier in the same run | exact-head only (`--head "ticket-N"`) | A worker naming its branch exactly `ticket-<N>` (required) is always found by exact match |
-| **Tolerant worker-report extraction** (#66) | pulls the last balanced `{…}` object carrying `status` out of arbitrary text | whole final message must `jq`-parse as one object | A compliant worker emits only the JSON object; tolerance only rescues a drifting worker |
-| **Run-start preflight-main reconcile** (#71) | `preflight-main.sh` reconciles every repo onto clean `main` before a run | no preflight; trusts the checkout is on `main` | main-on-main SessionStart hook already warns on drift |
-| **Run-scoped worker logs** (#75) | `GOVERN_RUN_DIR` isolates each run's worker logs | flat per-ticket log paths | Stale-log confusion only appears across many re-runs of the same ticket |
+| **Monotonic ticket numbering** | `land-resolution.sh` allocates new numbers above a persisted high-water mark — deleting the top ticket then filing a new one leaves a gap | `this-file max + 1` — reuses a number if the previous top ticket was just deleted | Id reuse only bites when an in-flight PR references a now-recycled number; rare below high churn |
+| **Tolerant PR-head matching + same-run adoption** | `find_pr` tries exact `ticket-N` head, falls back to a tolerant regex, adopts a PR opened earlier in the same run | exact-head only (`--head "ticket-N"`) | A worker naming its branch exactly `ticket-<N>` (required) is always found by exact match |
+| **Tolerant worker-report extraction** | pulls the last balanced `{…}` object carrying `status` out of arbitrary text | whole final message must `jq`-parse as one object | A compliant worker emits only the JSON object; tolerance only rescues a drifting worker |
+| **Run-start preflight-main reconcile** | `preflight-main.sh` reconciles every repo onto clean `main` before a run | no preflight; trusts the checkout is on `main` | main-on-main SessionStart hook already warns on drift |
+| **Run-scoped worker logs** | `GOVERN_RUN_DIR` isolates each run's worker logs | flat per-ticket log paths | Stale-log confusion only appears across many re-runs of the same ticket |
 
 The self-improvement lane (`govern-improve.sh` / `govern-self-apply.sh`) was retired outright rather
 than kept leaner: `governor/improvements.md` in this baseline is operator-maintained notes on harness

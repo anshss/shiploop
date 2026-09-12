@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guard test for the queue-isolation advisory wiring (#46): the Stop hook
+# Guard test for the queue-isolation advisory wiring: the Stop hook
 # (ticket-sweep-reminder.sh) folds a SOFT, never-blocking note into its reconcile
 # reason for any ticket whose **Where:** line targets NEITHER a sub-repo NOR the
 # harness — i.e. an EXTERNAL tool/skill that merely shared this terminal. Verifies
@@ -10,7 +10,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 # The hook lives at templates/hooks (template) | <root>/scripts (workspace); GOVERN_HOOKS_DIR
-# (from assert.sh) resolves whichever layout we're in (#255).
+# (from assert.sh) resolves whichever layout we're in.
 SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
 
 # Build a sandbox "main checkout": a git repo owning queue/tickets.md, plus a hermetic
@@ -30,10 +30,10 @@ mk_main() {
 # (which every case below writes) counts as this-session work → the hook fires and we can
 # inspect the reconcile reason. Private TMPDIR per call so the once-per-session marker never
 # collides across cases. Point GOVERN_WS_ROOT at the sandbox (same reason test-ticket-sweep.sh
-# does): otherwise the earlier #252 dangling-validation-ref lint's common.sh defaults WS_ROOT to
+# does): otherwise the dangling-validation-ref lint's common.sh defaults WS_ROOT to
 # the template repo, fails to source its (absent) scripts/lib/workspace.sh, and captures that
 # source-error noise as a spurious "evidence summary MISSING" block BEFORE the reconcile+advisory
-# path — masking the advisory (#255-class layout gotcha).
+# path — masking the advisory (a layout gotcha).
 sweep() { # <T> <session_id>
   local td; td="$(mktemp -d)"
   printf '{"session_id":"%s","cwd":"%s/main","stop_hook_active":false}' "$2" "$1" \

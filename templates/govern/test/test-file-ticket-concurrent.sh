@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for #240: a MANUAL filing via file-ticket.sh while a governor run is active must PERSIST
+# Regression: a MANUAL filing via file-ticket.sh while a governor run is active must PERSIST
 # (committed + pushed) and survive a concurrent driver's bookkeep rewriting/pushing tickets.md — never
 # silently clobbered. The original bug: file-ticket.sh left the append UNCOMMITTED, so a running
 # driver's bookkeep rewrote tickets.md on its own base and the appended entries were LOST with no error.
@@ -10,8 +10,8 @@
 #   S1  pre-edit-sync path — driver's bookkeep already landed on origin before the filing runs.
 #   S2  CAS-rebase path    — origin advances (driver's delete lands) DURING the filing, between its
 #                            pre-edit sync and its push, forced deterministically via a pre-push hook.
-#   S3  core invariant     — the filing NEVER leaves an uncommitted append (the #240 root cause),
-#                            and the legacy GOVERN_FILE_TICKET_NO_COMMIT=1 opt-out still appends-only.
+#   S3  core invariant     — the filing NEVER leaves an uncommitted append, and the legacy
+#                            GOVERN_FILE_TICKET_NO_COMMIT=1 opt-out still appends-only.
 # Hermetic + generic; no network, no real harness repo.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,7 +64,7 @@ clone() {
   ( cd "$2"; git config user.email d@d; git config user.name d ) >/dev/null 2>&1
   seed_ws_stub "$2"
   # Locally ignore the hermetic stub so it never shows as a dirty/untracked file in the filer's tree
-  # (the #240 invariant asserts the working tree is clean after a filing — only tickets.md/seq move).
+  # (this invariant asserts the working tree is clean after a filing — only tickets.md/seq move).
   printf 'scripts/\n' > "$2/.git/info/exclude"
   printf '%s' "$2"
 }
@@ -147,7 +147,7 @@ LF3="$(clone "$O3" "$ROOT/s3/filer")"
 # Default: a single filing with no concurrency still commits + pushes (never leaves an append).
 num3="$(file_ticket "$LF3" "lonely filing")"
 assert_eq "$num3" "100" "S3: default filing allocated #100"
-assert_eq "$(dirty_count "$LF3")" "0" "S3: default filing leaves NO uncommitted append (the #240 root cause)"
+assert_eq "$(dirty_count "$LF3")" "0" "S3: default filing leaves NO uncommitted append"
 assert_contains "$(origin_tickets "$O3")" "## #100 — lonely filing" "S3: default filing pushed to origin"
 
 # Opt-out: GOVERN_FILE_TICKET_NO_COMMIT=1 keeps the legacy append-only behavior (uncommitted).

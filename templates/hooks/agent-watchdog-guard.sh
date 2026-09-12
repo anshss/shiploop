@@ -54,7 +54,7 @@
 # Response shape: a DENY, never a kill. A worker mid-task that is denied its next tool call can
 # still emit a final text response — its structured report, with an honest status and a filled
 # escalation — so the work already done and the reason it stopped both survive. A kill would lose
-# both (D10). This also means the response is a `permissionDecision` in the hook's stdout JSON,
+# both. This also means the response is a `permissionDecision` in the hook's stdout JSON,
 # never a nonzero exit: hooks in this repo NEVER hard-fail a session (root CLAUDE.md rule, restated
 # here because a `set -e` slip in a PreToolUse hook denies every later tool call in the SESSION
 # that installed it, not just the one call under test).
@@ -215,8 +215,8 @@ exit 0
 # reparented to init and billing a box, (3) record the attempt outcome into attempts.jsonl so a
 # SIGKILLed attempt is never miscounted as a completed one for sizing history.
 #
-# None of that has a hook equivalent, and this file does not invent one (D10: "the launcher's
-# EXIT/INT/TERM cleanup has no hook equivalent"). Whether SessionEnd's own
+# None of that has a hook equivalent, and this file does not invent one: the launcher's
+# EXIT/INT/TERM cleanup has no hook counterpart. Whether SessionEnd's own
 # worktree/session-end-cleanup.sh covers the case the traps existed for, checked directly rather
 # than assumed:
 #   - (1) and (3) do not apply to the interactive lane at all: an in-session Agent child is NOT a

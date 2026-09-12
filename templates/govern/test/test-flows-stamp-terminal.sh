@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner (spec §5): govern::flows_stamp — the runner-facing terminal-verdict
+# Durable validation runner: govern::flows_stamp — the runner-facing terminal-verdict
 # entry point over govern::flows_stamp_from_report. Covers PASS/FAIL → resolve/gate-park translation,
 # ABORT/ERROR refusing to stamp, that a stamp touches EXACTLY its own flow's block (a multi-flow
 # registry's other blocks are byte-for-byte untouched), the evidence file landing under

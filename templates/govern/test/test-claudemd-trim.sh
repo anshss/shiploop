@@ -89,8 +89,8 @@ assert_not_contains "$props" "Class: judgment" "B4: judgment is never a proposal
 assert_not_contains "$props" "no citations here" "B5: a block with no citations is never proposed"
 assert_not_contains "$props" "Preamble paragraph" "B6: nor the citation-free preamble paragraph"
 assert_contains "$props" "judgment block(s) were skipped" "B7: the skipped judgment blocks are counted"
-assert_not_contains "$props" "anti-pattern 12" "D1: a load-bearing block is never proposed"
-assert_contains "$out" "load-bearing guard protected 1 block(s)" "D2: the guard reports how many it protected"
+assert_not_contains "$props" "anti-pattern 12" "a load-bearing block is never proposed"
+assert_contains "$out" "load-bearing guard protected 1 block(s)" "the guard reports how many it protected"
 # mechanical classes rank above jit-candidates
 dl="$(grep -n "Class: dead-citation" "$T/governor/claudemd-trim-proposals.md" | sed -n '1p' | cut -d: -f1)"
 jl="$(grep -n "Class: jit-candidate" "$T/governor/claudemd-trim-proposals.md" | sed -n '1p' | cut -d: -f1)"
@@ -117,9 +117,9 @@ cat > "$T/CLAUDE.md" <<'MD'
 MD
 rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=50 bash "$CT" 2>&1)" || rc=$?
 props="$(cat "$T/governor/claudemd-trim-proposals.md")"
-assert_not_contains "$props" "this rule is load-bearing" "D3: a block saying load-bearing is never proposed"
-assert_contains "$props" "ordinary dead rule" "D4: its neighbour is still classified normally"
-assert_contains "$out" "load-bearing guard protected 1 block(s)" "D5: and the guard counts it"
+assert_not_contains "$props" "this rule is load-bearing" "a block saying load-bearing is never proposed"
+assert_contains "$props" "ordinary dead rule" "its neighbour is still classified normally"
+assert_contains "$out" "load-bearing guard protected 1 block(s)" "and the guard counts it"
 rm -rf "$T"
 
 # ── C: REGRESSION. A path that exists only under a templates/ tree is LIVE, not dead ───────────
@@ -228,8 +228,8 @@ assert_eq "$f" "0" "F7: the dead verdict's old hash matches nothing"
 # ── G: a corrupt verdicts file reads as unstamped ──────────────────────────────────────────────
 printf '{this is not json' > "$T/governor/claudemd-verdicts.json"
 rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=100 bash "$CT" 2>&1)" || rc=$?
-assert_eq "$rc" "3" "G1: a corrupt verdicts file is not an error"
-assert_contains "$(cat "$T/governor/claudemd-trim-proposals.md")" "small rule, reworded" "G2: every block reads as unstamped again"
+assert_eq "$rc" "3" "a corrupt verdicts file is not an error"
+assert_contains "$(cat "$T/governor/claudemd-trim-proposals.md")" "small rule, reworded" "every block reads as unstamped again"
 rm -rf "$T"
 
 # ── H: the suggestion line ─────────────────────────────────────────────────────────────────────
@@ -283,7 +283,7 @@ assert_eq "$f" "1" "I4: it wrote classified candidates instead"
 assert_contains "$out" "/shiploop:compress" "I5: the STILL OVER message points at the compress playbook"
 assert_contains "$(cat "$T/CLAUDE.md")" "no citations here" "I6: no blind eviction: every block stayed put"
 # A per-entry cap low enough that the RETIRED demotion lane would have fired: this is the loophole a
-# prior attempt at #110 left open (it gated the demote behind a --report flag that only the driver's
+# prior attempt left open (it gated the demote behind a --report flag that only the driver's
 # call passed, so a bare `npm run govern:context-budgets` still silently demoted). There is no writer left
 # here at all now, bare or not.
 rm -f "$T/governor/claudemd-trim-proposals.md"

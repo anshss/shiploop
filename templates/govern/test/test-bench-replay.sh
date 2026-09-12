@@ -22,8 +22,8 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "SKIP: node not on PATH" >&2; exit 77; }
 
 FLEET="$HUB/bench/fixtures/replay-fleet"
-# The LEGACY arm, pinned explicitly. #108 changed the defaults (baseline driver-tier, partials
-# priced), so every assertion below that locks the pre-#108 arithmetic names the old pair by hand.
+# The LEGACY arm, pinned explicitly. The current defaults changed (baseline driver-tier, partials
+# priced), so every assertion below that locks the legacy arithmetic names the old pair by hand.
 # The new defaults get their own test: test-bench-levers.sh.
 run_replay() { node "$HUB/bench/replay.mjs" --fleet "$FLEET" --baseline same-mix --partials drop "$@" 2>&1; }
 
@@ -75,7 +75,7 @@ assert_eq "$(printf '%s' "$all" | jq -r '.arms["200k"].vanillaTokens')" "5779000
 assert_eq "$(printf '%s' "$all" | jq -r '.arms["1m"].vanillaTokens')" "11779000" "1m arm vanilla tokens"
 assert_eq "$(printf '%s' "$all" | jq -r '.arms["uncapped"].vanillaTokens')" "12679000" "uncapped arm vanilla tokens"
 # Cost: the legacy figures live in coreModel, which is frozen carry-only same-mix pricing with
-# partials dropped and no harness overhead. It anchors the pre-#108 model on this fixture so a
+# partials dropped and no harness overhead. It anchors the legacy model on this fixture so a
 # refactor cannot silently change the legacy arithmetic. Nothing is published; these are fixture
 # values, and they must not move for any reason short of a rate-table change.
 assert_eq "$(cents 200k coreModel.vanillaCostUsd)" "59506" "200k arm vanilla cost (legacy carry-only model)"

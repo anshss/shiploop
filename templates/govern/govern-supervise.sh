@@ -11,26 +11,26 @@ govern::require jq
 RUNDIR="${1:?run dir required}"
 PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
 
-# #56: originally fed the supervisor the FULL run history every pass (not tail -8 — that was
-# blind to most of the run, so a conflict between an early ticket and a much-later one, e.g.
-# #98/#109 or #104/#105, sat outside an 8-line tail and was never caught).
+# Originally fed the supervisor the FULL run history every pass (not tail -8 — that was
+# blind to most of the run, so a conflict between an early ticket and a much-later one sat
+# outside an 8-line tail and was never caught).
 # At the full-history design, EVERY pass re-sent the SAME, steadily growing text — wasted
 # tokens on every call, worse the longer the run. Fix: go INCREMENTAL, not windowed. Each pass
 # reads only the state.jsonl lines appended SINCE ITS OWN previous pass (cursor file below) plus
 # its OWN previous verdict JSON (the compressed judgment it already formed over everything
 # before that). This stays lossless across the run — every ticket outcome lands in exactly one
 # pass's "since last pass" section, never dropped by a size/age window the way tail -8 dropped
-# them — so the #56 regression (blindness past a fixed window) cannot return: nothing is ever cut
+# them — so that regression (blindness past a fixed window) cannot return: nothing is ever cut
 # from history, a pass just stops RE-reading outcomes an earlier pass in this SAME run already
 # reviewed and folds them into its own carried-forward verdict instead (the same way a human
 # reviewer trusts their own earlier notes instead of re-reading a whole document each time).
-# #122: the ticket-BLOCKS window below is intentionally left UNCHANGED by this ticket — it still
+# The ticket-BLOCKS window below is intentionally left UNCHANGED here — it still
 # shows the FULL current queue (bodies, GOVERN_SUPERVISOR_BLOCKS_LINES-capped, default 500) on
 # every pass. Unlike run history, the queue isn't something the supervisor "already reviewed" —
 # a same-surface conflict can appear between a ticket resolved 20 tickets ago and one just filed,
-# and predicting which subset is "relevant to this run" would silently reintroduce the #122
+# and predicting which subset is "relevant to this run" would silently reintroduce the same
 # blindness (truncated conflict-detection) this file was already fixed for. It's already bounded
-# and doesn't grow pass-over-pass the way raw run history did, so it isn't what this ticket targets.
+# and doesn't grow pass-over-pass the way raw run history did, so it isn't what this change targets.
 STATE_FILE="$RUNDIR/state.jsonl"
 CURSOR_FILE="$RUNDIR/.supervisor-cursor"
 PREV_VERDICT_FILE="$RUNDIR/.supervisor-last-verdict.json"
@@ -105,7 +105,7 @@ fi
 # Persist this pass's verdict + cursor so the NEXT pass this run only sees what's new. Cursor only
 # advances if the verdict write actually lands — if it doesn't (e.g. disk full), the next pass
 # keeps the OLD cursor and finds no prev_verdict either, so it naturally re-reads the same
-# state.jsonl range from scratch: degrades to the old #56 full-resend behavior, never to blindness.
+# state.jsonl range from scratch: degrades to the old full-resend behavior, never to blindness.
 if printf '%s\n' "$emit" > "$PREV_VERDICT_FILE" 2>/dev/null; then
   printf '%s' "$total_lines" > "$CURSOR_FILE" 2>/dev/null || true
 fi

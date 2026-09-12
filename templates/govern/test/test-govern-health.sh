@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Governor self-ROI telemetry (#272): govern-health.sh computes park rate + self-referential churn
+# Governor self-ROI telemetry: govern-health.sh computes park rate + self-referential churn
 # classification + tokens-per-ticket from ticket-history.jsonl, and resolve-ticket.sh's
 # rt_history_enrich() (the loop purge moved run-loop's record()/history_enrich() here) ENRICHES each
 # history entry with token spend (from the worker's log stream) + a churn flag (from the report's PR
@@ -15,12 +15,12 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 # Seed a hermetic workspace.sh + GOVERN_WS_ROOT up front so govern-health.sh's common.sh can source a
-# workspace.sh in BOTH layouts (template repo + a scaffolded workspace), independent of CWD (#255).
+# workspace.sh in BOTH layouts (template repo + a scaffolded workspace), independent of CWD.
 mk_ws_stub "$T"
 
 # ── Part A: computation over a hand-built history ─────────────────────────────
 # 4 resolved (2 self-ref harness/templates, 1 product, 1 mixed→product), 1 parked, 1 failed, plus a
-# validation-evidence POINTER row that must NOT be counted as an outcome (#252 double-count guard).
+# validation-evidence POINTER row that must NOT be counted as an outcome (double-count guard).
 H="$T/hist.jsonl"
 cat > "$H" <<'EOF'
 {"ticket":1,"run":"run-A","status":"resolved","ts":1000,"tokens":{"input":100,"output":200,"cacheRead":5000,"cacheCreation":700,"total":6000},"costUsd":1.50,"churn":true,"repos":["harness"]}
@@ -55,7 +55,7 @@ assert_eq "$(jq -r '.allTime.tokens.productAvgTokens' <<<"$j")" "5500" "product 
 # scoping: --run run-A sees only run-A's 4 rows
 jA="$(GOVERN_HISTORY_FILE="$H" bash "$HEALTH" --json --run run-A)"
 assert_eq "$(jq -r '.run.total' <<<"$jA")"          "4" "--run run-A scopes to run-A outcomes"
-assert_eq "$(jq -r '.run.churn.selfRefPct|round' <<<"$jA")" "67" "run-A is 2/3 self-ref churn (#115 shape)"
+assert_eq "$(jq -r '.run.churn.selfRefPct|round' <<<"$jA")" "67" "run-A is 2/3 self-ref churn"
 # default run-block = most recent run (run-B)
 jd="$(GOVERN_HISTORY_FILE="$H" bash "$HEALTH" --json)"
 assert_eq "$(jq -r '.run.total' <<<"$jd")" "2" "default run-block = most recent run (run-B)"

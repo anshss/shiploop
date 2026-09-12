@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Locks in the #18 reasoning-effort knob in spawn-worker.sh — an INDEPENDENT control from model
+# Locks in the reasoning-effort knob in spawn-worker.sh — an INDEPENDENT control from model
 # tier (raising effort is far cheaper than raising tier, so it's the correct first escalation rung):
 #   1. `Effort: high` on first attempt → --effort high
 #   2. Same ticket on retry (preserved worktree) → falls back to GOVERN_WORKER_EFFORT (or none)
@@ -8,7 +8,7 @@
 #   5. Unknown `Effort:` value → fail-safe, run continues with the pre-existing resolution
 #
 # The scout used to also SCORE its measurement into a cached (model, effort) verdict that decided
-# BOTH axes — that is GONE (§5.2, see scout-ticket.sh's header). Effort now comes from exactly
+# BOTH axes — that is GONE (see scout-ticket.sh's header). Effort now comes from exactly
 # GOVERN_WORKER_EFFORT (or the retry-class judgment bump); a scout cache sitting alongside the ticket
 # has no field left for resolve_sizing to read. That regression guard — "a cached verdict changes
 # nothing" — already lives in test-spawn-sizing-no-scout.sh; case 6 here, which asserted a scout

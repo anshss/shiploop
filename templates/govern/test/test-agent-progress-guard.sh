@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # agent-progress-guard.sh — the SubagentStop + TeammateIdle hook that reaches spawn-worker.sh's
-# §4.4a doom signature (govern::early_abort_reason in lib/common.sh) to in-session `Agent`
-# children, which have no pid and no worker.jsonl for that watchdog to see. Closes #116, rails 6-8
-# of .specs/2026-09-09-model-orchestration-design.md, and (the TeammateIdle cases) D8/G10 of
-# .specs/2026-09-11-advisor-worker-design.md.
+# doom signature (govern::early_abort_reason in lib/common.sh) to in-session `Agent`
+# children, which have no pid and no worker.jsonl for that watchdog to see.
 #
 # Covered here, on SubagentStop:
 #   1. STALL    — many read-only turns right before the child tries to stop → blocked, surfaced
@@ -11,8 +9,8 @@
 #   2. LOOP     — the same Bash command repeated identically → blocked, quotes the command
 #   3. HEALTHY  — edits throughout, same turn count → NOT blocked, no event
 #   4. DEFAULT ON — GOVERN_AGENT_SUPERVISION unset, on the SAME doomed transcript → blocked: the
-#                   mechanism ships ON as of D8 (rail 7 — an inert-by-default gate is the defect
-#                   this design is written against)
+#                   mechanism ships ON by default (an inert-by-default gate is the defect this
+#                   design is written against)
 #   5. KILL SWITCH — GOVERN_AGENT_SUPERVISION=0 explicitly, on the SAME doomed transcript → no
 #                    block, no event: the operator can still turn it off
 #   6. RE-ENTRANCY — stop_hook_active:true on a doomed transcript → no block (never adds a THIRD
@@ -34,7 +32,7 @@
 #      byte-identical to what spawn-worker.sh's watchdog emits for the SAME transcript shape,
 #      because both call govern::early_abort_reason() rather than each having their own copy.
 #
-# Covered here, on TeammateIdle (G10: an idle notification is not evidence of anything at all —
+# Covered here, on TeammateIdle (an idle notification is not evidence of anything at all —
 # a worker correctly blocked on a background task presents identically to a stalled one, so this
 # path alarms but never blocks):
 #   9.  IDLE STALL, via agent_transcript_path  → fleet event with signal=idle, NO block decision
@@ -50,7 +48,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
 
-# Two layouts (#255): scripts/agent-progress-guard.sh in a scaffolded workspace,
+# Two layouts: scripts/agent-progress-guard.sh in a scaffolded workspace,
 # templates/hooks/agent-progress-guard.sh in the hub repo. GOVERN_HOOKS_DIR (from assert.sh)
 # resolves whichever one we're in.
 GUARD="$GOVERN_HOOKS_DIR/agent-progress-guard.sh"
@@ -196,7 +194,7 @@ assert_eq "$has3" "no" "no fleet event for a healthy stop"
 # ── 4. DEFAULT ON — the SAME doomed transcript, GOVERN_AGENT_SUPERVISION unset ─────────────────
 events4="$TMP/events-4.jsonl"
 out4="$(run_guard "$TMP/stall.jsonl" a4 false GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events4")"
-assert_contains "$out4" '"decision":"block"' "GOVERN_AGENT_SUPERVISION unset → defaults ON (D8): the doomed subagent IS blocked"
+assert_contains "$out4" '"decision":"block"' "GOVERN_AGENT_SUPERVISION unset → defaults ON: the doomed subagent IS blocked"
 assert_contains "$(cat "$events4" 2>/dev/null || true)" '"type":"agent_progress_alarm"' \
   "the default-on path still surfaces the fleet event"
 

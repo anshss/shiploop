@@ -2,11 +2,11 @@
 // Generates bench/fixtures/replay-lever-fleet/, the synthetic fleet the multi-lever tests read.
 //
 // Nothing here is a measurement. It is a three-session run whose every figure is checkable by
-// hand, chosen to exercise exactly the things the pre-#108 fixture cannot:
+// hand, chosen to exercise exactly the things the earlier fixture cannot:
 //
 //   - three tiers in one run (opus driver, sonnet worker, haiku worker), so `--baseline
 //     driver-tier` has something to reprice and the routing credit is not zero by construction
-//   - an orchestration transcript (governor.jsonl), so spec section 4a has overhead to charge
+//   - an orchestration transcript (governor.jsonl), so there is overhead to charge
 //   - a `driver-model` stamp, so the driver tier is resolved rather than guessed
 //   - a session killed before its result event, so `--partials price|drop` differ
 //   - a lever-events.jsonl carrying all four instrumentation events, plus one unrecognised
@@ -178,7 +178,7 @@ write(
 );
 
 // A second run that aborted before dispatch: 0-byte state.jsonl, no transcripts. It is not a bench
-// input and it must not become one, but it IS counted and printed (spec section 4).
+// input and it must not become one, but it IS counted and printed.
 const abortDir = path.join(ROOT, 'logs', 'govern', 'run-20260202-000000');
 fs.mkdirSync(abortDir, { recursive: true });
 fs.writeFileSync(path.join(abortDir, 'state.jsonl'), '');

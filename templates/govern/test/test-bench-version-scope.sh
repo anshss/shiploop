@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# bench: version-scoped replay corpus (#107).
+# bench: version-scoped replay corpus.
 #
 # `bench/fixtures/replay-version-fleet` has three run directories: one unstamped-legacy (no
-# shiploop-version file, as if dispatched before #107 shipped), one stamped 1.18.0, one stamped
-# 1.19.0. Each run holds exactly one ticket with one session, so run count == session count ==
+# shiploop-version file, as if dispatched before version-scoping shipped), one stamped 1.18.0, one
+# stamped 1.19.0. Each run holds exactly one ticket with one session, so run count == session count ==
 # ticket count throughout, which makes every assertion below unambiguous.
 #
 #   run-20260501-000000  ticket-200  unstamped-legacy       input 1,000 / output 100

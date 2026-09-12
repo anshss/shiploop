@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner — pending-results delivery substrate (spec §4). Sourced by the three
+# Durable validation runner — pending-results delivery substrate. Sourced by the three
 # readers (validations-pending-apply.sh for the supervisor pass + SessionStart hook,
 # govern-validations.sh for the on-demand surface); definitions only.
 #
@@ -20,7 +20,7 @@ govern::valpending_dir() { # -> dir
   printf '%s' "${GOVERN_VALIDATIONS_DIR:-$LOG_ROOT/validations}"
 }
 
-# job-id shape is `val-<flowid>-<ts>` (spec §1) — ts is the trailing numeric segment; a flow id may
+# job-id shape is `val-<flowid>-<ts>` — ts is the trailing numeric segment; a flow id may
 # itself contain digits (e.g. `vastai2`), so only strip a trailing ALL-DIGITS segment, never a mixed one.
 govern::valpending_flowid_from_jobid() { # jobid -> flowid
   local jobid="$1" rest tail
@@ -176,7 +176,7 @@ govern::valpending_heartbeat_age() { # jobdir -> seconds | "-"
   echo $(( $(date +%s) - $(govern::mtime "$hb") ))
 }
 
-# Driver-facing live-jobs surface (spec §4 reader 3/3: `flows status` / `govern validations`).
+# Driver-facing live-jobs surface (`flows status` / `govern validations`).
 # Non-terminal job → phase + heartbeat age; terminal (pending or already-consumed) job → its verdict.
 govern::valpending_live_listing() { # [validations-dir]
   local vdir="${1:-$(govern::valpending_dir)}" d any=0

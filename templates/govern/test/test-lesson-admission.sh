@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression for the #87 always-on context ratchet gates in land-resolution.sh.
+# Regression for the always-on context ratchet gates in land-resolution.sh.
 #
 # The problem these encode: promotion into root CLAUDE.md is automatic, removal is a human noticing.
 # GOVERN_LESSON_MAX_CHARS caps how BIG one lesson may be; nothing caps how MANY. The three gates
 # below add an admission test and an eviction. GOVERN_LESSON_SINK and GOVERN_LESSON_LADDER still
-# SHIP INERT (default behaviour is byte-for-byte what it was before #87). GOVERN_LESSON_EVICT (#95)
+# SHIP INERT (default behaviour is byte-for-byte what it was before this change). GOVERN_LESSON_EVICT
 # no longer ships inert: it defaults ON, so this file asserts the NEW default (forced eviction at
 # budget) as hard as the kill switch that restores the old always-insert behaviour.
 #
@@ -95,8 +95,8 @@ run() { # <report-json> <env-assignments...>
   printf '%s' "$r" | env GOVERN_NO_PUSH=1 GOVERN_TICKETS_FILE="$T/tickets.md" "$@" bash "$BK" 9 >/dev/null 2>&1
 }
 
-# ── 1. DEFAULTS: GOVERN_LESSON_EVICT is ON by default (#95) ──────────────────
-# 1a. UNDER budget: eviction is a no-op below budget, so this leg is unchanged from before #95.
+# ── 1. DEFAULTS: GOVERN_LESSON_EVICT is ON by default ──────────────────
+# 1a. UNDER budget: eviction is a no-op below budget, so this leg is unchanged from before this change.
 reset_ws yes
 run "$(rpt '{}')"
 assert_contains "$(cat "$T/CLAUDE.md")" "$LESSON" "defaults, under budget: lesson still lands in CLAUDE.md (EVICT is a no-op below budget)"

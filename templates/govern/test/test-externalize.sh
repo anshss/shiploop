@@ -220,7 +220,7 @@ assert_eq "$rc_u" "0" "unset GOVERN_EXTERNALIZE_REPO exits 0 (opt-in gate — no
 assert_contains "$out_u" "no GOVERN_EXTERNALIZE_REPO configured" "logs a clear skip reason"
 assert_eq "$(cat "$TMP/tickets.md")" "$before_u" "leaves tickets.md byte-identical when skipping"
 
-# ── 11. Eligibility EXCLUDES harness-scope + validation/decision tickets (#75, unchanged).
+# ── 11. Eligibility EXCLUDES harness-scope + validation/decision tickets, unchanged.
 cat > "$TMP/tickets.md" <<'EOF'
 ## #50 — genuine foo product bug
 **Severity:** Low
@@ -239,7 +239,7 @@ cat > "$TMP/tickets.md" <<'EOF'
 **Where:** `foo` sub-repo — `foo/core/output_cap.py`
 ---
 EOF
-assert_eq "$(cands_of "$TMP/tickets.md")" "50" "#75: only genuine product bug #50 eligible; harness/validation/decide excluded"
+assert_eq "$(cands_of "$TMP/tickets.md")" "50" "only genuine product bug #50 eligible; harness/validation/decide excluded"
 
 # ── 12. Label-apply-rejected helper precision (kept from the original coverage).
 assert_eq "$(bash -c 'source "'"$COMMON"'"; govern::label_apply_rejected "GraphQL: ... (addLabelsToLabelable)" && echo yes || echo no')" "yes" "helper flags an addLabelsToLabelable rejection"

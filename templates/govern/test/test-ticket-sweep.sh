@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Guard test for the ticket-sweep Stop hook + SessionStart snapshot (mechanism #61).
+# Guard test for the ticket-sweep Stop hook + SessionStart snapshot.
 # Builds a sandbox "main checkout" (owns queue/tickets.md) and a "worktree" with one
 # sub-repo, then drives session-snapshot.sh and ticket-sweep-reminder.sh through
-# the #61 "Done when" scenarios — all deterministic, no real Claude, no network.
+# the "Done when" scenarios — all deterministic, no real Claude, no network.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 # Both hooks install to scripts/ at scaffold time (see commands/setup.md) so in a live
 # workspace they sit two levels up; in the template repo they live under templates/hooks/.
-# GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in (#255).
+# GOVERN_HOOKS_DIR (from assert.sh) resolves whichever layout we're in.
 SNAP="$GOVERN_HOOKS_DIR/session-snapshot.sh"
 SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
-# The Stop hook also runs the #252 dangling-validation-ref lint, which sources common.sh →
+# The Stop hook also runs the dangling-validation-ref lint, which sources common.sh →
 # $GOVERN_WS_ROOT/scripts/lib/workspace.sh. Seed a hermetic stub + export GOVERN_WS_ROOT so it
 # resolves in the template layout; otherwise common.sh's source-error noise is captured as a
-# spurious "evidence summary MISSING" block and fails the silent-stop cases (#255).
+# spurious "evidence summary MISSING" block and fails the silent-stop cases.
 WSSTUB="$(mktemp -d)"; trap 'rm -rf "$WSSTUB"' EXIT
 mk_ws_stub "$WSSTUB"
 
@@ -125,7 +125,7 @@ out="$(sweep "$T" sess9clean)"
 assert_contains "$out" '"decision":"block"' "no baseline + dirty tree → absolute fallback fires"
 
 # ── 10. Regression: a FLOWS LINT FAIL (zero-match glob) at session end must surface the lint's own
-#        message under the neutral wrapper, NEVER the #252 dangling-.claude/shiploop/validation-ref
+#        message under the neutral wrapper, NEVER the dangling-.claude/shiploop/validation-ref
 #        framing — the two are independent failure shapes from the same lint script.
 T="$(mk_sandbox)"
 mkdir -p "$T/main/.claude/shiploop/validation"
@@ -140,17 +140,17 @@ EOF
 out="$(sweep "$T" sess10)"
 assert_contains "$out" '"decision":"block"' "flows-lint FAIL at session end still blocks"
 assert_contains "$out" "validation lint failed at session end" "flows-lint FAIL uses the neutral wrapper"
-if printf '%s' "$out" | grep -q '#252'; then mislabeled=1; else mislabeled=0; fi
-assert_eq "$mislabeled" "0" "flows-lint FAIL is never mislabeled as the #252 dangling-ref case"
+if printf '%s' "$out" | grep -q 'evidence summary is MISSING'; then mislabeled=1; else mislabeled=0; fi
+assert_eq "$mislabeled" "0" "flows-lint FAIL is never mislabeled as the dangling-ref case"
 
-# ── 11. The #252 dangling-ref case is UNCHANGED: still gets its own framing, not the neutral wrapper.
+# ── 11. The dangling-ref case is UNCHANGED: still gets its own framing, not the neutral wrapper.
 T="$(mk_sandbox)"
 mkdir -p "$T/main/.claude/context"
 printf 'See [proof](.claude/shiploop/validation/ghost.md) for evidence.\n' > "$T/main/.claude/context/claim.md"
 ( cd "$T/main" && git add -A && git commit -q -m "seed dangling ref" )
 out="$(sweep "$T" sess11)"
 assert_contains "$out" '"decision":"block"' "dangling-ref case still blocks"
-assert_contains "$out" "#252" "dangling-ref case still gets the #252 framing"
+assert_contains "$out" "evidence summary is MISSING but still cited" "dangling-ref case still gets its own framing"
 
 # ── 12. GOVERN_RUN=1 (a dispatch worker's spawn) exits silently, even on a scenario that fires
 #        without it. Same setup as case 2 (new work after a clean baseline blocks), GOVERN_RUN=1

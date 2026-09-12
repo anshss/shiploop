@@ -149,7 +149,7 @@ unphysical in the tool's own output.
 
 ### The baseline axis: which model the counterfactual ran on
 
-Added 2026-09-08 (#108). The arm above says how much a single session could CARRY. The baseline says
+Added 2026-09-08. The arm above says how much a single session could CARRY. The baseline says
 what MODEL it ran on. They compose into a matrix, 3 arms x 2 baselines, selected with `--baseline`.
 
 | Baseline | The counterfactual | Default |
@@ -157,7 +157,7 @@ what MODEL it ran on. They compose into a matrix, 3 arms x 2 baselines, selected
 | `same-mix` | the same sessions at the same tiers, glued into one session | no |
 | `driver-tier` | one session running entirely on the dispatching session's own tier | **yes** |
 
-`same-mix` is the pre-#108 model, unchanged and kept, because a model that silently changes what it
+`same-mix` is the original model, unchanged and kept, because a model that silently changes what it
 computes cannot be checked. `coreModel` in the JSON freezes it on every arm regardless of which
 flags were passed, and `test-bench-regression.sh` asserts that it is invariant to `--baseline` and
 `--partials` on the synthetic fixture. That is a determinism guard over invented data, not a claim
@@ -215,7 +215,7 @@ sum to it (`leverSumCheck` in the JSON, `sum check:` in the report). A component
   plus cache creation, output excluded. A retry redoes the actual work either way, so the only
   thing resuming avoids is reading its way back into context. Crediting the failed attempt's total
   spend would hand this lever attempt 1's output tokens as savings, which would be exactly the kind
-  of entry section 4a exists to keep out of the bias ledger.
+  of entry this rule exists to keep out of the bias ledger.
 - **`skip-the-model`** credits a floor, not the work avoided. A deterministic apply resolves a
   ticket with zero model turns, so what it replaced is a whole worker session; the table credits
   only the context that session would have paid to reach its FIRST turn. That floor is a
@@ -262,8 +262,8 @@ comparison. Both are printed, always, and neither is presented as the other.
 ### Partial sessions: `--partials price|drop`
 
 A session killed before it emitted a result event has an exactly recoverable input side and an
-unrecoverable output side. `--partials price` (the default since #108) counts what it did record,
-flags the row `partial`, and leaves output at zero. `--partials drop` is the pre-#108 behaviour and
+unrecoverable output side. `--partials price` (the default) counts what it did record,
+flags the row `partial`, and leaves output at zero. `--partials drop` is the earlier behaviour and
 is kept because reproducing a historical number requires it. **Both totals are printed either way**,
 so the delta between them is always visible: dropping our own spend is the one exclusion that
 flatters us.
@@ -292,7 +292,7 @@ tickets skew toward earlier positions in a run, where less has been carried.
 
 ### Attempt-outcome breakdown
 
-Added 2026-09-10 (#108, "no attempt-outcome dimension"). `--scope all` prices every attempt
+Added 2026-09-10 ("no attempt-outcome dimension"). `--scope all` prices every attempt
 unconditionally, unchanged by anything below -- this is an ADDITIVE breakdown alongside that total,
 never a filter on it. It answers a different question: not how many tokens an attempt cost, but WHY
 that attempt happened, so a reader can separate infrastructure failures from capability ones
@@ -436,7 +436,7 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    shiploop arm. This is the largest known bias and it is unquantified, because the transcripts do
    not exist. The live A/B harness (`bench/run.sh`) counts the driver; the replay path cannot.
 
-   **CORRECTION (2026-09-08, #108).** This is no longer unquantified, and it is no longer left
+   **CORRECTION (2026-09-08).** This is no longer unquantified, and it is no longer left
    uncharged where it can be read. `replay.mjs` now sums every orchestration-side transcript a run
    produced (any `governor`/`driver`/`scout`/`review`/`re-verify`/`supervise` transcript, and any
    transcript sitting outside a `ticket-*` directory) INTO the shiploop arm's tokens, cost and
@@ -454,8 +454,8 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    GROWS with the product, not with the corpus size. Worse: the vanilla baseline this whole document
    models IS "one long Claude Code session doing the work", and the driver session now literally IS
    one, on the same model, doing real thinking about the same tickets. The baseline and the
-   treatment therefore overlap at exactly the point this report cannot see. This ticket's operator
-   decision (queue #108, 2026-09-10 addendum) is a STATED EXCLUSION rather than instrumentation: the
+   treatment therefore overlap at exactly the point this report cannot see. This operator
+   decision (2026-09-10 addendum) is a STATED EXCLUSION rather than instrumentation: the
    driver's tokens are not brought into scope here (that is separate, larger work, and a half
    instrumented driver figure would be worse than an honest gap), but `replay.mjs`'s own JSON and
    human report now both carry the exclusion unmissably (`driverScope`), and so does
@@ -477,7 +477,7 @@ Stated worst-first: the assumptions that inflate shiploop's number come first.
    pulled that choice toward the pricier tier and the entire session's modeled overhead was billed
    there, inflating the modeled vanilla cost in shiploop's favour.
 
-   `dominantTier()` is gone (removed 2026-09-08, #108). The modeled side is now priced at the
+   `dominantTier()` is gone (removed 2026-09-08). The modeled side is now priced at the
    session's own input-side token mix blended across the tiers that actually ran it
    (`sessionInputRate()` in `bench/replay.mjs`), so a session that spent 90% of its input side on
    sonnet has 90% of its modeled overhead priced at sonnet. For a single-model session the two

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bench/run.sh: the marketing benchmark driver (spec section 5).
+# bench/run.sh: the marketing benchmark driver.
 #
 # For every (backlog x arm x rep) cell: cut a fresh worktree of the backlog's pinned ref, run the
 # arm, run each ticket's verify_cmd, and record one results.jsonl row per spawned session plus one
@@ -15,20 +15,20 @@
 #                 the private candidate pool, which is gitignored and never pushed)
 #   --backlog     restrict to this backlog; repeatable. Default: all of them.
 #   --arm         restrict to this arm; repeatable. Default: vanilla shiploop.
-#                 vanilla-fresh is the private variant of section 2 and is opt-in only.
+#                 vanilla-fresh is the private variant and is opt-in only.
 #   --reps        repetitions per (backlog, arm) cell. Default 1.
 #
-# Rails, always on, never options (spec section 5):
+# Rails, always on, never options:
 #   BENCH_MAX_USD    (60) hard cap on API-rate total_cost_usd across the whole run. The driver
 #                    stops dispatching past it and records the remaining cells as status "capped".
 #                    Identical behavior on a subscription (caps quota burn) and on an API key
 #                    (caps real spend), because total_cost_usd is API-list-rate denominated either
-#                    way, which is also why the published number is a percentage (section 4).
+#                    way, which is also why the published number is a percentage.
 #   BENCH_MAX_TURNS  per-session turn ceiling, when the running claude CLI supports --max-turns.
 #                    Defaults are shape-specific: 200 for a vanilla backlog session, 80 per
 #                    shiploop worker. Setting BENCH_MAX_TURNS overrides both. A run that hits the
 #                    ceiling clears fewer tickets, so it records as failed-to-clear and the
-#                    backlog drops out of the published set (section 3).
+#                    backlog drops out of the published set.
 #   BENCH_MAX_SESSION_USD  the per-session dollar ceiling used INSTEAD of BENCH_MAX_TURNS when the
 #                    CLI has no --max-turns (observed on claude 2.1.246, which ships
 #                    --max-budget-usd in its place; see bench/METHODOLOGY.md). Applies to the
@@ -113,7 +113,7 @@ source "$BENCH_DIR/arms.sh"
 
 command -v jq >/dev/null 2>&1 || bench::die "jq is required"
 
-# CLI version is recorded on every row so the published sentence can name it (section 4). A dry run has no
+# CLI version is recorded on every row so the published sentence can name it. A dry run has no
 # CLI to ask, and inventing one would put a false version next to real-looking numbers.
 if [[ "$DRY_RUN" -eq 1 ]]; then
   CLI_VERSION="dry-run"
@@ -162,7 +162,7 @@ bench::validate_backlog() { # <backlog.jsonl>
 }
 
 # ── offline guard ───────────────────────────────────────────────────────────
-# Non-negotiable (ticket #104): the shiploop arm runs the REAL governor loop, which opens PRs
+# Non-negotiable: the shiploop arm runs the REAL governor loop, which opens PRs
 # against whatever remote it can reach. Every clone this driver makes has its remote(s) stripped
 # immediately, and nothing is allowed to spawn while any remote survives anywhere under the cell's
 # workdir. BENCH_ALLOW_REMOTES=1 is the deliberate, documented escape hatch — no benchmark needs it.
@@ -254,7 +254,7 @@ bench::prepare_workdir() { # <backlog.jsonl> <cell-id> -> path on stdout
 }
 
 # ── verify ──────────────────────────────────────────────────────────────────
-# Mechanical oracle, no LLM judging (section 3), SWE-bench style.
+# Mechanical oracle, no LLM judging, SWE-bench style.
 #
 # THE ORDERING IS THE CONTRACT. `verify_cmd` is the test the merged upstream PR made pass, which
 # means at the pinned `ref` that test DOES NOT EXIST: the PR added it. The arm is told only the
@@ -274,7 +274,7 @@ bench::prepare_workdir() { # <backlog.jsonl> <cell-id> -> path on stdout
 BENCH_VERIFY_PATCH_FAILED=90
 
 # Prints "<cleared> <total> <worstExit>" and writes one JSON line per ticket to <verify-ledger>,
-# the private per-ticket record section 3 asks for.
+# the private per-ticket verification record.
 bench::verify_backlog() { # <backlog.jsonl> <workdir> <verify-ledger>
   local backlog="$1" wd="$2" ledger="$3"
   local cleared=0 total=0 worst=0 line id cmd patch rc applied

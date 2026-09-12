@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #34 (b): a per-ticket worker whose `claude -p` stream dies from a TRANSIENT connection drop
+# A per-ticket worker whose `claude -p` stream dies from a TRANSIENT connection drop
 # mid-response (laptop sleep / network suspend) — the worker exits on its OWN (NOT hard-killed by the
 # timeout watchdog) with a result event `is_error:true, result:"API Error: Connection closed
 # mid-response"`, must be classified as the DISTINCT per-worker status `interrupted`, not
@@ -58,7 +58,7 @@ out="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
   _GOVERN_TOOLS_SUPPORTED=1 \
   "$SPAWN" 7 </dev/null)"
 
-assert_eq "$(printf '%s' "$out" | jq -r '.status')" "interrupted" "self-exit mid-stream drop → status:interrupted (NOT failed/infra) [#34]"
+assert_eq "$(printf '%s' "$out" | jq -r '.status')" "interrupted" "self-exit mid-stream drop → status:interrupted (NOT failed/infra)"
 assert_eq "$(printf '%s' "$out" | jq -r '(.interrupted.error // "") | length > 0')" "true" "interrupted report carries a non-empty .interrupted.error signature"
 
 assert_done

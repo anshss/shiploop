@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #49: preflight-base-ci.sh must refuse to dispatch on an UNAMBIGUOUS base-branch CI red, and must
+# preflight-base-ci.sh must refuse to dispatch on an UNAMBIGUOUS base-branch CI red, and must
 # fail OPEN on everything else (no checks configured, an in-progress run, a gh API error, gh
 # missing) — a red baseline fails every worker in a --parallel wave, but this check must never
 # block a fleet whose CI is simply absent.

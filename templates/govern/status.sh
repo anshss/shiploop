@@ -71,7 +71,7 @@ FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
   else if (typ == "worker_spawned") {
     t = jget(line,"ticket"); k = rid SUBSEP t
     wstate[k] = "live"; wpid[k] = jget(line,"pid"); wmodel[k] = jget(line,"model")
-    # modelSource/precision: rail 5/Layer 2 — WHY this tier was picked, carried on the same event
+    # modelSource/precision: WHY this tier was picked, carried on the same event
     # as model/effort (both known before the CLI even runs). Read by the "by source" fold below.
     wms[k] = jget(line,"modelSource"); wprec[k] = jget(line,"precision")
     weffort[k] = jget(line,"effort"); wsince[k] = ts
@@ -106,7 +106,7 @@ END {
     if (wstate[k] != "live") continue
     printf "W\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], wtick[k], (wpid[k]==""?0:wpid[k]), wmodel[k], weffort[k], (wsince[k]==""?0:wsince[k])
   }
-  # U = per-session tier attribution (rail 5): one row per ticket EVER spawned in scope (live or
+  # U = per-session tier attribution: one row per ticket EVER spawned in scope (live or
   # done — unlike the W rows above, which are live-only), carrying the model_source/precision the
   # dispatch was decided from and the cost once known. Old logs from before this field existed print
   # "" for modelSource/precision/cost; the bash-side fold below labels that "(unrecorded)"/"null"
@@ -220,7 +220,7 @@ N_RES="$(counter resolved)"; N_PARK="$(counter parked)"; N_FAIL="$(counter faile
 N_TIME="$(counter timeout)"; N_BUDGET="$(counter budget-exceeded)"; N_ABORT="$(counter early-abort)"
 N_INTR="$(counter interrupted)"; N_ESC="$(counter escalated)"; N_STALEC="$(counter stale)"
 
-# ── per-session tier attribution, grouped by model_source (rail 5 / design doc Layer 2) ──────────
+# ── per-session tier attribution, grouped by model_source ────────────────────────────────────────
 # The gap this closes: `model_source` was already logged (spawn-worker.sh's attempts.jsonl ledger)
 # but nothing aggregated it, so answering "which tier decided what, and what did it cost" took a
 # dedicated agent 38 tool calls on the run that first needed the answer. This reads it straight off

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # govern::ticket_proposal / govern::ticket_precision (lib/common.sh) and their CLI wrapper
-# ticket-proposal.sh — .specs/2026-09-11-advisor-worker-design.md D2/D6.
+# ticket-proposal.sh.
 #
 # Cases:
 #   1. A real, multi-paragraph **Proposed solution:** is extracted in full (blank lines inside it

@@ -2,7 +2,7 @@
 # Harness-repo commit-attribution guard (active via `git config core.hooksPath .githooks`, set by
 # scripts/setup.sh — same wiring as the pre-push guard).
 #
-# Problem (ticket #271): the `Co-Authored-By: Claude` trailer is a prose-enforced "must remember"
+# Problem: the `Co-Authored-By: Claude` trailer is a prose-enforced "must remember"
 # rule. `includeCoAuthoredBy:true` only applies when Claude Code makes the commit through its OWN
 # commit path; a raw shell `git commit` (the common case for workers + the governor) relies on the
 # agent typing the trailer, and it was silently omitted on 2 commits (4a8b35d/33a23da), later

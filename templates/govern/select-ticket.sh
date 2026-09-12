@@ -13,8 +13,8 @@
 # is ineligible (the caller names each survivor-less target and says why).
 #
 # Also dropped, per set: any ticket with an entry under "## Open" in escalations.md, any ticket whose
-# body is marked NOT govern-automatable (#92), and any ticket colliding with an open sync-port
-# manual port (#314).
+# body is marked NOT govern-automatable, and any ticket colliding with an open sync-port
+# manual port.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -44,7 +44,7 @@ if [[ -f "$ESCALATIONS_FILE" ]]; then
   done < "$ESCALATIONS_FILE"
 fi
 
-# #92: drop tickets whose body carries a bold "NOT govern-automatable" / "requires web-UI" /
+# Drop tickets whose body carries a bold "NOT govern-automatable" / "requires web-UI" /
 # "handle interactively" marker — a headless worker can't resolve them, so dispatching one just
 # burns a worker and fast-fails. They stay in tickets.md (workable again once a human
 # un-parks/handles them); the loop logs the human-readable why (this script's stderr is suppressed).
@@ -52,9 +52,9 @@ while IFS=$'\t' read -r na_n _; do
   [[ -n "$na_n" ]] && exclude+="${na_n},"
 done < <(govern::not_automatable_tickets "$TICKETS_FILE")
 
-# #314: drop tickets that edit a file with an OPEN sync-port manual-port escalation — dispatching
-# one risks colliding with that in-progress port's `sync-auto-*` branch/worktree (the #309
-# collision). They stay in tickets.md (dispatchable once the sync-port escalation resolves).
+# Drop tickets that edit a file with an OPEN sync-port manual-port escalation: dispatching
+# one risks colliding with that in-progress port's `sync-auto-*` branch/worktree. They stay in
+# tickets.md (dispatchable once the sync-port escalation resolves).
 while IFS=$'\t' read -r sp_n _; do
   [[ -n "$sp_n" ]] && exclude+="${sp_n},"
 done < <(govern::sync_port_collision_tickets "$TICKETS_FILE" "$ESCALATIONS_FILE")

@@ -15,7 +15,7 @@
 #   6. GOVERN_MEASURED_SIZING=0 → the OLD precedence is restored exactly: the field wins again
 #
 # The scout used to also SCORE its measurement into a cached (model, effort) verdict that outranked
-# even a disagreeing ticket field — that is GONE (§5.2, see scout-ticket.sh's header). Tier now comes
+# even a disagreeing ticket field — that is GONE (see scout-ticket.sh's header). Tier now comes
 # from exactly two knobs (GOVERN_WORKER_MODEL floor, GOVERN_WORKER_ESCALATION_MODEL ceiling via the
 # retry rail); the scout survives only as a pointer-locating surveyor with no vote on cost. That
 # demotion — including "a cached verdict changes nothing" and the escalate-exactly-once stamp — is
@@ -154,7 +154,7 @@ assert_eq "$(printf '%s' "$out6b" | jq -r '.model')" "opus" \
   "GOVERN_MEASURED_SIZING=0 → an unknown Model: value is still dropped fail-safe"
 
 # Case 7 used to assert that a cached scout verdict decides the tier, overriding a disagreeing ticket
-# field — that mechanism is gone (§5.2). The regression guard for "a scout cache must never silently
+# field — that mechanism is gone. The regression guard for "a scout cache must never silently
 # start influencing dispatch again" already lives in test-spawn-sizing-no-scout.sh (cases 1/2/4), so
 # it is not re-derived here rather than kept as a near-duplicate assertion.
 

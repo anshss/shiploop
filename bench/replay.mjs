@@ -55,7 +55,7 @@ const ARMS = {
 };
 const CURVE_POSITIONS = [1, 2, 3, 5, 8];
 
-// ── baselines (spec section 1) ───────────────────────────────────────────────
+// ── baselines ─────────────────────────────────────────────────────────────────
 // The context arm says how much a single session could CARRY. The baseline says what MODEL that
 // single session ran on. They compose into a matrix: 3 arms x 2 baselines.
 const BASELINES = {
@@ -121,7 +121,7 @@ const SCRIPTED_ACTION_ESTIMATES = {
 };
 
 // A transcript that is orchestration rather than ticket work: the governor's own model calls, the
-// scout, a re-verification pass. Spec section 4a charges these into the SHIPLOOP arm, which lowers
+// scout, a re-verification pass. These are charged into the SHIPLOOP arm, which lowers
 // the shiploop number. Matched by basename (with any `.attemptN` / `.prior` infix) or by sitting
 // outside a `ticket-*` directory.
 const ORCHESTRATION_BASENAMES =
@@ -160,7 +160,7 @@ const ABSORBED_LEVERS = [
 ];
 
 // The interactive/driver session that specifies tickets and dispatches workers is EXCLUDED from
-// every number in this report, unmissably, per queue #108's 2026-09-10 addendum. This is a STATED
+// every number in this report, unmissably, as of the 2026-09-10 addendum. This is a STATED
 // EXCLUSION, not instrumentation: instrumenting the driver is separate, larger work, and a half
 // instrumented driver figure is worse than an honestly stated gap. See METHODOLOGY.md and
 // KNOWN-LIMITS.md for the full mechanism.
@@ -245,11 +245,11 @@ const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|u
             current workspace and its siblings. Read only, never written to.
   --arm     which counterfactual session to model. Default all.
   --baseline which MODEL the counterfactual session runs on. Composes with --arm as a matrix.
-            same-mix   = the same sessions at the same tiers, glued together (the pre-#108 model).
+            same-mix   = the same sessions at the same tiers, glued together (the original model).
             driver-tier = one session entirely on the dispatching session's tier, which is the
                           real alternative to the harness. Default driver-tier.
   --partials price (default) counts a session killed before its result event from the usage it
-            DID record, flagged partial. drop is the pre-#108 behavior, kept to reproduce
+            DID record, flagged partial. drop is the earlier behavior, kept to reproduce
             historical numbers. Both totals are printed either way.
   --rows-file aggregate a published rows file (bench/published-rows/*.jsonl) instead of reading
             transcripts, and print the reduction each arm's rows imply. This is the frozen
@@ -261,8 +261,9 @@ const USAGE = `usage: node bench/replay.mjs [--fleet <path>]... [--arm 200k|1m|u
             >= this value. Composes with the version scope below (both must pass).
   --all     use every stamped-or-not run in the corpus, spanning every shiploop version this
             workspace has ever run. Without it, the default is the run's OWN shiploop version
-            (run-.../shiploop-version, written by run-loop.sh at dispatch): only runs stamped
-            with the NEWEST version present are kept, so an old workspace's numbers are not
+            (run-.../shiploop-version, stamped at dispatch by whichever caller creates the run
+            directory, which is the bench arm itself): only runs stamped with the NEWEST
+            version present are kept, so an old workspace's numbers are not
             diluted by every prior harness version it has run under. A run from before the stamp
             shipped, or a workspace whose scaffold never wrote one, has no file and is reported
             separately as unstamped-legacy. If NO run anywhere is stamped, this falls back to
@@ -406,9 +407,9 @@ function parseTranscript(file) {
       // every assistant message is a synthetic notice. It is the authoritative fallback. It also
       // carries the Claude Code CLI version the session actually ran under (claude_code_version) —
       // no event carries the shiploop PACKAGE version. That version instead comes from a sibling
-      // file next to the transcript (run-.../shiploop-version, see runVersion below), written by
-      // run-loop.sh at dispatch time; --since's run-dir-timestamp filter is the older, coarser
-      // proxy, kept for corpora with no stamp at all.
+      // file next to the transcript (run-.../shiploop-version, see runVersion below), stamped at
+      // dispatch time by whichever caller creates the run directory; --since's run-dir-timestamp
+      // filter is the older, coarser proxy, kept for corpora with no stamp at all.
       initModel = ev.model;
       if (ev.claude_code_version) initVersion = ev.claude_code_version;
     } else if (ev.type === 'assistant' && ev.message) {
@@ -667,18 +668,20 @@ function locate(file, fleetDir) {
   return { run, ticket };
 }
 
-// run-YYYYMMDD-HHMMSS-<pid> -> "YYYYMMDD-HHMMSS" (lexically sortable, local time — see run-loop.sh's
-// `date +%Y%m%d-%H%M%S`, no `-u`). null for a run name that doesn't match (e.g. "adhoc").
+// run-YYYYMMDD-HHMMSS-<pid> -> "YYYYMMDD-HHMMSS" (lexically sortable, local time, matching
+// bench/arms.sh's own `date +%Y%m%d-%H%M%S`, no `-u`). null for a run name that doesn't
+// match (e.g. "adhoc").
 function runDateKey(run) {
   const m = /^run-(\d{8}-\d{6})/.exec(run || '');
   return m ? m[1] : null;
 }
 
-// ── version scope (#107) ──────────────────────────────────────────────────────
-// run-loop.sh stamps a run directory with the workspace's synced shiploop version at dispatch
-// (best-effort: `govern::stamp_run_version`, never blocks a dispatch). One file per run, not per
-// transcript, since a run is one dispatch of one harness version. Memoized: a fleet with many
-// tickets in the same run would otherwise re-stat the same file once per ticket.
+// ── version scope ─────────────────────────────────────────────────────────────
+// Whoever creates a run directory stamps it with the workspace's synced shiploop version at
+// dispatch (best-effort: `govern::stamp_run_version`, never blocks a dispatch). Today that's the
+// bench arm itself, since the autonomous dispatch loop that used to own this is retired. One file
+// per run, not per transcript, since a run is one dispatch of one harness version. Memoized: a
+// fleet with many tickets in the same run would otherwise re-stat the same file once per ticket.
 const versionCache = new Map();
 function runVersion(fleetDir, run) {
   const key = `${fleetDir} ${run}`;
@@ -710,8 +713,8 @@ function compareVersions(a, b) {
 // an upgrade, that is the latest version that actually has data). `all` restores today's full
 // sweep. A run with no stamp file is "unstamped-legacy" and is never conflated with "an older
 // STAMPED version" — the two exclusion reasons are counted separately so the report can say which
-// one is eating the corpus. If nothing anywhere is stamped (a pure pre-#107 workspace), there is
-// no "newest" to select, so this falls back to the full sweep and says so.
+// one is eating the corpus. If nothing anywhere is stamped (a workspace that predates version
+// stamping entirely), there is no "newest" to select, so this falls back to the full sweep and says so.
 function applyVersionScope(tickets, all) {
   const runVersionOf = new Map(); // "fleet#run" -> version|null, one lookup per run
   for (const t of tickets) {
@@ -764,9 +767,9 @@ function applyVersionScope(tickets, all) {
     kept };
 }
 
-// ── orchestration, aborts and lever events (spec sections 4, 4a, 4b) ─────────
+// ── orchestration, aborts and lever events ─────────────────────────────────
 // Which side of the ledger a transcript belongs to. Ticket work is the measured arm's subject;
-// orchestration is the harness's own overhead, charged into the shiploop arm by section 4a.
+// orchestration is the harness's own overhead, charged into the shiploop arm.
 function roleOf(file, fleetDir) {
   if (ORCHESTRATION_BASENAMES.test(path.basename(file))) return 'orchestration';
   const rel = path.relative(path.join(fleetDir, 'logs', 'govern'), file);
@@ -776,7 +779,7 @@ function roleOf(file, fleetDir) {
 
 // A run whose state.jsonl is 0 bytes never dispatched anything: it aborted pre-flight. It is not a
 // bench input (there is no work to price), but it IS a dispatch-health signal, so it is counted
-// and printed rather than silently absent. See queue ticket #109.
+// and printed rather than silently absent.
 function preflightAborts(fleetDir) {
   const logs = path.join(fleetDir, 'logs', 'govern');
   let entries = [];
@@ -876,7 +879,7 @@ function readUnscopedLeverEvents(fleetDir) {
 // The tier the counterfactual session runs on under --baseline driver-tier. Resolution order:
 // an explicit `driver-model` stamp beside the run, then the run's own orchestration transcript,
 // then the highest tier any session in the run touched. The last is the FALLBACK and the report
-// counts how often it fired, per spec section 1.
+// counts how often it fired.
 function resolveDriverTier(fleetDir, run, workerSessions, orchSessions) {
   let stamp = null;
   try {
@@ -890,7 +893,7 @@ function resolveDriverTier(fleetDir, run, workerSessions, orchSessions) {
   return { tier: highestTier(workerSessions) || 'opus', source: 'fallback-highest-tier' };
 }
 
-// ── attempt-outcome classification (queue #108, "no attempt-outcome dimension") ────────────
+// ── attempt-outcome classification ("no attempt-outcome dimension") ──────────────────────────
 // govern::retry_class (templates/govern/lib/common.sh) already classifies why a retry was
 // dispatched -- infra|ci|budget|judgment|unknown -- and spawn-worker.sh's PER-ATTEMPT LEDGER
 // (a sibling `attempts.jsonl` next to the transcript, one appended row per dispatch of a ticket)
@@ -1358,7 +1361,7 @@ function replayRun(allTicketsInOrder, window, includePartial, driverTier) {
   return rows;
 }
 
-// ── event-derived levers (spec section 4b, contract bench/LEVER-EVENTS.md) ───
+// ── event-derived levers (contract bench/LEVER-EVENTS.md) ────────────────────
 // Credit is earned only by runs that actually carry `lever-events.jsonl`. A run without one is
 // UNINSTRUMENTED and is reported as such; it never contributes a zero that would drag an average
 // down and read as "this lever saves nothing".
@@ -1586,7 +1589,7 @@ function main() {
     : allTickets;
   const runsSeenKept = new Set(keptByDate.map((t) => `${t.fleet}#${t.run}`)).size;
 
-  // Version scope (#107): default to the run's OWN shiploop-version stamp, keeping only the
+  // Version scope: default to the run's OWN shiploop-version stamp, keeping only the
   // newest version present. `--all` (or a corpus with no stamp anywhere) restores the full sweep.
   const versionScope = applyVersionScope(keptByDate, opts.all);
   const allTicketsAfterVersion = versionScope.kept;
@@ -1640,7 +1643,7 @@ function main() {
   const kept = allTicketsAfterVersion.filter((t) => t.sessions.length > 0);
   for (const t of kept) t.counted = opts.scope === 'all' ? true : t.status === 'resolved';
 
-  // Attempt-outcome census (queue #108): unconditional, like --scope all's own count, and
+  // Attempt-outcome census: unconditional, like --scope all's own count, and
   // computed once over the whole kept corpus rather than per arm -- it does not depend on the
   // carry model at all.
   const attemptOutcomes = outcomeBreakdown(kept);
@@ -1693,7 +1696,7 @@ function main() {
     tiers: [...new Set([...runCtx.values()].map((c) => c.driverTier))].sort(),
   };
 
-  // Section 4a: the harness's own overhead, charged into the SHIPLOOP arm. A run with no
+  // The harness's own overhead, charged into the SHIPLOOP arm. A run with no
   // orchestration transcript is `overhead-uncovered`: its governor/scout spend happened and is
   // simply not in the corpus, so it is counted rather than assumed to be zero.
   const overhead = { runs: runCtx.size, covered: 0, uncovered: 0, tokens: 0, costUsd: 0, quota: 0, sessions: 0 };
@@ -1822,7 +1825,7 @@ function main() {
       const sum = (f) => rs.reduce((s, r) => s + f(r), 0);
       const runKeys = new Set(rs.map((r) => `${r.fleet}#${r.run}`));
 
-      // Section 4a: the harness's own overhead, charged into the SHIPLOOP arm. A run with no
+      // The harness's own overhead, charged into the SHIPLOOP arm. A run with no
       // orchestration transcript is `overhead-uncovered`: its governor and scout spend happened
       // and is simply not in the corpus, so it is counted rather than assumed to be zero.
       const ov = { runs: runKeys.size, covered: 0, uncovered: 0, sessions: 0, tokens: 0, costUsd: 0, quota: 0 };
@@ -2015,7 +2018,7 @@ function main() {
     } = A;
     const unknownClassCounts = A.unknownClassCounts;
     // The legacy pair: same-mix, carry only, partials dropped, no harness overhead. Frozen on
-    // purpose, so a refactor that silently moves the pre-#108 model is caught as a defect rather
+    // purpose, so a refactor that silently moves the original model is caught as a defect rather
     // than absorbed into a new default. Locked on the synthetic fixture by test-bench-regression.sh.
     const coreRows = (
       baseline === 'same-mix' && !includePartial
@@ -2143,7 +2146,7 @@ function main() {
     // replaced with a hash so a workspace name or internal ticket number never leaves the machine.
     // Same numbers the aggregate above was built from — sum shipTokens/shipCost per run and you
     // reproduce the corresponding arm's shiploopTokens/shiploopCostUsd exactly.
-    // Section 5: every row also carries the shiploop version the run was dispatched under and the
+    // Every row also carries the shiploop version the run was dispatched under and the
     // run's timestamp, so a version-scoped corpus is a filter over published rows rather than
     // date archaeology against raw logs. Rows published before the stamp existed carry no
     // version; a reader treats a missing one as "unknown" and the report counts them.
@@ -2293,7 +2296,7 @@ function fmtUsd(x) {
 function render(out) {
   const L = [];
   L.push('shiploop bench: replay');
-  // Version/model/date next to the headline, not buried in stdout (ticket #104): a transcript
+  // Version/model/date next to the headline, not buried in stdout: a transcript
   // carries no shiploop package version, so `since` (if given) + the CLI/model actually seen +
   // the covered date range are the disclosable stand-in, printed before a single number.
   const m = out.meta;
@@ -2303,14 +2306,14 @@ function render(out) {
       `   dates ${m.dateRange ? `${m.dateRange.from} .. ${m.dateRange.to}` : 'n/a'}` +
       `   runs ${m.runsSeenKept}/${m.runsSeenTotal}${m.since ? ` (--since ${m.since})` : ''}`,
   );
-  // Version scope (#107): which shiploop version the default corpus was narrowed to, and how much
+  // Version scope: which shiploop version the default corpus was narrowed to, and how much
   // that narrowing excluded, split into older-stamped vs unstamped-legacy so a reader can tell the
-  // two apart. `--all` restores the pre-#107 full sweep.
+  // two apart. `--all` restores the unscoped full sweep.
   const vs = m.versionScope;
   if (vs.mode === 'all' && vs.fellBack) {
     L.push(
-      `  shiploop version: no run in this corpus is stamped (pre-#107 workspace) — falling back ` +
-        `to the full sweep, ${vs.runsTotal} runs / ${vs.sessionsTotal} sessions.`,
+      `  shiploop version: no run in this corpus is stamped (predates version stamping) — ` +
+        `falling back to the full sweep, ${vs.runsTotal} runs / ${vs.sessionsTotal} sessions.`,
     );
   } else if (vs.mode === 'all') {
     L.push(`  shiploop version: --all — ${vs.runsTotal} runs / ${vs.sessionsTotal} sessions, every version.`);
@@ -2542,7 +2545,7 @@ function render(out) {
       `(direct-to-main or hand-resolved work the bench cannot see).`,
   );
   L.push('');
-  // Attempt-outcome breakdown (queue #108): --scope all keeps pricing every attempt
+  // Attempt-outcome breakdown: --scope all keeps pricing every attempt
   // unconditionally, unchanged above. This is the additional dimension: WHY each attempt happened,
   // read from spawn-worker.sh's per-attempt ledger where it exists, so infrastructure failures can
   // be told apart from capability ones instead of all landing in one undifferentiated total.
@@ -2567,7 +2570,7 @@ function render(out) {
   );
   L.push(
     '                   an uninstrumented or pre-ledger corpus reports every attempt unclassified ' +
-      '(reason no-ledger), which is the expected state until #108\'s ledger has been running a while.',
+      '(reason no-ledger), which is the expected state until the ledger has been running a while.',
   );
   L.push('');
   // Tier attribution: the same ledger rows, the fields the outcome census does not read. Says WHY

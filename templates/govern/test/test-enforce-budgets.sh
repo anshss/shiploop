@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# #94 — `context-budgets.sh` decouples context-budget enforcement from a dispatch.
+# `context-budgets.sh` decouples context-budget enforcement from a dispatch.
 #
 # The lesson char cap and the CLAUDE.md total budget used to run ONLY inside a per-ticket bookkeep, so
 # a fleet that stops dispatching stops enforcing: measured 2026-09-03, one fleet's root CLAUDE.md sat
 # at 24,366 chars against a 14,000 budget (74% over, re-sent on every turn of ~395 sessions) purely
 # because no bookkeep had run since August. Budgets are a property of the FILES, not of the run.
 #
-#   A. An over-budget CLAUDE.md STAYS over budget (exit 3, alarm) and byte-identical: #110 retired
-#      the demotion this test originally covered; see test-claudemd-trim.sh test I for the
+#   A. An over-budget CLAUDE.md STAYS over budget (exit 3, alarm) and byte-identical: the demotion
+#      this test originally covered was retired; see test-claudemd-trim.sh test I for the
 #      "never edits CLAUDE.md, bare or with a tiny per-entry cap" regression coverage.
 #   B. The PREAMBLE (everything above the first flush-left `## `) is never touched (trivially true
 #      now nothing in this file touches CLAUDE.md, but still worth pinning).
@@ -16,7 +16,7 @@
 #   E. No CLAUDE-APPENDIX.md is no longer a blocker for the CLAUDE.md report path at all (only
 #      `claudemd-trim.sh --apply` still needs one): the alarm fires and CLAUDE.md is untouched.
 #   F. Learnings TTL (opt-in) archives an entry past the window instead of deleting it (the one
-#      lane in this script that still writes anything, and out of #110's scope (not CLAUDE.md).
+#      lane in this script that still writes anything, and out of this script's scope (not CLAUDE.md).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"

@@ -19,7 +19,7 @@ Fields:
 - **Status** (required) — `UNTESTED | PASS | FAIL | STALE | MEASURING | INEFFECTIVE | EFFECTIVE | BLOCKED | TOMBSTONED`.
 - **Validated / Evidence / Env** (required once validated) — date · `repo@sha …` pins · PR URL; a pointer to `.claude/shiploop/validation/evidence/<id>.md` (or an https object-storage URL); `local` or `prod`.
 - **Gate** (required when Kind=effectiveness) — the metric + threshold + measurement source (`… ≥10% reduction, N≥100 · source: posthog:experiment/opt-v2`).
-- **Blocker** (required when Status=BLOCKED) — the named unworkable blocker (per anti-pattern #15).
+- **Blocker** (required when Status=BLOCKED) — the named unworkable blocker.
 - Optional: **Revalidate** (`on-change` | `every <N>d`), **Disposition**, **Supersedes**, **SupersededBy**, **Resource-group**, **Env-required**.
 
 Unknown fields are preserved verbatim on rewrite. `<!-- HTML comments -->` are decoration (parsers
