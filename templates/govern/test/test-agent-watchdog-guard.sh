@@ -75,7 +75,7 @@ assert_contains "$out3" "wc-stale" "the deny reason identifies WHICH child tripp
 out4="$(payload wc-stale "$PROJ/s3.jsonl" s3 | env GOVERN_AGENT_WALLCLOCK=0 bash "$GUARD")"
 assert_eq "$out4" "" "GOVERN_AGENT_WALLCLOCK=0 → not blocked even on the SAME stale state"
 
-# ── 7. Under the cap — a healthy child is never touched ───────────────────────────────────────
+# ── 7. Under the cap: a healthy child is never touched ───────────────────────────────────────
 mk_child_transcript "$PROJ" s7 wc-under 100
 out7="$(payload wc-under "$PROJ/s7.jsonl" s7 | env bash "$GUARD")"
 assert_eq "$out7" "" "fresh wall-clock → no output"
