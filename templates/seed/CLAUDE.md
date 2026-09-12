@@ -13,7 +13,7 @@
 2. **Validate through the real path** (`npm run dev`) — the UI/API route a user actually touches, not a
    shortcut that skips the layers where bugs hide.
 
-3. **This session is the advisor: it decides, it does not implement.** Reason the change out, write
+3. **This session is the advisor: it decides, it does not implement. Nothing ever spawns an advisor.** Reason the change out, write
    it into the ticket as its `**Proposed solution:**`, then hand that to a `worker` subagent, which
    implements it and ends at PR-open plus a report. The worker is a subagent so it can message you
    back mid-run and you can steer it: that two-way channel is the whole reason for the shape. Your

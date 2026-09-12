@@ -834,6 +834,45 @@ function readLeverEvents(fleetDir, run) {
   return { present: true, events, malformed, unknownEvents };
 }
 
+// Lever events that carry NO run. The interactive lane's watchdog
+// (templates/hooks/agent-watchdog-guard.sh) emits the same `watchdog-kill` row the headless
+// launcher does, but it runs inside a live session with no GOVERN_RUN_DIR, so the emitter's own
+// fallback path puts it at logs/govern/lever-events.jsonl, flat, beside the run directories.
+//
+// They are COUNTED here and CREDITED NOWHERE. Every event-derived lever is credited per run, and
+// these rows name no run: guessing one (newest run, only run, nearest timestamp) would attach a
+// real saving to an arbitrary arm. A census that a reader can see beats a credit a reader cannot
+// check, and the difference is disclosed wherever it prints.
+function readUnscopedLeverEvents(fleetDir) {
+  const f = path.join(fleetDir, 'logs', 'govern', 'lever-events.jsonl');
+  const byEvent = {};
+  let raw;
+  try {
+    raw = fs.readFileSync(f, 'utf8');
+  } catch {
+    return { present: false, events: 0, byEvent, malformed: 0 };
+  }
+  let events = 0;
+  let malformed = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      malformed++;
+      continue;
+    }
+    if (!ev || typeof ev !== 'object' || typeof ev.event !== 'string') {
+      malformed++;
+      continue;
+    }
+    events++;
+    byEvent[ev.event] = (byEvent[ev.event] || 0) + 1;
+  }
+  return { present: true, events, byEvent, malformed };
+}
+
 // The tier the counterfactual session runs on under --baseline driver-tier. Resolution order:
 // an explicit `driver-model` stamp beside the run, then the run's own orchestration transcript,
 // then the highest tier any session in the run touched. The last is the FALLBACK and the report
@@ -902,14 +941,18 @@ function attemptLedger(dir) {
 // ledger row before it exits -- both on the SAME exit path, so the ledger and the directory can
 // never disagree about which attempt number is current. `worker.jsonl` is therefore always the
 // ledger's own highest attempt number; `worker.attemptN.jsonl` is attempt N by construction.
-function classifyAttempt(sess, sessionsInFile) {
+// One session -> the ledger row that describes it, or a named reason why no row could be resolved.
+// Split out of classifyAttempt() so the outcome census and the TIER-ATTRIBUTION census below
+// resolve a session to its row through ONE implementation: two resolvers would eventually disagree
+// about which attempt a transcript is, and the two sections would then describe different corpora.
+function attemptRowFor(sess, sessionsInFile) {
   // A transcript holding more than one session (a resumed CLI process appending further turns) is
   // ambiguous: there is no way to tell which of its sessions a single ledger row describes.
-  if (sessionsInFile > 1) return { bucket: 'unclassified', reason: 'multi-session-file' };
+  if (sessionsInFile > 1) return { row: null, reason: 'multi-session-file' };
   const dir = path.dirname(sess.file);
   const base = path.basename(sess.file);
   const ledger = attemptLedger(dir);
-  if (!ledger) return { bucket: 'unclassified', reason: 'no-ledger' };
+  if (!ledger) return { row: null, reason: 'no-ledger' };
   let n = null;
   const m = ATTEMPT_FILE_RE.exec(base);
   if (m) {
@@ -919,9 +962,15 @@ function classifyAttempt(sess, sessionsInFile) {
   }
   // Anything else (`worker.prior.jsonl`, an orphan stream from a standalone invocation that
   // predates the ledger) carries no attempt number to look up.
-  if (n == null) return { bucket: 'unclassified', reason: 'ambiguous-file' };
+  if (n == null) return { row: null, reason: 'ambiguous-file' };
   const row = ledger.get(n);
-  if (!row) return { bucket: 'unclassified', reason: 'attempt-number-unmatched' };
+  if (!row) return { row: null, reason: 'attempt-number-unmatched' };
+  return { row, reason: null };
+}
+
+function classifyAttempt(sess, sessionsInFile) {
+  const { row, reason: rowReason } = attemptRowFor(sess, sessionsInFile);
+  if (!row) return { bucket: 'unclassified', reason: rowReason };
   const rc = row.retryClass;
   if (OUTCOME_CLASSES.includes(rc)) return { bucket: rc, reason: null };
   return { bucket: 'unclassified', reason: rc == null ? 'retryclass-null' : 'retryclass-unrecognized' };
@@ -958,6 +1007,148 @@ function outcomeBreakdown(kept) {
     }
   }
   return { totalAttempts, classes, unclassified };
+}
+
+// ── tier attribution: WHY an attempt ran on the tier it ran on ────────────────────────────────
+// record_attempt() (templates/govern/spawn-worker.sh) writes every INPUT to the sizing decision
+// into the same attempts.jsonl row the outcome census above reads: modelSource, effort,
+// effortSource, precisionGrade, precisionSource, respecRequested. Until this section existed the
+// reader loaded that row and used exactly one field of it (retryClass), so the report could say
+// which tier a ticket ran on and never why. Precision grade is what DRIVES tier selection now, so
+// that gap is the difference between "sonnet ran it" and "sonnet ran it because the ticket was
+// graded stated".
+//
+// Additive, exactly like outcomeBreakdown: a census of attempts, independent of --scope, changing
+// nothing that is priced.
+//
+// ABSENT vs RECORDED-EMPTY are different facts and are bucketed differently. A ledger row written
+// before a field existed does not carry the key at all -> `unrecorded`. A row that carries the key
+// with a null value is the harness saying "there was no grade here" -> `none`. Collapsing the two
+// would report a pre-#8e4e807 corpus as though every ticket had been graded and found ungradeable.
+// Neither is ever a zero.
+const ATTRIBUTION_ABSENT = 'unrecorded';
+const ATTRIBUTION_NULL = 'none';
+function attrBucket(v) {
+  if (v === undefined) return ATTRIBUTION_ABSENT;
+  if (v === null || v === '') return ATTRIBUTION_NULL;
+  if (v === true) return 'true';
+  if (v === false) return 'false';
+  return String(v);
+}
+function bump(map, key) {
+  map[key] = (map[key] || 0) + 1;
+}
+
+function tierAttribution(kept) {
+  const precision = {};
+  const modelSource = {};
+  const effort = {};
+  const respecRequested = {};
+  const unattributed = { attempts: 0, reasons: {} };
+  const perFile = new Map();
+  for (const t of kept) for (const sess of t.sessions) perFile.set(sess.file, (perFile.get(sess.file) || 0) + 1);
+  let totalAttempts = 0;
+  let attributed = 0;
+  for (const t of kept) {
+    for (const sess of t.sessions) {
+      totalAttempts++;
+      const { row, reason } = attemptRowFor(sess, perFile.get(sess.file));
+      if (!row) {
+        unattributed.attempts++;
+        bump(unattributed.reasons, reason);
+        continue;
+      }
+      attributed++;
+      bump(precision, `${attrBucket(row.precisionGrade)} x ${attrBucket(row.precisionSource)}`);
+      bump(modelSource, attrBucket(row.modelSource));
+      bump(effort, `${attrBucket(row.effort)} x ${attrBucket(row.effortSource)}`);
+      bump(respecRequested, attrBucket(row.respecRequested));
+    }
+  }
+  return { totalAttempts, attributed, unattributed, precision, modelSource, effort, respecRequested };
+}
+
+// ── advisor consult spend ─────────────────────────────────────────────────────────────────────
+// templates/govern/advisor-consult.sh buys a worker ONE scoped answer from a higher tier when it
+// hits a fork it cannot resolve. Those are real tokens spent on a worker's dispatch and they land
+// in NO transcript this report walks: the consult is a separate call, ledgered instead at
+// $LOG_ROOT/ticket-N/advisor.jsonl. Until this section existed bench simply did not count them,
+// which is harmless only while GOVERN_ADVISOR defaults to 0 -- the day an operator turns it on,
+// every cost figure here silently under-reports.
+//
+// Wire shape, read from lib/common.sh's govern::advisor_claim / govern::advisor_record rather than
+// guessed: two row kinds share the file.
+//   {"ts":N,"event":"claim","consultId":N,"sessionId":S|null,"question":Q|null,"turn":T|null}
+//   {"ts":N,"event":"record","consultId":N,"model":M,"tokens":N,"answer":A,
+//    "workerRemaining":N,"sessionRemaining":N}
+// Only `record` rows carry spend. There is ONE `tokens` figure, with no input/output split, so it
+// cannot be priced the way a transcript is.
+//
+// PRICING: the whole figure at the answering tier's OUTPUT rate. That is an upper bound, and the
+// upper bound is the conservative choice HERE specifically because this is a cost on the shiploop
+// side only: over-stating it lowers shiploop's own reduction, the same direction every other
+// estimate in this file leans. Priced through the same RATES/QUOTA_WEIGHTS/tierOf() the rest of
+// the report uses, never a second table.
+function advisorRowCost(tokens, model) {
+  const tier = tierOf(model) || 'opus';
+  return { usd: (tokens * RATES[tier].output) / 1e6, quota: tokens * QUOTA_WEIGHTS[tier] };
+}
+
+// fleetDir -> Map(ticket string -> {consults, tokens, costUsd, quota}), plus parse counters.
+// The ledger is FLAT ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped) and deliberately so:
+// lib/common.sh explains that GOVERN_RUN_DIR is gone with the run loop, so there is no run to
+// scope it under. Attribution to a run is therefore this reader's problem, handled at the call
+// site rather than assumed away here.
+function readAdvisorLedgers(fleetDir) {
+  const logs = path.join(fleetDir, 'logs', 'govern');
+  const byTicket = new Map();
+  let malformed = 0;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(logs, { withFileTypes: true });
+  } catch {
+    return { present: false, byTicket, malformed };
+  }
+  let present = false;
+  for (const e of entries) {
+    if (!e.isDirectory() || !/^ticket-/.test(e.name)) continue;
+    const f = path.join(logs, e.name, 'advisor.jsonl');
+    let raw;
+    try {
+      raw = fs.readFileSync(f, 'utf8');
+    } catch {
+      continue;
+    }
+    present = true;
+    const ticket = e.name.replace(/^ticket-/, '');
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        malformed++;
+        continue;
+      }
+      if (!row || typeof row !== 'object' || row.event !== 'record') continue;
+      const tokens = Number(row.tokens);
+      if (!Number.isFinite(tokens) || tokens < 0) {
+        malformed++;
+        continue;
+      }
+      const { usd, quota } = advisorRowCost(tokens, row.model);
+      let acc = byTicket.get(ticket);
+      if (!acc) {
+        acc = { consults: 0, tokens: 0, costUsd: 0, quota: 0 };
+        byTicket.set(ticket, acc);
+      }
+      acc.consults++;
+      acc.tokens += tokens;
+      acc.costUsd += usd;
+      acc.quota += quota;
+    }
+  }
+  return { present, byTicket, malformed };
 }
 
 function scanFleet(fleetDir) {
@@ -1454,6 +1645,10 @@ function main() {
   // carry model at all.
   const attemptOutcomes = outcomeBreakdown(kept);
 
+  // Tier attribution (the same ledger, the fields the outcome census does not read): WHY each
+  // attempt was sized the way it was. Same scope-independence, same "absent is not zero" rule.
+  const attribution = tierAttribution(kept);
+
   // Group into runs and order tickets within a run by completion time. That ordering is what a
   // single session would have worked them in.
   const runs = new Map();
@@ -1523,6 +1718,87 @@ function main() {
     instrumented.unknownEvents += c.levers.unknownEvents;
   }
 
+  // Run-less lever events (the interactive lane, see readUnscopedLeverEvents). Counted so an
+  // operator can see the lane is firing; credited into no arm, because they name no run.
+  const unscoped = { present: false, events: 0, byEvent: {}, malformed: 0, credited: false };
+  for (const fleet of fleets) {
+    const u = readUnscopedLeverEvents(fleet);
+    if (!u.present) continue;
+    unscoped.present = true;
+    unscoped.events += u.events;
+    unscoped.malformed += u.malformed;
+    for (const [k, n] of Object.entries(u.byEvent)) unscoped.byEvent[k] = (unscoped.byEvent[k] || 0) + n;
+  }
+  instrumented.unscoped = unscoped;
+
+  // Advisor consult spend (advisor-consult.sh's flat per-ticket ledger). Attribution is the whole
+  // difficulty: the ledger names a TICKET and nothing else, so a row is attributable only when
+  // that ticket appears in exactly ONE run of this corpus. Everything else is reported unattributed
+  // WITH its reason and left out of every arm, rather than charged to a run that may not have
+  // spent it. Recorded in bench/KNOWN-LIMITS.md as a named limit.
+  const runsForTicket = new Map(); // "fleet#ticket" -> Set of "fleet#run"
+  for (const t of kept) {
+    const tk = `${t.fleet}#${t.ticket}`;
+    if (!runsForTicket.has(tk)) runsForTicket.set(tk, new Set());
+    runsForTicket.get(tk).add(`${t.fleet}#${t.run}`);
+  }
+  const advisorByRun = new Map(); // "fleet#run" -> {consults, tokens, costUsd, quota}
+  const advisorSpend = {
+    present: false,
+    consults: 0,
+    tokens: 0,
+    costUsd: 0,
+    malformedLines: 0,
+    pricing: 'every consult token at the answering tier OUTPUT rate: an UPPER bound, because the ' +
+      'ledger records one combined token figure with no input/output split. Over-stating a ' +
+      'shiploop-side cost is the conservative direction.',
+    attributed: { consults: 0, tokens: 0, costUsd: 0, runs: 0 },
+    unattributed: { consults: 0, tokens: 0, costUsd: 0, reasons: {} },
+    note: 'The advisor ledger is FLAT ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped: see ' +
+      'templates/govern/lib/common.sh). A consult is attributed to a run only when its ticket ' +
+      'appears in exactly one run of this corpus. Unattributed spend is REAL and is reported ' +
+      'here, but is charged to no arm.',
+  };
+  for (const fleet of fleets) {
+    const led = readAdvisorLedgers(fleet);
+    if (led.present) advisorSpend.present = true;
+    advisorSpend.malformedLines += led.malformed;
+    for (const [ticket, acc] of led.byTicket) {
+      advisorSpend.consults += acc.consults;
+      advisorSpend.tokens += acc.tokens;
+      advisorSpend.costUsd += acc.costUsd;
+      const inRuns = runsForTicket.get(`${fleet}#${ticket}`);
+      if (!inRuns || inRuns.size === 0) {
+        advisorSpend.unattributed.consults += acc.consults;
+        advisorSpend.unattributed.tokens += acc.tokens;
+        advisorSpend.unattributed.costUsd += acc.costUsd;
+        bump(advisorSpend.unattributed.reasons, 'ticket-not-in-corpus');
+        continue;
+      }
+      if (inRuns.size > 1) {
+        advisorSpend.unattributed.consults += acc.consults;
+        advisorSpend.unattributed.tokens += acc.tokens;
+        advisorSpend.unattributed.costUsd += acc.costUsd;
+        bump(advisorSpend.unattributed.reasons, 'ticket-in-multiple-runs');
+        continue;
+      }
+      const runKey = [...inRuns][0];
+      advisorSpend.attributed.consults += acc.consults;
+      advisorSpend.attributed.tokens += acc.tokens;
+      advisorSpend.attributed.costUsd += acc.costUsd;
+      let r = advisorByRun.get(runKey);
+      if (!r) {
+        r = { consults: 0, tokens: 0, costUsd: 0, quota: 0 };
+        advisorByRun.set(runKey, r);
+      }
+      r.consults += acc.consults;
+      r.tokens += acc.tokens;
+      r.costUsd += acc.costUsd;
+      r.quota += acc.quota;
+    }
+  }
+  advisorSpend.attributed.runs = advisorByRun.size;
+
   // --rows evidence, keyed by arm. Populated once per real (non-sensitivity) computeArm call.
   const rowsByArm = {};
 
@@ -1570,11 +1846,26 @@ function main() {
         }
       }
 
+      // Advisor consults for the tickets in these runs, attributed as described where
+      // advisorByRun is built. Charged into the SHIPLOOP arm exactly like the orchestration
+      // overhead above: it is spend the harness incurs and a vanilla session never does, so it
+      // is added here and taken back out on the vanilla side by the `advisor-consult` lever.
+      const adv = { consults: 0, tokens: 0, costUsd: 0, quota: 0, runs: 0 };
+      for (const key of runKeys) {
+        const a = advisorByRun.get(key);
+        if (!a) continue;
+        adv.runs++;
+        adv.consults += a.consults;
+        adv.tokens += a.tokens;
+        adv.costUsd += a.costUsd;
+        adv.quota += a.quota;
+      }
+
       // The measured side is never repriced: it is what was actually billed. The harness's own
       // orchestration spend is added on top, which LOWERS this arm's reduction on purpose.
-      const shipTokens = sum((r) => r.shipTokens) + ov.tokens;
-      const shipCost = sum((r) => r.own.shipCost) + ov.costUsd;
-      const shipQuota = sum((r) => r.own.shipQuota) + ov.quota;
+      const shipTokens = sum((r) => r.shipTokens) + ov.tokens + adv.tokens;
+      const shipCost = sum((r) => r.own.shipCost) + ov.costUsd + adv.costUsd;
+      const shipQuota = sum((r) => r.own.shipQuota) + ov.quota + adv.quota;
       const outputCost = sum((r) => r.outputCost);
 
       // Event-derived levers, credited only in runs that carry lever-events.jsonl.
@@ -1658,6 +1949,19 @@ function main() {
           status: 'measured',
           coverage: { credited: ov.covered, of: ov.runs },
         },
+        // Advisor consult spend, charged into the shiploop arm above and removed from the vanilla
+        // side here. NEGATIVE by construction, same as harness-overhead: a vanilla session buys no
+        // second opinion, so this is a cost the harness carries alone, never a saving.
+        // `uninstrumented` when the corpus carries no advisor ledger at all -- which is the
+        // expected state while GOVERN_ADVISOR defaults to 0, and is not a measured zero.
+        'advisor-consult': {
+          tokens: -adv.tokens,
+          cost: -adv.costUsd,
+          quota: -adv.quota,
+          n: adv.consults,
+          status: advisorSpend.present ? 'measured' : 'uninstrumented',
+          coverage: { credited: adv.runs, of: runKeys.size },
+        },
       };
 
       const leverTotal = (metric) => Object.values(levers).reduce((s, l) => s + (l[metric] || 0), 0);
@@ -1677,7 +1981,10 @@ function main() {
       const part = (k) => sum((r) => r.shipParts[k]);
       const shipBreakdown = {
         input: part('input') + orchParts.input,
-        output: part('output') + orchParts.output,
+        // Advisor tokens land in `output` because that is the rate they are priced at (one
+        // combined figure, no split in the ledger, priced as the upper bound). Keeping them in the
+        // breakdown at all is what preserves the invariant that the four parts sum to shipTokens.
+        output: part('output') + orchParts.output + adv.tokens,
         cacheRead: part('cacheRead') + orchParts.cacheRead,
         cacheCreation: part('cacheCreation') + orchParts.cacheCreation,
       };
@@ -1951,6 +2258,8 @@ function main() {
     harnessOverhead: overhead,
     instrumentation: instrumented,
     outcomeBreakdown: attemptOutcomes,
+    tierAttribution: attribution,
+    advisorSpend,
     unmeasuredLevers: UNMEASURED_LEVERS,
     absorbedLevers: ABSORBED_LEVERS,
     partialRecovery,
@@ -2196,6 +2505,23 @@ function render(out) {
       `lever-events.jsonl (${out.instrumentation.malformedLines} malformed line(s), ` +
       `${out.instrumentation.unknownEvents} unrecognised event(s) skipped).`,
   );
+  if (out.instrumentation.unscoped.present) {
+    const byEv = Object.entries(out.instrumentation.unscoped.byEvent)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([k, n]) => `${k} x${n}`)
+      .join(', ');
+    L.push(
+      `                   plus ${out.instrumentation.unscoped.events} RUN-LESS lever event(s) at ` +
+        `logs/govern/lever-events.jsonl (${byEv || 'none'}).`,
+    );
+    L.push(
+      `                   These are the interactive lane's (templates/hooks/agent-watchdog-guard.sh, which has no ` +
+        `GOVERN_RUN_DIR).`,
+    );
+    L.push(
+      `                   COUNTED, CREDITED NOWHERE: they name no run, and every event-derived lever is credited per run.`,
+    );
+  }
   if (out.instrumentation.withEvents < out.instrumentation.runs) {
     L.push(
       `                   The emitter ships DEFAULT OFF (GOVERN_LEVER_EVENTS=0), so an uninstrumented`,
@@ -2243,6 +2569,68 @@ function render(out) {
     '                   an uninstrumented or pre-ledger corpus reports every attempt unclassified ' +
       '(reason no-ledger), which is the expected state until #108\'s ledger has been running a while.',
   );
+  L.push('');
+  // Tier attribution: the same ledger rows, the fields the outcome census does not read. Says WHY
+  // an attempt was sized the way it was, next to the census that says why it happened.
+  const ta = out.tierAttribution;
+  const dist = (label, obj) => {
+    const s = Object.entries(obj)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([k, n]) => `${k} x${n}`)
+      .join(', ');
+    L.push(`    ${label.padEnd(22)} ${s || 'none'}`);
+  };
+  L.push(
+    `  tier attribution (${ta.attributed} of ${ta.totalAttempts} attempt(s) carry a ledger row; why each ran where it ran):`,
+  );
+  dist('precision x source', ta.precision);
+  dist('modelSource', ta.modelSource);
+  dist('effort x source', ta.effort);
+  dist('respec requested', ta.respecRequested);
+  if (ta.unattributed.attempts) {
+    const r = Object.entries(ta.unattributed.reasons)
+      .map(([k, n]) => `${k} x${n}`)
+      .join(', ');
+    L.push(`    ${'unattributed'.padEnd(22)} ${ta.unattributed.attempts} attempt(s)   (${r})`);
+  }
+  L.push(
+    `                           "${ATTRIBUTION_ABSENT}" is a ledger row written before the field existed; ` +
+      `"${ATTRIBUTION_NULL}" is the harness`,
+  );
+  L.push(
+    '                           recording that there was no value. Neither is a measured zero, and they are not the same fact.',
+  );
+  L.push('');
+
+  // Advisor consult spend: real tokens on a worker's dispatch that live in no transcript. Printed
+  // as its OWN line, never folded silently into a total.
+  const adv = out.advisorSpend;
+  if (!adv.present) {
+    L.push(
+      '  advisor consults: no advisor ledger in this corpus (GOVERN_ADVISOR ships OFF). ' +
+        'UNINSTRUMENTED, not a measured zero.',
+    );
+  } else {
+    L.push(
+      `  advisor consults: ${adv.consults} consult(s), ${adv.tokens.toLocaleString('en-US')} token(s), ` +
+        `${fmtUsd(adv.costUsd)} -- charged INTO the shiploop arm (lever advisor-consult, negative).`,
+    );
+    L.push(
+      `                    attributed to a run: ${adv.attributed.consults} consult(s), ` +
+        `${fmtUsd(adv.attributed.costUsd)} across ${adv.attributed.runs} run(s).`,
+    );
+    const ur = Object.entries(adv.unattributed.reasons)
+      .map(([k, n]) => `${k} x${n}`)
+      .join(', ');
+    L.push(
+      `                    UNATTRIBUTED: ${adv.unattributed.consults} consult(s), ` +
+        `${fmtUsd(adv.unattributed.costUsd)}${ur ? ` (${ur})` : ''} -- real spend, charged to no arm.`,
+    );
+    L.push(`                    pricing: ${adv.pricing}`);
+    if (adv.malformedLines) {
+      L.push(`                    ${adv.malformedLines} unparseable/invalid ledger line(s) skipped.`);
+    }
+  }
   L.push('');
   L.push('  levers this bench does NOT measure, and what each would need:');
   for (const u of out.unmeasuredLevers) L.push(`    ${u.lever}: ${u.why}`);
