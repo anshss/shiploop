@@ -18,6 +18,12 @@
 #   6. RE-ENTRANCY — stop_hook_active:true on a doomed transcript → no block (never adds a THIRD
 #                    loop turn on top of Claude Code's own stop-hook block cap)
 #   7. MISSING agent_transcript_path → no block, no crash
+#   15. BASH WRITES — 40 turns whose only file changes are shell writes (`cat >`, `sed -i`) and
+#       zero Edit tool_use → NOT blocked. A worker told to change files through the shell used to
+#       read as stalled while converging perfectly, and then had its stop refused.
+#   16. WATCHDOG-CAPPED — a stalled transcript whose last turns carry the wall-clock watchdog's own
+#       deny text → NOT blocked. The watchdog has already denied every tool call and told the child
+#       to stop and report; refusing the stop on top of that leaves it no legal move at all.
 #   8. SAME SIGNAL, both callers — the STALL reason text this hook emits for a transcript is
 #      byte-identical to what spawn-worker.sh's watchdog emits for the SAME transcript shape,
 #      because both call govern::early_abort_reason() rather than each having their own copy.
@@ -76,6 +82,25 @@ gen_loop() {
   done
 }
 gen_loop > "$TMP/loop.jsonl"
+
+# BASH-WRITE transcript: the same 40 turns as the STALL one, but every turn is a shell command that
+# WRITES a file. Not one Edit/Write tool_use anywhere — this is the shape that used to trip STALL.
+gen_bash_writes() {
+  for i in $(seq 1 40); do
+    jq -cn --arg c "cat > /tmp/part-$i.txt <<EOF
+chunk
+EOF" '{type:"assistant",message:{content:[{type:"tool_use",name:"Bash",input:{command:$c}}],usage:{input_tokens:1,output_tokens:1}}}'
+    printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","is_error":false,"content":"ok"}]}}\n'
+  done
+}
+gen_bash_writes > "$TMP/bash-writes.jsonl"
+
+# WATCHDOG-CAPPED transcript: a genuinely stalled run (so the progress check DOES fire) whose last
+# tool_result is the wall-clock watchdog's own denial, verbatim from agent-watchdog-guard.sh.
+{ gen_stall
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":1,"output_tokens":1}}}\n'
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","is_error":true,"content":"[AGENT WATCHDOG] wall-clock: this child (agent_id=a16, agent_type=worker) has been running ~3612s, past the 3600s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call. Stop now and return your final response as your structured report."}]}}\n'
+} > "$TMP/watchdog-capped.jsonl"
 
 # run_guard <transcript> <agent_id> <stop_hook_active> [extra env assignments...]
 #
@@ -222,5 +247,30 @@ assert_eq "$out14" "" "the idle path still never blocks"
 assert_contains "$(cat "$events14")" "agent_progress_alarm" "the idle alarm IS surfaced, on the fleet event log"
 [ -f "$lever14" ] && haslev14=yes || haslev14=no
 assert_eq "$haslev14" "no" "and is NOT a lever event: it removes no tokens, so bench must not credit it"
+
+# ── 15. BASH WRITES, supervision ON — must NOT fire ────────────────────────────────────────────
+# Same turn count as the STALL transcript, same absence of any Edit tool_use. The only difference
+# is that these turns change files through the shell, which is a diff like any other.
+events15="$TMP/events-15.jsonl"
+out15="$(run_guard "$TMP/bash-writes.jsonl" a15 false GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events15")"
+assert_eq "$out15" "" "a subagent whose only file changes are shell writes is NOT blocked"
+[ -s "$events15" ] && has15=yes || has15=no
+assert_eq "$has15" "no" "no fleet alarm either — it was never stalling"
+
+# ── 16. WATCHDOG-CAPPED — a stalled child that has already been denied its tools ────────────────
+# The stop must go through. This child cannot land a diff (every tool call is denied) and the
+# watchdog has explicitly told it to stop and report; blocking the stop leaves it no legal move and
+# it burns its remaining turns arguing with two rails that contradict each other.
+events16="$TMP/events-16.jsonl"
+out16="$(run_guard "$TMP/watchdog-capped.jsonl" a16 false GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 GOVERN_EVENTS_FILE="$events16")"
+assert_not_contains "$out16" "decision" "a watchdog-denied child is allowed to stop and report"
+assert_eq "$out16" "" "no block decision at all on the terminal path"
+assert_contains "$(cat "$events16" 2>/dev/null || true)" '"type":"agent_progress_alarm"' \
+  "the alarm still fires — an operator should see the child both stalled AND was capped"
+
+# The SAME transcript without the watchdog's marker still blocks, so case 16 proves the marker is
+# what changed the outcome and not the transcript shape.
+out16b="$(run_guard "$TMP/stall.jsonl" a16b false GOVERN_AGENT_SUPERVISION=1)"
+assert_contains "$out16b" '"decision":"block"' "without the watchdog marker the same stalled shape is still blocked"
 
 assert_done

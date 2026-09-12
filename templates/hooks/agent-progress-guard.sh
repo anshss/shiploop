@@ -27,6 +27,12 @@
 #            CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) ends the loop — never silently, and never via a
 #            notification the parent has no way to check.
 #
+#   ONE EXCEPTION TO THE BLOCK, and it is a deadlock fix, not a softening: if the wall-clock
+#   watchdog has already denied this child's tool calls, the child has been told to stop and report
+#   and every tool it could use to answer a block is denied. Blocking its stop as well leaves it no
+#   legal move, so the block is skipped in that case (the fleet-event alarm is still emitted). See
+#   govern::watchdog_denied and the call site below.
+#
 # D8/G10 (.specs/2026-09-11-advisor-worker-design.md) — THE IDLE CASE, on TeammateIdle:
 #   SubagentStop only fires when a child tries to STOP. A child that goes quiet WITHOUT stopping —
 #   still running, mid-tool-call, or correctly blocked on a background task it must not poll —
@@ -124,6 +130,15 @@ result="$(
   else
     { command -v govern::event >/dev/null 2>&1 && govern::event agent_progress_alarm \
       "agent_id=${agent_id:-unknown}" "agent_type=${agent_type:-unknown}" "reason=${reason}"; } || true
+  fi
+  # A wall-clock watchdog denial is TERMINAL: the child has already been told to stop and report,
+  # and every further tool call it makes is denied. Blocking its stop on top of that leaves it with
+  # no legal move at all — it cannot produce the diff the block asks for, and it cannot exit either.
+  # So the alarm above still fires (an operator should see that this child both stalled and was
+  # capped), but the reason is NOT returned, and with nothing returned the block below never runs.
+  # Read off the same transcript this check already reads, no second channel.
+  if command -v govern::watchdog_denied >/dev/null 2>&1 && govern::watchdog_denied "$transcript_path"; then
+    exit 0
   fi
   printf '%s' "$reason"
 )" || true

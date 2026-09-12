@@ -3444,8 +3444,34 @@ govern::usage_error_signature() { # worker-jsonl -> signature|""
 # awk pass over a tiny tab-separated projection instead of repeated jq scans.
 #   T            one assistant turn
 #   X            one file-mutating tool_use (Edit/Write/NotebookEdit)
+#   W            one Bash tool_use whose command WRITES a file (see bashwrite below)
 #   C <command>  one Bash command string
 #   E 0|1        one tool_result, flagged with whether it was an error
+#
+# W exists because "edited a file" and "used the Edit tool" are not the same thing. An agent told to
+# prefer shell for file changes (python3 heredocs, `cat >`, `sed -i`) mutates files on nearly every
+# turn and emits ZERO X tokens, so a stall check keyed on X alone reads a converging worker as a
+# stalled one and then blocks its stop. W resets the same counter X does, off the command text
+# already carried on the C token, so no new projection or second transcript pass is needed.
+#
+# bashwrite() is deliberately conservative, and asymmetric on purpose: a MISSED write only keeps
+# today's behavior (the detector still fires, as it always did), while a wrongly-matched read
+# silences the detector for the whole run. So when a shape is ambiguous it is left OUT. Counted:
+#   - a redirect (`>` / `>>`) whose target looks like a path. Covers `cat > f`, `printf ... >> f`,
+#     and a heredoc redirected to a file (`cat > f <<EOF`), which is that same redirect. Redirects
+#     to /dev/* and fd dups (`2>&1`, `>&2`) are stripped BEFORE the test, so they never count, and
+#     the target must start with a path-ish character so `a -> b` and `[ x > y ]` do not match.
+#   - `tee` / `tee -a` to a path (same /dev/* strip).
+#   - `sed -i` / `perl -i`, matched only when the flag belongs to THAT command, so the very common
+#     `grep -i foo | sed ...` is not read as an in-place edit.
+#   - `mv`, `cp`, `truncate`, `git apply`, `git commit`.
+# Deliberately NOT counted, each because the shape is indistinguishable from a non-write:
+#   - `install`: the anchor cannot tell `install -m 755 a b` from `npm install` / `pip install`,
+#     and the package-manager sense is overwhelmingly the common one.
+#   - a heredoc fed to an interpreter's STDIN (`python3 - <<PY` … `open(f,"w")` … `PY`): whether the
+#     script writes anything is knowable only by reading the embedded program, not its shell shape.
+#     A worker doing that AND nothing else for 30 straight turns still trips STALL.
+#   - pure reads (`grep`, `cat` with no redirect, `ls`, `find`) and test/build runs.
 # `.message.content` is guarded with a type check: some events carry it as a STRING, and iterating a
 # string aborts the whole jq program (taking every already-parsed line with it). A partial last line
 # mid-write is tolerated the same way govern::cumulative_tokens tolerates it — jq stops there, and
@@ -3456,10 +3482,22 @@ govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
   [[ -n "$f" && -s "$f" ]] || return 0
   { govern::stream_grep "$f" -e '"type":"assistant"' -e '"type":"user"' || true; } \
     | jq -r '
+        def bashwrite($cmd):
+          ($cmd
+            | gsub("[0-9]?>>?&[0-9-]"; " ")
+            | gsub(">>?[[:space:]]*/dev/[A-Za-z0-9_]+"; " ")
+            | gsub("tee[[:space:]]+(-a[[:space:]]+)?/dev/[A-Za-z0-9_]+"; " ")) as $c
+          | ($c | test("(^|[[:space:]])>>?[[:space:]]*[\"\u0027A-Za-z0-9_.$~/-]"))
+            or ($c | test("(^|[|;&[:space:]])tee([[:space:]]+-a)?[[:space:]]+[\"\u0027A-Za-z0-9_.$~/-]"))
+            or ($c | test("(^|[|;&[:space:]])(sed|perl)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-i"))
+            or ($c | test("(^|[|;&[:space:]])(mv|cp)[[:space:]]"))
+            or ($c | test("(^|[|;&[:space:]])truncate[[:space:]]"))
+            or ($c | test("(^|[|;&[:space:]])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*(apply|commit)([[:space:]]|$)"));
         (if ((.message.content? | type) == "array") then .message.content else [] end) as $c
         | if .type == "assistant" then
             ( ["T"]
               + [ $c[] | select(.type? == "tool_use" and (.name? == "Edit" or .name? == "Write" or .name? == "NotebookEdit")) | "X" ]
+              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | select(bashwrite((.input.command? // "") | tostring)) | "W" ]
               + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | "C\t" + ((.input.command? // "") | tostring) ]
             ) []
           elif .type == "user" then
@@ -3483,12 +3521,12 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
     -v turns="${GOVERN_EARLY_ABORT_TURNS:-30}" -v reps="${GOVERN_EARLY_ABORT_REPEATS:-5}" \
     -v epct="${GOVERN_EARLY_ABORT_ERROR_PCT:-60}" -v ewin="${GOVERN_EARLY_ABORT_ERROR_WINDOW:-20}" '
     $1=="T" { t++; since++ }
-    $1=="X" { since=0; edits++ }
+    $1=="X" || $1=="W" { since=0; edits++ }
     $1=="C" { n_c++; cmd[$2]++; if (cmd[$2] > maxrep) { maxrep = cmd[$2]; maxcmd = $2 } }
     $1=="E" { ne++; err[ne] = ($2+0) }
     END {
       if (turns+0 > 0 && t+0 >= turns+0 && since+0 >= turns+0) {
-        printf "STALL: no file edit (Edit/Write/NotebookEdit) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
+        printf "STALL: no file change (Edit/Write/NotebookEdit, or a Bash command that writes a file) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
         exit
       }
       if (reps+0 > 0 && maxrep+0 >= reps+0) {
@@ -3508,6 +3546,35 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
       }
     }' || true
   return 0
+}
+
+# ── the wall-clock watchdog's deny marker, read off the same transcript ────────────────
+# When the wall-clock watchdog trips it DENIES every further tool call and tells the child to stop
+# and return its report. If a stop-blocking progress check then refuses that stop, the child is
+# denied the tools that would produce a diff AND denied the exit: it cannot satisfy either side, and
+# burns its remaining turns explaining itself. So a watchdog denial is TERMINAL, and a caller that
+# blocks stops must let the child through once it sees one.
+#
+# Detected off the child's OWN transcript the progress check already reads, rather than a state file
+# or a second channel: the deny reason arrives back as a tool_result, so the marker is simply there.
+# Scoped to the TAIL because the marker is only terminal when it is CURRENT — once the cap trips it
+# denies every subsequent call, so a real denial is always in the last few lines. A child that merely
+# read the watchdog's own source earlier in its run therefore does not silence its own progress check
+# (it would have to have done so within the tail window, immediately before trying to stop).
+# GOVERN_WATCHDOG_MARKER_TAIL tunes the window; 0 disables the check entirely.
+#
+# Returns 0 when a current denial is present, 1 otherwise — and 1 for every degenerate input (no
+# file, unreadable), the same "absence of data is never evidence" contract the rest of this path
+# holds to, here meaning "no evidence of a denial" rather than "denied".
+govern::watchdog_denied() { # <jsonl> -> 0 = the child was denied by the wall-clock watchdog
+  local f="${1:-}" n="${GOVERN_WATCHDOG_MARKER_TAIL:-40}"
+  [[ -n "$f" && -s "$f" ]] || return 1
+  case "$n" in (*[!0-9]*|"") n=40 ;; esac
+  [[ "$n" == "0" ]] && return 1
+  # tr -d NULs for the same reason govern::stream_grep exists: a NUL-holed stream must not read as
+  # "no marker" by accident of grep treating the file as binary.
+  tail -n "$n" "$f" 2>/dev/null | LC_ALL=C tr -d '\000' \
+    | grep '"type":"user"' 2>/dev/null | grep -qF '[AGENT WATCHDOG]' 2>/dev/null
 }
 
 # ── in-flight token-budget monitoring (#16) ─────────────────────────────────
