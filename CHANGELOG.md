@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.19.8 - 2026-09-13
+
+### Fixed
+
+**`sync` stopped advertising a script that does not exist.** Its closing line told the operator to
+run `<pm> run status`, but `scripts/status.sh` was deleted long ago, so the one command sync handed
+you crashed with `Missing script: "status"`. The hint now points at `doctor`, which is the check that
+actually reports whether the workspace is healthy.
+
 ## 1.19.7 - 2026-09-12
 
 ### Fixed
