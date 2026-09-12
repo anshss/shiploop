@@ -40,6 +40,17 @@
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
 
+## Ask before you spawn, never after
+
+**Put the dispatch to the operator before it runs, not after.** Name what you will dispatch, to which
+agent type, and what it will change. A child already running turns a decision into a fait accompli:
+the only question left is whether to kill it, which is not the question the operator should be
+answering.
+
+**A child inherits none of your instructions.** Every constraint you were given, pass down explicitly:
+which tree it may touch, what it may not delete, which git commands are forbidden, the standing rules.
+A fan-out you did not specify is a fan-out you cannot constrain, and it writes under your name.
+
 ## Never answer from assumption
 
 **Read the code before you state how it behaves.** A claim about behavior is earned by opening the
