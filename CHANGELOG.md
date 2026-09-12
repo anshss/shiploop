@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.19.6 - 2026-09-12
+
+### Added
+
+**The scaffolded `CLAUDE.md` carries two rules about spawning (#190).** Ask before a sweep or a
+fan-out, scoped deliberately to blast radius rather than to every dispatch: one worker on one ticket,
+a lookup, an investigation feeding an answer all just go, because asking each time is noise the
+operator has to clear. The rule fires on a sweep (many files, whole-tree, broad rewrite), a fan-out
+(a child that will spawn its own children), or anything expensive or awkward to undo, and it fires
+BEFORE the child runs, because a child already running reduces the operator's choice to kill or
+allow. Alongside it: a child inherits none of its parent's instructions, so every constraint has to
+be passed down explicitly. A dispatch carrying a tight scope (one worktree, no deletions, no git
+writes) fanned out to four children that saw none of it, and files were deleted in a tree the parent
+had been told not to touch.
+
 ## 1.19.5 - 2026-09-12
 
 ### Removed
