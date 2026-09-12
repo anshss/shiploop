@@ -308,7 +308,7 @@ fi
 
 if [[ "$DRY" -eq 1 ]]; then
   govern::log "deterministic #$N: DRY RUN — committed in $WT_REPO on $(git -C "$WT_REPO" rev-parse --abbrev-ref HEAD), not pushing, no PR"
-  # bench/LEVER-EVENTS.md `scripted-action`: a routine change just got handled by code instead of a
+  # The `scripted-action` lever event: a routine change just got handled by code instead of a
   # model turn. session=driver, tier=null: no `claude` invocation happened anywhere in this file.
   govern::emit_lever_event scripted-action "$N" driver "-" class="$DET_KIND"
   jq -nc --arg kind "$DET_KIND" --arg why "$DET_WHY" --arg repo "$REPO" \
@@ -342,7 +342,7 @@ pr_num="${pr_url##*/}"
 [[ "$pr_num" =~ ^[0-9]+$ ]] || det::skip "could not parse a PR number out of '$pr_url'"
 
 govern::log "deterministic #$N: RESOLVED with ZERO model turns — $slugref#$pr_num ($DET_KIND)"
-# bench/LEVER-EVENTS.md `scripted-action`: same as the dry-run emission above, for the live path.
+# The `scripted-action` lever event again: same as the dry-run emission above, for the live path.
 govern::emit_lever_event scripted-action "$N" driver "-" class="$DET_KIND"
 jq -nc --arg kind "$DET_KIND" --arg why "$DET_WHY" --arg repo "$REPO" \
    --arg url "$pr_url" --argjson num "$pr_num" \

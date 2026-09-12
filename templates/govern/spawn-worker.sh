@@ -81,7 +81,7 @@ if [[ "${GOVERN_SPAWN_FORCE_RETRY:-0}" == "1" ]]; then MODEL_IS_RETRY=1; fi
 export TICKET_MODEL MODEL_IS_RETRY
 # Ticket number into the worker environment so a wrapper running INSIDE the worker shell can
 # attribute what it records. verify-filter.sh is the only consumer today: it emits the
-# output-suppression lever event (bench/LEVER-EVENTS.md) and without this the event can only
+# output-suppression lever event and without this the event can only
 # say "some ticket in this run". Plain export, no gate: it is one small string and it must be
 # present whether or not lever events are enabled.
 export GOVERN_TICKET="$N"
@@ -1141,11 +1141,12 @@ resolve_sizing
 # The decision AND its reason, in one line — this is the audit trail for every retry escalation.
 govern::log "worker #$N sizing: model=$model [$model_source] effort=${effort:-none} [$effort_source] retry-class=$retry_class — $retry_reason"
 
-# bench/LEVER-EVENTS.md `resume`: this attempt is actually RESUMING (the notes/handoff block built
+# The `resume` lever event: this attempt is actually RESUMING (the notes/handoff block built
 # above, back in the RETRY CONTEXT section, is non-empty) rather than restarting cold. Both sides
 # must be captured HERE, before $jsonl gets rotated aside a little further down (the per-attempt
 # ledger block), because after that this attempt's PRIOR stream is gone and freshStartTokens becomes
-# unrecoverable, exactly as bench/LEVER-EVENTS.md warns.
+# unrecoverable — there would be a checkpoint count with no fresh-start count left to compare it
+# against.
 #   checkpointTokens  = what this attempt actually loads: the injected notes + structured handoff,
 #                        in bytes over the codebase's own ~4-bytes-per-token estimate (see
 #                        land-resolution.sh's lesson-entry sizing note for the same constant).
@@ -1576,7 +1577,7 @@ if [[ "$rc" -gt 128 ]]; then worker_killed=1; fi
 [[ -f "$budget_marker" ]] && { worker_killed=1; worker_budget_exceeded=1; }
 [[ -f "$early_abort_marker" ]] && { worker_killed=1; worker_early_abort=1; }
 
-# bench/LEVER-EVENTS.md `watchdog-kill`: one of the three watchdogs above (wall-clock / token-budget
+# The `watchdog-kill` lever event: one of the three watchdogs above (wall-clock / token-budget
 # / early-abort) just terminated this attempt. ctxTokens/turns are read from the now-frozen $jsonl
 # (the process is dead; nothing writes to it again until the rotation further down), so this is the
 # true state at the instant of the kill. Gated on GOVERN_LEVER_EVENTS itself (not just left to the

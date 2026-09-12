@@ -2,11 +2,10 @@
 # Driver-model run-dir stamp: logs/govern/<run>/driver-model, one line, the orchestrating (driver)
 # session's own bare tier (haiku/sonnet/opus). Sibling of govern::stamp_run_version's
 # logs/govern/<run>/shiploop-version, same file, same never-abort-a-dispatch contract, called from
-# the SAME spot in spawn-worker.sh. NOT a bench/LEVER-EVENTS.md event: this exists so bench/replay.mjs's
-# driver-tier baseline can price the counterfactual at the tier that actually dispatched a run
-# instead of guessing the highest tier observed anywhere in it (which is biased toward the most
-# expensive tier, and so toward shiploop's own credit: the exact class of bias spec section 4a
-# exists to eliminate). Unconditional: it must work on corpora where GOVERN_LEVER_EVENTS stays off.
+# the SAME spot in spawn-worker.sh. Not a lever event: this stamp exists so a cost comparison can
+# price what it credits at the tier that actually dispatched a run instead of guessing the highest
+# tier observed anywhere in it, which is biased toward the most expensive tier and so toward
+# shiploop's own credit. Unconditional: it must work on corpora where GOVERN_LEVER_EVENTS stays off.
 #
 # Covered:
 #   1. govern::model_family: bare alias, full id, a [1m] context-window suffix, a dated build id,

@@ -87,9 +87,9 @@ safe_id="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9._-' '_')"
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# ── the lever event (bench/LEVER-EVENTS.md `watchdog-kill`) ───────────────────────────────────
+# ── the lever event (the `watchdog-kill` contract) ────────────────────────────────────────────
 # The headless launcher emits this on every one of its watchdog kills (spawn-worker.sh's
-# emit_watchdog_kill). This lane did not, so a bench that already credits the watchdog lever saw
+# emit_watchdog_kill). This lane did not, so a reader that already credits the watchdog lever saw
 # only half the fleet's kills, and the interactive half read as "never fired" rather than
 # "unmeasured". Same event name, same field names (ctxTokens / turns / reason), so the two lanes
 # produce ONE event stream rather than two dialects that a reader has to reconcile.
@@ -102,8 +102,10 @@ SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #     fields this hook already parses), and inferring one from the parent would name the wrong
 #     model. The reader's own `driverTier` fallback covers a null tier already.
 #   - the file is NOT run-scoped: no GOVERN_RUN_DIR exists inside a live session, so the emitter's
-#     own fallback writes to $LOG_ROOT/lever-events.jsonl. replay.mjs counts those rows and credits
-#     them to no arm, on purpose (bench/KNOWN-LIMITS.md).
+#     own fallback writes to $LOG_ROOT/lever-events.jsonl, flat, beside the run directories rather
+#     than inside one. A reader can still count and name these rows by event type; it just cannot
+#     attach them to one arm or run without guessing which, so it discloses them uncredited rather
+#     than guessing.
 # `agent_type` and `agentId` ride along as extra k=v fields; the contract's reader skips fields it
 # does not know, so adding them costs nothing.
 #
