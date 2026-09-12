@@ -96,7 +96,6 @@ GOVERN_WORKER_ESCALATION_MODEL="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"   # CAP
 # ── Levers added in v1.17.0 — all default to the pre-v1.17.0 behaviour ───────
 # Every one is deterministic (no model call) and ships INERT, so enabling each is a deliberate act.
 # Flip one at a time and read `npm run govern:health` between changes.
-export GOVERN_DETERMINISTIC="${GOVERN_DETERMINISTIC:-0}"                   # 1 = let the scout's mechanical patches resolve a ticket with ZERO model turns
 export GOVERN_STALENESS_GATE="${GOVERN_STALENESS_GATE:-0}"                 # 1 = skip tickets whose named paths are gone (fail-open; positive evidence only)
 export GOVERN_STALENESS_RUN_TESTS="${GOVERN_STALENESS_RUN_TESTS:-0}"       # 1 = ALSO execute a test command read out of tickets.md. Separate opt-in on purpose: the queue is partly machine-written and a stat() is not a `bash -c`.
 export GOVERN_EARLY_ABORT="${GOVERN_EARLY_ABORT:-0}"                       # 1 = kill a worker showing no progress (~turn 30 instead of 218); it leaves a handoff the retry resumes from

@@ -231,11 +231,11 @@ bench::stream_had_subagent_activity() { # <jsonl> -> rc 0 spawned>0 && completed
   [[ "$spawned" -gt 0 && "$completed" -gt 0 ]]
 }
 
-# Reads a lever-events.jsonl file against an EXPLICIT allow-list of the five contract event names
+# Reads a lever-events.jsonl file against an EXPLICIT allow-list of the three contract event names
 # (bench/LEVER-EVENTS.md), never a `*.jsonl` glob minus a deny-list: attempts.jsonl and state.jsonl
 # carry their own unrelated schemas, and feeding them to a reader built for one schema was only ever
 # harmless by accidental non-overlap. A line that fails to parse as JSON, or whose `event` is not
-# one of the five, is counted and never silently dropped. Prints one JSON object; never fails the
+# one of the three, is counted and never silently dropped. Prints one JSON object; never fails the
 # caller (a run with no lever-events.jsonl is uninstrumented, not zero-saving).
 bench::read_lever_events() { # <lever-events.jsonl> -> {instrumented, events:{name:count}, malformed, unrecognized}
   local f="$1" malformed=0 unrecognized=0 ev tmp
@@ -251,7 +251,7 @@ bench::read_lever_events() { # <lever-events.jsonl> -> {instrumented, events:{na
     fi
     [[ -n "$ev" ]] || { malformed=$((malformed+1)); continue; }
     case "$ev" in
-      output-suppression|watchdog-kill|resume|scripted-action|escalation)
+      output-suppression|watchdog-kill|resume)
         printf '%s\n' "$ev" >> "$tmp" ;;
       *) unrecognized=$((unrecognized+1)) ;;
     esac

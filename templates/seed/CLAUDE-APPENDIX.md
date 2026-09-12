@@ -352,6 +352,40 @@ recency digest). Knobs: `GOVERN_GOTCHA_INJECT=0` (off), `GOVERN_GOTCHA_MAX` (ent
 
 ---
 
+## Escalation answer format (parsed by `escalations-apply-answers.sh`)
+
+Answering a parked escalation is a hand-edit of `governor/escalations.md`, no separate script
+required. The entry lives under `## Open`, headed `### #N` followed by a title. The separator
+between the number and the title is a real em dash character (Unicode U+2014, not a hyphen and not
+two hyphens): a heading the parser does not recognize is read as body text of whatever entry
+preceded it, never as a new entry.
+
+Fields are single-line `- **X:** <value>` entries directly under that heading. The two an operator
+fills in:
+- `- **Answer:** <free text>`
+- `- **Disposition:** <token>`
+
+A field still counts as unanswered if it is empty or contains the substring `(operator` anywhere
+(the unfilled stub is `_(operator)_` or `_(operator: <options>)_`), so overwrite the WHOLE
+placeholder rather than appending to it.
+
+Disposition is read from the LEADING token of the Disposition field first, so a trailing
+clarifying parenthetical (e.g. `keep-open _(not do-the-work)_`) is never misread as another token.
+Only when Disposition is blank does it fall back to scanning the Answer field's free text for a
+recognized word anywhere in the string.
+
+Recognized Disposition tokens (case-insensitive, tolerant of common synonyms and punctuation):
+- `do-the-work`: un-parks the ticket, moving it back into the live queue so the governor retries it.
+- `defer`: migrates the ticket's block from `tickets.md` to `tickets-parked.md`, still TODO, just off the live queue.
+- `mitigated`: removes the ticket's block from `tickets.md` entirely, closed as accepted-current-state, not parked.
+- `keep-open` (or left blank): no action, the entry stays open.
+- `kill`: acted on only when the ticket carries a `Flow:` id (the validations kill loop), files a removal ticket for that flow and closes the escalation.
+- `approve-all` / `move-back` / `decide-later`: acted on only when the entry also carries a `- **Kind:** externalize-review` line, ignored on any other entry.
+
+`- **Make this a rule?:**` answered with non-empty, non-negative text is appended to `preferences.md`.
+
+---
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_

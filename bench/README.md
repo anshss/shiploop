@@ -51,7 +51,7 @@ SAME tier, and neither hit its turn/spend ceiling — see "Rails" below.
 bench/
   METHODOLOGY.md                  what is measured, what every fairness rail closes, and why
   KNOWN-LIMITS.md                 what does not hold yet, read this before quoting anything
-  LEVER-EVENTS.md                 the wire contract for the five lever-attribution events
+  LEVER-EVENTS.md                 the wire contract for the three lever-attribution events
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record

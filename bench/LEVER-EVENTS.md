@@ -1,6 +1,6 @@
 # Lever event contract
 
-Authoritative wire shape for the five instrumentation events. The governor emitter and every
+Authoritative wire shape for the three instrumentation events. The governor emitter and every
 reader built on top of it are built against THIS FILE. Neither half may change a field name
 without changing it here first.
 
@@ -26,7 +26,7 @@ consumers.
 
 | Field | Type | Notes |
 |---|---|---|
-| `event` | string | one of the five names below |
+| `event` | string | one of the three names below |
 | `ts` | integer | unix seconds, `date +%s` at emit |
 | `ticket` | integer \| null | the ticket being worked, null for orchestration-side |
 | `session` | string | transcript basename without `.jsonl`, e.g. `worker`; identifies which session the credit attaches to |
@@ -41,8 +41,6 @@ and skipped, never fatal.
 {"event":"output-suppression","ts":1788800004,"ticket":108,"session":"worker","tier":null,"withheldBytes":48213,"withheldLines":612,"outcome":"pass"}
 {"event":"watchdog-kill","ts":1788800000,"ticket":108,"session":"worker","tier":"sonnet","ctxTokens":184320,"turns":97,"reason":"context-cap"}
 {"event":"resume","ts":1788800001,"ticket":108,"session":"worker","tier":"sonnet","checkpointTokens":12400,"freshStartTokens":86100}
-{"event":"scripted-action","ts":1788800002,"ticket":108,"session":"driver","tier":null,"class":"version-bump"}
-{"event":"escalation","ts":1788800003,"ticket":108,"session":"worker","failedTier":"sonnet","failedTokens":240500}
 ```
 
 - `watchdog-kill`: `ctxTokens` and `turns` are the values at the instant the watchdog terminates.
@@ -89,12 +87,6 @@ and skipped, never fatal.
   would hand the resume lever the failed attempt's output tokens as savings, which is a lever
   biased toward shiploop, and this rule exists precisely to leave no such entry
   in the ledger. When in doubt this number is under-counted, never over-counted.
-- `scripted-action`: `class` names which deterministic-apply.sh pattern fired. There is currently no
-  live per-class token-estimate table anywhere in the tree — a would-be counterfactual constant
-  here was calibrated on the wrong worker shape and was deleted rather than carried forward
-  unfixed. A reader that wants to PRICE this lever needs its own corpus-derived estimate per class;
-  until then, a correct reader counts occurrences by class and reports an unknown class as counted
-  and named, never silently dropped, but prices nothing.
 - `output-suppression`: emitted by `verify-filter.sh` when it withholds a PASSING command's output
   from the transcript. `withheldBytes` / `withheldLines` are measured from the capture file at the
   instant of suppression, immediately before the EXIT trap deletes it. This is the only moment the
@@ -114,14 +106,6 @@ and skipped, never fatal.
   token and credit the result ONCE per event, never per later turn: crediting once is a
   deliberately loose floor, because the real saving is that those bytes would otherwise have been
   re-sent on every later turn, which is the entire reason the wrapper exists.
-
-- `escalation`: **RETIRED, no longer emitted.** Automatic tier escalation was removed from the
-  dispatch path (no failure class buys a tier), so there is no escalation event left to emit. The
-  schema is kept documented because historical `lever-events.jsonl` files still carry these rows and
-  a reader walking one must keep recognising them rather than counting them as unrecognized:
-  `failedTokens` is what the failed attempt burned, a reader that credits routing should SUBTRACT it
-  from routing credit, and the row carries `failedTier` instead of `tier`. Do not add a new emitter
-  for it.
 
 ## Deliberate exclusions
 
