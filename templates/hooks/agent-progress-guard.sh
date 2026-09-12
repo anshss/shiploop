@@ -17,6 +17,22 @@
 #            right before the child tries to stop, is the same STALL/LOOP/ERROR signature the
 #            headless watchdog already detects: reused via govern::early_abort_reason(), never
 #            reimplemented.
+#
+#            THE STALL SIGNAL IS GATED TWICE HERE, and neither gate belongs in the shared function
+#            (one needs the payload's agent_type, the other needs the filesystem, and that function
+#            is a pure read of a transcript). Both close false positives that were costing real
+#            work:
+#              - a read-only agent type (lookup, investigator) is never stalled. Producing no diff
+#                is what success looks like for it.
+#              - the stall only stands if the WORKING TREE also failed to change. The transcript
+#                signal counts Edit/Write/NotebookEdit tool_uses, and a child that changes files
+#                through the shell emits none of them while converging perfectly. Classifying the
+#                command text cannot fix that (whether a heredoc piped into an interpreter writes
+#                anything is knowable only from the program inside it), so this asks the filesystem,
+#                which no idiom can hide from. Unresolvable tree or a git failure means the check
+#                cannot tell, and a check that cannot tell never denies.
+#            LOOP and ERRORS are deliberately NOT gated: both are evidence of a child fighting its
+#            own tools, which is true for every agent type and needs no filesystem to confirm.
 #   A COMPLETION NOTIFICATION IS A CLAIM, not evidence. This fires at the moment a
 #            subagent is ABOUT to stop, i.e. BEFORE whatever it is about to report reaches the
 #            parent as a finished result. A doom signature at that boundary means the "I'm done"
@@ -25,6 +41,12 @@
 #            forced to keep working until Claude Code's own stop-hook block cap (default 8x,
 #            CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) ends the loop — never silently, and never via a
 #            notification the parent has no way to check.
+#
+#   ONE EXCEPTION TO THE BLOCK, and it is a deadlock fix, not a softening: if the wall-clock
+#   watchdog has already denied this child's tool calls, the child has been told to stop and report
+#   and every tool it could use to answer a block is denied. Blocking its stop as well leaves it no
+#   legal move, so the block is skipped in that case (the fleet-event alarm is still emitted). See
+#   govern::watchdog_denied and the call site below.
 #
 # THE IDLE CASE, on TeammateIdle:
 #   SubagentStop only fires when a child tries to STOP. A child that goes quiet WITHOUT stopping —
@@ -89,6 +111,17 @@ event_name="$(get hook_event_name)"
 transcript_path="$(get agent_transcript_path)"
 agent_id="$(get agent_id)"
 agent_type="$(get agent_type)"
+cwd="$(get cwd)"
+
+# Per-agent state file for the working-tree fingerprint, in the SAME ${TMPDIR:-/tmp} per-key idiom
+# router-posture-guard.sh uses for its session counters and agent-watchdog-guard.sh uses for its
+# wall-clock start time. Not a new state mechanism, the existing one keyed on a new thing. The id is
+# sanitized before it reaches a path for the same reason it is there: it is platform-issued in
+# practice, never trusted into a path unescaped. Like its two siblings the file is never swept; it
+# is a few bytes per child that the OS's own tmp cleanup reclaims.
+safe_id="$(printf '%s' "${agent_id:-unknown}" | tr -c 'A-Za-z0-9._-' '_')"
+[ -n "$safe_id" ] || safe_id="unknown"
+fp_state="${TMPDIR:-/tmp}/metarepo-agent-progress-tree-${safe_id}"
 
 idle=0
 if [ "$event_name" = "TeammateIdle" ]; then
@@ -110,6 +143,44 @@ result="$(
   command -v govern::early_abort_reason >/dev/null 2>&1 || exit 0
   reason="$(govern::early_abort_reason "$transcript_path")"
   [ -n "$reason" ] || exit 0
+  # STALL, and ONLY stall, passes two more gates before it may alarm or block. The loop and
+  # tool-error-rate signatures are untouched: both are evidence of a child fighting its tools, which
+  # is true for any agent type and needs no filesystem to confirm.
+  case "$reason" in
+    STALL:*)
+      # GATE 1 — a read-only agent type is never stalled. A lookup or an investigator is not
+      # supposed to produce a diff, so "no diff" is what SUCCESS looks like for it. Firing here cost
+      # two findings reports in one day: both children spent their final message arguing they were
+      # not stuck instead of delivering what they had found, and the findings were lost. agent_type
+      # is on the payload already, the same field agent-watchdog-guard.sh keys its own scoping on.
+      case ",${GOVERN_READONLY_AGENT_TYPES:-lookup,investigator}," in
+        *",${agent_type},"*) exit 0 ;;
+      esac
+      # GATE 2 — did the working tree actually change? The transcript signal only knows about
+      # Edit/Write/NotebookEdit tool_uses, and a child that changes files through the shell emits
+      # none of them. Ask the filesystem instead: it is immune to command idiom, which no amount of
+      # command-text classification can be.
+      probe="$(govern::tree_probe "$cwd" 2>/dev/null || true)"
+      # Unresolvable tree, no git, or a git failure: this check CANNOT TELL, so it must not be the
+      # thing that denies a stop. Allow, and say nothing.
+      [ -n "$probe" ] || exit 0
+      fp="$(printf '%s\n' "$probe" | sed -n 1p)"
+      dirty="$(printf '%s\n' "$probe" | sed -n 2p)"
+      prev=""
+      [ -f "$fp_state" ] && prev="$(cat "$fp_state" 2>/dev/null || true)"
+      printf '%s' "$fp" > "$fp_state" 2>/dev/null || true
+      if [ -n "$prev" ]; then
+        # The tree moved between two looks. That is progress, whatever produced it.
+        [ "$fp" != "$prev" ] && exit 0
+      else
+        # First look at this child, so there is no baseline to compare against. Uncommitted or
+        # unpushed work on disk is the honest evidence that it has produced something, and absent a
+        # baseline the fail-open direction is to believe it.
+        [ "$dirty" = "1" ] && exit 0
+      fi
+      reason="$reason Its working tree has not changed either: nothing added, modified or newly committed since the last check."
+      ;;
+  esac
   # Surfaced via the fleet event log (governor/events.jsonl) BEFORE the block decision below, so
   # an operator watching fleet-monitor.sh sees the alarm even on a session that never re-prompts
   # (e.g. the child's stop is force-ended by Claude Code's own block cap without ever resolving
@@ -123,6 +194,15 @@ result="$(
   else
     { command -v govern::event >/dev/null 2>&1 && govern::event agent_progress_alarm \
       "agent_id=${agent_id:-unknown}" "agent_type=${agent_type:-unknown}" "reason=${reason}"; } || true
+  fi
+  # A wall-clock watchdog denial is TERMINAL: the child has already been told to stop and report,
+  # and every further tool call it makes is denied. Blocking its stop on top of that leaves it with
+  # no legal move at all — it cannot produce the diff the block asks for, and it cannot exit either.
+  # So the alarm above still fires (an operator should see that this child both stalled and was
+  # capped), but the reason is NOT returned, and with nothing returned the block below never runs.
+  # Read off the same transcript this check already reads, no second channel.
+  if command -v govern::watchdog_denied >/dev/null 2>&1 && govern::watchdog_denied "$transcript_path"; then
+    exit 0
   fi
   printf '%s' "$reason"
 )" || true

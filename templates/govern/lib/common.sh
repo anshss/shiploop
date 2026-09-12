@@ -3505,6 +3505,121 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
   return 0
 }
 
+# ── working-tree fingerprint: did the child actually change any files? ────────────────────
+# The stall signature above asks "did an Edit/Write/NotebookEdit tool_use happen", which is not the
+# same question as "did the tree change". An agent that changes files through the shell (a heredoc
+# piped into an interpreter is the dominant idiom) emits none of those tool_uses and reads as
+# stalled while converging perfectly, and then has its stop refused. Classifying the COMMAND cannot
+# fix that: whether `python3 - <<PY ... PY` writes anything is knowable only from the program inside
+# the heredoc. So ask the filesystem instead. A fingerprint that moved between two checks is
+# progress, whatever idiom produced it, and no shell-shape heuristic can be wrong about it.
+#
+# WHICH TREES. A worker runs in a worktree of a sub-repo, not in the session's own checkout, so a
+# single `git status` where the hook happens to stand answers about the wrong directory. Resolved
+# deterministically from one starting directory, using git's own bookkeeping rather than a guess:
+#   - the enclosing repo of the start dir (`rev-parse --show-toplevel`),
+#   - every immediate subdirectory of that toplevel that is itself a git checkout. A meta-repo's
+#     sub-repos are nested checkouts, and a parent's `git status` never reports a nested repo's
+#     files, so without this the one tree that actually changes is the one nobody looked at.
+#   - every LINKED WORKTREE of each of those repos (`git worktree list`). This is the case that
+#     matters: the session stands in the main checkout while the child works in a worktree
+#     elsewhere on disk, and git is the only thing that knows where that worktree is.
+#
+# A UNION, AND WHY THAT IS THE RIGHT DIRECTION. The fingerprint covers every resolved tree at once,
+# so a change anywhere in the set reads as progress. Two consequences, both deliberate: work by a
+# CONCURRENT sibling in another worktree can look like this child's progress, and the answer is
+# therefore only ever "something moved" rather than "this child moved something". That is the
+# fail-open direction. The cost of the alternative is the failure being fixed here, a converging
+# child denied its exit, and there is nothing on a stop-hook payload that identifies which worktree
+# a given child was working in.
+#
+# COST AND FAILURE. One `git status` per tree, and callers run this ONLY once a stall signature has
+# already fired, never per tool call: reaching that point takes ~30 consecutive read-only turns, so
+# a healthy session pays nothing. Measured at ~1.2s across 30 trees on a real workspace.
+# GOVERN_PROGRESS_TREE_MAX (default 64) bounds a pathological fan-out: past it this returns nothing,
+# which every caller must read as "cannot tell" and therefore ALLOW. Same for an unresolvable start
+# dir, a missing git, or any git failure. A check that cannot tell must never be the thing that
+# denies.
+govern::progress_trees() { # <start-dir> -> one absolute tree path per line
+  local start="${1:-}" top d
+  [[ -n "$start" && -d "$start" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  top="$(git -C "$start" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" && -d "$top" ]] || return 0
+  local -a roots=("$top")
+  for d in "$top"/*/; do
+    [[ -e "${d}.git" ]] || continue
+    roots+=("${d%/}")
+  done
+  for d in "${roots[@]}"; do
+    git -C "$d" worktree list --porcelain 2>/dev/null | awk '$1=="worktree"{ $1=""; sub(/^ /,""); print }'
+  done
+  return 0
+}
+
+# Prints TWO lines when it can answer, and NOTHING when it cannot:
+#   <fingerprint>     a hash over every resolved tree's porcelain status and HEAD
+#   <dirty 0|1>       whether any tree currently holds uncommitted or unpushed work
+#
+# The status is taken with --untracked-files=all, because a brand new file is the single most
+# common shape of real progress and the default summarises a new directory as one line. `-b` and
+# the HEAD sha ride along so a COMMIT registers as a change too: committing empties the porcelain
+# output, and without those a worker that committed its work would fingerprint back to the value it
+# had before it started.
+#
+# `dirty` exists for the first check of an agent's life, where there is no previous fingerprint to
+# compare against. Absent a baseline, uncommitted work on disk is the honest evidence that the child
+# has produced something, and the fail-open direction is to believe it.
+govern::tree_probe() { # <start-dir> -> "<fingerprint>\n<0|1>" | empty when unresolvable
+  local start="${1:-}" trees n raw dirty=0 p st sum
+  trees="$(govern::progress_trees "$start" | sort -u)"
+  [[ -n "$trees" ]] || return 1
+  n="$(printf '%s\n' "$trees" | grep -c .)"
+  [[ "$n" -le "${GOVERN_PROGRESS_TREE_MAX:-64}" ]] || return 1
+  raw=""
+  while IFS= read -r p; do
+    [[ -n "$p" && -d "$p" ]] || continue
+    st="$(git -C "$p" status --porcelain --untracked-files=all -b 2>/dev/null)" || return 1
+    raw+="$p"$'\n'"$st"$'\n'"$(git -C "$p" rev-parse HEAD 2>/dev/null || true)"$'\n'
+    if printf '%s\n' "$st" | grep -qv '^## '; then dirty=1; fi
+    case "$st" in *'[ahead '*) dirty=1 ;; esac
+  done <<< "$trees"
+  [[ -n "$raw" ]] || return 1
+  sum="$(printf '%s' "$raw" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null; } | awk '{print $1}')"
+  [[ -n "$sum" ]] || return 1
+  printf '%s\n%s\n' "$sum" "$dirty"
+  return 0
+}
+
+# ── the wall-clock watchdog's deny marker, read off the same transcript ────────────────
+# When the wall-clock watchdog trips it DENIES every further tool call and tells the child to stop
+# and return its report. If a stop-blocking progress check then refuses that stop, the child is
+# denied the tools that would produce a diff AND denied the exit: it cannot satisfy either side, and
+# burns its remaining turns explaining itself. So a watchdog denial is TERMINAL, and a caller that
+# blocks stops must let the child through once it sees one.
+#
+# Detected off the child's OWN transcript the progress check already reads, rather than a state file
+# or a second channel: the deny reason arrives back as a tool_result, so the marker is simply there.
+# Scoped to the TAIL because the marker is only terminal when it is CURRENT — once the cap trips it
+# denies every subsequent call, so a real denial is always in the last few lines. A child that merely
+# read the watchdog's own source earlier in its run therefore does not silence its own progress check
+# (it would have to have done so within the tail window, immediately before trying to stop).
+# GOVERN_WATCHDOG_MARKER_TAIL tunes the window; 0 disables the check entirely.
+#
+# Returns 0 when a current denial is present, 1 otherwise — and 1 for every degenerate input (no
+# file, unreadable), the same "absence of data is never evidence" contract the rest of this path
+# holds to, here meaning "no evidence of a denial" rather than "denied".
+govern::watchdog_denied() { # <jsonl> -> 0 = the child was denied by the wall-clock watchdog
+  local f="${1:-}" n="${GOVERN_WATCHDOG_MARKER_TAIL:-40}"
+  [[ -n "$f" && -s "$f" ]] || return 1
+  case "$n" in (*[!0-9]*|"") n=40 ;; esac
+  [[ "$n" == "0" ]] && return 1
+  # tr -d NULs for the same reason govern::stream_grep exists: a NUL-holed stream must not read as
+  # "no marker" by accident of grep treating the file as binary.
+  tail -n "$n" "$f" 2>/dev/null | LC_ALL=C tr -d '\000' \
+    | grep '"type":"user"' 2>/dev/null | grep -qF '[AGENT WATCHDOG]' 2>/dev/null
+}
+
 # ── in-flight token-budget monitoring ─────────────────────────────────
 # The only ceiling on a worker used to be wall-clock (GOVERN_WORKER_TIMEOUT) — a worker that wanders
 # could burn tens of millions of tokens before that fired. GOVERN_WORKER_MAX_TOKENS adds a cumulative
