@@ -13,8 +13,10 @@
 # Usage:
 #   advisor-consult.sh claim <ticket-N> [--question "<scoped question>"] [--turn <n>]
 #     Checks the remaining budget and prints ONE JSON decision line to stdout.
-#       allow (exit 0): {"decision":"allow","consultId":N,"advisorModel":"...","maxTokens":N,
+#       allow (exit 0): {"decision":"allow","consultId":N,"maxTokens":N,
 #                         "workerRemaining":N,"sessionRemaining":N}
+#     There is deliberately no model field here. An `allow` authorises ASKING the advisor session
+#     that wrote the proposal, never SPAWNING one: nothing ever spawns an advisor.
 #       deny  (exit 1): {"decision":"deny","reason":"disabled|worker-budget-exhausted|
 #                         session-budget-exhausted","workerRemaining":N,"sessionRemaining":N}
 #     A deny is not a cue to retry, reformulate, or consult anyway: Layer 4 is explicit that an

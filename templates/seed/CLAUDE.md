@@ -13,15 +13,18 @@
 2. **Validate through the real path** (`npm run dev`) — the UI/API route a user actually touches, not a
    shortcut that skips the layers where bugs hide.
 
-3. **The driver orchestrates; it does not read or edit product source.** Every inline `Read` is
-   permanent context cargo, re-sent every later turn. Delegate and relay only the verdict.
-   Coordination files (`queue/`, `governor/`, `CLAUDE.md`, `learnings.md`) are free to read and edit
-   here. **Route by shape:**
+3. **This session is the advisor: it decides, it does not implement.** Reason the change out, write
+   it into the ticket as its `**Proposed solution:**`, then hand that to a `worker` subagent, which
+   implements it and ends at PR-open plus a report. The worker is a subagent so it can message you
+   back mid-run and you can steer it: that two-way channel is the whole reason for the shape. Your
+   steers are capped (`GOVERN_STEER_CAP`); past the cap, rewrite the proposal and dispatch again.
+   **Never read or edit product source here.** Every inline `Read` is permanent context cargo,
+   re-sent every later turn. Delegate and relay only the verdict. Coordination files (`queue/`,
+   `governor/`, `CLAUDE.md`, `learnings.md`) are free to read and edit here. **Route by shape:**
 
    | shape | route |
    |---|---|
    | a `## #N` ticket exists, or the user names tickets | `Agent(subagent_type: "worker")`, one per ticket |
-   | multi-ticket batch, cron, or no session open | headless lane, one ticket at a time: `npm run govern:pre-dispatch -- <N>` then `spawn-worker.sh <N>` |
    | heavy but not ticket-shaped (investigation feeding an answer) | `Agent`, sized per the table below |
    | trivial | inline |
    | a worker failed once | retry once with `model: opus`, then stop and report |
@@ -30,12 +33,26 @@
    inherit only for judgment-heavy synthesis or final review. Never size a ticket when filing one —
    the scout measures that.
 
-   **Either lane ends at PR-open plus report.** Landing it is the same last step either way: pipe
-   that report into `npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue
-   file. A ticket's queue block is never deleted before merge.
+   **A worker ends at PR-open plus report.** Landing it is your last step: pipe that report into
+   `npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue file. A ticket's
+   queue block is never deleted before merge.
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
+
+## Never answer from assumption
+
+**Read the code before you state how it behaves.** A claim about behavior is earned by opening the
+file, not by reading a name, a default value, a comment, or one side of a contract. If you have not
+read it, say "I have not checked" and go check: an unverified answer stated plainly is worse than no
+answer, because it gets acted on. Never relay a delegate's conclusion as fact without opening the
+primary source yourself, and when the operator tells you how something works, that REPLACES your
+model of it rather than merging into it.
+
+**Comments never cite documents.** A comment states what the code does and why. It never points at a
+spec, a design doc, a ticket number, or a lettered decision: those get moved and deleted, and a
+pointer that no longer resolves sends a reader off to invent the answer. If the rationale matters,
+write the rationale.
 
 ## Where knowledge goes
 

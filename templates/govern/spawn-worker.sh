@@ -413,8 +413,8 @@ resolve_sizing() {
   # The worker-request cap. govern::model_request_cap (lib/common.sh) is the ONE shared clamp: rank
   # comparison, not string equality, so `Model: opus` under a `sonnet` ceiling is caught while an
   # at-or-below request passes through untouched, and an unrankable ceiling (rank 0) caps nothing
-  # rather than inventing a tier. The advisor consult model (#127, design Layer 3) reuses this exact
-  # function rather than a second copy: see govern::advisor_claim.
+  # rather than inventing a tier. One clamp, one call site: the ticket `Model:` field is the only
+  # thing in the system that requests a tier above the floor.
   if [[ "$TICKET_MODEL_APPLIED" -eq 1 ]]; then
     local capped_model; capped_model="$(govern::model_request_cap "$model")"
     if [[ "$capped_model" != "$model" ]]; then

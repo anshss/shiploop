@@ -112,25 +112,10 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
   saying nothing does not make you wrong — it only reduces how often whoever is watching has to
   stop and read your transcript to find out which one you are; it never removes their need to look.
 - **Real UI → drive it headlessly via the project's browser tool** — the real user path.
-- **One judgment fork you cannot resolve → consult, don't guess or fail.** Run
-  `scripts/govern/advisor-consult.sh claim <N>` (from the workspace root, the script decides, you
-  never do). `deny` (budget exhausted, or the mechanism is off) is not a cue to retry, reformulate,
-  or consult anyway: note it and keep going on your own judgment, or say so plainly in `escalation`
-  if the fork is genuinely where you are stuck. An exhausted budget surfaces to the operator, it
-  never buys a bigger tier by itself. A stuck agent looping on a broken command does not need this;
-  that is a progress problem, not a question to ask.
-  **On `allow` — HEADLESS LANE (this one; the interactive lane's `.claude/agents/worker.md`
-  overrides this bullet with a different mechanism, D1):** there is no live advisor session to ask —
-  this lane is degraded and slated for retirement (queue #123/G12), so it inherits the weaker
-  mechanism deliberately rather than driving the design. `allow` names an `advisorModel` (already
-  capped by `GOVERN_WORKER_ESCALATION_MODEL`, the same cap an explicit ticket `Model:` request
-  obeys) and a `maxTokens` ceiling: spawn exactly ONE `Agent` at that model with a single scoped
-  question, and that question MUST carry the ticket's own `**Proposed solution:**` (see "Proposed
-  solution" above) and the relevant brief verbatim — a fresh child that has never seen the proposal
-  pays a full cold start to re-derive what the advisor already decided, and can return an answer
-  that contradicts it. Do not paraphrase the proposal away; quote it. Then run `advisor-consult.sh
-  record <N> <consultId> --model <m> --tokens <n> --answer "<summary>"` and continue at your own
-  tier. This never raises the tier for the rest of the ticket, only that one call.
+- **One judgment fork you cannot resolve → say so, don't guess.** Note it in `.governor-notes.md`.
+  If the rest of the ticket lands without settling it, land it and put the fork in `newTickets`. If
+  the fork IS where you are stuck, say that plainly in `escalation` and stop. A stuck agent looping
+  on a broken command is not this: that is a progress problem, not a question.
 
 **Escalate as human-only ONLY** with a concrete unworkable blocker — a credential you cannot
 self-grant, unrentable hardware, money beyond the test grant, subjective judgment. Hard/flaky/slow,

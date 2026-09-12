@@ -19,16 +19,13 @@ follow it. That file is the single source of truth for scope, context economy, t
 handoff block, capability posture, and the JSON output contract. It is NOT summarized here and it is
 not duplicated here: if this file and that file ever disagree, that file wins.
 
-Ignore only these three things in it, which describe the other lane:
+Ignore only these two things in it, which describe the other lane:
 
 - `{{TICKET_BLOCK}}` under "## The ticket". There is no substitution on this lane, because your
   ticket arrives in the task prompt that spawned you. If the prompt gave you a number but not the
   block, `grep -A40 '^## #<N>' queue/tickets.md` and read it yourself.
 - `{{REPORT_PATH}}` in the output contract. Return the JSON as your final message; write it to a
   file only if the prompt named one.
-- §4's "On `allow` — HEADLESS LANE" text under the advisor-consult bullet. That describes spawning a
-  fresh `Agent`; your own consult mechanism (delta 4 below) is a different one, per
-  `.specs/2026-09-11-advisor-worker-design.md` D1.
 
 ## Interactive-lane deltas
 
@@ -51,25 +48,21 @@ Ignore only these three things in it, which describe the other lane:
    calls, so pass it inline on the `claim` call in delta 4: `GOVERN_ADVISOR_BUDGET=<n>` using
    `spawn-worker.sh`'s own scale — `open`→`${GOVERN_ADVISOR_PER_WORKER_OPEN:-3}`,
    `stated`→`${GOVERN_ADVISOR_PER_WORKER_STATED:-1}`, else `${GOVERN_ADVISOR_PER_WORKER:-2}`.
-4. **The advisor consult goes UP, to the advisor that wrote your brief — not out to a fresh child**
-   (D1, overrides worker-prompt.md §4's "On `allow` — HEADLESS LANE" text): it already holds the
-   proposal and the reasoning behind it, so it is both cheaper and more correct to ask than a cold
-   child. Call `GOVERN_ADVISOR_BUDGET=<n> scripts/govern/advisor-consult.sh claim <N>` (delta 3's
-   budget; caps/ledger are otherwise script-owned, same as the headless lane). On `allow`, ignore
-   `advisorModel` — nothing is spawned. Instead `SendMessage` your one scoped question to the
-   session that dispatched you (`to: "main"`, or the name it gave itself if it spawned you into a
-   named team), **say in that same message that you are now waiting on the reply** (the one piece
-   of state an idle notification can't carry on its own — worker-prompt.md §4), **then STOP and wait**:
-   no fallback `Agent`, no guessing, no proceeding on another part of the ticket. This BLOCKS with
-   no timeout — a worker that proceeds on a guess is the exact failure this design exists to
-   prevent, and the per-worker cap already bounds how many times you may interrupt the advisor.
-   Waiting here is correct, not a stall; naming it up front only saves whoever is watching a trip
-   to your transcript to find that out, it is not what makes the wait legitimate. Resume where you
-   paused once the reply arrives, then run
-   `advisor-consult.sh record <N> <consultId> --model advisor --tokens 0 --answer "<summary>"` (no
-   separate agent model exists to report, so `--model advisor` names the source) and continue at
-   your own tier. If the advisor genuinely cannot answer, that is an honest `escalation`, never a
-   quiet substitution or a spawned child.
+4. **The advisor consult goes UP, to the advisor that wrote your brief.** It already holds the
+   proposal and the reasoning behind it, so it is the one place an answer can come from. Call
+   `GOVERN_ADVISOR_BUDGET=<n> scripts/govern/advisor-consult.sh claim <N>` (delta 3's budget;
+   caps/ledger are otherwise script-owned). On `allow`, `SendMessage` your one scoped question to
+   the session that dispatched you (`to: "main"`, or the name it gave itself if it spawned you into
+   a named team), **say in that same message that you are now waiting on the reply** (the one piece
+   of state an idle notification can't carry on its own), **then STOP and wait**: no guessing, no
+   proceeding on another part of the ticket. This BLOCKS with no timeout: a worker that proceeds on
+   a guess is the exact failure this design exists to prevent, and the per-worker cap already bounds
+   how many times you may interrupt the advisor. Resume where you paused once the reply arrives, then run
+   `advisor-consult.sh record <N> <consultId> --model advisor --tokens 0 --answer "<summary>"`
+   (`--model advisor` names the source) and continue at your own tier. If the advisor genuinely
+   cannot answer, that is an honest `escalation`, never a quiet substitution. The advisor's own
+   steer budget is bounded too (`GOVERN_STEER_CAP`): if it tells you it is re-dispatching with a
+   corrected proposal instead of answering, stop and report where you are.
 5. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
    not stage a sub-repo's files.
 6. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
