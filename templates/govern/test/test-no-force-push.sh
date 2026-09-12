@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ported from the harness #105 regression (scripts/govern/test/test-no-force-push.sh), adapted to the
+# Ported from the harness regression (scripts/govern/test/test-no-force-push.sh), adapted to the
 # single-driver meta-repo template baseline: the governor's meta-repo `main` bookkeeping must push
 # FAST-FORWARD-ONLY and must NEVER rewrite already-pushed history (no force-push, no `+refspec`, no
 # `--force-with-lease`, no history rewrite of a shared branch).
@@ -21,7 +21,7 @@
 # Template-baseline deltas vs. the harness original: the single-driver template has only ONE
 # main-push path (land-resolution.sh) — there is no preflight-main.sh, and escalations-apply-answers.sh
 # commits locally and leaves the push to the operator (never pushes main itself), so those assertions
-# are intentionally absent here. The harness's #105 operator-doctrine CLAUDE.md guidance is likewise
+# are intentionally absent here. The harness's operator-doctrine CLAUDE.md guidance is likewise
 # not part of the generic template baseline.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

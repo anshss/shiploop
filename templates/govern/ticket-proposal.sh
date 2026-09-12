@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ticket-proposal.sh <N> [tickets-file] — print ticket N's **Proposed solution:** / **Precision:**
-# fields (.specs/2026-09-11-advisor-worker-design.md D2/D6), or nothing if the ticket carries
+# fields, or nothing if the ticket carries
 # neither yet (absent, or still the filing-time placeholder — filing is not specifying).
 #
 # This is the interactive lane's entry point into the SAME extraction the headless launcher
@@ -8,7 +8,7 @@
 # assembles a dispatch prompt — see lib/common.sh, the one shared implementation both lanes call.
 # The headless lane gets this injected into its dispatch prompt automatically; a worker subagent
 # (.claude/agents/worker.md) has no launcher to do that for it, so it runs THIS as its own first
-# step, the same pattern gotchas-for-paths.sh (#125) already established for hazard handoff.
+# step, the same pattern gotchas-for-paths.sh already established for hazard handoff.
 #
 # Usage: scripts/govern/ticket-proposal.sh <N> [tickets-file]
 # Prints nothing (exit 0) when the ticket has no real proposal yet — the caller must treat that as

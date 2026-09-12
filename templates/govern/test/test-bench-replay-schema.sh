@@ -16,7 +16,7 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 command -v node >/dev/null 2>&1 || { echo "SKIP: node not on PATH" >&2; exit 77; }
 
 FLEET="$HUB/bench/fixtures/replay-fleet"
-# Pinned to the LEGACY pair (same-mix, partials dropped). #108 moved the defaults; the invariants
+# Pinned to the LEGACY pair (same-mix, partials dropped). The defaults moved since; the invariants
 # below are the ones that must survive that move unchanged, so they name the old arm by hand.
 j="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm all --baseline same-mix --partials drop --json 2>&1)"
 assert_eq "$?" "0" "--json exits 0 on the fixture fleet"
@@ -34,7 +34,7 @@ assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACT
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "No vanilla session was run" \
   "and states plainly that the vanilla arm was never executed"
 
-# ── meta (ticket #104: version/model/date next to the headline, not buried in stdout) ─────────
+# ── meta (version/model/date next to the headline, not buried in stdout) ─────────
 assert_eq "$(printf '%s' "$j" | jq -r '.meta | keys | join(",")')" \
   "cliVersions,dateRange,models,runsSeenKept,runsSeenTotal,since,versionScope" \
   "meta carries exactly the fields the headline prints"
@@ -42,7 +42,7 @@ assert_eq "$(printf '%s' "$j" | jq -r '.meta.since')" "null" "no --since given -
 assert_eq "$(printf '%s' "$j" | jq -r '.meta.runsSeenKept')" "$(printf '%s' "$j" | jq -r '.meta.runsSeenTotal')" \
   "no --since given -> nothing is filtered out"
 
-# ── meta.versionScope (#107): the fixture has no shiploop-version stamp anywhere, so this must
+# ── meta.versionScope: the fixture has no shiploop-version stamp anywhere, so this must
 # fall back to a full sweep rather than reporting a phantom zero-run corpus.
 assert_eq "$(printf '%s' "$j" | jq -r '.meta.versionScope | keys | join(",")')" \
   "fellBack,mode,runsExcludedOlder,runsExcludedUnstamped,runsKept,runsTotal,selected,sessionsExcludedOlder,sessionsExcludedUnstamped,sessionsKept,sessionsTotal" \
@@ -93,13 +93,13 @@ assert_eq "$(printf '%s' "$j" | jq -r '.driverTierAudit.fromFallbackHighestTier'
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].label')" "a 1M-context session" \
   "the arm carries the sentence a caller should print beside the number"
 
-# ── driverScope (#108, 2026-09-10 addendum): the interactive driver is excluded unmissably ────
+# ── driverScope: the interactive driver is excluded unmissably ────
 assert_eq "$(printf '%s' "$j" | jq -r '.driverScope.excluded')" "true" \
   "the driver session's exclusion is a stated fact of the report, not a silent gap"
 assert_contains "$(printf '%s' "$j" | jq -r '.driverScope.reason')" "one premium session doing the work itself" \
   "and the JSON carries the honest counterfactual in full, not just a boolean"
 
-# ── outcomeBreakdown (#108, "no attempt-outcome dimension"): a census of attempts, not a filter.
+# ── outcomeBreakdown ("no attempt-outcome dimension"): a census of attempts, not a filter.
 # The fixture ships no attempts.jsonl anywhere, so every attempt is unclassified with a reason.
 assert_eq "$(printf '%s' "$j" | jq -r '.outcomeBreakdown | keys | join(",")')" \
   "classes,totalAttempts,unclassified" "outcomeBreakdown has a fixed shape"
@@ -204,7 +204,7 @@ assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tickets')" "0" "and reports z
 assert_eq "$(printf '%s' "$e" | jq -r '.arms["1m"].tokenReductionPct')" "null" \
   "and reports no reduction rather than a fabricated one"
 
-# ── --rows: the anonymized recomputable evidence, ticket #104 ────────────────
+# ── --rows: the anonymized recomputable evidence ────────────────
 rows="$(node "$HUB/bench/replay.mjs" --fleet "$FLEET" --arm 1m --baseline same-mix --partials drop --rows 2>&1)"
 assert_eq "$(printf '%s\n' "$rows" | jq -sr 'map(select(true)) | length > 0')" "true" \
   "--rows emits at least one line"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Rail 9 / #125: the interactive lane (Agent(subagent_type: "worker"), .claude/agents/worker.md)
+# The interactive lane (Agent(subagent_type: "worker"), .claude/agents/worker.md)
 # has no launcher to inject **Paths:**-tagged CLAUDE.md/learnings.md gotchas into its prompt the
-# way spawn-worker.sh does for the headless lane (#118/#174) — that mechanism fires on the headless
+# way spawn-worker.sh does for the headless lane — that mechanism fires on the headless
 # dispatch path only. gotchas-for-paths.sh is the interactive lane's own entry point into the SAME
 # lookup: a worker subagent runs it directly, as its first step, on the paths it is about to touch.
 #

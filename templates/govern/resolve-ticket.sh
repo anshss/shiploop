@@ -14,7 +14,7 @@
 #                deliberately left open) by hand — go straight to landing.
 #   stdin        the worker's JSON report — the EXACT shape land-resolution.sh consumes:
 #                .pr, .prs[], .status, .lessonPatch, .newTickets[], .validation.*
-#                Accepted `.pr` shapes (#120 — an ambiguous contract once let a present-but-
+#                Accepted `.pr` shapes (an ambiguous contract once let a present-but-
 #                unparseable `.pr` silently land as "no PR", deleting a queue block with the PR
 #                still open, unmerged):
 #                  * absent / null            — no PR at all (see `.prs[]`), e.g. omit the field.
@@ -31,7 +31,7 @@
 # What it does, in order:
 #   1. Refuse anything whose report.status is not "resolved" — that is the worker's own concern,
 #      not this script's; read the worker's output directly.
-#   2. Normalize `.pr` into {repo,number,url}, or REFUSE (#120): a `.pr` that is present but not
+#   2. Normalize `.pr` into {repo,number,url}, or REFUSE: a `.pr` that is present but not
 #      one of the accepted shapes (see the stdin contract above) must never fall through to the
 #      "no PR" path — that silent fall-through once deleted a queue block while the PR sat open,
 #      unmerged. This runs BEFORE any bookkeeping, so a refusal here leaves tickets.md untouched.
@@ -39,7 +39,7 @@
 #      if a Claude spec/plan artifact leaked into the diff. Ported from run-loop.sh's per-ticket
 #      PR-hygiene block; scoped, like the original, to the single reported .pr (not every PR a
 #      multi-repo ticket opened).
-#   4. The validation-evidence gate (#67 no live-test evidence / #73 gate measured a negative):
+#   4. The validation-evidence gate (no live-test evidence / gate measured a negative):
 #      refuse to land, explain which of the two rules tripped, exit non-zero. A refusal here is a
 #      product-judgment call the worker must never make for itself.
 #   5. Await CI + merge EVERY PR the report names (.pr + .prs[]), via the EXISTING await-ci.sh /
@@ -59,7 +59,7 @@
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
-#      the codebase index (§4.3, GOVERN_INDEX) and tear down the ticket's worktree.
+#      the codebase index (GOVERN_INDEX) and tear down the ticket's worktree.
 #   9. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), preserving the
 #      exact JSON shape run-loop.sh's record()/history_enrich() wrote.
 #
@@ -97,7 +97,7 @@ if [[ "$status" != "resolved" ]]; then
   exit 2
 fi
 
-# ── Normalize/validate the reported `.pr` shape, or REFUSE (#120) ──────────────────────────────
+# ── Normalize/validate the reported `.pr` shape, or REFUSE ─────────────────────────────────────
 # A present-but-unparseable `.pr` (a bare integer, a malformed object, any other shape) used to
 # fall through to the SAME branch as a genuinely PR-less report, and that branch LANDS — deleting
 # the queue block while the real PR sat open, unmerged, with only a stderr line as the signal. This
@@ -105,11 +105,11 @@ fi
 # here leaves tickets.md byte-identical. See the stdin contract at the top of this file for the
 # accepted `.pr` shapes.
 _norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report" || {
-  echo "resolve-ticket #$N: .pr is present but not one of the accepted shapes (an object {repo,number,url}, or a bare integer PR number a configured repo has open) — refusing BEFORE any bookkeeping rather than silently landing as 'no PR' (#120). Fix the report's .pr field and re-run." >&2
+  echo "resolve-ticket #$N: .pr is present but not one of the accepted shapes (an object {repo,number,url}, or a bare integer PR number a configured repo has open): refusing BEFORE any bookkeeping rather than silently landing as 'no PR'. Fix the report's .pr field and re-run." >&2
   exit 9
 }
 
-# ── ticket-history.jsonl writer (§B3) ───────────────────────────────────────────────────────────
+# ── ticket-history.jsonl writer ─────────────────────────────────────────────────────────────────
 # Mirrors run-loop.sh's record()/history_enrich() exactly (same JSON shape: {ticket,run,status,ts}
 # plus tokens/costUsd/model/effort/attempt/usageSource/churn/repos) so govern-health.sh — which
 # reads ONLY this file — keeps an input now that the loop no longer writes it. "run" falls back to
@@ -190,32 +190,32 @@ if [[ -n "$_pr_num" ]]; then
   fi
 fi
 
-# ── 2. The #67/#73 validation-evidence gate (ported from run-loop.sh:1455-1500) ────────────────
+# ── 2. The validation-evidence gate (ported from run-loop.sh:1455-1500) ────────────────────────
 tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
 if govern::is_validation_ticket "$tblock"; then
   case "$(govern::validation_gate_action "$report")" in
     park-no-evidence)
-      echo "resolve-ticket #$N: VALIDATION ticket but the worker gave no live-test evidence (validation.ranLiveTest != true, or no evidence) — refusing to auto-resolve (#67 gate). Run the actual test and attach evidence, or confirm it cannot be automated and record a disposition. The PR (if any) is left open for review." >&2
-      rt_record_history parked "validation gate: no live-test evidence (#67)"
+      echo "resolve-ticket #$N: VALIDATION ticket but the worker gave no live-test evidence (validation.ranLiveTest != true, or no evidence): refusing to auto-resolve. Run the actual test and attach evidence, or confirm it cannot be automated and record a disposition. The PR (if any) is left open for review." >&2
+      rt_record_history parked "validation gate: no live-test evidence"
       exit 3
       ;;
     park-gate-failed)
-      echo "resolve-ticket #$N: VALIDATION ticket whose gate FAILED (validation.gatePassed == false) — refusing to auto-ship a measured-NEGATIVE result (#73 gate). Decide kill / ship-default-off / shelve / rework yourself; do not let a worker self-decide. The PR (if any) is left open for review." >&2
-      rt_record_history parked "validation gate: measured negative (#73)"
+      echo "resolve-ticket #$N: VALIDATION ticket whose gate FAILED (validation.gatePassed == false): refusing to auto-ship a measured-NEGATIVE result. Decide kill / ship-default-off / shelve / rework yourself; do not let a worker self-decide. The PR (if any) is left open for review." >&2
+      rt_record_history parked "validation gate: measured negative"
       exit 3
       ;;
   esac
 fi
 
-# ── 3. Await CI + merge every PR the report names (ported from run-loop.sh's per-PR merge walk,
-#    B1 steps 2-3). merge-pr.sh calls await-ci.sh internally — never reimplemented here. ────────
+# ── 3. Await CI + merge every PR the report names (ported from run-loop.sh's per-PR merge walk).
+#    merge-pr.sh calls await-ci.sh internally (never reimplemented here). ─────────────────────
 pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
 MERGE_REPO_MERGED=0
 if [[ "$NO_MERGE" -eq 1 ]]; then
   echo "resolve-ticket #$N: --no-merge — skipping CI/merge (operator already handled it), landing directly" >&2
   MERGE_REPO_MERGED=1
 elif [[ -n "$pr_lines" ]]; then
-  # Two DIFFERENT non-zero classes, exactly as the loop drew the line (#129, #autonomy):
+  # Two DIFFERENT non-zero classes, exactly as the loop drew the line:
   #   LEFT OPEN, still land, rc 2 (frontend/PR-only repo: a different account merges it) and
   #     rc 6 (GOVERN_AUTONOMY observe/pr-only: the governor opens PRs and does not merge them).
   #     Neither is a failure of the resolution: the work is done, the PR is deliberately not ours
@@ -240,7 +240,7 @@ elif [[ -n "$pr_lines" ]]; then
         govern::is_merge_repo "$_mrepo" && MERGE_REPO_MERGED=1
         ;;
       2)
-        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only) [#129], surfaced, not merged; merge it yourself when ready." >&2
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only), surfaced, not merged; merge it yourself when ready." >&2
         PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(frontend-left-open)"
         ;;
       6)
@@ -273,7 +273,7 @@ if [[ "$mneeded" == "true" && "$mdestr" != "true" && -n "$pr_lines" ]]; then
     govern::is_local_first_repo "$_lfr" || { _all_localfirst=0; break; }
   done <<< "$pr_lines"
   if [[ "$_all_localfirst" == "1" ]]; then
-    echo "resolve-ticket #$N: additive migration ships as auto-applying code on local-first repo(s) — no prod apply needed; proceeding as a normal resolve (#72)" >&2
+    echo "resolve-ticket #$N: additive migration ships as auto-applying code on local-first repo(s): no prod apply needed; proceeding as a normal resolve" >&2
     mneeded="false"
   fi
 fi
@@ -331,7 +331,7 @@ if [[ "${GOVERN_INDEX:-1}" != "0" ]]; then
   "$DIR/codebase-index.sh" build >/dev/null 2>&1 || true
 fi
 if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
-  # Never ASSUME the worktree is named ticket-$N (#127/G9) — the interactive lane is
+  # Never ASSUME the worktree is named ticket-$N: the interactive lane is
   # self-service (worker.md: `npm run worktree:new -- t<N>`, or any other slug for non-ticket
   # work) and does not share the headless lane's naming. Try the headless convention first, but
   # VERIFY it rather than assume it: worktree/rm.sh's ONLY early-exit is an unregistered name
@@ -357,7 +357,7 @@ if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
 fi
 
 # ── 7. Record the outcome (govern-health.sh's only input) ──────────────────────────────────────
-# #129: record EVERY PR with its disposition (merged / frontend-left-open / autonomy-left-open) so
+# Record EVERY PR with its disposition (merged / frontend-left-open / autonomy-left-open) so
 # nothing a multi-repo ticket opened is silently dropped from the history row.
 _rnote="${PR_DISPOSITIONS:-}"
 _rnote="${_rnote# }"

@@ -13,7 +13,7 @@ WS_ROOT="${GOVERN_WS_ROOT:-$(cd "$GOVERN_LIB_DIR/../../.." && pwd)}"
 # test override and is NOT polluted by an inherited META_ROOT from the environment (the governor
 # exports META_ROOT for its own run — without this pin, a hermetic test's seeded workspace.sh, which
 # defaults `META_ROOT="${META_ROOT:-$T}"`, would resolve repo localdirs against the outer workspace
-# and the merge-pr.sh #76 branch-cleanup backstop would silently no-op).
+# and the merge-pr.sh branch-cleanup backstop would silently no-op).
 export META_ROOT="$WS_ROOT"
 # shellcheck source=../../lib/workspace.sh
 source "$WS_ROOT/scripts/lib/workspace.sh"
@@ -34,7 +34,7 @@ PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
-# The interactive lane's subagent definition (#117). spawn-worker.sh reads its tool allow-list
+# The interactive lane's subagent definition. spawn-worker.sh reads its tool allow-list
 # out of this file instead of keeping a second hardcoded copy — see govern::worker_agent_field
 # below. Absent on a fleet scaffolded before this file shipped, or in a hermetic test's stub
 # workspace: callers must treat that as "fall back to your own default", never a hard failure.
@@ -52,16 +52,16 @@ EXTERNALIZED_FILE="${GOVERN_EXTERNALIZED_FILE:-$QUEUE_DIR/externalized.md}"
 # live tickets.md) and held for one operator approval before any public issue is filed — the governor
 # never auto-publishes. Same block format as tickets.md; the governor never SELECTS work from it.
 EXTERNALIZE_REVIEW_FILE="${GOVERN_EXTERNALIZE_REVIEW_FILE:-$QUEUE_DIR/tickets-externalize-review.md}"
-# Manual-only defer queue the governor NEVER selects from (#62: a terminal-disposition escalation
+# Manual-only defer queue the governor NEVER selects from (a terminal-disposition escalation
 # answer auto-migrates a ticket here so tickets.md stays the live govern-workable set).
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"
-# Driver→relay escalation hand-off (#62) — regenerated every run-end, gitignored runtime state.
+# Driver→relay escalation hand-off — regenerated every run-end, gitignored runtime state.
 PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
-# Cross-run wait-for-merge / dependency deferrals (#119). Persists supervisor "defer #N until PR #M
-# merges" advice (in-memory skipThisRun #57 evaporated at run-end) so a blocked ticket stays skipped
+# Cross-run wait-for-merge / dependency deferrals. Persists supervisor "defer #N until PR #M
+# merges" advice (an in-memory skipThisRun evaporated at run-end) so a blocked ticket stays skipped
 # across runs until its blocker lands. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
 PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.json}"
-# Cross-run per-ticket outcome ledger (#60), one JSON object per attempt. Per-machine runtime state
+# Cross-run per-ticket outcome ledger, one JSON object per attempt. Per-machine runtime state
 # — gitignored. Defined here (not just for one caller) because spawn-worker's retry classifier
 # (retry-class), pre-dispatch-check.sh and resolve-ticket.sh all read/write the SAME file.
 TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
@@ -292,7 +292,7 @@ govern::emit_lever_event() { # <event> <ticket> <session> <tier> [k=v ...]
   return 0
 }
 
-# Per-ticket worker-log directory (#75). RUN-SCOPED when a caller exports GOVERN_RUN_DIR
+# Per-ticket worker-log directory. RUN-SCOPED when a caller exports GOVERN_RUN_DIR
 # (= $LOG_ROOT/run-<ts>), so a re-run of ticket N writes to a fresh run-<ts>/ticket-N/ and can
 # NEVER read a PRIOR run's stale worker.jsonl. Falls back to the legacy flat $LOG_ROOT/ticket-N/
 # only for a standalone spawn-worker invocation (tests / manual) where no run is in scope.
@@ -305,7 +305,7 @@ govern::worker_logdir() { # ticket -> dir
 # node_modules / .next / dist are gitignored + regenerable, never uncommitted work, so stripping
 # them frees the bulk of a bootstrapped worktree while keeping the source checkout + any diffs for
 # inspection/resume. This is what stops a fleet from self-bricking: a handful of parks no longer
-# fills the disk (#48). Moved here from run-loop.sh's slim_worktree() when the loop was deleted:
+# fills the disk. Moved here from run-loop.sh's slim_worktree() when the loop was deleted:
 # the caller that PRESERVES a worktree is spawn-worker.sh, so the slim belongs beside it.
 # Skipped in dry mode and when a worktree-cmd override is set (tests).
 govern::slim_worktree() { # <ticket> [worktree-path]
@@ -321,7 +321,7 @@ govern::slim_worktree() { # <ticket> [worktree-path]
   return 0
 }
 
-# Stamps a run dir with the workspace's synced hub version (#107), so bench/replay.mjs can scope
+# Stamps a run dir with the workspace's synced hub version, so bench/replay.mjs can scope
 # its default corpus to the sessions that ran under the CURRENT harness instead of blending every
 # version a workspace has ever run: no transcript event carries the shiploop package version.
 # Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
@@ -383,7 +383,7 @@ for _r in "${REPOS[@]}"; do
 done
 unset _r
 
-# #272: repos that represent SELF-REFERENTIAL governor/harness work (the #115 churn class — a run
+# repos that represent SELF-REFERENTIAL governor/harness work (the churn class — a run
 # where most of the tickets were "port into templates" / harness self-improvement with near-zero
 # PRODUCT value) rather than shipped product value. A resolved ticket whose PR(s) ALL target these
 # repos is scored as "self-referential churn" by the ROI health summary (govern-health.sh). By
@@ -432,7 +432,7 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
   printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
 }
 
-# ── Interactive-worker agent-definition reader (#117) ───────────────────────────────────────────
+# ── Interactive-worker agent-definition reader ───────────────────────────────────────────
 # The headless launcher (spawn-worker.sh) and the interactive lane (.claude/agents/worker.md) run
 # one capability posture, and worker.md is now the declared source for the parts that live in its
 # frontmatter (currently: tools). This reads a single flat `key: value` frontmatter line out of
@@ -450,7 +450,7 @@ govern::worker_agent_field() { # <field-name> -> the field's value, rc 1 if unre
   printf '%s\n' "$val"
 }
 
-# ── Gotcha injection (rail 9 / #118) ────────────────────────────────────────────────────────────
+# ── Gotcha injection ────────────────────────────────────────────────────────────
 # A worker's cwd at session start is the META-repo worktree root, so Claude Code's project-memory
 # auto-load only ever picks up the ROOT CLAUDE.md — a sub-repo's own CLAUDE.md two directories down
 # is never auto-loaded, and worker-prompt.md's "read the sub-repo CLAUDE.md" line is a pointer the
@@ -511,8 +511,7 @@ govern::gotchas_in_file() { # <file> <max-entries> <path> [path…] -> matched "
 # govern::gotcha_block <repo/path> [<repo/path> ...] -> the "## Recorded gotchas ..." markdown
 # block for **Paths:**-tagged CLAUDE.md/learnings.md entries matching those <repo>/<path> tokens
 # (root files' entries as-is; each named repo's OWN CLAUDE.md/learnings.md, repo-relative), or
-# nothing if none match. THE single implementation for BOTH worker lanes (#125, closing rail 9's
-# headless-only half left by #118/#174): spawn-worker.sh extracts <repo>/<path> candidates from a
+# nothing if none match. THE single implementation for BOTH worker lanes: spawn-worker.sh extracts <repo>/<path> candidates from a
 # ticket's block text and calls this; the interactive lane has no launcher to inject anything FOR
 # it, so its gotchas-for-paths.sh wrapper calls this directly on the paths a worker names before it
 # starts editing — same function, same output, for the same candidate shape. Honors
@@ -571,7 +570,7 @@ $out"
   return 0
 }
 
-# Fail CLOSED if a commit dir didn't resolve to a real git work-tree (#28). A commit dir is derived as
+# Fail CLOSED if a commit dir didn't resolve to a real git work-tree. A commit dir is derived as
 # `$(cd "$(dirname "$TICKETS_FILE")" && pwd)`; when that directory is MISSING the substitution yields an
 # EMPTY string, and a later `cd "$commit_dir"` becomes `cd ""` — a no-op that leaves git running against
 # the CURRENT working directory, so land-resolution.sh could commit/push into the WRONG repo. Call this right after
@@ -579,10 +578,10 @@ $out"
 govern::assert_commit_dir() { # <dir>
   local d="${1:-}"
   [[ -n "$d" ]] && git -C "$d" rev-parse --show-toplevel >/dev/null 2>&1 \
-    || govern::die "refusing to commit: '$d' is not a git work-tree (TICKETS_FILE='$TICKETS_FILE' — its dir missing?). A bare cd here would hit the CURRENT repo (#28)."
+    || govern::die "refusing to commit: '$d' is not a git work-tree (TICKETS_FILE='$TICKETS_FILE' — its dir missing?). A bare cd here would hit the CURRENT repo."
 }
 
-# ── escalation lifecycle (#62) ──────────────────────────────────────────────
+# ── escalation lifecycle ──────────────────────────────────────────────
 # Parse the entries under "## Open" in escalations.md into NDJSON (one object per
 # line) so the emit/apply scripts share ONE deterministic parser instead of each
 # re-implementing markdown parsing. Fields are read line-oriented (each `- **X:**`
@@ -592,7 +591,7 @@ govern::assert_commit_dir() { # <dir>
 govern::escalations_open_ndjson() { # [escalations-file]
   local file="${1:-$ESCALATIONS_FILE}"
   [[ -f "$file" ]] || return 0
-  # #331: a NEW entry heading requires the `— ` title separator every writer emits (file_open_escalation
+  # a NEW entry heading requires the `— ` title separator every writer emits (file_open_escalation
   # and every other writer both print `### #N — <title>`). A bare `### #42` ref an operator pastes into
   # a multi-line Reason/Answer body therefore is NOT mistaken for a new entry. Then validate each emitted
   # object with jq before it reaches any caller, so a jesc-escaping regression can't silently ship
@@ -632,7 +631,7 @@ govern::escalations_open_ndjson() { # [escalations-file]
 
 # Pass through only lines that parse as one JSON object; warn + drop anything malformed. jq is already a
 # hard dependency of every escalations_open_ndjson consumer, but degrade safe if it's somehow absent
-# (pass the raw stream through) rather than blanking every entry. #331.
+# (pass the raw stream through) rather than blanking every entry.
 govern::_ndjson_validate() {
   if ! command -v jq >/dev/null 2>&1; then cat; return 0; fi
   local line
@@ -658,7 +657,7 @@ govern::is_placeholder() { # value
   return 1
 }
 
-# Does escalations.md already carry an OPEN `### #N` escalation for ticket $1? Used to make the #120
+# Does escalations.md already carry an OPEN `### #N` escalation for ticket $1? Used to make the
 # permanent-park nudge ONE-TIME: while a prior recommendation still sits under "## Open" awaiting the
 # operator (or was kept open), don't re-file it. Returns 0 if an open entry exists, 1 otherwise.
 govern::has_open_escalation() { # ticket -> 0 if an open ### #N entry exists
@@ -699,7 +698,7 @@ govern::file_open_escalation() { # N title reason question options [kind] [disp-
   blk="$(mktemp)"
   kindline=""; [[ -n "$kind" ]] && kindline="- **Kind:** $kind"$'\n'
   [[ -n "$disphint" ]] || disphint="operator: do-the-work | defer | mitigated | keep-open"
-  # #312: stamp `Opened` (date; run id if the caller exported one) so govern-health.sh can age it.
+  # stamp `Opened` (date; run id if the caller exported one) so govern-health.sh can age it.
   printf '\n### #%s — %s\n- **Opened:** %s%s\n%s- **Reason:** %s\n- **Question:** %s\n- **Options:** %s\n- **Answer:** _(operator)_\n- **Disposition:** _(%s)_\n- **Make this a rule?:** _(operator)_\n' \
     "$N" "$title" "$(date +%F)" "${TJ_RUN_ID:+ (run $TJ_RUN_ID)}" "$kindline" "$reason" "$question" "$options" "$disphint" > "$blk"
   if grep -q '^## Open' "$ESCALATIONS_FILE" 2>/dev/null; then
@@ -710,7 +709,7 @@ govern::file_open_escalation() { # N title reason question options [kind] [disp-
     cat "$blk" >> "$ESCALATIONS_FILE" 2>/dev/null || true
   fi
   rm -f "$blk"
-  # #14: an escalations.md writer must COMMIT its append SAME-STEP — an uncommitted tracked
+  # an escalations.md writer must COMMIT its append SAME-STEP — an uncommitted tracked
   # escalations.md makes the NEXT run's preflight `git pull --rebase` abort on a dirty tree, which the
   # governor misreports as a rebase conflict and self-blocks its own start (the recurring-orphan class).
   # commit_meta_to_main is scoped to escalations.md, CAS/rebase-safe, push-guarded, and a no-op outside
@@ -718,7 +717,7 @@ govern::file_open_escalation() { # N title reason question options [kind] [disp-
   govern::_commit_escalations "file escalation #$N ($title)"
 }
 
-# Commit ONLY escalations.md to main via the CAS-safe path (#14). Derives the repo root + repo-relative
+# Commit ONLY escalations.md to main via the CAS-safe path. Derives the repo root + repo-relative
 # path from $ESCALATIONS_FILE so it works whether escalations.md sits at governor/ (production) or an
 # override dir (tests). No-op (returns 0) outside a git repo. Shared by every escalations.md writer.
 govern::_commit_escalations() { # <commit-subject-tail>
@@ -734,7 +733,7 @@ govern::_commit_escalations() { # <commit-subject-tail>
 # word, before any explanatory parenthetical (`_(...)_` or `(...)`). The disposition is
 # ANCHORED to this leading token so a clarifying parenthetical that names another canonical
 # token (e.g. `keep-open _(deliberately NOT do-the-work)_`, `defer (not do-the-work)`) is
-# NOT misclassified by norm_disposition's anywhere-in-string match (#87). Returns "" if blank.
+# NOT misclassified by norm_disposition's anywhere-in-string match. Returns "" if blank.
 govern::disposition_lead_token() { # raw -> leading token (may be "")
   local d="$1"
   d="${d#"${d%%[![:space:]]*}"}"   # strip leading whitespace
@@ -751,8 +750,8 @@ govern::disposition_lead_token() { # raw -> leading token (may be "")
 # tokens never fall through. Tolerant of
 # operator hand-edits / synonyms; the relay writes the canonical token directly.
 # NOTE: this matches a canonical token ANYWHERE in the input — so when classifying a
-# structured Disposition FIELD, anchor first via govern::disposition_lead_token (#87).
-# `mitigated` (#121): the situation is already acceptable / harm is zero — close the ticket as
+# structured Disposition FIELD, anchor first via govern::disposition_lead_token.
+# `mitigated`: the situation is already acceptable / harm is zero — close the ticket as
 # accepted-current-state. Mechanically like `defer` (leaves the live queue) but NOT parked as
 # still-todo; the apply step removes the block from tickets.md and resolves the escalation with a
 # "resolved — mitigated" note (see escalations-apply-answers.sh). Matched BEFORE defer so its
@@ -778,7 +777,7 @@ govern::norm_disposition() { # raw -> canonical|""
   esac
 }
 
-# ── concurrency primitives (#41: safe parallel govern drivers on disjoint tickets) ──
+# ── concurrency primitives (safe parallel govern drivers on disjoint tickets) ──
 # mkdir is atomic on POSIX, so an empty dir is a portable mutex. The holder pid is recorded
 # INSIDE the lock dir so stale reclaim is PID-liveness-aware: a lock whose holder is still
 # alive is NEVER stolen, even if its mtime clock-ages past the stale window (a genuine ticket
@@ -866,7 +865,7 @@ govern::lock_try() { # lockdir [stale_s=18000]
 # Release: rm -rf (not rmdir) because the lock now holds a `holder` file.
 govern::lock_release() { rm -rf "$1" 2>/dev/null || true; }
 
-# ── Worker process-tree teardown (#242) ─────────────────────────────────────
+# ── Worker process-tree teardown ─────────────────────────────────────
 # Killing the governor (Stop / SIGTERM) used to leave its spawn-worker.sh + child worker process
 # (and any grandchildren it spawned) ALIVE — reparented to init, needing a manual `kill -9` sweep; a
 # worker orphaned mid-task can keep a billable resource alive. The fix has two layers, both wired here:
@@ -917,7 +916,7 @@ govern::otel_attrs() { # <instance-label> -> "k=v,k=v,..."
   printf '%s' "$attrs"
 }
 
-# ── monotonic ticket numbering (#54, #73) ───────────────────────────────────
+# ── monotonic ticket numbering ───────────────────────────────────
 # THE single source of truth for "what's the next tickets.md number". Both the governor's
 # auto-filing (land-resolution.sh) AND any manual filing (operator/relay sessions, /resolve sweeps,
 # scripts/govern/file-ticket.sh) MUST route through here so a number is never silently reused.
@@ -932,8 +931,8 @@ govern::ticket_filemax() { # [tickets-file] -> N
 
 # govern::next_ticket_number — allocate the next number: max(highest `## #N` in tickets.md,
 # persisted high-water mark in governor/.ticket-seq) + 1, then bump .ticket-seq to it. A number is
-# therefore NEVER reused — not after the highest ticket is resolved+deleted (#54), and not by a
-# manual filing that never read/bumped the seq (#73). The read+bump is serialized under the bookkeep
+# therefore NEVER reused — not after the highest ticket is resolved+deleted, and not by a
+# manual filing that never read/bumped the seq. The read+bump is serialized under the bookkeep
 # lock so two concurrent filers (a govern driver and an operator sweep) can't read the same max and
 # collide on one number. Reentrant: a caller already holding the bookkeep lock (land-resolution.sh
 # does) sets GOVERN_BOOKKEEP_LOCK_HELD=1 to skip re-acquiring (the mkdir mutex is NOT reentrant — a
@@ -966,7 +965,7 @@ govern::next_ticket_number() { # [tickets-file] -> N
   printf '%s\n' "$maxn"
 }
 
-# govern::duplicate_ticket_headings — cheap collision detector (#73): print each ticket number that
+# govern::duplicate_ticket_headings — cheap collision detector: print each ticket number that
 # appears more than once as a `## #N` heading in the file (with its count), one per line. Returns 0
 # (silent) when clean, 1 when any duplicate exists. The Stop hook / lint-tickets.sh treat a non-zero
 # return as a fault to surface immediately. Scans ONE file (see ticket_filemax).
@@ -982,7 +981,7 @@ govern::duplicate_ticket_headings() { # [tickets-file]
   return 1
 }
 
-# ── not-govern-automatable markers (#92) ────────────────────────────────────
+# ── not-govern-automatable markers ────────────────────────────────────
 # A ticket whose BODY carries a bold "not govern-automatable" marker
 # (**NOT govern-automatable…**, **requires web-UI…**, **handle interactively…**) cannot be
 # resolved by a headless CLI worker — selecting it just burns a worker / fast-fails every run
@@ -1019,11 +1018,10 @@ govern::ticket_block() { # N [tickets-file]
   ' "$f"
 }
 
-# ── the dispatch contract carries a proposed solution (.specs/2026-09-11-advisor-worker-design.md
-# D2, queue #130's full text recoverable at `git show 912e4be:queue/tickets.md`) ──────────────────
+# ── the dispatch contract carries a proposed solution ───────────────────────────────────────────
 # The advisor decides what the change is BEFORE dispatching a worker, and records that decision IN
 # THE TICKET rather than in a spawn prompt only pre-dispatch-check.sh can't see. One implementation,
-# the same section-bounded shape govern::gotchas_in_file (#176/#125) already uses for a CLAUDE.md
+# the same section-bounded shape govern::gotchas_in_file already uses for a CLAUDE.md
 # entry: a marker line opens the section, capture continues until the NEXT bold `**Field:**` marker
 # (or the end of the ticket block), never a blank line — a real proposal is routinely more than one
 # paragraph, so bounding on blank lines the way the single-line Model:/Effort:/Flow: latch does in
@@ -1061,11 +1059,11 @@ govern::ticket_proposal() { # N [tickets-file] -> **Proposed solution:** body, "
   printf '%s\n' "$raw"
 }
 
-# govern::ticket_precision — the sibling D6 adds: the **Precision:** line the advisor writes
+# govern::ticket_precision — the sibling field: the **Precision:** line the advisor writes
 # adjacent to **Proposed solution:**, one of stated|scoped|open (case-insensitive on input, always
 # lowercase out). A missing or unrecognised value (including the filing-time placeholder, which
 # starts with an underscore and so never matches the bare-word capture) prints nothing — callers
-# resolve that to "scoped" themselves (D6: absence must never silently buy the cheapest grade).
+# resolve that to "scoped" themselves: absence must never silently buy the cheapest grade.
 govern::ticket_precision() { # N [tickets-file] -> stated|scoped|open, "" if absent/unrecognized
   local n="$1" f="${2:-$TICKETS_FILE}"
   local block; block="$(govern::ticket_block "$n" "$f")"
@@ -1159,7 +1157,7 @@ govern::pr_spec_files() { # slug pr -> offending paths
 
 # ── externalization lane: Low-severity OSS-repo tickets → public GitHub Issues ───────────────────
 # Print one bare ticket number per OPEN ticket eligible for externalization. Eligibility is PRINCIPLED,
-# not just (Low + Where-mentions-target) — a Low ticket qualifies ONLY when ALL hold (#75):
+# not just (Low + Where-mentions-target) — a Low ticket qualifies ONLY when ALL hold:
 #   1. **Severity:** Low, AND
 #   2. its **Where:** references the OSS sub-repo (GOVERN_EXTERNALIZE_SUBREPO), AND
 #   3. its Where does NOT target the HARNESS (scripts/ governor/ queue/ workspace.sh meta-repo harness) —
@@ -1216,7 +1214,7 @@ govern::externalize_candidates() { # [tickets-file] -> eligible ticket numbers, 
   ' "$f"
 }
 
-# ── externalization: label-apply permission rejection (#26) ──────────────────
+# ── externalization: label-apply permission rejection ──────────────────
 # `gh issue create --label …` is a COMPOSITE op: it creates the issue (URL on stdout, exit 0) and
 # THEN applies the labels in a separate GraphQL `addLabelsToLabelable` mutation. When the authed gh
 # account has only `pull` on the repo (no triage/push), GitHub CREATES the issue but REJECTS the
@@ -1293,7 +1291,7 @@ govern::out_of_scope_tickets() { # [tickets-file] -> "N\twhere" lines
   ' "$f"
 }
 
-# ── lesson placement gate (#83 Part 1) ───────────────────────────────────────
+# ── lesson placement gate ────────────────────────────────────────────────────
 # Root CLAUDE.md is re-sent on EVERY turn of every session; a lessonPatch whose subject is really ONE
 # sub-repo's internals (not a cross-cutting harness/workspace rule) permanently taxes every session,
 # including ones that never touch that sub-repo. worker-prompt.md already TELLS workers to file such
@@ -1314,7 +1312,7 @@ govern::out_of_scope_tickets() { # [tickets-file] -> "N\twhere" lines
 #      the harness and that sub-repo interact, not a pure sub-repo-internal fact.
 # Every other case (zero path signals, 2+ repos referenced, or a cross-cutting word) stays at root.
 # Pure function — prints "<repo>\t<reason>" (redirect) or "\t<reason>" (stay at root); always exit 0.
-# The caller (land-resolution.sh) logs the reason either way, so every decision is auditable (#83).
+# The caller (land-resolution.sh) logs the reason either way, so every decision is auditable.
 GOVERN_LESSON_CROSSCUT_RE='(^|[^A-Za-z0-9_-])(meta-repo|root claude\.md|governor|workspace\.sh|claude\.md|queue/tickets\.md|cross-repo|harness)([^A-Za-z0-9_-]|$)'
 govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
   local text="$1" r
@@ -1390,15 +1388,15 @@ govern::subrepo_default_branch() { # <dir> -> branch name
   printf 'main'
 }
 
-# ── validation gate decision (#67 + #73) ─────────────────────────────────────
+# ── validation gate decision ─────────────────────────────────────────────────
 # Given a worker's resolved report for a VALIDATION-type ticket, decide the gate action. Pure — no
 # side effects; the caller applies it. Prints exactly one of:
-#   park-no-evidence — the live test was NOT run (ranLiveTest!=true or empty evidence)  [#67]
+#   park-no-evidence — the live test was NOT run (ranLiveTest!=true or empty evidence)
 #   park-gate-failed — the test RAN but its OWN gate FAILED (gatePassed==false, a measured negative);
-#                      the ship-vs-kill disposition is the operator's, not the worker's              [#73]
+#                      the ship-vs-kill disposition is the operator's, not the worker's
 #   resolve          — gate passed, or no explicit gate (gatePassed absent → "unknown" → auto-resolve)
 # NB: jq's `//` treats false as null, so `.gatePassed // "unknown"` would MISREAD a failed gate as
-# "unknown"; we branch on the boolean explicitly. Absent gatePassed ⇒ "unknown" ⇒ resolve, so pre-#73
+# "unknown"; we branch on the boolean explicitly. Absent gatePassed ⇒ "unknown" ⇒ resolve, so older
 # workers and non-gated validations are unaffected.
 govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate-failed | resolve
   local report="$1" ranlive eviden gatepass
@@ -1410,7 +1408,7 @@ govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate
   else echo "resolve"; fi
 }
 
-# ── "is this a validation ticket?" — the recognizer behind the #67/#73 gate ──
+# ── "is this a validation ticket?" — the recognizer behind that gate ────────
 # MUST stay in sync with the four tells worker-prompt.md gives the worker ("Validation / test /
 # 'does X actually work' tickets"). It previously drifted: an inline grep at the old call site matched
 # only tells 1-2 and the "live-verif" half of tell 3, so a ticket like
@@ -1418,7 +1416,7 @@ govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate
 #   **Done when:** a PASS/FAIL table from an actual run against the sandbox
 # was treated as validation-required BY THE WORKER (its prompt lists exactly those tells) while the
 # governor's safety net did not recognise it at all. A worker resolving that off static analysis
-# sailed through the very gate #67/#73 exist to enforce — a silent fail-OPEN, the one direction this
+# sailed through the very gate this exists to enforce — a silent fail-OPEN, the one direction this
 # gate must never fail. Extracted here so prompt and enforcement have a single place to drift from.
 #
 # Deliberately fail-CLOSED: a false positive parks a ticket and asks a human (recoverable, noisy);
@@ -1493,19 +1491,18 @@ govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this 
   return 0
 }
 
-# ── precision grade (design: .specs/2026-09-09-model-orchestration-design.md, Layer 2; tier
-# corrected by .specs/2026-09-11-advisor-worker-design.md D5) ────────────────────────────────────
+# ── precision grade ─────────────────────────────────────────────────────────────────────────────
 # "Tier is chosen by how well-specified the work is, not by how hard it looks." `govern::warm_assertion`
 # above already implements the top of that scale (a parent that STATED the change gets the
-# execute-only shortcut, sonnet per D5, never haiku), but it was still a single binary (warm or not)
-# with nothing between "fully specified" and "ordinary dispatch". This generalises it into the
-# design's three grades:
+# execute-only shortcut at sonnet, never haiku), but it was still a single binary (warm or not)
+# with nothing between "fully specified" and "ordinary dispatch". This generalises it into three
+# grades:
 #   stated: parent stated the change; GOVERN_WARM already covers this, unchanged, below.
 #   scoped: intent clear, files named or trivially locatable. The ORDINARY case; nothing to assert.
 #   open: requires discovery of where and what. Same tier as scoped today (sonnet, since the advisor
-#         budget half of "open" is layer 3, not built), but the grade is still worth RECORDING so a
-#         later advisor mechanism has something to key on and rail 11 has a precision grade to
-#         attach to the dispatch record at all.
+#         budget half of "open" is not built), but the grade is still worth RECORDING so a later
+#         advisor mechanism has something to key on, and so the dispatch record carries a precision
+#         grade at all.
 # Same shape as warm_assertion on purpose: explicit, per-invocation (so it cannot rot in the queue the
 # way a ticket field does, see the "THE TICKET's Model:/Effort: FIELDS DO NOT PARTICIPATE" note in
 # spawn-worker.sh for why filing-time fields are the wrong place for a dispatch-time decision), and
@@ -1538,32 +1535,31 @@ govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion co
 # ── advisor consult ──────────────────────────────────────────────────────────────────────────────
 # A sonnet worker that reaches a decision it cannot make asks the advisor session that wrote its
 # proposal, receives an answer, and continues at sonnet. The budget for asking is script-owned, so
-# the cap is a mechanism rather than prompt text. Same shape as govern::gotcha_block (#125/#176):
+# the cap is a mechanism rather than prompt text. Same shape as govern::gotcha_block:
 # THE one implementation, reached through a thin CLI wrapper (advisor-consult.sh). A launcher can
 # inject the gotchas block IN ADVANCE because it is static text known before dispatch; a consult is
 # a LIVE decision only the running worker can make mid-session, so there is nothing for a launcher
 # to precompute here: the worker calls `advisor-consult.sh` itself, at the moment it needs it. spawn-worker.sh's only role is exporting GOVERN_ADVISOR_BUDGET from the ticket's
-# precision grade (Layer 2) before the live spawn, so the grade-appropriate cap is already in the
+# precision grade before the live spawn, so the grade-appropriate cap is already in the
 # headless child's environment when it calls this; an interactive worker has no grade at all, so
 # govern::advisor_claim falls back to the plain GOVERN_ADVISOR_PER_WORKER default in that case
 # rather than being permanently zero-budgeted.
 #
-# Bounded by construction (rail 4): GOVERN_ADVISOR=0 is the kill switch, default OFF everywhere
+# Bounded by construction: GOVERN_ADVISOR=0 is the kill switch, default OFF everywhere
 # (test/assert.sh pins it explicitly, matching GOVERN_GOTCHA_INJECT's own idiom): with it off,
 # `claim` denies immediately and writes NOTHING, a true no-op. Two independent numeric caps: per
 # WORKER (this ticket's own flat ledger, so it accumulates across retries rather than resetting) and
 # per SESSION (every ticket sharing one CLAUDE_CODE_SESSION_ID; the case that matters in practice is
 # the interactive lane, where one human session can dispatch many worker subagents across many
 # tickets; a headless dispatch is its own standalone `claude -p` process now that the run-loop
-# grouping several tickets under one session is retired (#108), so a session key that never repeats
+# grouping several tickets under one session is retired, so a session key that never repeats
 # collapses this to the per-worker cap on its own). A missing session key degrades to the per-worker
 # cap LOUDLY (govern::log), never silently unbounded. A missing/absent ledger file means ZERO
 # consults used so far, never a denial: "no evidence" is not "no budget".
 #
 # The flat ledger path ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped) is deliberate: unlike
-# attempts.jsonl, which IS run-scoped via govern::worker_logdir, GOVERN_RUN_DIR is gone with the loop
-# (#108's 2026-09-09 update), so there is no run to scope this ledger under even for a caller that
-# still sets it.
+# attempts.jsonl, which IS run-scoped via govern::worker_logdir, nothing sets GOVERN_RUN_DIR any
+# more, so there is no run to scope this ledger under even for a caller that still sets it.
 govern::advisor_ledger_path() { # <N> -> the flat advisor.jsonl path for this ticket (dir mkdir -p'd)
   local n="${1:?ticket number required}"
   local dir="$LOG_ROOT/ticket-$n"
@@ -1699,11 +1695,11 @@ govern::not_automatable_tickets() { # [tickets-file] -> "N\treason" lines
 }
 
 # govern::sync_port_collision_tickets — tickets that touch a file with an OPEN
-# sync-port manual-port escalation (#314). Each open `sync-port:` escalation carries a
+# sync-port manual-port escalation. Each open `sync-port:` escalation carries a
 # structured `- **Files:** <space-separated live paths>` line (written by sync-port.sh's
 # file_sync_escalation) naming the harness files whose port is mid-flight on a `sync-auto-*`
 # branch. Selecting a ticket that edits one of those exact paths THIS run risks colliding
-# with that in-progress manual port (the #309 sync-port-branch collision the supervisor
+# with that in-progress manual port (the sync-port-branch collision the supervisor
 # caught only by reading both by hand). Exclude such a ticket the same way
 # not_automatable_tickets() does — it stays in tickets.md and becomes selectable again the
 # moment the sync-port escalation resolves (branch merged, entry moves out of `## Open`).
@@ -1744,8 +1740,8 @@ govern::sync_port_collision_tickets() { # [tickets-file] [escalations-file] -> "
   ' "$ef" "$tf"
 }
 
-# ── chronically-skipped NA tickets → permanent-disposition nudge (#120) ──────
-# The #92 selector auto-skips a "NOT govern-automatable" ticket every run — correct, but on its own
+# ── chronically-skipped NA tickets → permanent-disposition nudge ──────
+# The selector auto-skips a "NOT govern-automatable" ticket every run — correct, but on its own
 # the ticket churns a skip note forever and never leaves the live queue. We persist a per-ticket
 # count of CONSECUTIVE runs each NA ticket is auto-skipped so the loop can, after K runs, file ONE
 # escalation recommending the operator escalate+defer it permanently (migrate to tickets-parked.md),
@@ -2081,7 +2077,7 @@ govern::_run_with_manual_timeout() { # <secs> <cmd...>
   return "$rc"
 }
 
-# ── Real-vs-stub claude_bin guard (#57) ──────────────────────────────────────────────────────────
+# ── Real-vs-stub claude_bin guard ──────────────────────────────────────────────────────────
 # 227+ files (re-verified as ~529) under the workspace's logs/govern/run-*/ticket-*/worker*.jsonl
 # turned out to be test-fixture output, not real worker sessions: an ad-hoc manual repro wired a
 # fake `claude` onto PATH/GOVERN_CLAUDE_BIN to poke at the harness by hand, without also exporting
@@ -2118,7 +2114,7 @@ govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecogni
 # normal production spawn is untouched (no override, but a real claude_bin passes the probe
 # above); a hermetic test is untouched (mk_ws_stub always exports GOVERN_WS_ROOT, and every
 # non-mk_ws_stub test that actually spawns exports GOVERN_LOG_ROOT). Only the exact ad-hoc
-# combination that caused #57 — real-tree resolution plus a fixture/stub binary — is refused, and
+# the dangerous combination — real-tree resolution plus a fixture/stub binary — is refused, and
 # only unless the caller opts in with GOVERN_ALLOW_REAL_LOG_WRITE=1.
 govern::guard_real_log_write() { # <claude_bin>
   local bin="$1"
@@ -2126,7 +2122,7 @@ govern::guard_real_log_write() { # <claude_bin>
   [[ -n "${GOVERN_LOG_ROOT:-}" ]] && return 0
   [[ "${GOVERN_ALLOW_REAL_LOG_WRITE:-0}" == "1" ]] && return 0
   govern::claude_bin_is_real "$bin" && return 0
-  govern::die "refusing to write worker logs under the real log root ($LOG_ROOT): claude_bin ($bin) does not look like the real Claude Code CLI, and this is exactly how #57's fixture pollution happened. Export GOVERN_WS_ROOT or GOVERN_LOG_ROOT to a scratch dir for a manual/test repro, or set GOVERN_ALLOW_REAL_LOG_WRITE=1 to proceed anyway."
+  govern::die "refusing to write worker logs under the real log root ($LOG_ROOT): claude_bin ($bin) does not look like the real Claude Code CLI, and this is exactly how fixture pollution happened. Export GOVERN_WS_ROOT or GOVERN_LOG_ROOT to a scratch dir for a manual/test repro, or set GOVERN_ALLOW_REAL_LOG_WRITE=1 to proceed anyway."
 }
 
 # The branch name a worker should use for ticket N on a given repo: neutral `sl-<hex>` on a PUBLIC
@@ -2187,7 +2183,7 @@ govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; r
 }
 
 # Find an already-open PR for ticket $1. The standard head is "ticket-<N>" (worktree:new), but a
-# worker may have named its branch e.g. "fix/ticket-<N>-..." (#55) — so we match an exact
+# worker may have named its branch e.g. "fix/ticket-<N>-..." — so we match an exact
 # "ticket-<N>" head FIRST, then fall back to ANY open-PR head CONTAINING "ticket-<N>" at a digit
 # boundary (so "ticket-12" never matches "ticket-120"). Prints "repo number url" if found — lets a
 # re-run resume instead of opening a duplicate PR, AND lets a same-run worker that opened a PR but
@@ -2217,7 +2213,7 @@ govern::find_pr() {
   # the sub-repo allowlist above never includes the meta-repo/harness remote itself, so a
   # HARNESS-scope ticket's PR (pushed to the meta-repo's own origin, or to
   # GOVERN_UPSTREAM_HARNESS_REPO) was invisible here — this feeds BOTH the pre-spawn resume check
-  # (the old loop's "found existing PR, resuming" check) and the #55 same-dispatch adoption net, so a
+  # (the old loop's "found existing PR, resuming" check) and the same-dispatch adoption net, so a
   # crashed-and-resumed (or malformed-report) harness worker got silently re-spawned or recorded
   # failed despite a clean, already-open PR. Fall back to the harness slug(s) directly.
   local slug
@@ -2245,7 +2241,7 @@ govern::_repos_merge_first() {
   for r in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do printf '%s\n' "$r"; done
 }
 
-# #129: like find_pr, but enumerate EVERY open PR whose head matches ticket-<N> across ALL repos
+# like find_pr, but enumerate EVERY open PR whose head matches ticket-<N> across ALL repos
 # (merge + frontend) — not just the first. A worker for a multi-repo ticket may open N PRs; find_pr
 # returned only the first repo's, so the siblings were orphaned unmerged. Prints one
 # "repo<TAB>number<TAB>url" line per matching open PR, in merge-then-frontend order (backend-first,
@@ -2264,7 +2260,7 @@ govern::find_all_prs() {
   done < <(govern::_repos_merge_first)
 }
 
-# #129: the FULL, deduped, backend-first PR set for ticket $1 — the worker-reported PR(s) in the
+# the FULL, deduped, backend-first PR set for ticket $1 — the worker-reported PR(s) in the
 # report JSON $2 (the single `.pr` PLUS the multi-PR `.prs[]` array) UNION every open ticket-<N>
 # head discovered across all repos. Deduped by repo#number (first occurrence wins, preserving its
 # url) and emitted in merge-then-frontend order so the live backend always merges before any
@@ -2305,7 +2301,7 @@ govern::collect_ticket_prs() {
   return 0
 }
 
-# #120: resolve which configured repo owns OPEN PR number $1, for a worker report that gave a
+# resolve which configured repo owns OPEN PR number $1, for a worker report that gave a
 # bare integer with no repo. If the merge-first candidate set (GOVERN_MERGE_REPOS +
 # GOVERN_FRONTEND_REPOS, i.e. every REPOS entry) has exactly ONE repo total, that repo IS the
 # answer — no `gh` call needed, and a bad number still fails safely later (merge-pr.sh/await-ci.sh
@@ -2313,7 +2309,7 @@ govern::collect_ticket_prs() {
 # which repo actually has PR $1 open, merge-first then harness slugs, first OPEN match wins.
 # Prints "repo url" (repo = short REPOS name, or bare slug for a harness repo) on success; empty +
 # rc 1 if `gh` is unavailable or no configured repo has it open — the caller must treat that as
-# UNRESOLVABLE, never as "no PR" (#120).
+# UNRESOLVABLE, never as "no PR".
 govern::resolve_pr_repo() { # <pr-number> -> "repo url"
   local num="$1" candidates ncand repo slug j state url
   candidates="$(govern::_repos_merge_first)"
@@ -2350,7 +2346,7 @@ govern::resolve_pr_repo() { # <pr-number> -> "repo url"
   return 1
 }
 
-# #120: normalize the worker-report `.pr` field into the canonical {repo,number,url} object, or
+# normalize the worker-report `.pr` field into the canonical {repo,number,url} object, or
 # refuse. Accepted shapes:
 #   * absent / null           — no PR at all (legitimate — see `.prs[]`); passed through untouched.
 #   * an OBJECT                {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"}
@@ -2362,7 +2358,7 @@ govern::resolve_pr_repo() { # <pr-number> -> "repo url"
 # non-numeric string, a bool/array, an object missing `.number`/`.repo`, or an integer no
 # configured repo has open) — the caller MUST treat that as a hard refusal, never fall through to
 # the "no PR" path: that silent fall-through once deleted a queue block while the PR sat open,
-# unmerged (#120).
+# unmerged.
 govern::normalize_pr_field() { # <report-json> -> normalized-report-json (rc 1 = refuse)
   local report="$1" pr_type num repo resolved rrepo rurl
   pr_type="$(jq -r '.pr | type' <<<"$report" 2>/dev/null || echo error)"
@@ -2444,8 +2440,8 @@ govern::harness_pr_verify() { # repo number -> "repo\tnumber\turl"
   printf '%s\t%s\t%s\n' "$repo" "$num" "$url"
 }
 
-# ── cross-run wait-for-merge / dependency deferrals (#119) ───────────────────
-# skipThisRun (#57) defers a ticket for the CURRENT run only (in-memory excludes), so a supervisor
+# ── cross-run wait-for-merge / dependency deferrals ───────────────────
+# skipThisRun defers a ticket for the CURRENT run only (in-memory excludes), so a supervisor
 # "defer #N until PR #M merges" advisory vanished at run-end and the selector re-picked the blocked
 # ticket next run (re-deriving — or failing to re-derive — the same conflict). These helpers persist
 # such waits to governor/pending-waits.json and re-evaluate them at every run-start, so the deferral
@@ -2458,14 +2454,14 @@ govern::csv_remove() { # list value -> cleaned-list
 
 # Print a PR's state — OPEN | MERGED | CLOSED — or "" when it can't be verified (no gh, offline,
 # unknown PR/repo). The caller treats "" as "still blocking" (fail-CLOSED) so a transient network
-# blip never silently evaporates a persisted wait — the whole point of #119.
+# blip never silently evaporates a persisted wait, which is the whole point of persisting it.
 govern::pr_state() { # repo pr -> STATE|""
   local repo="$1" pr="$2"
   command -v gh >/dev/null 2>&1 || return 0
   gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
 }
 
-# NOTE (#116) — if you ever need to MUTATE an open PR here (retarget its base branch after a
+# NOTE — if you ever need to MUTATE an open PR here (retarget its base branch after a
 # dependency-reorder in select-ticket.sh or a preflight-main.sh base reconciliation; rewrite a body),
 # do NOT use `gh pr edit` at all. It resolves the PR through gh's GraphQL `projectCards` query, which
 # now hard-fails with `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
@@ -2481,7 +2477,7 @@ govern::pr_state() { # repo pr -> STATE|""
 # #J`), PLUS implicit deps declared FROM THE OTHER SIDE: any OTHER ticket whose body carries a
 # `**Blocks:** #N, #M` line naming this ticket is treated as an implicit blocker (#N "blocks" this
 # ticket ⇒ this ticket "depends on" #N). This lets a single blocker declare the edge once instead of
-# every dependent having to add its own `**Depends on:**` marker (#309). Prints one bare number per
+# every dependent having to add its own `**Depends on:**` marker. Prints one bare number per
 # dep (deduped order-preserving). The `**Depends on:**` scan reads #N's block only — bounded by the
 # next `## #` heading — so a later ticket's declared deps never leak in; the `**Blocks:**` scan reads
 # every OTHER block (that's the point) but only emits a blocker when its Blocks line names #N exactly
@@ -2501,7 +2497,7 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
     # (`**Depends on:**`) or just after it (`**Depends on**:`) — so PROSE elsewhere in the body,
     # e.g. "Depends on the `budget-exceeded` outcome ... Coordinate with ticket #13 and ticket
     # #10", is never mistaken for the marker and never contributes its own #N mentions as false
-    # dependencies (#29). The colon is what does the work there: that prose sentence DOES start its
+    # dependencies. The colon is what does the work there: that prose sentence DOES start its
     # line, so line-anchoring alone would still have matched it. Only #N on the MARKER line itself
     # is harvested — never from the lines that follow it. (`\*?\*?` rather than `\*{0,2}`: ERE
     # interval quantifiers are unsupported by pre-1.3.4 mawk, still the default awk on older
@@ -2536,10 +2532,10 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
   ' "$f"
 }
 
-# Non-blocking lint (#309): a ticket that states a dependency in PROSE ("depends on #N", "blocked by
+# Non-blocking lint: a ticket that states a dependency in PROSE ("depends on #N", "blocked by
 # #N", "blocks #N") but carries NO canonical bold marker (`**Depends on:**` / `**Blocks:**`) anywhere
 # in its block. Such a prose-only edge is invisible to the pre-spawn dependency gate
-# (govern::ticket_deps), so the dependent stays freely selectable — the exact #308/#306/#307 miss that
+# (govern::ticket_deps), so the dependent stays freely selectable — the exact miss that
 # a supervisor had to flag by hand. Prints one warning line per offending ticket (empty when clean);
 # advisory only — the operator canonicalizes to the bold marker; never gates selection. Conservative:
 # a block with ANY bold marker is suppressed (a second, differently-targeted prose edge is not
@@ -2627,7 +2623,7 @@ govern::dangling_dep_refs() { # [tickets-file] -> "#N: depends on #M, which has 
   ' "$f" "$f"
 }
 
-# ── locality batching (#23) ────────────────────────────────────────────────
+# ── locality batching ────────────────────────────────────────────────
 # Exploration is the dominant cost term of a resolved ticket (~98% cacheRead): three tickets that all
 # touch the same directory currently mean THREE workers each paying full discovery cost on the same
 # code — three repo loads, three CLAUDE.md reads, three architecture explorations. One worker fixing
@@ -2652,7 +2648,7 @@ govern::dangling_dep_refs() { # [tickets-file] -> "#N: depends on #M, which has 
 # default. Note this drops the old deliberate hub/workspace mirror collapse
 # (`shiploop/templates/govern/x.sh` + `scripts/govern/x.sh` no longer share a key): those are two
 # different repos, and porting between them is the sync-porter's job, not a batch.
-# §4.8 ALLOCATION. The harness auto-files tickets ABOUT ITSELF (workers file their own
+# ALLOCATION. The harness auto-files tickets ABOUT ITSELF (workers file their own
 # `newTickets[]` through file-ticket.sh), pays full worker price for them, and files more.
 # govern-health.sh already splits self-referential from product spend in its REPORTING — which means
 # somebody already suspected this — and root CLAUDE.md states the principle "gate dispatch cost, never
@@ -2826,7 +2822,7 @@ govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
   unset -f _rel
 }
 
-# Per-ticket outcome lookup for a BATCHED worker report (#23 constraint (c)): a group that partially
+# Per-ticket outcome lookup for a BATCHED worker report: a group that partially
 # fails must report per-ticket outcomes, never collapse to one verdict — otherwise bookkeeping marks
 # unfixed tickets resolved and DELETES them. Reads the report's `tickets` array (one
 # `{ticket,status,note}` per ticket in the group). Prints the status for $2, or "" when the ticket is
@@ -2849,10 +2845,10 @@ govern::batch_ticket_note() { # report-json ticket -> note|""
     | if . == null then "" else . end' 2>/dev/null || true
 }
 
-# ── dispatch-time overlap nudge, zero model calls (#139) ────────────────────
+# ── dispatch-time overlap nudge, zero model calls ────────────────────
 # Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45% of
 # overlapping pairs were ALREADY QUEUED at dispatch time, batchable if the operator had known.
-# Post-#137 (named dispatch is the only front door), govern::locality_groups already batches
+# Named dispatch is the only front door, and govern::locality_groups already batches
 # overlap WITHIN a named set, but it has no visibility into the rest of the queue: a ticket the
 # operator did not name is invisible to it. This is the gap-surfacing counterpart: a cheap,
 # non-blocking hint, not a batching decision. It never changes what gets dispatched.
@@ -3081,11 +3077,11 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
     [[ "$t" =~ ^[0-9]+$ ]] || continue
     # The waiting ticket itself was resolved/closed → its wait is moot; drop it.
     if ! grep -qE "^## #$t([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
-      govern::log "wait #$t — ticket no longer in tickets.md; clearing wait (#119)"; continue
+      govern::log "wait #$t — ticket no longer in tickets.md; clearing wait"; continue
     fi
-    # #191: a wait must NEVER hold back a ticket whose OWN open PR is in an auto-merge repo. Such a PR
+    # a wait must NEVER hold back a ticket whose OWN open PR is in an auto-merge repo. Such a PR
     # is the governor's to DRIVE TO MERGE (resume → merge; on conflict → rebase-resolve → merge), not
-    # an external PR to "wait on" — the #119 defer is for PRs a human / another lane lands (frontend,
+    # an external PR to "wait on" — the defer is for PRs a human / another lane lands (frontend,
     # or a true cross-ticket dependency the ticket has no PR for). Conflating the two left the 2nd of
     # two interdependent un-parked tickets permanently deferred while its blocker was green+MERGEABLE,
     # needing a manual merge. If #t has its OWN open PR (head ticket-$t) in an auto-merge repo, drop
@@ -3096,7 +3092,7 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
     if [[ -n "$own" ]]; then
       read -r o_repo o_pr _o_url <<<"$own"
       if govern::is_merge_repo "$o_repo"; then
-        govern::log "wait #$t — ticket owns open $o_repo PR #$o_pr in an auto-merge repo; governor will resume+merge it (not defer); clearing wait (#191)"
+        govern::log "wait #$t — ticket owns open $o_repo PR #$o_pr in an auto-merge repo; governor will resume+merge it (not defer); clearing wait"
         continue
       fi
     fi
@@ -3108,7 +3104,7 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
       state="$(govern::pr_state "$repo" "$pr")"
       case "$state" in
         OPEN)          blocking=1; why="waiting on $repo PR #$pr (still open)";;
-        MERGED|CLOSED) govern::log "wait #$t — $repo PR #$pr is $state; clearing wait (#119)";;
+        MERGED|CLOSED) govern::log "wait #$t — $repo PR #$pr is $state; clearing wait";;
         *)             blocking=1; why="waiting on $repo PR #$pr (state unverifiable — keeping wait)";;
       esac
     fi
@@ -3116,7 +3112,7 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
       if grep -qE "^## #$dep([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
         blocking=1; why="depends on #$dep (still open)"
       else
-        govern::log "wait #$t — dependency #$dep resolved; clearing wait (#119)"
+        govern::log "wait #$t — dependency #$dep resolved; clearing wait"
       fi
     fi
     if [[ "$blocking" -eq 1 ]]; then
@@ -3128,7 +3124,7 @@ govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites
 }
 
 # govern::ticket_present_on_origin — cross-driver re-selection guard for parallel drivers
-# (GOVERN_ALLOW_CONCURRENT=1, #41). After a FRESH fetch, is a `## #N` block still present in
+# (GOVERN_ALLOW_CONCURRENT=1). After a FRESH fetch, is a `## #N` block still present in
 # origin/main's tickets.md? When two drivers share one origin/main, a second driver may have
 # resolved+deleted #N (and pushed) AFTER this driver last pulled, so this driver's LOCAL
 # tickets.md (what select-ticket read) is stale and still lists the done ticket. The run loop
@@ -3148,10 +3144,10 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   return 1
 }
 
-# ── autostash-pop-safe `pull --rebase` for the shared main checkout (#377) ──────────────────────
+# ── autostash-pop-safe `pull --rebase` for the shared main checkout ──────────────────────
 # Three call sites run `git -c rebase.autoStash=true pull --rebase origin main` in the SHARED main
 # checkout: land-resolution.sh's pre-edit origin sync (step 0) and its push-CAS retry loop (step 4),
-# plus commit_meta_to_main's push loop. #370 added autostash so a co-tenant Claude session's UNRELATED
+# plus commit_meta_to_main's push loop. Autostash was added so a co-tenant Claude session's UNRELATED
 # dirty tracked files (e.g. .claude/context/** WIP) never block the rebase. That handles a
 # NON-overlapping dirty tree. But when origin/main advances a file the co-tenant is CONCURRENTLY
 # editing (SAME file+region — e.g. a merged spawn-worker.sh change vs the flows-feature WIP), the
@@ -3162,7 +3158,7 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
 # UNMERGED entries and the autostash PRESERVED. So the old `pull --rebase … || { rebase --abort; }`
 # fallback NEVER fires (rc 0) and `rebase --abort` would be a no-op anyway (the rebase already
 # completed; the pop is a separate step). Every later `git add`/`git commit`/`git pull` in the shared
-# checkout then fails "you have unmerged files" → the checkout is WEDGED (#377, incident 2026-07-17:
+# checkout then fails "you have unmerged files" → the checkout is WEDGED (incident 2026-07-17:
 # a merge collided with co-tenant flows WIP → several tickets false-FAILED and got parked).
 #
 # This wrapper runs that exact command but NEVER leaves the shared checkout wedged, distinguishing:
@@ -3186,7 +3182,7 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
   pre_stash="$(git -C "$d" rev-parse -q --verify refs/stash 2>/dev/null || true)"
   if ! git -C "$d" -c rebase.autoStash=true pull --rebase origin main >/dev/null 2>&1; then
     # rc ≠ 0 → the rebase itself failed (genuine content conflict, left in progress). Fail closed
-    # exactly like the pre-#377 fallback: abort (this also restores the autostash) and signal caller.
+    # exactly like the older fallback: abort (this also restores the autostash) and signal caller.
     git -C "$d" rebase --abort >/dev/null 2>&1 || true
     return 1
   fi
@@ -3199,7 +3195,7 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
   post_stash="$(git -C "$d" rev-parse -q --verify refs/stash 2>/dev/null || true)"
   if [[ -n "$post_stash" && "$post_stash" != "$pre_stash" ]]; then
     git -C "$d" reset -q --hard HEAD >/dev/null 2>&1 || true
-    govern::log "pull_rebase_autostash: origin advanced a file a co-tenant is concurrently editing; the autostash pop conflicted. Local main IS synced to origin/main; the co-tenant's uncommitted WIP is preserved in \`git stash\` (top entry) — recover it with 'git stash pop' and resolve the conflict. The governor did NOT touch or merge it (#377)."
+    govern::log "pull_rebase_autostash: origin advanced a file a co-tenant is concurrently editing; the autostash pop conflicted. Local main IS synced to origin/main; the co-tenant's uncommitted WIP is preserved in \`git stash\` (top entry) — recover it with 'git stash pop' and resolve the conflict. The governor did NOT touch or merge it."
     return 0
   fi
   # Unmerged index but no recoverable stash (should be unreachable: an autostash pop is the only way
@@ -3208,7 +3204,7 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
   return 1
 }
 
-# ── commit a tracked meta/runtime file to main (ported from harness #111 via #112) ──────────────
+# ── commit a tracked meta/runtime file to main ──────────────────────────────────────────────────
 # Stage ONE tracked meta/runtime file, commit it (pathspec-scoped — never sweeps up unrelated staged
 # changes), and publish to origin/main, keeping local main == origin/main. Used by the WRITER of a
 # tracked governor runtime artifact (governor/escalations.md, governor/improvements.md) so it never lingers
@@ -3216,15 +3212,15 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
 # (e.g. land-resolution.sh's pre-edit origin sync, step 0) abort with "cannot pull with rebase: You
 # have unstaged changes", a failure easily misread as a merge conflict. Mirrors land-resolution's commit+CAS-
 # push: if origin advanced under us, rebase our append-only commit and retry; NEVER force-push (the
-# #105 ff-only/no-force invariant that test-no-force-push.sh locks). Guarded + non-fatal — no-op
+# ff-only/no-force invariant that test-no-force-push.sh locks). Guarded + non-fatal — no-op
 # outside a git repo or when there's nothing to commit; commits locally but skips the push under
 # GOVERN_NO_PUSH=1 or with no origin (tests / offline). Always returns 0.
-# #370: the retry-loop's `pull --rebase` runs with `-c rebase.autoStash=true` so a co-tenant
+# the retry-loop's `pull --rebase` runs with `-c rebase.autoStash=true` so a co-tenant
 # session's unrelated dirty tracked files (e.g. .claude/context/** WIP) never block it — git
 # transiently stashes/restores them byte-identically around the rebase. A genuine content conflict
 # on $rel itself still fails the rebase (autostash only covers UNRELATED dirty files) and falls
 # through to the abort + break, unchanged.
-# #377: the rebase is done through govern::pull_rebase_autostash so an OVERLAPPING-same-file autostash
+# the rebase is done through govern::pull_rebase_autostash so an OVERLAPPING-same-file autostash
 # POP conflict (origin advanced a file a co-tenant is editing) can NEVER wedge the shared index — that
 # case is rc 0 but leaves unmerged entries, which the helper detects and recovers (co-tenant WIP parked
 # in the preserved stash). A genuine content conflict on $rel still returns 1 → abort + break, unchanged.
@@ -3245,10 +3241,10 @@ govern::commit_meta_to_main() {
   return 0
 }
 
-# ── infra/auth-outage detection (#90) ───────────────────────────────────────
+# ── infra/auth-outage detection ───────────────────────────────────────
 # An infra outage (expired OAuth token, API unreachable, network down) kills a worker with a
 # transport-level error BEFORE it can emit any report — on the surface IDENTICAL to a genuine
-# ticket-fault failure. Recording it as a ticket `failed` (a) pollutes the cross-run #60 history
+# ticket-fault failure. Recording it as a ticket `failed` (a) pollutes the cross-run history
 # (two such runs for the same ticket would FALSELY auto-escalate it as a systemic blocker) and
 # (b) misleads any later review of the history (it would read an auth outage as if the tickets were
 # hard). These helpers tell the two apart: tag the outage distinctly (status:"infra"), skip the
@@ -3293,7 +3289,7 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 #                       a tier was too cheap), so they must not come back empty.
 #   none              — nothing readable (no stream, or no usage anywhere in it).
 #
-# ROOT CAUSE of null costUsd (queue #114), verified 2026-09-10 against aquanode's own
+# ROOT CAUSE of null costUsd, verified 2026-09-10 against aquanode's own
 # logs/govern/**/attempts.jsonl, not just this repo's: `total_cost_usd` exists ONLY on the CLI's
 # final `"type":"result"` event. Every `"type":"assistant"` event's `.message.usage` was checked
 # directly and carries token counts but NO price field at all, at any point in the stream. So a
@@ -3313,7 +3309,7 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 # with nothing to tell them apart. Excluding that one run, aquanode's real sonnet population is 3
 # attempts total: 2 killed (correctly null) and 1 resolved with a correctly-priced result event,
 # too small to support "unverifiable," and not evidence of a live defect. See status.sh's "by
-# source" summary (rail 5) for a per-session view that would have caught this measurement error
+# source" summary for a per-session view that would have caught this measurement error
 # live instead of costing a dedicated audit.
 # Always echoes ONE valid JSON object: {tokens:{input,output,cacheRead,cacheCreation,total}|null,
 # costUsd:<number|null>, usageSource:"result"|"assistant-partial"|"none"}. Never fails.
@@ -3368,7 +3364,7 @@ govern::infra_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
-# ── interrupted/mid-stream-drop detection (#34) ─────────────────────────────
+# ── interrupted/mid-stream-drop detection ─────────────────────────────
 # A laptop that sleeps mid-run (e.g. clamshell-on-battery) suspends the worker's process tree and
 # drops the network, so the in-flight `claude -p` API stream dies mid-response with "API Error:
 # Connection closed mid-response" and the worker exits on its OWN (NOT killed by the timeout
@@ -3399,7 +3395,7 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
-# ── CLI usage-error detection (#56) ──────────────────────────────────────────
+# ── CLI usage-error detection ──────────────────────────────────────────
 # A harness bump can ship a `claude` invocation flag/subcommand the fleet's INSTALLED CLI doesn't
 # support yet (version skew, a renamed/removed flag). The CLI then exits fast on the invocation
 # itself, e.g. `error: unknown option '--definitely-not-a-real-flag'` — a single PLAIN-TEXT line,
@@ -3428,13 +3424,12 @@ govern::usage_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
-# ── progress signature, shared by the headless watchdog AND in-session supervision (#116) ──────
-# Extracted from spawn-worker.sh's §4.4a early-abort watchdog so the SAME deterministic doom
+# ── progress signature, shared by the headless watchdog AND in-session supervision ──────
+# Extracted from spawn-worker.sh's early-abort watchdog so the SAME deterministic doom
 # signature (stall / identical-command loop / rising tool-error rate) is available to a second
 # caller: templates/hooks/agent-progress-guard.sh, a SubagentStop hook that reaches this to
 # in-session `Agent` children — which have no pid and no worker.jsonl, so the headless watchdog
-# never covered them (see .specs/2026-09-09-model-orchestration-design.md, rails 6-8). One
-# implementation, two callers, so a doom signature detected here has one definition rather than
+# never covered them. One implementation, two callers, so a doom signature detected here has one definition rather than
 # two that can drift apart.
 #
 # HARD CONSTRAINT unchanged from the original: every signal is DETERMINISTIC, read straight off a
@@ -3510,7 +3505,7 @@ govern::early_abort_reason() { # <jsonl> -> reason | empty
   return 0
 }
 
-# ── in-flight token-budget monitoring (#16) ─────────────────────────────────
+# ── in-flight token-budget monitoring ─────────────────────────────────
 # The only ceiling on a worker used to be wall-clock (GOVERN_WORKER_TIMEOUT) — a worker that wanders
 # could burn tens of millions of tokens before that fired. GOVERN_WORKER_MAX_TOKENS adds a cumulative
 # per-attempt token cap, polled against the LIVE worker.jsonl while the worker is still running. The
@@ -3530,7 +3525,7 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
-# Sibling of govern::cumulative_tokens, NOT a mode flag on it: other callers (the #16 budget
+# Sibling of govern::cumulative_tokens, NOT a mode flag on it: other callers (the budget
 # watchdog, the timeout/park report synthesis) depend on the FULL total, so this is a separate
 # function rather than a behavior change on a shared one.
 #
@@ -3567,7 +3562,7 @@ govern::cumulative_context_tokens() { # worker-jsonl -> integer input+cache_crea
 #              | unverifiable (driver-declared)                      | escalate at all
 #   ci         | this dispatch IS the CI-fix re-dispatch, or the      | SAME tier; the failing axis
 #              | prior attempt died on red CI (driver-tagged)        | is portability/env, not tier
-#   budget     | prior attempt burned its token budget (#16)         | scope underestimated → raise
+#   budget     | prior attempt burned its token budget         | scope underestimated → raise
 #              |                                                     | TIER
 #   judgment   | prior attempt opened a PR that did not land — a      | judgment failure → raise
 #              | coherent but wrong fix                              | EFFORT and TIER
@@ -3755,7 +3750,7 @@ govern::model_request_cap() { # <requested> -> <requested-or-capped>
 
 govern::effort_bump() { # effort -> the next rung UP the reasoning-effort ladder
   # Raising effort is far cheaper than raising tier, so it is the first rung of the escalation
-  # ladder. An UNSET effort has no rung to step from (#18 deliberately invents no default), so an
+  # ladder. An UNSET effort has no rung to step from (nothing invents a default), so an
   # escalation from unset lands on the ladder's first EXPLICIT rung, `high`. An unrecognized value
   # is left untouched (fail-safe — the caller's allowlist drops it anyway).
   case "${1:-}" in
@@ -3802,7 +3797,7 @@ govern::retry_class() { # N -> "<class>\t<reason>" (tab-separated; class ∈ inf
     esac
     case "$st" in
       budget-exceeded)
-        printf 'budget\tprior attempt burned its token budget while still exploring (#16) — scope was underestimated\n'; return 0 ;;
+        printf 'budget\tprior attempt burned its token budget while still exploring — scope was underestimated\n'; return 0 ;;
       failed|parked)
         if [[ "${nrepos:-0}" -gt 0 ]]; then
           printf 'judgment\tprior attempt opened a PR that did not land (%s) — a coherent but wrong fix\n' "$st"; return 0
@@ -3815,10 +3810,10 @@ govern::retry_class() { # N -> "<class>\t<reason>" (tab-separated; class ∈ inf
   printf 'unknown\tno recorded evidence for a prior attempt\n'
 }
 
-# ── tolerant worker-report extraction (#66) ─────────────────────────────────
+# ── tolerant worker-report extraction ─────────────────────────────────
 # The strict contract is "the worker's final message is ONLY a single JSON object", but a worker
 # that DID the work sometimes drifts to "JSON + trailing prose" (or writes prose into report.json).
-# Requiring the WHOLE text to `jq empty`-parse then turns real work into a recorded `failed` (#66).
+# Requiring the WHOLE text to `jq empty`-parse then turns real work into a recorded `failed`.
 # These helpers make extraction tolerant: pull the LAST balanced {...} object that carries a
 # `status` field out of arbitrary text, validating each candidate with jq. Happy path (the whole
 # text is one clean object) still short-circuits, so the strict contract stays the fast path.

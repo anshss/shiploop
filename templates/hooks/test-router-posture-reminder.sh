@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Guard for templates/hooks/router-posture-reminder.sh's D4 conditional clause
-# (.specs/2026-09-11-advisor-worker-design.md D4): the ticket-shaped sentence in the
-# once-per-session banner is now CONDITIONAL on D2's **Proposed solution:** signal
-# instead of always routing straight to a worker -- a dispatch QUALIFIER, not a
-# dispatch ACCELERATOR.
+# Guard for templates/hooks/router-posture-reminder.sh's conditional clause: the ticket-shaped
+# sentence in the once-per-session banner is now CONDITIONAL on a ticket's own
+# **Proposed solution:** signal instead of always routing straight to a worker -- a dispatch
+# QUALIFIER, not a dispatch ACCELERATOR.
 #
 # Why a FAKE scaffolded workspace, not GOVERN_WS_ROOT: the helper this hook calls
 # (scripts/govern/ticket-proposal.sh -> lib/common.sh) hardcodes its workspace root as
@@ -39,7 +38,7 @@ WS
 PROP_SRC="$DIR/../govern/ticket-proposal.sh"
 COMMON_SRC="$DIR/../govern/lib/common.sh"
 if [ ! -f "$PROP_SRC" ] || [ ! -f "$COMMON_SRC" ]; then
-  echo "SKIP: templates/govern/ticket-proposal.sh or lib/common.sh not resolvable (pre-D2 workspace) -- the hook itself must degrade gracefully here, covered separately below"
+  echo "SKIP: templates/govern/ticket-proposal.sh or lib/common.sh not resolvable (an older workspace layout) -- the hook itself must degrade gracefully here, covered separately below"
   PROP_SRC=""
 fi
 if [ -n "$PROP_SRC" ]; then
@@ -74,7 +73,7 @@ print(json.dumps({"session_id": sys.argv[1], "prompt": sys.argv[2]}))
 DEFAULT_MARK='Ticket-shaped (a `## #N` block'
 
 if [ -n "$PROP_SRC" ]; then
-  echo "with a reachable scaffolded workspace + ticket-proposal.sh (real D2 path)"
+  echo "with a reachable scaffolded workspace + ticket-proposal.sh"
 
   out="$(run s1 "Please resolve ticket #501 end to end and open a PR.")"
   case "$out" in
@@ -97,7 +96,7 @@ if [ -n "$PROP_SRC" ]; then
 
   out="$(run s4 "PR #166 fixed the changelog bug. Now finish the migration end to end.")"
   case "$out" in
-    *"$DEFAULT_MARK"*) ok "4. #126: 'PR #166' alone is not a ticket reference -> default clause, not the #166 qualifier" ;;
+    *"$DEFAULT_MARK"*) ok "4. 'PR #166' alone is not a ticket reference -> default clause, not the #166 qualifier" ;;
     *"#166"*) bad "4. 'PR #166' was mistaken for a ticket reference: ${out:0:120}" ;;
     *) bad "4. expected the default clause, got: ${out:0:120}" ;;
   esac
@@ -108,7 +107,7 @@ if [ -n "$PROP_SRC" ]; then
     *) bad "5. expected the #501 qualifier (never #166), got: ${out:0:120}" ;;
   esac
 else
-  ok "SKIP-noted: D2 path not testable in this layout (see SKIP message above)"
+  ok "SKIP-noted: not testable in this layout (see SKIP message above)"
 fi
 
 echo "degrades gracefully with no scaffolded workspace reachable at all"
@@ -121,7 +120,7 @@ case "$out" in
   *) bad "6. expected graceful degradation to the default clause, got: ${out:0:120}" ;;
 esac
 
-echo "once-per-session marker (unaffected by D4's change)"
+echo "once-per-session marker (unaffected by this change)"
 out1="$(run s7 "Please resolve ticket #501 end to end.")"
 out2="$(run s7 "second prompt in the same session")"
 [ -n "$out1" ] && [ -z "$out2" ] && ok "7. fires once per session_id, silent on the second prompt" \

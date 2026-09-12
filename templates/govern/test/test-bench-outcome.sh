@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bench: the attempt-outcome breakdown (#108, "no attempt-outcome dimension").
+# bench: the attempt-outcome breakdown ("no attempt-outcome dimension").
 #
 # `--scope all` prices every attempt unconditionally, which is honest for cost but leaves
 # infrastructure failures indistinguishable from capability ones. outcomeBreakdown() reads
@@ -71,7 +71,7 @@ assert_eq "$(printf '%s' "$all" | jq -r '.arms["1m"].shiploopTokens')" \
   "$(printf '%s' "$j" | jq -r '.arms["1m"].shiploopTokens')" \
   "and adding the breakdown never moves the headline token total"
 
-# ── driverScope (#108, 2026-09-10 addendum): unmissable in the JSON on every fleet, not just here
+# ── driverScope: unmissable in the JSON on every fleet, not just here
 assert_eq "$(printf '%s' "$j" | jq -r '.driverScope.excluded')" "true" \
   "the interactive driver session's exclusion is a stated field, present on every report"
 

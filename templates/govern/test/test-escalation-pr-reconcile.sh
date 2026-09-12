@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# D7/#127/G8: a PR-shaped escalation (the auto-merge guard refused a PR, waiting for a human to
+# A PR-shaped escalation (the auto-merge guard refused a PR, waiting for a human to
 # merge it by hand) must reconcile against the PR's ACTUAL state, even with no operator answer —
 # a 2026-09-08 entry for shiploop#159 was still printing three days after that PR merged.
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# #312 — govern-health.sh flags STALE open escalations: any `## Open` entry still blank on BOTH
+# govern-health.sh flags STALE open escalations: any `## Open` entry still blank on BOTH
 # Answer and Disposition whose stamped `Opened` date is older than GOVERN_ESCALATION_STALE_DAYS
-# (default 3). Legacy entries with no `Opened` field (they predate #312) are flagged with an unknown
+# (default 3). Legacy entries with no `Opened` field (they predate it) are flagged with an unknown
 # age. Answered entries and freshly-opened ones are NOT flagged. Pure sandbox: no auth, no network.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

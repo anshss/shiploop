@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #71 run-start preflight: reconcile the meta-repo MAIN checkout with origin/main BEFORE the
+# Run-start preflight: reconcile the meta-repo MAIN checkout with origin/main BEFORE the
 # governor cuts any harness-lane PR.
 #
 # When the governor delivers a meta-repo-file ticket as a PR, it branches that PR off the meta
@@ -40,7 +40,7 @@ git -C "$d" fetch --quiet origin main 2>/dev/null || { govern::log "preflight: f
 read -r behind ahead < <(git -C "$d" rev-list --left-right --count origin/main...HEAD 2>/dev/null || echo "0	0")
 behind="${behind:-0}"; ahead="${ahead:-0}"
 
-# #111: a dirty working tree only blocks the reconcile when a PULL is needed (behind != 0): both
+# A dirty working tree only blocks the reconcile when a PULL is needed (behind != 0): both
 # `git pull --ff-only` (behind-only) and `git pull --rebase` (diverged) abort with "cannot pull with
 # rebase: You have unstaged changes". git surfaces this as a pull failure, which the divergence path
 # below would otherwise MISREPORT as a rebase conflict that 'cascades un-mergeable PRs'. The usual
@@ -65,7 +65,7 @@ if [[ "$behind" != "0" ]] && [[ -n "$(git -C "$d" status --porcelain 2>/dev/null
     exit 2
   fi
   # Only known runtime artifacts are dirty → commit them so the rebase below isn't blocked
-  # (self-heal, #111). Commit ONLY (no push) — the existing reconcile paths below replay + publish
+  # (self-heal). Commit ONLY (no push). The existing reconcile paths below replay + publish
   # them. Committing locally turns a behind-only state into diverged, so recompute ahead/behind
   # afterwards. Each pathspec is best-effort: a path that isn't dirty is a harmless no-op.
   ( cd "$d"
@@ -73,14 +73,14 @@ if [[ "$behind" != "0" ]] && [[ -n "$(git -C "$d" status --porcelain 2>/dev/null
     for p in governor/improvements.md governor/.ticket-seq governor/escalations.md governor/pending-escalations.json; do
       git add -- "$p" 2>/dev/null && _pf_paths+=("$p") || true
     done
-    # #375 sweep-guard: commit ONLY the allowlist paths that exist (pathspec), never a bare
+    # Sweep-guard: commit ONLY the allowlist paths that exist (pathspec), never a bare
     # `git commit`. The old "at run-start nothing else should be staged" assumption is FALSE in a
     # shared checkout — a co-tenant's staged .claude/context WIP was present and a bare commit swept
     # it onto origin/main (incident 2026-07-17). Pathspec-scoping is structurally sweep-proof and
     # still tolerates a clean allowlist path (git just omits it; `|| true` covers "nothing to commit").
-    [[ ${#_pf_paths[@]} -gt 0 ]] && git commit -q -m "chore(govern): commit uncommitted runtime artifacts before reconcile (preflight self-heal #111)" -- "${_pf_paths[@]}" 2>/dev/null || true
+    [[ ${#_pf_paths[@]} -gt 0 ]] && git commit -q -m "chore(govern): commit uncommitted runtime artifacts before reconcile (preflight self-heal)" -- "${_pf_paths[@]}" 2>/dev/null || true
   ) || true
-  govern::log "preflight: committed uncommitted governor runtime artifacts so the rebase isn't blocked (#111 self-heal)"
+  govern::log "preflight: committed uncommitted governor runtime artifacts so the rebase isn't blocked"
   read -r behind ahead < <(git -C "$d" rev-list --left-right --count origin/main...HEAD 2>/dev/null || echo "0	0")
   behind="${behind:-0}"; ahead="${ahead:-0}"
 fi

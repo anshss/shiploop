@@ -235,7 +235,7 @@ if [ -f "$ROOT/.claude/shiploop/validation/flows.md" ] && [ -f "$ROOT/scripts/go
 fi
 
 # ── Base branch CI: is main red before this session builds on it? ──
-# Advisory only: reuses preflight-base-ci.sh (the governor's own run-start gate, #49) so a plain
+# Advisory only: reuses preflight-base-ci.sh (the governor's own run-start gate) so a plain
 # session learns it is about to build on a red base without needing to know the dispatch path
 # exists at all. Never duplicates its logic here; the script itself already fails open (exit 0) on
 # everything that is not an unambiguous red: gh missing, gh unauthenticated, no CI configured, no

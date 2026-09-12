@@ -52,7 +52,7 @@ seen="$(cat "$TMP/seen-prompt.txt")"
 assert_contains "$seen" "sample ticket" "prompt includes the ticket block"
 assert_contains "$seen" "DOCTRINE-MARKER" "prompt includes the preferences doctrine"
 
-# #66 regression: a worker that DID the work but emitted "JSON + trailing prose" as its final
+# Regression: a worker that DID the work but emitted "JSON + trailing prose" as its final
 # message (and wrote NO report file) must be parsed as its real status, not synthesized `failed`.
 cat > "$TMP/fake-claude-prose.sh" <<EOF
 #!/usr/bin/env bash
@@ -76,7 +76,7 @@ out2="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
 assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "resolved" "JSON+prose final message → resolved, not failed"
 assert_eq "$(printf '%s' "$out2" | jq -r '.pr.number')" "116" "JSON+prose final message → PR number preserved"
 
-# #66: a worker that produced NO parseable JSON anywhere still yields a synthesized failed report.
+# A worker that produced NO parseable JSON anywhere still yields a synthesized failed report.
 cat > "$TMP/fake-claude-noreport.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '{"type":"result","result":"I could not finish the ticket today, sorry."}\n'
@@ -93,7 +93,7 @@ out3="$(GOVERN_TICKETS_FILE="$TMP/tickets.md" \
 
 assert_eq "$(printf '%s' "$out3" | jq -r '.status')" "failed" "no parseable JSON anywhere → synthesized failed"
 
-# #95 regression: the worker's own env (the `env ... "$claude_bin"` prefix spawn-worker.sh builds)
+# Regression: the worker's own env (the `env ... "$claude_bin"` prefix spawn-worker.sh builds)
 # must carry GOVERN_RUN=1, the same marker sync-port.sh already sets on a porter spawn. This is
 # what lets pre-push's branch-name enforcement (and the ticket-sweep-reminder / router-posture-guard
 # GOVERN_RUN exemptions) recognize a dispatch worker at all.

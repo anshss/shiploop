@@ -24,8 +24,7 @@ with what does not hold).
   governor loop — where BOTH arms are measured, on the same tiny pilot backlog, same model, no
   remotes, nothing that can push.
 
-Design and rationale: `.specs/2026-09-03-benchmark-design.md`. Where either number does not hold:
-`bench/KNOWN-LIMITS.md`.
+Where either number does not hold: `bench/KNOWN-LIMITS.md`.
 
 ## The published claim
 

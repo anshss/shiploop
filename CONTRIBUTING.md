@@ -129,7 +129,7 @@ CI must be fully green before merge. The `scaffold-and-test` job takes a couple 
 
 This repo is maintained partly by an autonomous governor running the same mechanism it distributes. That has two consequences for outside contributors:
 
-- **External PRs are never auto-merged.** The merge guard in `templates/govern/lib/common.sh` (`govern::pr_automerge_allowed`, added in PR #32) enforces three independent conditions before auto-merging any PR: the PR author must be the governor's own GitHub login; the head branch must match the governor's branch pattern; and the head repository must be the same owner as the base (no cross-owner forks). A PR from anyone else fails all three and is routed to human review. This is the entire trust boundary — read that function for the truth.
+- **External PRs are never auto-merged.** The merge guard in `templates/govern/lib/common.sh` (`govern::pr_automerge_allowed`) enforces three independent conditions before auto-merging any PR: the PR author must be the governor's own GitHub login; the head branch must match the governor's branch pattern; and the head repository must be the same owner as the base (no cross-owner forks). A PR from anyone else fails all three and is routed to human review. This is the entire trust boundary — read that function for the truth.
 - **Your improvements may be ported into maintainers' production fleets via sync-port.** The templates and the fleet workspaces stay in sync deliberately (see `README.md`, "Dogfood story"). A useful fix here may be adopted downstream via the project's own port mechanism, which is how the templates got most of what is in them.
 
 Human review is the norm for outside PRs; the governor is not on the review path.

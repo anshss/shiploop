@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner — CORE LAUNCHER (harness durable-validation-runner design §1–§3).
+# Durable validation runner: CORE LAUNCHER.
 #
 # THE sanctioned launch path for a long, BILLABLE flow validation script. Running a flow's script
 # directly bypasses the whole orphan substrate; this runner is what makes such a run durable and
@@ -27,7 +27,7 @@ SELF="$DIR/$(basename "${BASH_SOURCE[0]}")"
 
 VALIDATIONS_DIR="${GOVERN_VALIDATIONS_DIR:-$LOG_ROOT/validations}"
 INTERVAL="${GOVERN_VAL_HEARTBEAT_INTERVAL:-30}"
-TIMEOUT="${GOVERN_VAL_TIMEOUT:-21600}"   # 6h — generous, hours not minutes (§1).
+TIMEOUT="${GOVERN_VAL_TIMEOUT:-21600}"   # 6h: generous, hours not minutes.
 
 # ── supervise mode (internal; the detached, runner-owned babysitter) ─────────
 if [[ "${1:-}" == "--_supervise" ]]; then
@@ -131,7 +131,7 @@ job_id="${GOVERN_VAL_JOB_ID:-val-${flowslug}-$(date +%Y%m%d-%H%M%S)}"
 VAL_JOB_DIR="$VALIDATIONS_DIR/$job_id"
 mkdir -p "$VAL_JOB_DIR"
 
-# Pre-flight gate (§6, thin): a per-flow refuse-to-start check the flow owns (capacity/quota/health).
+# Pre-flight gate (thin): a per-flow refuse-to-start check the flow owns (capacity/quota/health).
 # The runner owns ONLY the refuse-to-start decision — a non-zero pre-flight means nothing is spent.
 preflight="${GOVERN_VAL_PREFLIGHT:-}"
 if [[ -z "$preflight" && ! -f "$FLOW" ]] && command -v govern::flow_field >/dev/null 2>&1; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for the lesson placement gate (#83 Part 1): land-resolution.sh must NOT trust a
+# Regression for the lesson placement gate: land-resolution.sh must NOT trust a
 # worker's claim that a lessonPatch belongs at root — it re-derives placement from the lesson TEXT
 # via govern::lesson_placement (lib/common.sh) and redirects an unambiguously sub-repo-scoped lesson
 # to that sub-repo's own CLAUDE.md instead of letting it accrete on the always-on root file. The

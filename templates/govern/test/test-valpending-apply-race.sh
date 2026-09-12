@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable validation runner (spec §4) — pending-result APPLY. Proves: (1) PASS applies an
+# Durable validation runner — pending-result APPLY. Proves: (1) PASS applies an
 # evidence-stamp to the flow registry (via the SAME govern::flows_stamp_from_report primitive
 # bookkeep uses for a ticket resolve); (2) FAIL files an escalation; (3) applying an already-consumed
 # entry is a no-op; (4) the load-bearing case — TWO readers racing to apply the SAME terminal job

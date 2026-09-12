@@ -77,7 +77,7 @@ for id in $candidates; do
   fi
   # Capability gate (Phase 5): a flow that `Requires:` a workspace capability whose knob is UNSET can't
   # be validated headlessly — filing it would queue a runnable-then-billable ticket that only parks with
-  # no evidence. Degrade it to BLOCKED with the NAMED blocker (anti-pattern #15) and exclude it, rather
+  # no evidence. Degrade it to BLOCKED with the NAMED blocker and exclude it, rather
   # than filing. No-op when the flow declares no `Requires:` or every required knob is wired.
   if command -v govern::flow_missing_cap_blocker >/dev/null 2>&1; then
     _cap_blocker="$(govern::flow_missing_cap_blocker "$id" "$FLOWS" 2>/dev/null || true)"
@@ -166,7 +166,7 @@ while IFS= read -r key || [[ -n "$key" ]]; do   # `|| [[ -n ]]` — read the fin
     body="$(cat <<EOF
 Where: flow(s) $gids (.claude/shiploop/validation/flows.md)
 Observed: registry status warrants a real validation run.
-Fix direction: drive the REAL user path for each flow (rule #12 — real UI/API, headless browser, real deploy where needed), then fill report validation.{validatedShas,environment,gatePassed,measured,flowIds}. Name every provisioned resource ticket-<N>-<label> so the orphan sweep can reap it.
+Fix direction: drive the REAL user path for each flow (real UI/API, headless browser, real deploy where needed), then fill report validation.{validatedShas,environment,gatePassed,measured,flowIds}. Name every provisioned resource ticket-<N>-<label> so the orphan sweep can reap it.
 Done when: each flow above is stamped in .claude/shiploop/validation/flows.md with a fresh verdict (PASS/FAIL or EFFECTIVE/INEFFECTIVE/MEASURING) pinned to the validated SHAs, with a promoted evidence summary.
 EOF
 )"

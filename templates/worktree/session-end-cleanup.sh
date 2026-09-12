@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/lib/workspace.sh"
 
 # Kill processes on $port that THIS checkout owns (cwd under $2), never a parallel
-# session's (anti-pattern #10). Killing whoever holds the port would SIGKILL a
+# session's. Killing whoever holds the port would SIGKILL a
 # neighbor's stack mid-run on a slot collision — or via the slot-0 base-port
 # fallback below. A process from another checkout is left alone; this is a cleanup
 # hook, so we silently skip rather than erroring.

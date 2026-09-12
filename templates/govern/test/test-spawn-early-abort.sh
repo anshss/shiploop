@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# §4.4a EARLY ABORT — a doomed worker must die at ~turn 30, not ~turn 218.
+# EARLY ABORT — a doomed worker must die at ~turn 30, not ~turn 218.
 #
 # A worker session is ~218 assistant turns; a doomed one burns nearly all of that before failing,
 # because wall-clock and the token budget are both ceilings a stuck worker only reaches at the very

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable-validation runner + job-substrate proof (design §1–§3). bash 3.2-safe, like its siblings.
+# Durable-validation runner + job-substrate proof. bash 3.2-safe, like its siblings.
 # Part A unit-tests the pure valjob.sh helpers (manifest/heartbeat/orphan-verdict/terminal/prune).
 # Part B drives the REAL run-validation.sh with a fake flow script to prove the five "Done when"
 # behaviors: (1) the job survives the launcher process's exit; (2) the manifest line precedes the

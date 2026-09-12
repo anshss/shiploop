@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #90: an infra/auth outage mid-run (expired OAuth token, API unreachable, network down) must NOT
+# An infra/auth outage mid-run (expired OAuth token, API unreachable, network down) must NOT
 # be misclassified as a ticket `failed`. Proves:
 #   (1) spawn-worker tags a transport/auth error as status:"infra" (carrying the signature), not failed.
 #   (2) govern::infra_error_signature matches the auth signature, and does NOT match ordinary content.

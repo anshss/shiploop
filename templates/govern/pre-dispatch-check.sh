@@ -26,29 +26,29 @@
 # Gates, in the same order the loop ran them, same helper functions, same env vars:
 #   0. disk pre-flight           (GOVERN_MIN_FREE_GB, default 5GB), a full disk must not
 #                                 masquerade as a worker failure
-#   1. NA-marker auto-skip       (govern::not_automatable_tickets), plus the #120 chronic-skip
-#                                 streak bump and its one-time permanent-park escalation
+#   1. NA-marker auto-skip       (govern::not_automatable_tickets), plus the chronic-skip streak
+#                                 bump and its one-time permanent-park escalation
 #   2. already-a-public-issue    (govern::tickets_already_issues,
 #                                 GOVERN_SKIP_ISSUE_TICKETS, default on)
 #   3. cross-driver re-verify    (govern::ticket_present_on_origin) still on origin/main?
 #   4. depends-on gate           (govern::ticket_deps) every **Depends on:** #K landed?
 #   5. staleness gate            (staleness-gate.sh; GOVERN_STALENESS_GATE=0 by default, ships
 #                                 inert, the same default the loop shipped)
-#   6. failure-streak breaker    (#60, GOVERN_MAX_TICKET_FAILS default 2) an item that failed /
+#   6. failure-streak breaker    (GOVERN_MAX_TICKET_FAILS default 2) an item that failed /
 #                                 timed out / blew its budget on the last N attempts is escalated
 #                                 as a systemic blocker instead of burning another worker
-#   7. proposed-solution gate    (.specs/2026-09-11-advisor-worker-design.md D2, govern::ticket_proposal)
-#                                 refuses a ticket with no **Proposed solution:**; the advisor must
-#                                 decide what the change is before dispatching a worker on it. Ships
-#                                 ON, GOVERN_PROPOSAL_GATE=0 is the kill switch. THIS GATE APPLIES
-#                                 ONLY TO A NUMBERED-TICKET WORKER DISPATCH (this script's one and
-#                                 only input is a ticket number) — it is never in the path of an
-#                                 advisor's own read-only data-collection child (D9): that child is
-#                                 spawned directly, is not "dispatching a worker on ticket N", and so
-#                                 never calls this script at all. Nothing here needs to distinguish
-#                                 the two; the non-overlap is structural, not a runtime check.
+#   7. proposed-solution gate    (govern::ticket_proposal) refuses a ticket with no **Proposed
+#                                 solution:**; the advisor must decide what the change is before
+#                                 dispatching a worker on it. Ships ON, GOVERN_PROPOSAL_GATE=0 is
+#                                 the kill switch. THIS GATE APPLIES ONLY TO A NUMBERED-TICKET
+#                                 WORKER DISPATCH (this script's one and only input is a ticket
+#                                 number): it is never in the path of an advisor's own read-only
+#                                 data-collection child: that child is spawned directly, is not
+#                                 "dispatching a worker on ticket N", and so never calls this
+#                                 script at all. Nothing here needs to distinguish the two; the
+#                                 non-overlap is structural, not a runtime check.
 #   8. upstream-drift pregate    (govern::pregate_hub_ahead, lib/pregate.sh)
-#   9. overlap nudge             (#139, govern::overlap_nudge) advisory only, stderr, never a verdict
+#   9. overlap nudge             (govern::overlap_nudge) advisory only, stderr, never a verdict
 #
 # NOT ported here (deliberately out of scope): the per-ticket CLAIM lock and the "resume an existing
 # open PR" adoption, both loop-only machinery per the purge audit. A concurrent-dispatch race is now
@@ -67,18 +67,18 @@ if [[ "${GOVERN_PRE_DISPATCH_CHECK:-1}" == "0" ]]; then
   exit 0
 fi
 
-# ── 0. disk pre-flight (#48, ported from run-loop.sh) ────────────────────────────────────────
+# ── 0. disk pre-flight (ported from run-loop.sh) ─────────────────────────────────────────────
 # Never let a full disk cascade into phantom worker failures: below the worktree headroom, refuse
 # the dispatch with a distinct reason instead of spawning a worker that cannot check anything out.
 if [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
   _free_gb="$(df -k "$HOME" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}')"
   if [[ "${_free_gb:-99}" -lt "${GOVERN_MIN_FREE_GB:-5}" ]]; then
-    echo "skip: disk low (${_free_gb}GB < ${GOVERN_MIN_FREE_GB:-5}GB). Free space or resolve escalations to reclaim parked worktrees, then dispatch again (#48)"
+    echo "skip: disk low (${_free_gb}GB < ${GOVERN_MIN_FREE_GB:-5}GB). Free space or resolve escalations to reclaim parked worktrees, then dispatch again"
     exit 0
   fi
 fi
 
-# ── 1. NA-marker auto-skip, plus the #120 chronic-skip streak ────────────────────────────────
+# ── 1. NA-marker auto-skip, plus the chronic-skip streak ─────────────────────────────────────
 # The streak counter is file-backed (governor/na-skip-counts.json via govern::na_skip_bump), so it
 # survives the loop it used to live in: a ticket auto-skipped as NOT-automatable for
 # GOVERN_NA_NUDGE_AFTER (default 3) consecutive dispatches gets ONE escalation recommending the
@@ -100,15 +100,15 @@ if [[ -n "$_na_hit" ]]; then
   if [[ "${GOVERN_MODE:-live}" == "live" ]]; then
     _na_count="$(govern::na_skip_bump "$N" 2>/dev/null || echo 0)"
     if [[ "${_na_count:-0}" -ge "${GOVERN_NA_NUDGE_AFTER:-3}" ]] && ! govern::has_open_escalation "$N"; then
-      govern::log "#$N auto-skipped ${_na_count} consecutive dispatches ('$_na_hit_reason'), filing a one-time escalation to PERMANENTLY remove it from the live queue (#120)"
+      govern::log "#$N auto-skipped ${_na_count} consecutive dispatches ('$_na_hit_reason'), filing a one-time escalation to PERMANENTLY remove it from the live queue"
       govern::file_open_escalation "$N" \
         "permanently park chronically-skipped '$_na_hit_reason' ticket" \
-        "auto-skipped as '$_na_hit_reason' for ${_na_count} consecutive govern dispatches, it can't be resolved headlessly and is churning a skip note every time instead of leaving the live queue (#120)" \
+        "auto-skipped as '$_na_hit_reason' for ${_na_count} consecutive govern dispatches, it can't be resolved headlessly and is churning a skip note every time instead of leaving the live queue" \
         "remove it from the live queue: answer Disposition 'defer' to migrate it to tickets-parked.md (or 'do-the-work' to keep retrying it, 'keep-open' to leave it in the live queue)" \
         "defer (recommended) / do-the-work / keep-open"
     fi
   fi
-  echo "skip: body marked '$_na_hit_reason' (not govern-automatable; handle interactively): no worker burned (#92)"
+  echo "skip: body marked '$_na_hit_reason' (not govern-automatable; handle interactively): no worker burned"
   exit 0
 fi
 
@@ -124,7 +124,7 @@ fi
 # ── 3. cross-driver re-verify: still on origin/main? ─────────────────────────────────────────
 META_DIR="$(govern::meta_root)"
 if ! govern::ticket_present_on_origin "$META_DIR" "$N"; then
-  echo "skip: #$N no longer on origin/main (resolved+pushed by a concurrent session) — no worker burned (#108)"
+  echo "skip: #$N no longer on origin/main (resolved+pushed by a concurrent session): no worker burned"
   exit 0
 fi
 
@@ -135,7 +135,7 @@ while IFS= read -r _k; do
   grep -qE "^##[[:space:]]+#$_k([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null && _unmet="${_unmet:+$_unmet, }#$_k"
 done < <(govern::ticket_deps "$N" "$TICKETS_FILE")
 if [[ -n "$_unmet" ]]; then
-  echo "skip: depends on unresolved $_unmet (still in tickets.md) — no worker burned (#119)"
+  echo "skip: depends on unresolved $_unmet (still in tickets.md): no worker burned"
   exit 0
 fi
 
@@ -145,12 +145,12 @@ if [[ "${GOVERN_STALENESS_GATE:-0}" == "1" ]]; then
   _sg_rc=0
   _sg_out="$("$DIR/staleness-gate.sh" "$N" 2>/dev/null)" || _sg_rc=$?
   if [[ "$_sg_rc" -eq 10 ]]; then
-    echo "skip: ${_sg_out:-confidently stale} — no worker burned (#4.5)"
+    echo "skip: ${_sg_out:-confidently stale}: no worker burned"
     exit 0
   fi
 fi
 
-# ── 6. failure-streak breaker (#60, ported verbatim from run-loop.sh's consecutive_fails) ────
+# ── 6. failure-streak breaker (ported verbatim from run-loop.sh's consecutive_fails) ─────────
 # Trailing CONSECUTIVE failed / timeout / budget-exceeded / early-abort outcomes for THIS ticket
 # across the cross-run history (a resolved or parked outcome resets the streak). Its data source,
 # governor/ticket-history.jsonl, is written by govern::record-style writers that survive the loop
@@ -174,22 +174,23 @@ if command -v jq >/dev/null 2>&1; then _cf="$(_consecutive_fails "$N")"; fi
 if [[ "${_cf:-0}" -ge "${GOVERN_MAX_TICKET_FAILS:-2}" ]]; then
   # Auto-escalate as a systemic blocker (filed under "## Open", so the next dispatch skips it too)
   # rather than re-attempting: the operator / root-cause path takes over instead of an infinite
-  # retry. One escalation only, guarded the same way the #120 nudge is.
+  # retry. One escalation only, guarded the same way the chronic-skip nudge is.
   if [[ "${GOVERN_MODE:-live}" == "live" ]] && ! govern::has_open_escalation "$N"; then
     govern::file_open_escalation "$N" \
       "systemic blocker: ${_cf} consecutive failed dispatches" \
-      "systemic blocker: failed ${_cf} consecutive dispatches. Needs operator / root-cause, not another auto-retry (#60)" \
+      "systemic blocker: failed ${_cf} consecutive dispatches. Needs operator / root-cause, not another auto-retry" \
       "inspect the preserved worktree + worker.jsonl, fix the underlying blocker (or re-scope / close the ticket)" \
       ""
   fi
-  echo "skip: #$N failed ${_cf} consecutive dispatches (GOVERN_MAX_TICKET_FAILS=${GOVERN_MAX_TICKET_FAILS:-2}): auto-escalated as a systemic blocker, not re-spawning (#60)"
+  echo "skip: #$N failed ${_cf} consecutive dispatches (GOVERN_MAX_TICKET_FAILS=${GOVERN_MAX_TICKET_FAILS:-2}): auto-escalated as a systemic blocker, not re-spawning"
   exit 0
 fi
 
-# ── 7. proposed-solution gate (D2) ───────────────────────────────────────────────────────────────
-# An inert-by-default gate is the exact failure G7/#128 is filed for, so this ships ON: the kill
-# switch must be set explicitly, not assumed. Reads the ticket exactly once, through the one shared
-# implementation (govern::ticket_proposal) — nothing else on this path re-parses the ticket file.
+# ── 7. proposed-solution gate ────────────────────────────────────────────────────────────────────
+# An inert-by-default gate risks shipping silently off, exactly the failure to avoid, so this
+# ships ON: the kill switch must be set explicitly, not assumed. Reads the ticket exactly once,
+# through the one shared implementation (govern::ticket_proposal). Nothing else on this path
+# re-parses the ticket file.
 if [[ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]]; then
   if [[ -z "$(govern::ticket_proposal "$N" "$TICKETS_FILE")" ]]; then
     echo "refuse: no proposed solution - the driver must specify before dispatch"
@@ -208,7 +209,7 @@ if declare -F govern::pregate_hub_ahead >/dev/null 2>&1; then
   fi
 fi
 
-# ── 9. dispatch-time overlap nudge (#139, zero model calls, stderr only) ─────────────────────
+# ── 9. dispatch-time overlap nudge (zero model calls, stderr only) ───────────────────────────
 # A non-blocking hint that some OTHER queued-but-unnamed ticket touches the files this one does, so
 # the operator can batch them into one worker. It never changes the verdict and never touches the
 # queue. GOVERN_OVERLAP_NUDGE=0 silences it.

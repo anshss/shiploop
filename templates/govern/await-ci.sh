@@ -14,8 +14,8 @@
 #                      (network / auth / rate-limit / GitHub 5xx) for GOVERN_CI_ERR_MAX
 #                      consecutive polls, OR the none-verification call itself failed.
 #                      FAIL-CLOSED: a gh error is NOT conflated with "no checks" — the
-#                      caller must PARK (never merge) on 'error' (root cause of the
-#                      pre-#34b fail-open: `… 2>/dev/null || echo '[]'` made a broken gh
+#                      caller must PARK (never merge) on 'error' (root cause of a past
+#                      fail-open bug: `… 2>/dev/null || echo '[]'` made a broken gh
 #                      look identical to a checkless repo and auto-merged un-tested PRs).
 # Tunables: GOVERN_CI_MAX_TRIES (60), GOVERN_CI_INTERVAL secs (30),
 #           GOVERN_CI_NONE_GRACE secs (6) slept between consecutive-empty polls,
@@ -77,7 +77,7 @@ while :; do
   if [[ "$total" -eq 0 ]]; then
     none_seen=$((none_seen+1))
     if [[ "$none_seen" -ge "$NONE_CONSEC" ]]; then
-      # An empty `gh pr checks` alone is NOT sufficient to auto-merge (#34b). Confirm with a
+      # An empty `gh pr checks` alone is NOT sufficient to auto-merge. Confirm with a
       # second independent signal before concluding the repo is genuinely checkless.
       case "$(verify_checkless)" in
         empty) echo "none"; exit 0 ;;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durable-validation JOB SUBSTRATE (harness durable-validation-runner design §2–§3). Sourced by
+# Durable-validation JOB SUBSTRATE: the manifest, heartbeat and status record. Sourced by
 # BOTH run-validation.sh's detached supervisor AND a flow's validation script — DEFINITIONS ONLY;
 # every function resolves its deps at call time so definition order and the sourcing context are
 # irrelevant. No `set -e` side effects: sourcing this file must never abort the caller.
@@ -10,7 +10,7 @@
 #                    box is trackable even if the job dies one line later.
 #   heartbeat      — runner-owned liveness file, touched ~every GOVERN_VAL_HEARTBEAT_INTERVAL while
 #                    the flow's process group is alive (liveness, NOT script cooperation).
-#   status.jsonl   — {phase,deploys,verdict,evidence,ts} per phase boundary (§3 schema).
+#   status.jsonl   — {phase,deploys,verdict,evidence,ts} per phase boundary.
 #   status         — terminal marker holding one of PASS|FAIL|ABORT|ERROR (the quick terminal probe).
 #   tombstone      — written by the workspace sweep when it reaps a stale job; STICKY and DOMINATES
 #                    the heartbeat. Present at a phase boundary → the job must ABORT and touch nothing.
@@ -52,13 +52,13 @@ valjob::_require_dir() {
   printf '%s' "$VAL_JOB_DIR"
 }
 
-# ── deploy naming (§1) ───────────────────────────────────────────────────────
+# ── deploy naming ────────────────────────────────────────────────────────────
 # The name every box the flow provisions MUST carry so the session-scoped reaper can attribute it:
 # <VAL_JOB_ID>-<label>. VAL_JOB_ID already begins with `val-`, so the result matches the spec's
 # `val-<jobid>-<label>` shape and the sweep's `<jobid>-*` prefix match without a doubled prefix.
 valjob::deploy_name() { printf '%s-%s' "${VAL_JOB_ID:?VAL_JOB_ID unset}" "${1:?deploy label required}"; }
 
-# ── manifest (§2) ────────────────────────────────────────────────────────────
+# ── manifest ─────────────────────────────────────────────────────────────────
 # Append one deploy line BEFORE provisioning. A single short line is < PIPE_BUF so `>>` is atomic.
 valjob::manifest_add() { # <deploy-id> <provider>
   local id="${1:?deploy id required}" prov="${2:-unknown}" dir
@@ -80,7 +80,7 @@ valjob::_deploys_array() {
   printf '[%s]' "$(awk 'BEGIN{sep=""} {printf "%s%s", sep, $0; sep=","}' "$f")"
 }
 
-# ── heartbeat (§2) ───────────────────────────────────────────────────────────
+# ── heartbeat ────────────────────────────────────────────────────────────────
 valjob::heartbeat_touch() { local dir; dir="$(valjob::_require_dir)" || return 1; touch "$dir/heartbeat" 2>/dev/null || true; return 0; }
 # Age of the heartbeat in seconds (empty output when there is no heartbeat yet).
 valjob::heartbeat_age() { # [jobdir]
@@ -91,7 +91,7 @@ valjob::heartbeat_age() { # [jobdir]
   now="$(date +%s)"; printf '%s' "$(( now - m ))"
 }
 
-# ── status + terminal record (§3) ────────────────────────────────────────────
+# ── status + terminal record ─────────────────────────────────────────────────
 # Append a phase-boundary line. verdict/evidence stay empty until the terminal line.
 valjob::phase() { # <phase> [verdict] [evidence]
   local phase="${1:?phase name required}" verdict="${2:-}" evidence="${3:-}" dir
@@ -113,7 +113,7 @@ valjob::terminal() { # <PASS|FAIL|ABORT|ERROR> [evidence]
   return 0
 }
 
-# ── tombstone guard (§3) — the job side of orphan-safety ─────────────────────
+# ── tombstone guard — the job side of orphan-safety ──────────────────────────
 # Called at EVERY phase boundary, before doing anything else. Tombstone present → the sweep already
 # closed this job's boxes; emit terminal ABORT and EXIT without touching or re-provisioning anything.
 # This exits the sourcing flow script by design (a resumed job must never continue against reaped boxes).
@@ -127,7 +127,7 @@ valjob::guard_tombstone() { # [phase-label]
   return 0
 }
 
-# ── orphan verdict (§2) — DATA for GOVERN_DEPLOY_SWEEP_CMD; the hub NEVER closes boxes itself ─────
+# ── orphan verdict — DATA for GOVERN_DEPLOY_SWEEP_CMD; the hub NEVER closes boxes itself ─────────
 # Deterministic rule: tombstone (sticky, dominates) → terminal record → stale heartbeat → else LIVE.
 valjob::orphan_verdict() { # [jobdir] -> "LIVE …" | "ORPHAN <reason>"
   local dir="${1:-${VAL_JOB_DIR:-}}" age stale
@@ -142,7 +142,7 @@ valjob::orphan_verdict() { # [jobdir] -> "LIVE …" | "ORPHAN <reason>"
 }
 valjob::is_orphan() { case "$(valjob::orphan_verdict "${1:-${VAL_JOB_DIR:-}}")" in ORPHAN*) return 0 ;; *) return 1 ;; esac; }
 
-# ── retention pruning (§1) ───────────────────────────────────────────────────
+# ── retention pruning ────────────────────────────────────────────────────────
 # Prune TERMINAL job dirs only (those with a `status` marker) — keep the newest N regardless of age,
 # then delete the rest older than the day window. Live (non-terminal) dirs are NEVER touched.
 valjob::prune() { # <validations-dir>

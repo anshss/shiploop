@@ -10,7 +10,7 @@ below), look for:
   operator fixes the systemic issue instead of burning more worker runs.
 - **Drift:** the run doing something clearly off (churning the same ticket, escalations piling up
   unaddressed).
-- **Template-sync amplification (#115):** if this meta-repo mirrors harness scripts into a
+- **Template-sync amplification:** if this meta-repo mirrors harness scripts into a
   skill/templates dir, watch for the backlog filling with 1:1 `port #N into templates` tickets — one
   per harness change. That's the anti-pattern: recommend ONE batched "sync templates" PR (port all
   accumulated changes together, advance the sync marker), never a per-change ticket.

@@ -1,12 +1,12 @@
 # Known limits
 
-Led by the least flattering true facts, per the operator's instruction on ticket #104. If a number
+Led by the least flattering true facts, per the operator's own instruction. If a number
 in `README.md` or `METHODOLOGY.md` looks better than this file, this file is right and the number
 needs another look.
 
 ## The interactive driver session is excluded, and the baseline now overlaps it
 
-Added 2026-09-10 (#108). `bench/replay.mjs` walks `logs/govern/<run>/**` only. The interactive
+Added 2026-09-10. `bench/replay.mjs` walks `logs/govern/<run>/**` only. The interactive
 driver session -- the one that turns a conversation into tickets, decides scope, dispatches
 workers and reviews the PRs -- writes no transcript there, so none of its tokens are in this
 report, in either arm, under any flag.
@@ -145,7 +145,7 @@ otherwise, so it is immune to this by construction. Full mechanism and the "Flat
 classification: `bench/METHODOLOGY.md`. A cost reduction must never be quoted with the same
 confidence as a token reduction; `README.md`'s "Tokens vs. cost" section states why.
 
-**FIXED 2026-09-08 (#108).** `dominantTier()` is removed. The modeled side is now priced at the
+**FIXED 2026-09-08.** `dominantTier()` is removed. The modeled side is now priced at the
 session's own input-side token mix blended across the tiers that actually ran it
 (`sessionInputRate()`), so the whole-session single-tier rounding described above no longer happens.
 For a single-model session the two rules agree to the cent, which is why the frozen fixtures and the
@@ -155,7 +155,7 @@ does not. Never quote a cost reduction with the same confidence as a token reduc
 
 ## The headline is a composite of several counterfactuals, not one session
 
-Since #108 the reported saving sums per-lever components, and those levers do not all share one
+The reported saving sums per-lever components, and those levers do not all share one
 counterfactual. Carry and routing are measured against "one accumulating session on the driver's
 tier", which is the arm's stated definition. Cache-prefix, watchdog, resume and skip-the-model are
 measured against "the same harness WITHOUT that lever": a single session would never have spawned a
@@ -185,7 +185,7 @@ zero and the reason, so it can never be mistaken for a measured zero.
 
 ## The attempt-outcome breakdown is `unclassified` wherever the per-attempt ledger is missing
 
-Added 2026-09-10 (#108). `outcomeBreakdown()` reads spawn-worker.sh's per-attempt ledger
+Added 2026-09-10. `outcomeBreakdown()` reads spawn-worker.sh's per-attempt ledger
 (`attempts.jsonl`, sibling of the transcript) to say why an attempt happened
 (`infra`/`ci`/`budget`/`judgment`/`unknown`/`first-attempt`), the same way the lever levers above
 read `lever-events.jsonl`. A ticket directory with no `attempts.jsonl` at all -- any corpus
@@ -210,7 +210,7 @@ remove.
 
 ## The harness-overhead charge is bounded by what the corpus recorded
 
-Spec section 4a charges orchestration-side transcripts into the shiploop arm, which is the fix for
+This charges orchestration-side transcripts into the shiploop arm, which is the fix for
 METHODOLOGY's old "largest known bias". It can only charge what exists. On a corpus where the
 governor wrote no transcript of its own model calls, every run is `overhead-uncovered`, the charge
 is zero, and the shiploop arm's cost is a stated LOWER bound rather than a measurement. The report

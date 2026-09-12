@@ -34,22 +34,23 @@
 #
 # THIRD behavior, and the only BLOCKING one in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
-# session. It has two lanes and one doctrine: the interactive lane is
-# `Agent(subagent_type: "worker")`, the autonomous lane is govern's headless
-# spawn-worker.sh. Any Agent-tool child that is NOT subagent_type "worker" is a
+# session. The session dispatches one as `Agent(subagent_type: "worker")` and
+# steers it; govern's headless spawn-worker.sh runs the same doctrine unattended
+# for a cron-style run with no open session. Any Agent-tool child that is NOT
+# subagent_type "worker" is a
 # **subagent** (the platform's own term). "Ticket-shaped" needs TWO signals, not
 # one keyword: a real ticket REFERENCE (the word "ticket" on its own, or a bare
 # `#<N>`) AND DISPATCH intent (a verb meaning "go make this ticket done") --
 # OR an item-shaped `name`/`description` (`t1004`, `ticket-955`, `w973`,
 # `t920-fix`), which carries both signals on its own even when the prompt body
-# never says "ticket" or a dispatch verb (#115: measured across 95 sessions,
+# never says "ticket" or a dispatch verb (measured across 95 sessions,
 # item-named children outnumbered `worker`-typed ones roughly 4 to 1, and the
 # prompt-only scan saw none of them).
 #
 # A write marker under a NEGATION ("do not open a PR", "never commit",
 # "without editing") is the prompt FORBIDDING that action, not evidence it
 # will happen. The first cut of this fix only special-cased "do not
-# (edit|commit)"; #115 hit the identical defect again on "do not open a PR" /
+# (edit|commit)", then hit the identical defect again on "do not open a PR" /
 # "not create a worktree", proving enumerate-the-pairs doesn't scale. The
 # negation check is generic instead: ANY write marker preceded (within a
 # short filler window) by a negator -- do/does/did not, will not, won't,
@@ -60,7 +61,7 @@
 # prose for a *different* ticket, reviewing a draft ticket body) is not a
 # prompt that DISPATCHES one, even though the quoted text is full of ticket
 # references and section headers ("Fix:") that read as dispatch verbs out of
-# context (#115, 2026-09-10). Authoring gets its own two-signal exemption,
+# context. Authoring gets its own two-signal exemption,
 # same shape as ticket-shaped itself: an authoring verb (draft/author) PLUS a
 # content-artifact noun (prose, write-up, queue entr(y|ies), scratchpad) --
 # either alone is too weak ("draft" also reads "draft a fix", which IS
@@ -81,22 +82,20 @@
 # sub-delegation) and never on a call that already carries subagent_type
 # "worker".
 #
-# FOURTH behavior, D9 (2026-09-11 spec): a `lookup` or `investigator` Agent call is a
-# read-only DATA-COLLECTION child, never routed here even when the prompt is
-# ticket-shaped. It exits clean exactly where subagent_type "worker" already does,
-# because it is provable rather than heuristic: both types ship with tools: Read,
-# Grep, Glob, Bash and nothing that writes, so an advisor gathering what it needs to
-# WRITE a proposal (D2) cannot be mistaken for a subagent doing the ticket's actual
-# work. Without this exemption, D2's proposal gate and this guard's deny path would
-# deadlock the advisor investigating its own ticket -- #126's read-only false
-# positive by a second route. D9 also settles the corollary: these children do NOT
-# count against the fan-out cap below (that cap targets unbounded WORKER spawning,
-# not the advisor's own thinking).
+# FOURTH behavior: a `lookup` or `investigator` Agent call is a read-only
+# DATA-COLLECTION child, never routed here even when the prompt is ticket-shaped. It
+# exits clean exactly where subagent_type "worker" already does, because it is
+# provable rather than heuristic: both types ship with tools: Read, Grep, Glob, Bash
+# and nothing that writes, so an advisor gathering what it needs to WRITE a proposed
+# solution cannot be mistaken for a subagent doing the ticket's actual work. Without
+# this exemption, the proposal gate and this guard's deny path would deadlock the
+# advisor investigating its own ticket -- a read-only false positive by a second
+# route. These children also do NOT count against the fan-out cap below (that cap
+# targets unbounded WORKER spawning, not the advisor's own thinking).
 #
-# FIFTH behavior, D4's fan-out cap (queue #126 / #115): nothing previously counted a
-# genuine `subagent_type: "worker"` dispatch, so a session could spawn an unbounded
-# number of them in one turn with zero friction (G4's "way too many workers"
-# symptom). Reuses the exact per-session-counter-file MECHANISM the Read/Bash
+# FIFTH behavior, the worker fan-out cap: nothing previously counted a genuine
+# `subagent_type: "worker"` dispatch, so a session could spawn an unbounded number of
+# them in one turn with zero friction (the "way too many workers" symptom). Reuses the exact per-session-counter-file MECHANISM the Read/Bash
 # advisories below already use, keyed the same way (sanitised session_id), but with
 # its OWN file and its OWN kill switch -- a worker dispatch is a materially
 # different event from an inline-Read/verbose-build advisory and the two must not
@@ -114,11 +113,11 @@ set -uo pipefail
 # --- tuning knobs -----------------------------------------------------------
 READ_LINE_THRESHOLD=1000   # a Read spanning >= this many lines counts as "large"
 MAX_WARNS_PER_SESSION=3    # after this many warns in a session, stay quiet
-# D4's fan-out cap (queue #126 / spec D4): a starting point, not a derived constant.
-# Chosen high enough that a legitimate multi-ticket sweep ("several tickets, one at a
-# time" per the operator doctrine) doesn't nag on every dispatch, low enough that the
-# "way too many workers" symptom G4 measured (every ticket-shaped signal steered
-# independently, with zero session-wide count) gets flagged before it compounds.
+# The fan-out cap: a starting point, not a derived constant. Chosen high enough that a
+# legitimate multi-ticket sweep ("several tickets, one at a time" per the operator
+# doctrine) doesn't nag on every dispatch, low enough that the measured "way too many
+# workers" symptom (every ticket-shaped signal steered independently, with zero
+# session-wide count) gets flagged before it compounds.
 MAX_WORKERS_PER_SESSION=5
 
 # --- never nag the delegation target (sub-agent / governor worker) ----------
@@ -189,7 +188,7 @@ esac
 # the Agent tool is never touched by this.
 if [ "$tool_name" = "Agent" ]; then
   [ "${GOVERN_TICKET_ROUTE_GUARD:-1}" = "0" ] && exit 0
-  # Already the worker agent type, or a read-only data-collection child (D9): nothing
+  # Already the worker agent type, or a read-only data-collection child: nothing
   # to route. `lookup`/`investigator` are read-only BY THEIR OWN `tools:` line (Read,
   # Grep, Glob, Bash -- no Write/Edit/Agent), so this is provable from the type alone,
   # never a prompt-shape heuristic, and neither counts against the fan-out cap below.
@@ -204,14 +203,14 @@ if [ "$tool_name" = "Agent" ]; then
   # disagree about which ticket a call is for.
   probe="$agent_prompt $agent_desc"
   # A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166", "pull request #166") is a PR
-  # reference, not a ticket reference (queue #126: a changelog-style sentence read as ticket-shaped
-  # dispatch). Stripped from a lowercased copy before any number is read out of it.
+  # reference, not a ticket reference: a changelog-style sentence otherwise reads as
+  # ticket-shaped dispatch. Stripped from a lowercased copy before any number is read out of it.
   pr_ref_re='(^|[^[:alnum:]])(pr|pull[[:space:]]+request)[[:space:]]*#[0-9]+'
   probe_lc="$(tr '[:upper:]' '[:lower:]' <<< "$probe")"
   probe_lc_noPR="$(sed -E "s/$pr_ref_re/ /g" <<< "$probe_lc")"
   # Item-shaped NAME/DESCRIPTION: a short slug that carries its own ticket reference + dispatch
   # intent, so a custom-named child that skips ticket vocabulary in its PROMPT (t1004, ticket-955,
-  # w973, t920-fix) is still recognised (#115). Anchored to the WHOLE field, never a substring, so
+  # w973, t920-fix) is still recognised. Anchored to the WHOLE field, never a substring, so
   # a prose description ("Fix ticket 930 ready_at") is untouched here -- it already matches the
   # ticket-reference + dispatch_re checks below. `{2,}` floors t/w names at two digits: a
   # single-digit `t1`/`t2` used as an ad-hoc step label ("task 1", "task 2") is not a ticket number.
@@ -284,7 +283,7 @@ print(json.dumps({
         fi
       fi
     fi
-    # D4's fan-out cap (see header FIFTH behavior): count this dispatch, and once a
+    # The fan-out cap (see header FIFTH behavior): count this dispatch, and once a
     # session crosses MAX_WORKERS_PER_SESSION, emit ONE advisory per subsequent
     # dispatch -- never a deny; the deny path above is reserved for ticket-shaped
     # work skipping the worker doctrine entirely, not for "too many of them".
@@ -348,7 +347,7 @@ print(json.dumps({
 
     # AUTHORING is its own two-signal exemption, same shape as ticket-shaped itself:
     # drafting queue-entry PROSE quotes ticket vocabulary and "Fix:"-shaped section
-    # headers without dispatching anything (#115, 2026-09-10). Neither signal alone is
+    # headers without dispatching anything. Neither signal alone is
     # safe on its own -- "draft" also reads "draft a fix" (real dispatch), and
     # "prose"/"entries" show up in unrelated writing -- so both must be present.
     authoring_verb_re='(^|[^[:alnum:]])(draft(s|ing)?|author(s|ing)?)([^[:alnum:]]|$)'
@@ -360,7 +359,7 @@ print(json.dumps({
 
     # A write marker under a NEGATION is the prompt FORBIDDING that action, not
     # evidence it will happen -- generic over every write_re marker rather than a
-    # hand-picked "do not edit/commit" pair (#115 hit the same defect twice: a
+    # hand-picked "do not edit/commit" pair (the same defect hit twice: a
     # prohibition worded "do not open a PR" / "not create a worktree" slipped past a
     # fix scoped only to edit/commit). Strip a write_re marker preceded, within a
     # short filler window, by a negator: do/does/did not, will not, won't, cannot,
@@ -368,7 +367,7 @@ print(json.dumps({
     # this is boolean-only scratch text, never shown to the user. (probe_lc was
     # already lowered above, for the PR-ref strip -- reused here, not recomputed.)
     #
-    # #126 (2026-09-11): one negator governs a whole LIST in English -- "do not edit,
+    # One negator governs a whole LIST in English -- "do not edit,
     # commit, or create anything" negates BOTH edit and commit -- but the first cut of
     # this pattern only consumed ONE write verb per trigger, so "commit" survived
     # un-negated and re-triggered write_re just past the very prohibition disclaiming

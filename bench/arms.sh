@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# bench/arms.sh: the three arm shapes of the marketing benchmark (spec section 2). Source, do not execute.
+# bench/arms.sh: the three arm shapes of the marketing benchmark. Source, do not execute.
 #
 #   vanilla        ONE `claude -p` session per backlog, headless default model, default tools, no
 #                  hooks, no extra CLAUDE.md, in a fresh worktree of the pinned ref. The prompt is
 #                  the backlog verbatim plus the one framing line. This is stock Claude Code used
 #                  the way it is used out of the box: one session, one conversation, top to bottom.
 #   vanilla-fresh  a fresh `claude -p` per ticket, sequential, same prompt shape. Private record
-#                  only (section 2): if a teardown replays us with per-ticket sessions we already know the
+#                  only: if a teardown replays us with per-ticket sessions we already know the
 #                  delta. Never published.
 #   shiploop       the REAL shipped session lane in a scaffolded throwaway workspace, over a
 #                  queue/tickets.md seeded with the same backlog, defaults on. Per ticket, in the
@@ -22,7 +22,7 @@
 # the first thing a replay finds, and it voids even true numbers.
 #
 # Neither arm gets WebFetch or WebSearch, so nothing in a run can reach the upstream PRs the
-# backlog was mined from (section 3). Both arms express that through the SAME already-gated `--tools`
+# backlog was mined from. Both arms express that through the SAME already-gated `--tools`
 # mechanism: the vanilla session passes the governor's default tool list minus the two web tools,
 # and the shiploop arm sets GOVERN_WORKER_TOOLS to the same list so its workers inherit it.
 set -euo pipefail
@@ -57,7 +57,7 @@ BENCH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,To
 #   _GOVERN_MAXBUDGETUSD_SUPPORTED pre-seed 1|0 to skip the --max-budget-usd probe (test seam)
 #
 # Unsupported CLI (neither flag) is a HARD STOP, not a silent degrade: a per-session ceiling is an
-# always-on rail (spec section 5) and dropping it would spawn an uncapped, spend-bearing session.
+# always-on rail and dropping it would spawn an uncapped, spend-bearing session.
 # `BENCH_ALLOW_UNCAPPED_TURNS=1` is the deliberate operator override.
 bench::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
   govern::claude_supports_max_turns "$1"
@@ -273,7 +273,7 @@ EOF
 
 # Copy every session stream the arm produced into the bench log dir, in dispatch order, named
 # NN-<ticket>.jsonl so record.sh derives `task` from the filename. An arm that spawned scouts and
-# escalations copies those too: section 2 says cost is EVERYTHING the lane spends.
+# escalations copies those too: cost is EVERYTHING the lane spends.
 bench::collect_govern_streams() { # <workspace> <logdir>
   local ws="$1" logdir="$2" i=0 f rel tag
   # `find`, not a `**` glob: globstar is bash 4+ and macOS ships bash 3.2, where `**` would
@@ -365,7 +365,7 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
   if govern::claude_supports_tools_flag "$BENCH_CLAUDE_BIN"; then
     tools_flag="--tools $BENCH_TOOLS"
   else
-    bench::die "claude CLI ($BENCH_CLAUDE_BIN) does not support --tools, so WebFetch/WebSearch cannot be excluded. Spec section 3 forbids running an arm that can reach the upstream PRs."
+    bench::die "claude CLI ($BENCH_CLAUDE_BIN) does not support --tools, so WebFetch/WebSearch cannot be excluded, and an arm that can reach the upstream PRs must never run."
   fi
   mkdir -p "$(dirname "$jsonl")"
   # -u GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/GH_REPO: offline guard, part 2 (run.sh's

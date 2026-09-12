@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #56: a harness bump can ship a `claude` invocation flag/subcommand the fleet's installed CLI
+# A harness bump can ship a `claude` invocation flag/subcommand the fleet's installed CLI
 # doesn't support yet (version skew). The CLI then rejects the invocation itself — e.g.
 # `error: unknown option '--definitely-not-a-real-flag'`, exit 1, a single PLAIN-TEXT line, never
 # touching the streaming JSON protocol at all (spawn-worker redirects 2>&1 into $jsonl). That trips
