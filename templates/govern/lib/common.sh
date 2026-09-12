@@ -1535,15 +1535,14 @@ govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion co
   esac
 }
 
-# ── advisor consult (#127, design Layer 3: .specs/2026-09-09-model-orchestration-design.md) ──────
-# "A sonnet worker that reaches a decision it cannot make spawns ONE opus `Agent` with a scoped
-# question, receives an answer, and continues at sonnet." Same shape as govern::gotcha_block (#125/
-# #176): THE one implementation both lanes call through a thin CLI wrapper
-# (advisor-consult.sh). A launcher can inject the gotchas block IN ADVANCE because it is static text
-# known before dispatch; a consult is a LIVE decision only the running worker can make mid-session,
-# so there is nothing for a launcher to precompute FOR either lane here: the headless worker and an
-# interactive worker subagent both call `advisor-consult.sh` themselves, the same way, at the moment
-# they need it. spawn-worker.sh's only role is exporting GOVERN_ADVISOR_BUDGET from the ticket's
+# ── advisor consult ──────────────────────────────────────────────────────────────────────────────
+# A sonnet worker that reaches a decision it cannot make asks the advisor session that wrote its
+# proposal, receives an answer, and continues at sonnet. The budget for asking is script-owned, so
+# the cap is a mechanism rather than prompt text. Same shape as govern::gotcha_block (#125/#176):
+# THE one implementation, reached through a thin CLI wrapper (advisor-consult.sh). A launcher can
+# inject the gotchas block IN ADVANCE because it is static text known before dispatch; a consult is
+# a LIVE decision only the running worker can make mid-session, so there is nothing for a launcher
+# to precompute here: the worker calls `advisor-consult.sh` itself, at the moment it needs it. spawn-worker.sh's only role is exporting GOVERN_ADVISOR_BUDGET from the ticket's
 # precision grade (Layer 2) before the live spawn, so the grade-appropriate cap is already in the
 # headless child's environment when it calls this; an interactive worker has no grade at all, so
 # govern::advisor_claim falls back to the plain GOVERN_ADVISOR_PER_WORKER default in that case
@@ -1634,8 +1633,13 @@ govern::advisor_claim() { # <N> [<question>] [<turn>]
       '{decision:"deny",reason:"session-budget-exhausted",workerRemaining:$wr,sessionRemaining:$sr}'
     return 1
   fi
-  local advisor_model max_tokens consult_id wr2 sr2
-  advisor_model="$(govern::model_request_cap opus)"
+  # No advisorModel is issued. Nothing ever spawns an advisor: the interactive lane asks the session
+  # that wrote the proposal, and the headless lane has no advisor at all and reports an honest
+  # escalation instead. The field this response used to carry existed only to name a model for a
+  # worker to SPAWN, so it is gone rather than left inert. govern::model_request_cap is untouched and
+  # still caps an explicit ticket `Model:` request in spawn-worker.sh; it simply has no second caller
+  # here any more.
+  local max_tokens consult_id wr2 sr2
   max_tokens="${GOVERN_ADVISOR_MAX_TOKENS:-4000}"
   consult_id=$(( used_worker + 1 ))
   wr2=$(( wr - 1 )); if [[ "$wr2" -lt 0 ]]; then wr2=0; fi
@@ -1645,9 +1649,9 @@ govern::advisor_claim() { # <N> [<question>] [<turn>]
      '{ts:$ts, event:"claim", consultId:$cid, sessionId:(if $key=="" then null else $key end),
        question:(if $q=="" then null else $q end), turn:(if $turn=="" then null else $turn end)}' \
      >> "$ledger" 2>/dev/null || true
-  jq -nc --argjson cid "$consult_id" --arg am "$advisor_model" --argjson mt "$max_tokens" \
+  jq -nc --argjson cid "$consult_id" --argjson mt "$max_tokens" \
      --argjson wr "$wr2" --argjson sr "$sr2" \
-     '{decision:"allow",consultId:$cid,advisorModel:$am,maxTokens:$mt,workerRemaining:$wr,sessionRemaining:$sr}'
+     '{decision:"allow",consultId:$cid,maxTokens:$mt,workerRemaining:$wr,sessionRemaining:$sr}'
   return 0
 }
 
@@ -3734,11 +3738,8 @@ govern::model_clamp() { # <tier> -> <tier>, or the ceiling when <tier> outranks 
 # when the request outranks it. Rank comparison, not string equality, so an at-or-below request
 # passes through untouched and an unrankable ceiling (rank 0) caps nothing rather than inventing a
 # tier: the exact comparison spawn-worker.sh's resolve_sizing used to run inline for the ticket
-# `Model:` field cap. Factored out here so the advisor consult model (#127, design Layer 3) can
-# reuse the SAME cap instead of a second copy: "the advisor model is capped, not free... resolves
-# against GOVERN_WORKER_ESCALATION_MODEL the same way an explicit ticket Model: request already
-# does." Never logs (callers that already log the ticket-Model-field case keep doing so themselves,
-# unchanged) and never fails: an unrankable requested model just passes through.
+# `Model:` field cap, which is its one caller today. Never logs (the caller that already logs the
+# ticket-Model-field case keeps doing so itself, unchanged) and never fails: an unrankable requested model just passes through.
 govern::model_request_cap() { # <requested> -> <requested-or-capped>
   local requested="${1:-}" wcap wrank crank
   wcap="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"

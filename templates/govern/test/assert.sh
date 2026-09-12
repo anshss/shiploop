@@ -101,6 +101,11 @@ export GOVERN_AGENT_SUPERVISION=1    # .specs/2026-09-11-advisor-worker-design.m
                                       # protect: test-agent-progress-guard.sh is the only test that
                                       # ever invokes this hook, and it covers the ON default and
                                       # the GOVERN_AGENT_SUPERVISION=0 kill switch directly.
+export GOVERN_STEER_CAP=12           # advisor-steer-guard.sh's per-session cap on messages sent
+                                      # down to a dispatched worker. Pinned at the shipped default,
+                                      # not forced off: this gate only ever DENIES a message, it
+                                      # never spawns, so no dispatch fixture is perturbed by it.
+                                      # Explicit so a live session's own override cannot leak in.
 
 # §4.3 index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

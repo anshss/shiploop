@@ -196,7 +196,94 @@ if [ "$tool_name" = "Agent" ]; then
   case "$subagent_type" in
     lookup|investigator) exit 0 ;;
   esac
+
+  # ── shared probe + ticket-number resolution ────────────────────────────────
+  # Hoisted above the worker branch because BOTH the proposal gate (worker dispatch, below) and
+  # the ticket-route deny path (further down) need the same ticket number off the same text. One
+  # probe, one lowering, one PR-ref strip, one resolver: a second copy is how the two paths would
+  # disagree about which ticket a call is for.
+  probe="$agent_prompt $agent_desc"
+  # A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166", "pull request #166") is a PR
+  # reference, not a ticket reference (queue #126: a changelog-style sentence read as ticket-shaped
+  # dispatch). Stripped from a lowercased copy before any number is read out of it.
+  pr_ref_re='(^|[^[:alnum:]])(pr|pull[[:space:]]+request)[[:space:]]*#[0-9]+'
+  probe_lc="$(tr '[:upper:]' '[:lower:]' <<< "$probe")"
+  probe_lc_noPR="$(sed -E "s/$pr_ref_re/ /g" <<< "$probe_lc")"
+  # Item-shaped NAME/DESCRIPTION: a short slug that carries its own ticket reference + dispatch
+  # intent, so a custom-named child that skips ticket vocabulary in its PROMPT (t1004, ticket-955,
+  # w973, t920-fix) is still recognised (#115). Anchored to the WHOLE field, never a substring, so
+  # a prose description ("Fix ticket 930 ready_at") is untouched here -- it already matches the
+  # ticket-reference + dispatch_re checks below. `{2,}` floors t/w names at two digits: a
+  # single-digit `t1`/`t2` used as an ad-hoc step label ("task 1", "task 2") is not a ticket number.
+  item_shape_re='^(t[0-9]{2,}|w[0-9]{2,}|ticket-?[0-9]+)(-[a-zA-Z0-9-]+)?$'
+  resolve_tnum() { # -> the ticket number this Agent call is about, or "" if none is resolvable
+    local t
+    t="$(grep -oE '#[0-9]+' <<< "$probe_lc_noPR" 2>/dev/null | head -1 | tr -d '#' || true)"
+    if [ -z "$t" ]; then
+      t="$(grep -oEi '^(t|w|ticket-?)[0-9]+' <<< "$agent_name"$'\n'"$agent_desc" 2>/dev/null \
+             | grep -oE '[0-9]+' | head -1 || true)"
+    fi
+    printf '%s' "$t"
+  }
   if [ "$subagent_type" = "worker" ]; then
+    # ── SIXTH behavior: the proposed-solution gate, on THIS lane ──────────────
+    # pre-dispatch-check.sh already refuses a headless dispatch on a ticket with no
+    # **Proposed solution:**, off the same GOVERN_PROPOSAL_GATE switch, ON by default. But
+    # nothing RUNS that script for an advisor dispatching a worker in-session: it is a command
+    # the advisor has to remember, and a gate that only fires when someone remembers it reads
+    # as configured while controlling nothing. This is the same gate on the event that actually
+    # starts the work, so ONE kill switch governs both lanes and neither can be dispatched around.
+    #
+    # The advisor IS the driver, so the DRIVER-only guards at the top of this file (GOVERN_RUN,
+    # .../subagents/) are exactly right here: a worker sub-delegating to another worker is
+    # already exempt, and only the session that OWNS the proposal is gated on having written it.
+    #
+    # Resolution is best-effort and degrades to ALLOW (never a hard fail) on any of: no
+    # resolvable ticket number in the call, no ticket-proposal.sh on this install, no
+    # workspace config, no queue file. An unreadable ticket must never block a dispatch --
+    # the gate refuses a ticket it can SEE has no proposal, never one it cannot read.
+    if [ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]; then
+      gate_tnum="$(resolve_tnum)"
+      if [ -n "$gate_tnum" ]; then
+        # Dual-layout resolve, same probe order router-posture-reminder.sh uses beside this
+        # file: a scaffolded workspace has govern at <root>/scripts/govern/, the hub template
+        # tree has it at templates/govern/ (one level up, not under scripts/).
+        # ticket-proposal.sh is the thin CLI over govern::ticket_proposal -- the ONE
+        # implementation that knows what a proposal is (placeholder text reads as absent);
+        # this hook never re-parses the ticket file itself.
+        SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        prop_sh="$SELF_ROOT/scripts/govern/ticket-proposal.sh"
+        [ -f "$prop_sh" ] || prop_sh="$SELF_ROOT/govern/ticket-proposal.sh"
+        source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null \
+          || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
+        tickets_file="${META_ROOT:-}/queue/tickets.md"
+        if [ -f "$prop_sh" ] && [ -n "${META_ROOT:-}" ] && [ -f "$tickets_file" ]; then
+          if [ -z "$(bash "$prop_sh" "$gate_tnum" "$tickets_file" 2>/dev/null || true)" ]; then
+            gate_deny="$(cat <<EOF
+[PROPOSAL GATE] Denied: ticket #${gate_tnum} has no \`**Proposed solution:**\`, so there is nothing for a worker to implement. You are the advisor: deciding what the change is is YOUR half of the work, and a worker handed a problem statement instead of a solution re-derives it at the wrong tier, or quietly builds something else.
+
+Write the proposal into the ticket block first:
+
+  **Proposed solution:** <what to change, where, and why that shape -- concrete enough that a sonnet worker implements it without re-deciding anything>
+
+Then dispatch again. If the answer genuinely is not knowable yet, that is investigation, not dispatch: send a \`lookup\` or \`investigator\` child to collect what you need, write the proposal from what it returns, and dispatch the worker after. Set GOVERN_PROPOSAL_GATE=0 to turn this gate off for the session (the same switch governs the headless lane's pre-dispatch-check.sh).
+EOF
+)"
+            python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
+  }
+}))
+' "$gate_deny" 2>/dev/null || true
+            exit 0
+          fi
+        fi
+      fi
+    fi
     # D4's fan-out cap (see header FIFTH behavior): count this dispatch, and once a
     # session crosses MAX_WORKERS_PER_SESSION, emit ONE advisory per subsequent
     # dispatch -- never a deny; the deny path above is reserved for ticket-shaped
@@ -224,37 +311,18 @@ print(json.dumps({
     fi
     exit 0
   fi
-  probe="$agent_prompt $agent_desc"
   # Two signals, never one keyword (see the header). Word boundaries here exclude
   # `/` `.` `-` `_` on purpose: `queue/tickets.md`, `tickets.md`, `ticket-<N>` and
   # `GOVERN_MAX_TICKETS` are IDENTIFIERS being cited, not tickets being dispatched.
-  #
-  # A bare `#NNN` marked in prose as a PULL REQUEST ("PR #166", "pull request #166")
-  # is a PR reference, not a ticket reference (queue #126: a changelog-style sentence
-  # read as ticket-shaped dispatch). Anchored the way govern::ticket_deps anchors its
-  # own harvest -- it only counts a `#N` that appears on the declared MARKER line, never
-  # from surrounding prose -- applied here as an exclusion rather than an inclusion,
-  # because free text has no marker line to anchor TO: strip the "pr #N" / "pull
-  # request #N" shape from a lowercased copy before the number half of the
-  # ticket-reference check ever sees it. The "tickets?" word check is untouched (a PR
-  # description that also says "ticket" is still ticket-shaped on that signal alone).
+  # (The PR-ref strip that feeds the number half of this check is hoisted above, and is
+  # the exclusion govern::ticket_deps's marker-line anchoring achieves for a real ticket
+  # file: free text has no marker line to anchor TO. The "tickets?" word check is
+  # untouched -- a PR description that also says "ticket" is still ticket-shaped on that
+  # signal alone.)
   ticket_word_re='(^|[^[:alnum:]_/.#-])tickets?([^[:alnum:]_/.-]|$)'
   ticket_num_re='(^|[^[:alnum:]])#[0-9]+'
   pr_ref_re='(^|[^[:alnum:]])(pr|pull[[:space:]]+request)[[:space:]]*#[0-9]+'
   dispatch_re='(^|[^[:alnum:]])(resolv(e|es|ing)|fix(es|ing)?|implement(s|ing)?|clos(e|es|ing)|land|ship|complet(e|es|ing)|handl(e|es|ing)|solv(e|es|ing)|address(es)?|work (on|the)|working on|works on|pick up|take on|do the|end[- ]to[- ]end)([^[:alnum:]]|$)'
-  # Lowercased once, reused below both for the PR-ref strip here and for the
-  # negated-write-verb strip further down -- one lowering, not two.
-  probe_lc="$(tr '[:upper:]' '[:lower:]' <<< "$probe")"
-  probe_lc_noPR="$(sed -E "s/$pr_ref_re/ /g" <<< "$probe_lc")"
-
-  # Item-shaped NAME/DESCRIPTION: a short slug that carries its own ticket reference +
-  # dispatch intent, so a custom-named child that skips ticket vocabulary in its PROMPT
-  # (t1004, ticket-955, w973, t920-fix) is still routed (#115). Anchored to the WHOLE
-  # field, never a substring, so a prose description ("Fix ticket 930 ready_at") is
-  # untouched here -- it already matches the ticket-reference + dispatch_re checks below. `{2,}`
-  # floors t/w names at two digits: a single-digit `t1`/`t2` used as an ad-hoc step
-  # label ("task 1", "task 2") is not a ticket number.
-  item_shape_re='^(t[0-9]{2,}|w[0-9]{2,}|ticket-?[0-9]+)(-[a-zA-Z0-9-]+)?$'
 
   # NOTE ON PIPE STYLE BELOW: every check here feeds a possibly-large $probe (the
   # full agent prompt) into a consumer via a herestring (`<<<`), never a live
@@ -322,12 +390,7 @@ print(json.dumps({
   fi
 
   if { [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; } && [ "$exempt" != 1 ]; then
-    # Same PR-ref strip as the signal check above: a genuine ticket number should
-    # never be reported as "PR #166" when a real ticket reference is also present.
-    tnum="$(grep -oE '#[0-9]+' <<< "$probe_lc_noPR" 2>/dev/null | head -1 | tr -d '#' || true)"
-    if [ -z "$tnum" ]; then
-      tnum="$(grep -oEi '^(t|w|ticket-?)[0-9]+' <<< "$agent_name"$'\n'"$agent_desc" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)"
-    fi
+    tnum="$(resolve_tnum)"
     [ -n "$tnum" ] || tnum="N"
     deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, single-ticket session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
