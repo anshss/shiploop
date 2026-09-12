@@ -1,0 +1,1 @@
+{"attempt":1,"model":"claude-sonnet-5","modelSource":"GOVERN_WORKER_MODEL","effort":"medium","effortSource":"GOVERN_WORKER_EFFORT","retryClass":"first-attempt","respecRequested":false,"precisionGrade":"scoped","precisionSource":"inferred","mode":"brief","status":"resolved","ts":1806000004}

@@ -26,7 +26,7 @@ assert_eq "$?" "0" "--json emits parseable JSON and nothing else"
 
 # ── top level ────────────────────────────────────────────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r 'keys | join(",")')" \
-  "abortedRuns,absorbedLevers,arms,baseline,baselines,driverScope,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,outcomeBreakdown,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierFallback,unknownModels,unmeasuredLevers" \
+  "abortedRuns,absorbedLevers,advisorSpend,arms,baseline,baselines,driverScope,driverTierAudit,fleets,harnessOverhead,instrumentation,kind,meta,outcomeBreakdown,partialRecovery,partials,provenance,quotaWeights,reconciliation,resolvedWithoutTranscript,scope,scriptedActionEstimates,sessionsExcludedNoResultEvent,tierAttribution,tierFallback,unknownModels,unmeasuredLevers" \
   "the top-level key set is the contract"
 assert_eq "$(printf '%s' "$j" | jq -r '.kind')" "replay" "kind names the tool that produced it"
 assert_contains "$(printf '%s' "$j" | jq -r '.provenance')" "MODELED COUNTERFACTUAL" \
@@ -70,7 +70,7 @@ assert_eq "$(printf '%s' "$j" | jq -r '.partials')" "drop" "and the partial-sess
 assert_eq "$(printf '%s' "$j" | jq -r '.quotaWeights | to_entries | map("\(.key)=\(.value)") | join(",")')" \
   "fable-5-1=10,fable=10,opus=5,sonnet=2,haiku=1" "the quota weights travel with the number that used them"
 assert_eq "$(printf '%s' "$j" | jq -r '.arms["1m"].levers | keys | join(",")')" \
-  "cache-prefix,carry,escalation-correction,harness-overhead,output-suppression,resume-not-restart,routing,skip-the-model,watchdog" \
+  "advisor-consult,cache-prefix,carry,escalation-correction,harness-overhead,output-suppression,resume-not-restart,routing,skip-the-model,watchdog" \
   "every lever is named in every report, including the ones worth nothing here"
 assert_eq "$(printf '%s' "$j" | jq -r '[.arms[].leverSumCheck | .tokens and .cost and .quotaWeighted] | all')" "true" \
   "the lever components sum to the arm saving, in all three metrics, in every arm"

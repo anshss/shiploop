@@ -9,6 +9,16 @@ changing it here first.
 
 `logs/govern/<run>/lever-events.jsonl`: one JSON object per line, append-only.
 
+**Run-less fallback, and it is the interactive lane's normal case.** `govern::emit_lever_event`
+resolves its file as `${GOVERN_LEVER_EVENTS_FILE:-${GOVERN_RUN_DIR:-$LOG_ROOT}/lever-events.jsonl}`,
+so an emitter with no `GOVERN_RUN_DIR` in scope lands at `logs/govern/lever-events.jsonl`: flat,
+beside the run directories, not inside one. A live interactive session is exactly that case, since
+nothing exports `GOVERN_RUN_DIR` there (the autonomous dispatch loop that used to is retired).
+`replay.mjs` reads that flat file in `readUnscopedLeverEvents()` and reports it as a census under
+`instrumentation.unscoped` with `credited:false`: counted, named per event type, and credited to no
+arm. Guessing a run for those rows (newest, only, nearest timestamp) would attach a real saving to
+an arbitrary arm, so they are disclosed instead of credited. See `bench/KNOWN-LIMITS.md`.
+
 **Not `state.jsonl`.** That file is a per-ticket outcome log (`{ticket,status,note}`), tailed by
 cursor in `govern-supervise.sh` and read raw by any reviewer prompt built from a run. Interleaving
 lever events there adds rows those consumers must learn to skip. A sibling file has no existing
@@ -39,6 +49,35 @@ and skipped, never fatal.
 
 - `watchdog-kill`: `ctxTokens` and `turns` are the values at the instant the watchdog terminates.
   `reason` is free text.
+
+  **DUAL-LANE. Two emitters, one event stream.** The headless lane emits it from
+  `templates/govern/spawn-worker.sh` (its `emit_watchdog_kill`), run-scoped under
+  `logs/govern/<run>/`. The interactive lane emits it from the
+  `templates/hooks/agent-watchdog-guard.sh` PreToolUse hook, on BOTH of its deny paths, run-less at
+  `logs/govern/lever-events.jsonl` (see Location above). Same event name and the same
+  `ctxTokens` / `turns` / `reason` field names on both, deliberately: the two lanes produce ONE
+  stream a reader can group, not two dialects it has to reconcile. Before this, a bench crediting
+  the watchdog lever saw only half the fleet's kills, and the interactive half read as "never
+  fired" rather than "unmeasured".
+
+  Shared reason strings, so kills group across lanes: `wall-clock-timeout` (an elapsed-time cap)
+  and `context-cap` (a cumulative-token cap). `turns` counts assistant turns the same way on both
+  lanes, a line count of `"type":"assistant"` over the transcript.
+
+  Three extra fields ride along on the interactive lane only. A reader skips fields it does not
+  know, so adding them costs nothing:
+
+  | Field | Type | Notes |
+  |---|---|---|
+  | `lane` | string | `interactive` from the hook. Absent on the headless lane |
+  | `agentType` | string | the child's agent type, `unknown` when the payload omits it |
+  | `agentId` | string | the child's `agent_id`, the only stable identifier a hook sees |
+
+  Two common fields are necessarily `null` on the interactive lane, and honest nulls are the
+  deliberate choice over guesses: `ticket` (a hook sees an `agent_id`, never the ticket handed to
+  the child in a prompt it does not read) and `tier` (PreToolUse carries no model field for the
+  child, and inferring one from the parent would name the wrong model; the reader's own
+  `driverTier` fallback already covers a null tier).
 - `resume`: both sides computed at resume time from state the governor already holds; they are
   unrecoverable afterward. `checkpointTokens` = what the resume actually loads (injected notes
   plus structured handoff).
@@ -76,6 +115,21 @@ and skipped, never fatal.
   replay must keep reading them: `failedTokens` is what the failed attempt burned, replay SUBTRACTS
   it from routing credit, and the row carries `failedTier` instead of `tier`. Do not add a new
   emitter for it.
+
+## Deliberate exclusions
+
+Mechanisms that exist, fire in production, and are **not** lever events. Each is listed here so a
+future reader finds the decision instead of assuming an oversight and adding an emitter.
+
+- **`agent_progress_alarm`** (`templates/hooks/agent-progress-guard.sh`) stays on the fleet event
+  log (`GOVERN_EVENTS`) and is NOT promoted to a lever event. A lever bench credits must REMOVE
+  tokens from the counterfactual, and this one removes none. Its `TeammateIdle` branch cannot block
+  by construction (there is no stop to hold open), so it terminates nothing and truncates nothing.
+  Its `SubagentStop` branch blocks a stop, which makes the child work LONGER, not shorter.
+  Crediting it would be crediting an observation as a saving. The exclusion is locked by case 14 of
+  `templates/govern/test/test-agent-progress-guard.sh`, which asserts the alarm produces a fleet
+  event and no lever event, so an emitter cannot be added quietly without moving this entry and the
+  matching one in `bench/KNOWN-LIMITS.md`.
 
 ## Emitter rules
 

@@ -39,6 +39,7 @@ test-bench-selection
 test-bench-validate
 test-bench-replay
 test-bench-replay-schema
+test-bench-attribution
 test-bench-proof-table
 test-bench-version-scope
 test-bench-levers
