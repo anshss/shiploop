@@ -271,7 +271,7 @@ fs.writeFileSync(
       tier: null,
       ctxTokens: 200000,
       turns: 91,
-      reason: 'context-cap',
+      reason: 'wall-clock-timeout',
       lane: 'interactive',
     },
   ]

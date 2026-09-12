@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# PreToolUse(*) hook, subagent-scoped: the two headless-launcher watchdogs that have no
-# stop/idle equivalent — D10, .specs/2026-09-11-advisor-worker-design.md. Closes two of G12's
-# four launcher-retirement blockers (blocker 4). agent-progress-guard.sh already ported the
-# other two (early-abort signature + D8's idle supervision); this ports the remaining pair:
+# PreToolUse(*) hook, subagent-scoped: the one headless-launcher watchdog that has no stop/idle
+# equivalent. agent-progress-guard.sh already ports the other two carried signals (the early-abort
+# signature and idle supervision); this ports the remaining one:
 #   - wall-clock       (the launcher's GOVERN_WORKER_TIMEOUT)
-#   - token budget     (the launcher's GOVERN_WORKER_MAX_TOKENS)
-# The launcher's third remaining item, EXIT/INT/TERM cleanup traps, has NO hook equivalent and is
-# NOT ported here — see the comment at the bottom of this file for what does and does not cover it.
+# The launcher's other remaining item, EXIT/INT/TERM cleanup traps, has NO hook equivalent and is
+# NOT ported here. See the comment at the bottom of this file for what does and does not cover it.
 #
-# Both caps also emit the `watchdog-kill` lever event (bench/LEVER-EVENTS.md) the headless launcher
-# already emits, so bench sees ONE watchdog stream across both lanes instead of crediting only the
-# headless half. See emit_watchdog_kill below for what this lane can and cannot fill in.
+# DO NOT RE-ADD A PER-AGENT TOKEN-VOLUME CAP HERE. A cumulative token total sums cache reads, which
+# are re-paid every turn for the same prefix, so the number tracks turn count rather than spend.
+# And killing a warm child throws away its prompt cache: the cold replacement pays cache creation
+# (priced above input) plus full-price re-reads, so firing costs more than not firing except
+# against a child that would never have finished. That case belongs to the wall-clock cap below and
+# to the stall, identical-command-loop and tool-error-rate detection agent-progress-guard.sh
+# carries, both of which measure whether the child is getting anywhere rather than how much it read.
 #
-# WHY PreToolUse, not SubagentStop/TeammateIdle (D10). Those two only fire when a child STOPS or
+# The cap also emits the `watchdog-kill` lever event the headless launcher already emits, so bench
+# sees ONE watchdog stream across both lanes instead of crediting only the headless half. See
+# emit_watchdog_kill below for what this lane can and cannot fill in.
+#
+# WHY PreToolUse, not SubagentStop/TeammateIdle. Those two only fire when a child STOPS or
 # goes QUIET. A child that is busily doing the wrong thing for an hour does neither — it never
 # stops and never idles. The event a working child emits CONTINUOUSLY is a tool call, so that is
-# the one place a ceiling on wall-clock or tokens can actually catch it in progress.
+# the one place a wall-clock ceiling can actually catch it in progress.
 #
 # DETECTION: "this is a child", not the driver/advisor. Verified live 2026-09-11 against the
 # installed claude 2.1.246 by spawning a real subagent and diffing its own PreToolUse payload
@@ -53,19 +59,14 @@
 # here because a `set -e` slip in a PreToolUse hook denies every later tool call in the SESSION
 # that installed it, not just the one call under test).
 #
-# BOTH CAPS SHIP ON, each with its own kill switch (0 disables that one specifically) — an
-# inert-by-default watchdog is the G7 defect this whole design exists to close. Neither default
-# below is a derived constant; both are starting points, tunable per fleet:
-#   GOVERN_AGENT_WALLCLOCK    (seconds, default 3600) — the SAME 1h starting point the launcher's
-#     own GOVERN_WORKER_TIMEOUT already ships, ported unchanged rather than inventing a new number
-#     for the identical question ("how long is too long for one child").
-#   GOVERN_AGENT_TOKEN_BUDGET (tokens, default 10000000) — the launcher's OWN GOVERN_WORKER_MAX_TOKENS
-#     ships OFF (0) by default, which G7 forbids repeating here, so this is a fresh pick rather
-#     than a straight port: half of the ~22M-token runaway that tickets #3/#6 measured before
-#     GOVERN_WORKER_MAX_TOKENS existed (spawn-worker.sh, "#16"), generous enough not to trip on
-#     ordinary heavy multi-file work, tight enough to actually catch a wandering child.
-# Deliberately its OWN two switches, NOT GOVERN_AGENT_SUPERVISION (D8's idle-supervision knob) —
-# conflating them would mean one kill switch silently disables three unrelated mechanisms.
+# THE CAP SHIPS ON, with its own kill switch (0 disables it): an inert-by-default watchdog is the
+# defect this whole design exists to close. The default is not a derived constant, it is a starting
+# point, tunable per fleet:
+#   GOVERN_AGENT_WALLCLOCK (seconds, default 3600): the SAME 1h starting point the launcher's own
+#     GOVERN_WORKER_TIMEOUT already ships, ported unchanged rather than inventing a new number for
+#     the identical question ("how long is too long for one child").
+# Deliberately its OWN switch, NOT GOVERN_AGENT_SUPERVISION (the idle-supervision knob).
+# Conflating them would mean one kill switch silently disables unrelated mechanisms.
 set -uo pipefail
 
 # --- read the PreToolUse hook stdin payload ---
@@ -131,9 +132,9 @@ deny() { # <reason text> -> emits the PreToolUse deny JSON and exits 0
   exit 0
 }
 
-# The child's own transcript (derived path, see header). Resolved ONCE here because both the token
-# cap below and the lever event's ctxTokens/turns read it; empty when the payload does not carry
-# enough to derive it, which every caller below treats as "no reading", never as zero.
+# The child's own transcript (derived path, see header). Read ONLY to fill the lever event's
+# ctxTokens/turns, never as a ceiling; empty when the payload does not carry enough to derive it,
+# which every caller below treats as "no reading", never as zero.
 child_transcript=""
 if [ -n "$transcript_path" ] && [ -n "$session_id" ]; then
   child_transcript="$(dirname "$transcript_path")/$session_id/subagents/agent-${agent_id}.jsonl"
@@ -201,23 +202,6 @@ if [ "$wallclock_cap" != "0" ]; then
     # Same reason string the headless lane uses for the identical cap, so the two streams group.
     emit_watchdog_kill "wall-clock-timeout" "$(child_tokens)" "$(child_turns)"
     deny "[AGENT WATCHDOG] wall-clock: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has been running ~${elapsed}s, past the ${wallclock_cap}s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_WALLCLOCK if this task genuinely needs longer."
-  fi
-fi
-
-# ── token budget ─────────────────────────────────────────────────────────────────────────────
-# Sum from the child's OWN transcript (derived path, see header) via govern::cumulative_tokens —
-# the same function the headless launcher's own GOVERN_WORKER_MAX_TOKENS watchdog polls against a
-# live worker.jsonl. One implementation, two callers, so a token total has one definition.
-token_cap="${GOVERN_AGENT_TOKEN_BUDGET:-10000000}"
-case "$token_cap" in (*[!0-9]*) token_cap=10000000 ;; esac
-if [ "$token_cap" != "0" ]; then
-  if [ -n "$child_transcript" ]; then
-    tokens="$(child_tokens)"
-    if [ -n "$tokens" ] && [ "$tokens" -ge "$token_cap" ] 2>/dev/null; then
-      # Same reason string the headless GOVERN_WORKER_MAX_TOKENS watchdog uses for its own kill.
-      emit_watchdog_kill "context-cap" "$tokens" "$(child_turns)"
-      deny "[AGENT WATCHDOG] token budget: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has burned ~${tokens} tokens, past the ${token_cap}-token cap (GOVERN_AGENT_TOKEN_BUDGET). Do not start another tool call. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_TOKEN_BUDGET if this task genuinely needs a bigger budget."
-    fi
   fi
 fi
 

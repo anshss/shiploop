@@ -53,16 +53,19 @@ and skipped, never fatal.
   **DUAL-LANE. Two emitters, one event stream.** The headless lane emits it from
   `templates/govern/spawn-worker.sh` (its `emit_watchdog_kill`), run-scoped under
   `logs/govern/<run>/`. The interactive lane emits it from the
-  `templates/hooks/agent-watchdog-guard.sh` PreToolUse hook, on BOTH of its deny paths, run-less at
+  `templates/hooks/agent-watchdog-guard.sh` PreToolUse hook, on its wall-clock deny path, run-less at
   `logs/govern/lever-events.jsonl` (see Location above). Same event name and the same
   `ctxTokens` / `turns` / `reason` field names on both, deliberately: the two lanes produce ONE
   stream a reader can group, not two dialects it has to reconcile. Before this, a bench crediting
   the watchdog lever saw only half the fleet's kills, and the interactive half read as "never
   fired" rather than "unmeasured".
 
-  Shared reason strings, so kills group across lanes: `wall-clock-timeout` (an elapsed-time cap)
-  and `context-cap` (a cumulative-token cap). `turns` counts assistant turns the same way on both
-  lanes, a line count of `"type":"assistant"` over the transcript.
+  Reason strings: `wall-clock-timeout` (an elapsed-time cap) is emitted by both lanes and groups
+  across them. `context-cap` (a cumulative-token cap) is HEADLESS-ONLY: the interactive lane has no
+  token-volume cap, deliberately, so no interactive row ever carries that reason. `turns` counts
+  assistant turns the same way on both lanes, a line count of `"type":"assistant"` over the
+  transcript. On the interactive lane `ctxTokens` is a reading reported alongside the kill, never
+  the thing that caused it.
 
   Three extra fields ride along on the interactive lane only. A reader skips fields it does not
   know, so adding them costs nothing:
