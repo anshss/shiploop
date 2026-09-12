@@ -20,8 +20,11 @@
 #      stated/scoped grades' "carries ZERO budget" behavior, #127/test-precision-grade.sh), and
 #      when UNSET entirely (the interactive lane, which has no launcher and no grade) falls back to
 #      the plain per-worker default rather than being permanently zero-budgeted.
-#   7. The advisor model is capped by GOVERN_WORKER_ESCALATION_MODEL, the SAME clamp an explicit
-#      ticket Model: request obeys (govern::model_request_cap, shared, not a second copy).
+#   7. An `allow` names NO model. Nothing ever spawns an advisor, so the response carries no model
+#      field for anything to spawn FROM: an allow authorises asking the advisor session that wrote
+#      the proposal, and on the headless lane there is no advisor and an unresolvable fork is an
+#      honest escalation instead. This case is a REGRESSION test: it asserts the field's ABSENCE, so
+#      re-introducing it turns this red.
 #   8. GOVERN_ADVISOR_MAX_TOKENS controls the returned per-consult token ceiling.
 #   9. `record` closes the entry: the ledger's closing row carries the model/tokens/answer and the
 #      budget state after.
@@ -100,12 +103,13 @@ rc=0; out="$(run GOVERN_ADVISOR=1 GOVERN_ADVISOR_SESSION_KEY=SESS-C -- claim 731
 assert_eq "$rc" "0" \
   "6c. with GOVERN_ADVISOR_BUDGET unset entirely (the interactive lane: no launcher, no grade) claim still allows via the plain per-worker default"
 
-# ── 7. advisor model capped by GOVERN_WORKER_ESCALATION_MODEL (shared clamp, not a second one) ───
+# ── 7. an `allow` names no model at all: nothing ever spawns an advisor ──────────────────────────
 out="$(run GOVERN_ADVISOR=1 GOVERN_ADVISOR_SESSION_KEY=SESS-D -- claim 740)"
-assert_contains "$out" '"advisorModel":"opus"' "7a. the default requested advisor model is opus"
-out="$(run GOVERN_ADVISOR=1 GOVERN_ADVISOR_SESSION_KEY=SESS-E GOVERN_WORKER_ESCALATION_MODEL=sonnet -- claim 741)"
-assert_contains "$out" '"advisorModel":"sonnet"' \
-  "7b. a sonnet GOVERN_WORKER_ESCALATION_MODEL caps the advisor request down from opus"
+assert_contains "$out" '"decision":"allow"' "7a. the claim is allowed"
+assert_not_contains "$out" 'advisorModel' \
+  "7b. the allow response carries NO advisorModel: an allow authorises ASKING the advisor session, never spawning one"
+assert_not_contains "$out" 'model' \
+  "7c. no model field of any name -- there is nothing in the response for a worker to spawn a tier from"
 
 # ── 8. GOVERN_ADVISOR_MAX_TOKENS controls the per-consult token ceiling ───────────────────────────
 out="$(run GOVERN_ADVISOR=1 GOVERN_ADVISOR_SESSION_KEY=SESS-F -- claim 750)"

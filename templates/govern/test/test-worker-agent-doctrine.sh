@@ -172,22 +172,26 @@ GOTCHA_SCRIPT="$(cd "$DIR/.." && pwd)/gotchas-for-paths.sh"
 assert_eq "$([ -f "$GOTCHA_SCRIPT" ] && echo yes || echo no)" "yes" \
   "7b. the script worker.md points at actually exists beside spawn-worker.sh"
 
-# ── 8. D1: the consult goes UP to the advisor, not out to a fresh child ────
-# .specs/2026-09-11-advisor-worker-design.md D1. The headless mechanism (spawn a fresh Agent) is
-# canonical-doctrine content that this lane must explicitly override, not silently inherit.
-assert_contains "$body" "HEADLESS LANE" \
-  "8a. worker.md names the specific worker-prompt.md bullet it overrides"
+# ── 8. the consult goes UP to the advisor, and no lane ever spawns one ────
+# Nothing ever spawns an advisor. The headless lane has no advisor session at all and reports an
+# honest escalation on a fork it cannot resolve; the interactive lane asks the session that wrote
+# its proposal. Cases 8e-8g are REGRESSION tests on the ABSENCE of the old spawn-a-fresh-child
+# instruction: re-introducing it in either lane's doctrine file turns this red.
 assert_contains "$body" "advisor-consult.sh claim" \
   "8b. the interactive lane still uses the same script-owned budget/ledger"
 assert_contains "$body" "SendMessage" \
-  "8c. worker.md instructs messaging the advisor directly, not spawning a child"
+  "8c. worker.md instructs messaging the advisor that dispatched it"
 assert_contains "$body" "STOP and wait" \
   "8d. the consult BLOCKS -- explicit instruction to stop rather than proceed on a guess"
 assert_not_contains "$body" "spawn exactly ONE" \
-  "8e. worker.md never repeats the headless lane's spawn-a-fresh-child instruction"
+  "8e. worker.md carries no spawn-a-fresh-child instruction"
 PROMPT_BODY="$(cat "$PROMPT_MD")"
-assert_contains "$PROMPT_BODY" "MUST carry the ticket's own" \
-  "8f. the headless lane's own consult text now hands the fresh child the proposal (D1's degraded-lane requirement)"
+assert_not_contains "$PROMPT_BODY" "spawn exactly ONE" \
+  "8f. the headless lane's doctrine carries no spawn-a-fresh-child instruction either"
+assert_not_contains "$PROMPT_BODY" "advisorModel" \
+  "8g. and names no model for one to be spawned at"
+assert_contains "$PROMPT_BODY" "escalation" \
+  "8h. the headless lane's answer to an unresolvable fork is an honest escalation"
 
 # ── 9. D2: the ticket's proposal is implemented, in worker-prompt.md (lane-neutral, both lanes) ──
 assert_contains "$PROMPT_BODY" "Implement the ticket's" \
