@@ -327,10 +327,10 @@ govern::slim_worktree() { # <ticket> [worktree-path]
 # Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
 # against (same file doctor.sh / govern-health.sh already read for the update-channel check). Best-
 # effort ONLY: an absent stamp file, an unreadable one, or a workspace that never ran scaffold.sh
-# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Called
-# by whoever creates a run directory (on the shipped lane that is bench::arm_shiploop; a plain
-# session sets no GOVERN_RUN_DIR and stays unstamped, see bench/KNOWN-LIMITS.md "Run-scoped
-# stamps"). A workspace-relative $RUN_DIR keeps this callable from a test harness that overrides
+# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Only
+# useful to a caller that both creates a run directory and calls this on it; nothing in the
+# current dispatch path does, so a session runs unstamped unless something opts in explicitly.
+# A workspace-relative $RUN_DIR keeps this callable from a test harness that overrides
 # GOVERN_WS_ROOT.
 #
 # `|| true` on the write: a bare `[[ cond ]] && cmd` is NOT a no-op on failure under `set -e`, even
