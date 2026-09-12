@@ -25,19 +25,16 @@
 #                    (caps real spend), because total_cost_usd is API-list-rate denominated either
 #                    way, which is also why the published number is a percentage.
 #   BENCH_MAX_TURNS  per-session turn ceiling, when the running claude CLI supports --max-turns.
-#                    Defaults are shape-specific: 200 for a vanilla backlog session, 80 per
-#                    shiploop worker. Setting BENCH_MAX_TURNS overrides both. A run that hits the
-#                    ceiling clears fewer tickets, so it records as failed-to-clear and the
-#                    backlog drops out of the published set.
-#   BENCH_MAX_SESSION_USD  the per-session dollar ceiling used INSTEAD of BENCH_MAX_TURNS when the
-#                    CLI has no --max-turns (observed on claude 2.1.246, which ships
-#                    --max-budget-usd in its place; see bench/METHODOLOGY.md). Applies to the
-#                    shiploop arm's workers; default $5, sized for one ticket's worth of work,
-#                    the dollar analogue of the 80-turn worker default. The vanilla arm's
-#                    per-session cap is NOT this value: vanilla is one session doing the WHOLE
-#                    backlog, so its cap is BENCH_MAX_USD (the run budget) directly — capping it
-#                    at a flat per-ticket number would bind it far tighter than the shiploop arm
-#                    and make a loss look real when it is only the rail. A vanilla session that
+#                    Default 200, EQUAL on both arms (fairness rail 1 — section 5 of the design):
+#                    each arm is now exactly one whole-backlog session, so there is no shape-specific
+#                    reason left for one arm's ceiling to bind tighter than the other's. Non-binding
+#                    by construction; a cell that hits it is forced to "capped", never counted as an
+#                    ordinary loss.
+#   BENCH_MAX_SESSION_USD  the per-session dollar ceiling used INSTEAD of BENCH_TURNS when the CLI
+#                    has no --max-turns (observed on claude 2.1.246, which ships --max-budget-usd
+#                    in its place; see bench/METHODOLOGY.md). Default equal to BENCH_MAX_USD (the
+#                    whole run budget): since each arm is one whole-backlog session, its own cap is
+#                    the run cap, the same way it always was for the vanilla arm. A session that
 #                    hits its cap records status "capped" for the whole cell, never "resolved" or
 #                    "failed": a budget-truncated run is not a completed comparison.
 #
@@ -57,15 +54,13 @@ SEL_BACKLOGS=()
 SEL_ARMS=()
 
 BENCH_MAX_USD="${BENCH_MAX_USD:-60}"
-BENCH_TURNS_VANILLA="${BENCH_MAX_TURNS:-200}"
-BENCH_TURNS_WORKER="${BENCH_MAX_TURNS:-80}"
+BENCH_TURNS="${BENCH_MAX_TURNS:-200}"
 BENCH_CLAUDE_BIN="${BENCH_CLAUDE_BIN:-claude}"
-# Per-session dollar ceiling, the --max-budget-usd fallback for a CLI with no --max-turns.
-# Asymmetric by design (see the usage header above): vanilla's cap is the WHOLE run budget because
-# it is one session doing the whole backlog; the worker default is a flat, documented dollar figure.
-BENCH_SESSION_USD_WORKER="${BENCH_MAX_SESSION_USD:-5}"
-BENCH_SESSION_USD_VANILLA="$BENCH_MAX_USD"
-export BENCH_TURNS_VANILLA BENCH_TURNS_WORKER BENCH_CLAUDE_BIN BENCH_SESSION_USD_WORKER BENCH_SESSION_USD_VANILLA
+# Per-session dollar ceiling, the --max-budget-usd fallback for a CLI with no --max-turns. Equal on
+# both arms (see the usage header above): each arm is one session doing the whole backlog now, so
+# the per-session cap is the run cap by default, same as the run-level BENCH_MAX_USD.
+BENCH_SESSION_USD="${BENCH_MAX_SESSION_USD:-$BENCH_MAX_USD}"
+export BENCH_TURNS BENCH_CLAUDE_BIN BENCH_SESSION_USD
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -145,11 +140,17 @@ bench::discover_backlogs() { # -> names on stdout, one per line
 }
 
 bench::validate_backlog() { # <backlog.jsonl>
-  local f="$1" bad
+  local f="$1" bad count
   bad="$(jq -r 'select((.id//"")=="" or (.repo//"")=="" or (.ref//"")=="" or (.title//"")==""
                        or (.body//"")=="" or (.verify_cmd//"")==""
                        or (.test_patch//"")=="" or (.merge_sha//"")=="") | .id // "<no id>"' "$f" 2>&1 || true)"
   [[ -z "$bad" ]] || bench::die "backlog $f has ticket(s) missing required fields: $bad"
+  # A zero-ticket backlog is not rejected outright (a smoke-test backlog is a legitimate, if
+  # unpublishable, thing to run) but every cell it produces gets its OWN status rather than the
+  # misleading "resolved" a bare `cleared -eq total` comparison gives 0 == 0 (see the main loop
+  # below and spec section 7 item 1). Logged here, once, rather than once per arm/rep.
+  count="$(jq -s 'length' "$f" 2>/dev/null || echo 0)"
+  [[ "${count:-0}" -gt 0 ]] || bench::log "backlog $f has ZERO tickets — every cell will record status no-tickets, never resolved"
   # backlogs/fixture-backlog exists for the test suite and names a fixture:// repo that no clone can
   # reach. Catching it here turns a confusing git failure mid-run into one sentence up front, and
   # makes sure a fixture can never be counted toward a published backlog total.
@@ -308,9 +309,9 @@ bench::verify_backlog() { # <backlog.jsonl> <workdir> <verify-ledger>
 }
 
 # ── dry-run arm stand-ins ───────────────────────────────────────────────────
-# Canned `"type":"result"` events for both arm shapes. The vanilla shape is ONE stream; the
-# shiploop shape is a driver stream plus one worker stream per ticket, which is what makes the
-# multi-session fold in record.sh a real code path in a dry run rather than a special case.
+# Canned `"type":"result"` events. Every arm is ONE whole-backlog session now (vanilla-fresh is the
+# one exception, one session per ticket), so every case here writes exactly the same shape
+# bench::arm_vanilla / bench::arm_shiploop write for real: a single 01-<name>.jsonl stream.
 bench::dry_arm() { # <arm> <backlog.jsonl> <logdir> <backlog-name>
   local arm="$1" backlog="$2" logdir="$3" name="$4"
   local fx="$BENCH_DIR/fixtures"
@@ -322,15 +323,11 @@ bench::dry_arm() { # <arm> <backlog.jsonl> <logdir> <backlog-name>
     vanilla-fresh)
       while IFS= read -r id; do
         i=$((i+1))
-        cp "$fx/shiploop-worker.jsonl" "$(printf '%s/%02d-%s.jsonl' "$logdir" "$i" "$id")"
+        cp "$fx/vanilla-fresh-session.jsonl" "$(printf '%s/%02d-%s.jsonl' "$logdir" "$i" "$id")"
       done < <(jq -r '.id' "$backlog")
       ;;
     shiploop)
-      cp "$fx/shiploop-driver.jsonl" "$logdir/01-driver.jsonl"
-      while IFS= read -r id; do
-        i=$((i+1))
-        cp "$fx/shiploop-worker.jsonl" "$(printf '%s/%02d-worker-%s.jsonl' "$logdir" "$((i+1))" "$id")"
-      done < <(jq -r '.id' "$backlog")
+      cp "$fx/shiploop-session.jsonl" "$logdir/01-$name.jsonl"
       ;;
     *) bench::die "unknown arm: $arm" ;;
   esac
@@ -403,7 +400,16 @@ for name in "${backlogs[@]}"; do
       mkdir -p "$RUN_DIR/verify"
       read -r cleared total worst < <(bench::verify_backlog "$backlog_file" "$workdir" "$RUN_DIR/verify/$cell.jsonl")
       wall_ms=$(( ( $(date +%s) - started ) * 1000 ))
-      if [[ "$cleared" -eq "$total" ]]; then status="resolved"; else status="failed"; fi
+      # A zero-ticket backlog makes `cleared -eq total` compare 0 -eq 0, which reads exactly like a
+      # cell that dispatched nothing as one that cleared everything (spec section 7 item 1). Checked
+      # BEFORE the ordinary comparison so a real empty backlog never silently reports "resolved".
+      if [[ "$total" -eq 0 ]]; then
+        status="no-tickets"
+      elif [[ "$cleared" -eq "$total" ]]; then
+        status="resolved"
+      else
+        status="failed"
+      fi
       # A session cut off by its OWN per-session ceiling (--max-turns / --max-budget-usd) never
       # gets to be a completed comparison, even if it happened to clear every ticket anyway: the
       # cap decided how far it got, not the arm. Overrides resolved/failed to "capped" so the

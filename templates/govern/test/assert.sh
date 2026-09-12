@@ -121,6 +121,11 @@ export _GOVERN_MAXTURNS_SUPPORTED=0
 # Same for the --max-budget-usd fallback probe (bench's per-session ceiling when --max-turns is
 # unsupported): pre-seeded UNSUPPORTED so the whole suite is hermetic, its own test cases opt in.
 export _GOVERN_MAXBUDGETUSD_SUPPORTED=0
+# Same shape again for bench's --forward-subagent-text probe (treatment-arm attribution): pre-seeded
+# UNSUPPORTED so no test can shell out to a real `claude --help` for it either. Unlike the two
+# above, an unsupported CLI here is a HARD STOP for the shiploop arm (no degraded-arm fallback), so
+# test-bench-arms.sh's own cases opt in per case to exercise both the allow and the stop.
+export _GOVERN_FWDSUBAGENT_SUPPORTED=0
 
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without

@@ -1,37 +1,38 @@
 #!/usr/bin/env bash
-# bench/arms.sh: the three arm shapes of the marketing benchmark. Source, do not execute.
+# bench/arms.sh: the arm shapes of the live A/B benchmark. Source, do not execute.
 #
-#   vanilla        ONE `claude -p` session per backlog, headless default model, default tools, no
-#                  hooks, no extra CLAUDE.md, in a fresh worktree of the pinned ref. The prompt is
-#                  the backlog verbatim plus the one framing line. This is stock Claude Code used
-#                  the way it is used out of the box: one session, one conversation, top to bottom.
-#   vanilla-fresh  a fresh `claude -p` per ticket, sequential, same prompt shape. Private record
-#                  only: if a teardown replays us with per-ticket sessions we already know the
-#                  delta. Never published.
-#   shiploop       the REAL shipped session lane in a scaffolded throwaway workspace, over a
-#                  queue/tickets.md seeded with the same backlog, defaults on. Per ticket, in the
-#                  same order a session would: pre-dispatch-check.sh (every pre-spawn gate:
-#                  NA-marker, public-issue dedup, still-on-origin re-verify, dependency gate,
-#                  staleness, failure-streak breaker, upstream drift), then spawn-worker.sh, then
-#                  resolve-ticket.sh fed the worker's own report (await CI, merge, land). Nothing
-#                  here reimplements a gate: this loop only sequences the shipped scripts, exactly
-#                  as the doctrine tells a session to. Skipping any of the three would measure
-#                  something that is not the product.
+#   vanilla        without shiploop. ONE `claude -p` session per backlog, headless default model,
+#                  the CLI's own DEFAULT toolset (no --tools flag at all), no hooks, no extra
+#                  CLAUDE.md, in a fresh worktree of the pinned ref. The prompt is the backlog
+#                  verbatim plus the one framing line. This is stock Claude Code used the way it is
+#                  used out of the box: one session, one conversation, top to bottom.
+#   vanilla-fresh  a fresh `claude -p` per ticket, sequential, same prompt shape, same no-flag
+#                  toolset. Private record only: if a teardown replays us with per-ticket sessions
+#                  we already know the delta. Never published.
+#   shiploop       with shiploop. The SAME checkout, inside a workspace `scaffold.sh` actually
+#                  built, handed the SAME whole-backlog prompt as vanilla. It follows whatever the
+#                  installed doctrine tells it to: acts as advisor, spawns worker subagents through
+#                  the native Agent tool (the scaffolded .claude/agents/worker.md that
+#                  --setting-sources project,local already picks up with no --agents flag), and —
+#                  if it chooses to — pipes a worker's report into its own resolve step. Nothing
+#                  here scripts that sequence: the session under test decides it, the way a real
+#                  operator's session does.
 #
 # Ticket text is byte-identical across arms. The treatment arm gets no hints: asymmetric input is
 # the first thing a replay finds, and it voids even true numbers.
 #
-# Neither arm gets WebFetch or WebSearch, so nothing in a run can reach the upstream PRs the
-# backlog was mined from. Both arms express that through the SAME already-gated `--tools`
-# mechanism: the vanilla session passes the governor's default tool list minus the two web tools,
-# and the shiploop arm sets GOVERN_WORKER_TOOLS to the same list so its workers inherit it.
+# Neither arm gets a curated --tools list any more: the ONLY difference between arms is which
+# directory the session opens in. A trimmed tool schema was itself one of the ten levers under
+# test, so handing it to the control arm (or holding it back from the advisor's own session) would
+# lend one arm part of the product's own credit. `bench::assert_offline` (bench/run.sh) plus the
+# git-remote strip plus the scrubbed GH_TOKEN/GITHUB_TOKEN/... env still close every leak this
+# design can close without a network namespace — the open gap (a worker's own Bash could still
+# reach the network) is unchanged and is disclosed in bench/KNOWN-LIMITS.md, not something either
+# arm's tool list ever tried to plug.
 set -euo pipefail
 
 BENCH_ARMS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_ARMS_HUB="$(cd "$BENCH_ARMS_DIR/.." && pwd)"
-
-# Tool list shared by both arms: the governor's measured default minus WebFetch and WebSearch.
-BENCH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,ToolSearch,Monitor,ScheduleWakeup,SendMessage,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate"
 
 # ── --max-turns / --max-budget-usd capability probe ─────────────────────────
 # CLAUDE.md anti-pattern 12: never put a new `claude` flag on a dispatch path unguarded. The fleet's
@@ -41,11 +42,11 @@ BENCH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,TodoWrite,Agent,Task,To
 #
 # Neither probe is reimplemented here. `govern::claude_supports_max_turns` and
 # `govern::claude_supports_max_budget_usd` live in templates/govern/lib/common.sh beside the
-# --tools and --exclude-dynamic-system-prompt-sections probes: cached, bounded `--help` greps,
-# never a version compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test seam. Both arms
-# need the same answer, and the shiploop arm's workers reach the same two probes through
-# spawn-worker.sh's GOVERN_WORKER_MAX_TURNS / GOVERN_WORKER_MAX_BUDGET_USD, so the probes are the
-# only way the two arms can be guaranteed to agree.
+# --exclude-dynamic-system-prompt-sections probe: cached, bounded `--help` greps, never a version
+# compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test seam. Both arms need the same
+# answer, and the shiploop arm's own workers reach the same two probes through spawn-worker.sh's
+# GOVERN_WORKER_MAX_TURNS / GOVERN_WORKER_MAX_BUDGET_USD IF the session chooses that path, so the
+# probes are the only way the two arms can be guaranteed to agree.
 #
 # --max-turns is tried FIRST; --max-budget-usd is the fallback for a CLI release that dropped
 # --max-turns entirely (observed: claude 2.1.246 has no --max-turns, only --max-budget-usd). A
@@ -101,6 +102,60 @@ bench::require_turn_ceiling() { # <arm>
   bench::die "arm $1: --max-turns is unavailable and BENCH_ALLOW_UNCAPPED_TURNS is not set. Refusing to spawn an uncapped session; upgrade the claude CLI or set BENCH_ALLOW_UNCAPPED_TURNS=1 deliberately."
 }
 
+# ── --forward-subagent-text capability probe ────────────────────────────────
+# Attribution inside the treatment arm (which model did the advisor's own reasoning, which did the
+# worker's) reads forwarded subagent turns tagged `parent_tool_use_id`, each carrying its own
+# `message.usage` / `message.model`. That forwarding is itself a `claude` CLI flag on a dispatch
+# path, so CLAUDE.md anti-pattern 12 applies exactly as it does to --max-turns above: a cached,
+# bounded --help grep, never a version compare, with its own pre-seed seam
+# (`_GOVERN_FWDSUBAGENT_SUPPORTED`) and env kill switch (`BENCH_FORWARD_SUBAGENT_TEXT=0`).
+#
+# Unlike --max-turns, an unsupported CLI here is a HARD STOP for the shiploop arm rather than a
+# fallback: there is no substitute flag, and running without it would silently degrade the
+# treatment arm's own attribution to "unmeasured" while everything else looked like a normal run —
+# the same failure mode section 6 closes for subagent_stats. `bench::require_turn_ceiling` is the
+# shape this copies: a spend-bearing arm either gets the rail or the run refuses to start.
+_GOVERN_FWDSUBAGENT_PROBE_CACHE="${GOVERN_FWDSUBAGENT_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-fwd-subagent-support}"
+
+bench::claude_supports_forward_subagent_text() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_FWDSUBAGENT_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_FWDSUBAGENT_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_FWDSUBAGENT_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_FWDSUBAGENT_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--forward-subagent-text'; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      bench::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --forward-subagent-text"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_FWDSUBAGENT_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_FWDSUBAGENT_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
+# Sets the global `bench_fwd_subagent_flag` (empty or `--forward-subagent-text`). Hard-stops the
+# whole run when unsupported and no override is set — see the header comment above for why this one
+# has no degraded fallback the way --max-turns does.
+bench::resolve_forward_subagent_flag() { # <claude_bin>
+  local bin="$1"
+  bench_fwd_subagent_flag=""
+  if [[ "${BENCH_FORWARD_SUBAGENT_TEXT:-1}" == "0" ]]; then
+    bench::log "BENCH_FORWARD_SUBAGENT_TEXT=0, omitting --forward-subagent-text (disabled by operator); the treatment arm's own advisor/worker attribution will be unmeasured this run"
+    return 0
+  fi
+  if bench::claude_supports_forward_subagent_text "$bin"; then
+    bench_fwd_subagent_flag="--forward-subagent-text"
+    return 0
+  fi
+  bench::die "claude CLI ($bin) does not support --forward-subagent-text, so the treatment arm's advisor/worker attribution cannot be measured. Upgrade the claude CLI, or set BENCH_FORWARD_SUBAGENT_TEXT=0 to run without attribution deliberately (the headline cost/token numbers are unaffected either way — attribution is never the headline)."
+}
+
 # ── prompts ─────────────────────────────────────────────────────────────────
 # Byte-identical ticket text across arms: both of these render from the same backlog.jsonl fields
 # through the same jq program, so there is one place where the wording lives.
@@ -130,14 +185,14 @@ bench::tickets_markdown() { # <backlog.jsonl> -> all tickets as markdown on stdo
   return 0
 }
 
-# ── vanilla ─────────────────────────────────────────────────────────────────
+# ── vanilla (without shiploop) ───────────────────────────────────────────────
 # ONE session for the whole backlog. Writes exactly one stream: 01-<backlog>.jsonl.
 bench::arm_vanilla() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3" name="$4"
   local prompt jsonl
   jsonl="$logdir/01-$name.jsonl"
   prompt="$(bench::backlog_prompt "$backlog")"
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_VANILLA" "$BENCH_SESSION_USD_VANILLA"
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS" "$BENCH_SESSION_USD"
   bench::require_turn_ceiling vanilla
   bench::spawn "$wd" "$prompt" "$jsonl" ${bench_max_turns_flag:-}
   return 0
@@ -145,11 +200,11 @@ bench::arm_vanilla() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
 
 # ── vanilla-fresh ───────────────────────────────────────────────────────────
 # A fresh session per ticket, sequential, same worktree so later tickets see earlier commits.
-# Streams are NN-<ticket-id>.jsonl in dispatch order.
+# Streams are NN-<ticket-id>.jsonl in dispatch order. Also without shiploop: same no-flag toolset.
 bench::arm_vanilla_fresh() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3"
   local i=0 id prompt jsonl
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER" "$BENCH_SESSION_USD_WORKER"
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS" "$BENCH_SESSION_USD"
   bench::require_turn_ceiling vanilla-fresh
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
@@ -161,81 +216,61 @@ bench::arm_vanilla_fresh() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   return 0
 }
 
-# ── shiploop ────────────────────────────────────────────────────────────────
+# ── shiploop (with shiploop) ─────────────────────────────────────────────────
 # Scaffold a throwaway workspace around the SAME checkout the vanilla arm gets, seed
-# queue/tickets.md from the backlog, and drive the shipped session lane over every ticket number in
-# order. Nothing here reimplements a gate; the scripts being measured are the product.
+# queue/tickets.md from the backlog, and hand the advisor session the SAME whole-backlog prompt
+# vanilla gets. This is the whole point of the design: from here on the only difference between
+# arms is which directory the session opened in. Nothing about the dispatch loop is reimplemented,
+# simulated, or scripted on the session's behalf — it invokes whatever the scaffolded CLAUDE.md /
+# SKILL.md tells it to, the way a real operator's session does.
 bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   local wd="$1" backlog="$2" logdir="$3" name="$4"
-  local ws nums slug ghbin
+  local ws slug prompt jsonl ghbin
   slug="$(bench::repo_slug "$backlog")"
   ws="$(bench::scaffold_workspace "$wd" "$name" "$slug")"
   bench::assert_offline "$ws"
   bench::seed_tickets "$backlog" "$ws/queue/tickets.md" "$slug"
   ghbin="$(bench::install_local_gh "$ws" "$slug")"
-  nums="$(jq -rs 'to_entries | map((.key + 1) | tostring) | join(" ")' "$backlog")"
-  # Same rails as the vanilla arm, expressed through the governor's own knobs so the loop under
-  # measurement is the shipped one:
-  #   GOVERN_WORKER_TOOLS          the same web-free tool list, gated by the same --tools probe
-  #   GOVERN_WORKER_MAX_TURNS      the per-worker turn ceiling, when --max-turns is supported
-  #   GOVERN_WORKER_MAX_BUDGET_USD the per-worker dollar ceiling, the fallback when it is not
-  # spawn-worker.sh resolves whichever flag applies behind the SAME two probes checked here, so
-  # the two arms can never disagree about which one is in play.
-  # The ceiling is checked HERE too, so an arm that cannot enforce EITHER refuses to run rather
-  # than spending uncapped and reporting a number nothing bounded.
-  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS_WORKER" "$BENCH_SESSION_USD_WORKER"
+  jsonl="$logdir/01-$name.jsonl"
+  prompt="$(bench::backlog_prompt "$backlog")"
+  bench::resolve_max_turns_flag "$BENCH_CLAUDE_BIN" "$BENCH_TURNS" "$BENCH_SESSION_USD"
   bench::require_turn_ceiling shiploop
-  local worker_turns="0" worker_budget="0"
-  case "${bench_max_turns_flag:-}" in
-    "--max-turns "*)       worker_turns="$BENCH_TURNS_WORKER" ;;
-    "--max-budget-usd "*)  worker_budget="$BENCH_SESSION_USD_WORKER" ;;
-  esac
-  # One run directory for the whole arm, exported so every worker of this arm logs under
-  # logs/govern/run-<ts>/ticket-N/ and the run-scoped stamps replay.mjs reads (shiploop-version,
-  # driver-model, lever-events.jsonl) exist. Nothing sets GOVERN_RUN_DIR on the interactive lane
-  # any more, so the ONE consumer that actually feeds replay.mjs establishes it itself. See
-  # bench/KNOWN-LIMITS.md, "run-scoped stamps".
+  bench::resolve_forward_subagent_flag "$BENCH_CLAUDE_BIN"
+  # The advisor session's own env. NOT GOVERN_WORKER_TOOLS / GOVERN_WORKER_MAX_TURNS /
+  # GOVERN_WORKER_MAX_BUDGET_USD / GOVERN_WORKER_MODEL: every one of those is a lever under test
+  # (rail 4 — "the treatment arm's model tiers come from the scaffold, not from bench"), and the
+  # scaffolded .claude/agents/worker.md already carries its own model/tools/permissionMode in its
+  # frontmatter with no flag needed. GOVERN_AUTONOMY=auto + the merge allowlist below are NOT a
+  # lever: they are what makes a resolved ticket actually land in this offline, reviewer-less
+  # workspace at all, exactly as bench::scaffold_workspace already documents for the old loop.
   local rundir="$ws/logs/govern/run-$(date +%Y%m%d-%H%M%S)-$$"
   mkdir -p "$rundir"
-  (
-    cd "$ws"
-    # shellcheck source=/dev/null
-    source "$ws/scripts/govern/lib/common.sh" 2>/dev/null || true
-    if declare -F govern::stamp_run_version >/dev/null 2>&1; then
-      GOVERN_WS_ROOT="$ws" govern::stamp_run_version "$rundir" || true
-      GOVERN_WS_ROOT="$ws" govern::stamp_driver_model "$rundir" || true
-    fi
-  ) >/dev/null 2>&1 || true
   (
     cd "$ws"
     export PATH="$ghbin:$PATH"
     export GOVERN_WS_ROOT="$ws"
     export GOVERN_RUN_DIR="$rundir"
-    export GOVERN_WORKER_TOOLS="$BENCH_TOOLS"
-    export GOVERN_WORKER_MAX_TURNS="$worker_turns"
-    export GOVERN_WORKER_MAX_BUDGET_USD="$worker_budget"
     export GOVERN_AUTONOMY=auto
     export GOVERN_PR_TICKET_REF=1
     export _GOVERN_ASSUME_MERGE_ALLOWED=1
     unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GH_HOST GH_REPO
-    local n verdict report
-    for n in $nums; do
-      verdict="$(bash "$ws/scripts/govern/pre-dispatch-check.sh" "$n" 2>&1 | tail -1)" || verdict="proceed"
-      case "$verdict" in
-        proceed) ;;
-        *) printf '[bench] ticket %s: %s\n' "$n" "$verdict"; continue ;;
-      esac
-      report="$(bash "$ws/scripts/govern/spawn-worker.sh" "$n")" || true
-      [[ -n "$report" ]] || { printf '[bench] ticket %s: worker produced no report\n' "$n"; continue; }
-      printf '%s' "$report" | bash "$ws/scripts/govern/resolve-ticket.sh" "$n" || true
-    done
-  ) >"$logdir/00-driver.log" 2>&1 || true
-  bench::collect_govern_streams "$ws" "$logdir"
+    bench::spawn "$ws" "$prompt" "$jsonl" ${bench_max_turns_flag:-} ${bench_fwd_subagent_flag:-}
+  )
+  # Two failure modes that produce a clean-looking zero (section 6): a subagent refused for zero
+  # tools, or a stream headed by bench::spawn's merged-stderr non-JSON line, both still exit 0 with
+  # is_error:false. A treatment arm that never spawned a worker is indistinguishable from one that
+  # worked unless this is checked directly against subagent_stats, never the exit code. This is the
+  # REAL spawn path only — bench::run_arm calls bench::dry_arm instead of this function under
+  # --dry-run, so there is no canned-fixture case to special-case here.
+  if ! bench::stream_had_subagent_activity "$jsonl"; then
+    bench::die "arm shiploop ($name): the advisor session's own result event shows no completed subagent (subagent_stats.spawned>0 && completed>0 required) — this cell measured nothing, not a real with-shiploop run. See $jsonl."
+  fi
+  bench::report_attribution "$ws" "$jsonl" "$rundir" "$name"
   # Write-back: the dispatch above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace
   # made of $wd (arms.sh cp -R). run.sh's main loop verifies "$wd" (the ORIGINAL), never the copy —
   # so without this, verify always sees the pristine pre-run checkout and the shiploop arm can never
-  # register a cleared ticket, no matter how correct the worker's fix was. The copy IS the fully
-  # evolved tree (governor commits + local merges happened there), so replace $wd with it wholesale.
+  # register a cleared ticket, no matter how correct the session's fix was. The copy IS the fully
+  # evolved tree (worker commits + local merges happened there), so replace $wd with it wholesale.
   if [[ -d "$ws/$slug/.git" ]]; then
     rm -rf "$wd"
     cp -R "$ws/$slug" "$wd"
@@ -268,28 +303,6 @@ EOF
   mkdir -p "$ws/governor"
   printf '%s private\n' "$repo" > "$ws/governor/.repo-visibility"
   printf '%s\n' "$bindir"
-  return 0
-}
-
-# Copy every session stream the arm produced into the bench log dir, in dispatch order, named
-# NN-<ticket>.jsonl so record.sh derives `task` from the filename. An arm that spawned scouts and
-# escalations copies those too: cost is EVERYTHING the lane spends.
-bench::collect_govern_streams() { # <workspace> <logdir>
-  local ws="$1" logdir="$2" i=0 f rel tag
-  # `find`, not a `**` glob: globstar is bash 4+ and macOS ships bash 3.2, where `**` would
-  # silently match only one level and quietly drop every worker stream from the cost total.
-  [[ -d "$ws/logs/govern" ]] || return 0
-  while IFS= read -r f; do
-    [[ -f "$f" ]] || continue
-    i=$((i+1))
-    rel="${f#"$ws"/logs/govern/}"
-    tag="$(printf '%s' "$rel" | tr '/' '-' | sed 's/\.jsonl$//')"
-    cp "$f" "$(printf '%s/%02d-%s.jsonl' "$logdir" "$i" "$tag")"
-  # -name '*.jsonl' -a -not -name 'state.jsonl': state.jsonl is the governor's OWN event log, not
-  # a claude session stream (bench/replay.mjs's walkJsonl excludes it for the identical reason).
-  # Without this, record.sh's session-row pass reads it as a zero-usage "session" — harmless to the
-  # cost TOTAL (it contributes 0) but it inflates the reported session COUNT with a phantom entry.
-  done < <(find "$ws/logs/govern" -name '*.jsonl' -not -name 'state.jsonl' -type f | LC_ALL=C sort)
   return 0
 }
 
@@ -358,20 +371,20 @@ bench::scaffold_workspace() { # <repo-workdir> <name> <repo-slug> -> workspace p
 
 # ── the one place a `claude -p` is launched ─────────────────────────────────
 # Every arm goes through here so the flag set, the env scrub, and the stream destination are
-# identical across arms. Extra args (the resolved --max-turns) are appended verbatim.
+# identical across arms. Extra args (the resolved --max-turns / --forward-subagent-text) are
+# appended verbatim. No --tools flag: the CLI's own default toolset, MCP included, is what BOTH
+# arms get now — see the file header for why.
 bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
   local wd="$1" prompt="$2" jsonl="$3"; shift 3
-  local tools_flag=""
-  if govern::claude_supports_tools_flag "$BENCH_CLAUDE_BIN"; then
-    tools_flag="--tools $BENCH_TOOLS"
-  else
-    bench::die "claude CLI ($BENCH_CLAUDE_BIN) does not support --tools, so WebFetch/WebSearch cannot be excluded, and an arm that can reach the upstream PRs must never run."
-  fi
   mkdir -p "$(dirname "$jsonl")"
   # -u GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/GH_REPO: offline guard, part 2 (run.sh's
   # bench::assert_offline covers git remotes; this covers the OTHER way a gh credential reaches a
   # real repo — an ambient token in the operator's own shell, which a bare `gh` call honors with no
   # remote and no stored login required. Scrubbed from every spawned session, both arms, always.
+  # </dev/null: bench::spawn merges stderr into the same stream (section 6), and with no stdin the
+  # CLI printed a "no stdin data received in 3s, proceeding without it" warning line ahead of the
+  # first real JSON line, once per cell — a non-JSON line a reader must otherwise learn to skip.
+  # Piping from /dev/null removes both the line and the 3-second stall.
   ( cd "$wd" && exec env \
       -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
       -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
@@ -379,8 +392,7 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
       "$BENCH_CLAUDE_BIN" -p "$prompt" \
       --output-format stream-json --verbose \
       --setting-sources project,local \
-      $tools_flag \
       --permission-mode acceptEdits \
-      "$@" ) >"$jsonl" 2>&1 || true
+      "$@" ) </dev/null >"$jsonl" 2>&1 || true
   return 0
 }

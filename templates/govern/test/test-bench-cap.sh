@@ -20,7 +20,7 @@ HUB="$(cd "$DIR/../../.." && pwd)"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
-# The vanilla fixture alone bills $24, so a $1 cap can only bite AFTER the first cell: the cap
+# The vanilla fixture alone bills $10.29, so a $1 cap can only bite AFTER the first cell: the cap
 # gates dispatch, and a session that already ran cannot be un-spent.
 out="$(BENCH_OUT_ROOT="$T/r" BENCH_MAX_USD=1 bash "$HUB/bench/run.sh" --dry-run --run-id cap \
         --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog 2>&1)"
@@ -60,7 +60,7 @@ out="$(BENCH_OUT_ROOT="$T/r2" BENCH_MAX_USD=1000 bash "$HUB/bench/run.sh" --dry-
 R2="$T/r2/ok-dry/results.jsonl"
 assert_eq "$(jq -sr '[ .[] | select(.kind=="rollup" and .status=="capped") ] | length' "$R2")" "0" \
   "5. no cell is capped under a generous cap"
-assert_eq "$(jq -sr '[ .[] | select(.kind=="session") ] | length' "$R2")" "8" \
-  "5. every session is recorded under a generous cap"
+assert_eq "$(jq -sr '[ .[] | select(.kind=="session") ] | length' "$R2")" "2" \
+  "5. every session is recorded under a generous cap (1 vanilla + 1 shiploop)"
 
 assert_done

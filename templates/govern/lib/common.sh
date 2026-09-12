@@ -227,8 +227,8 @@ govern::event_find_log() { # [start-dir]
 # scripted-action / escalation). Deliberately its OWN file, NOT state.jsonl: that file is a
 # per-ticket outcome log tailed by cursor in govern-supervise.sh and read raw by any reviewer
 # prompt built from a dispatch, so interleaving lever events there would add rows those
-# consumers must learn to skip. bench/replay.mjs reads THIS file; a reader that doesn't recognise
-# `event` skips the line, and a line that fails to parse is counted and skipped, never fatal.
+# consumers must learn to skip. Any reader of this file skips a line whose `event` it does not
+# recognise, and counts rather than aborts on a line that fails to parse — never fatal.
 #
 # ON BY DEFAULT at runtime: an operator who installs a release and never touches this flag should
 # still accumulate a real corpus, not discover months later that every run went unrecorded. Kill
@@ -321,16 +321,16 @@ govern::slim_worktree() { # <ticket> [worktree-path]
   return 0
 }
 
-# Stamps a run dir with the workspace's synced hub version, so bench/replay.mjs can scope
-# its default corpus to the sessions that ran under the CURRENT harness instead of blending every
-# version a workspace has ever run: no transcript event carries the shiploop package version.
+# Stamps a run dir with the workspace's synced hub version, so a corpus can be scoped to the
+# sessions that ran under one CURRENT harness version instead of blending every version a
+# workspace has ever run: no transcript event carries the shiploop package version itself.
 # Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
 # against (same file doctor.sh / govern-health.sh already read for the update-channel check). Best-
 # effort ONLY: an absent stamp file, an unreadable one, or a workspace that never ran scaffold.sh
-# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Called
-# by whoever creates a run directory (on the shipped lane that is bench::arm_shiploop; a plain
-# session sets no GOVERN_RUN_DIR and stays unstamped, see bench/KNOWN-LIMITS.md "Run-scoped
-# stamps"). A workspace-relative $RUN_DIR keeps this callable from a test harness that overrides
+# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Only
+# useful to a caller that both creates a run directory and calls this on it; nothing in the
+# current dispatch path does, so a session runs unstamped unless something opts in explicitly.
+# A workspace-relative $RUN_DIR keeps this callable from a test harness that overrides
 # GOVERN_WS_ROOT.
 #
 # `|| true` on the write: a bare `[[ cond ]] && cmd` is NOT a no-op on failure under `set -e`, even
@@ -347,16 +347,16 @@ govern::stamp_run_version() { # <run_dir>
   return 0
 }
 
-# Stamps a run dir with the orchestrating (driver) session's own model tier, so bench/replay.mjs's
-# driver-tier baseline can price the counterfactual at what actually dispatched the run instead of
-# falling back to the highest tier observed anywhere in it, which is a guess biased toward the most
-# expensive tier and so toward shiploop's own credit. Same shape and the same never-abort contract
+# Stamps a run dir with the orchestrating (driver) session's own model tier, so a cost comparison
+# can price what it credits at the tier that actually dispatched the run instead of falling back to
+# the highest tier observed anywhere in it, which is a guess biased toward the most expensive tier
+# and so toward shiploop's own credit. Same shape and the same never-abort contract
 # as govern::stamp_run_version above (a sibling stamp, NOT a lever event: this is run-scoped context
 # that has to exist before GOVERN_LEVER_EVENTS ever comes into it, and bench/LEVER-EVENTS.md does not
 # define it). Source: govern::session_model, the SAME signal govern::model_ceiling already trusts to
 # clamp every worker's escalation tier on this exact dispatch path, normalised to a bare family name
-# (govern::model_family) because replay.mjs's baseline vocabulary is haiku/sonnet/opus, not a full
-# model id. Best-effort ONLY: an undetectable session model, or one outside the known family list,
+# (govern::model_family) because a driver-tier baseline's own vocabulary is haiku/sonnet/opus, not
+# a full model id. Best-effort ONLY: an undetectable session model, or one outside the known family list,
 # writes nothing rather than a guess, exactly the standard govern::stamp_run_version already holds
 # to. Called by whoever creates a run directory, beside the version stamp.
 govern::stamp_driver_model() { # <run_dir>

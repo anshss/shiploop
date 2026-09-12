@@ -1,2 +1,0 @@
-{"type":"system","subtype":"init","model":"claude-sonnet-5","claude_code_version":"2.1.246","session_id":"sess-203"}
-{"type":"assistant","message":{"id":"msg_203_0","model":"claude-sonnet-5","usage":{"input_tokens":10000,"cache_read_input_tokens":30000,"cache_creation_input_tokens":10000,"output_tokens":4}}}

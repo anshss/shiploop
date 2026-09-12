@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-vanilla-fresh","model":"claude-opus-4-8"}
+{"type":"assistant","message":{"id":"fixture-vanilla-fresh-msg-0","model":"claude-opus-4-8","usage":{"input_tokens":1200,"output_tokens":1800,"cache_read_input_tokens":180000,"cache_creation_input_tokens":15000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":15000}}}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":18,"session_id":"fixture-vanilla-fresh","total_cost_usd":1.6287815,"usage":{"input_tokens":3434,"output_tokens":11084,"cache_read_input_tokens":1844243,"cache_creation_input_tokens":41239,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":41239}}}

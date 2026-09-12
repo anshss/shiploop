@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bench/LEVER-EVENTS.md instrumentation (spec 4b): the governor-side emitter half.
 #
-# bench/replay.mjs (built against the SAME contract file, in parallel) attributes four levers from
-# a run's logs/govern/<run>/lever-events.jsonl: watchdog-kill, resume, scripted-action, escalation.
+# A reader built against the SAME contract file attributes levers from a run's
+# logs/govern/<run>/lever-events.jsonl: watchdog-kill, resume, scripted-action, escalation.
 # This proves the EMITTER side: govern::emit_lever_event's own contract (off by default, well-formed
 # JSON, never aborts the caller even on a write failure), then each of the four real call sites,
 # present when the lever genuinely fires, absent when it does not.
