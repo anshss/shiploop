@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.19.7 - 2026-09-12
+
+### Fixed
+
+**The stall check asks the filesystem whether work happened, instead of guessing from tool names
+(#192).** It reset its counter only on an `Edit`/`Write`/`NotebookEdit` tool_use, so a child told to
+prefer the shell for file changes (heredocs, `cat >`, `sed -i`) mutated files on nearly every turn,
+emitted none of those tool_uses, and read as stalled while it was converging. It now fingerprints the
+working trees it can resolve, hashing `git status --porcelain --untracked-files=all` together with
+each tree's HEAD, and treats any change as progress. Untracked files are included because a brand new
+file is the most common shape of real progress; HEAD rides along so that COMMITTING registers as
+progress rather than fingerprinting back to the pre-start value once the porcelain output empties. On
+an agent's first check there is no baseline to compare against, so uncommitted work on disk is taken
+as the evidence. An unresolvable tree, a missing `git`, or any `git` failure degrades to allow: a
+check that cannot tell must never be the thing that denies a stop.
+
+**A read-only child is never stalled (#192).** A `lookup` or an `investigator` is not supposed to
+produce a diff, so no diff is what success looks like for it. The check fired on them anyway, and
+twice in one day a read-only child spent its final message arguing it was not stuck instead of
+delivering its findings, losing both reports. The exempt set is `GOVERN_READONLY_AGENT_TYPES`,
+defaulting to `lookup,investigator`. The loop and tool-error-rate signatures are untouched for every
+type: both are evidence of a child fighting its tools, which needs no filesystem to confirm.
+
+**A watchdog denial ends a child's turn instead of deadlocking it (#192).** Once a cap tripped, the
+watchdog denied every tool call ("stop now and report") while the stall check simultaneously refused
+the stop ("land real progress"). The child was denied the tools that would produce a diff and denied
+the exit, and burned its remaining budget cycling between the two. A watchdog denial is now terminal:
+the stall path lets the child stop and file its report.
+
 ## 1.19.6 - 2026-09-12
 
 ### Added
