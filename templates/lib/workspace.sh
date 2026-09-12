@@ -70,7 +70,7 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 # (e.g. the meta-repo itself, or a skill-template repo on another owner). Give any
 # such repo a wsp_repo_slug / wsp_repo_localdir override below.
 GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
-# ── Worker tier: a cheap FLOOR plus an escalation CEILING (two knobs, never one) ──
+# ── Worker tier: a cheap FLOOR plus a CAP on explicit requests (two knobs, never one) ──
 # First attempts run at the FLOOR. Measured over a real backlog: opus $8.94/ticket, sonnet $2.22,
 # haiku $0.59; three tickets sized opus resolved at sonnet on attempt 1 for $1.34-$2.95 while the
 # one dispatched at opus cost $20.18. Failures are also cheap relative to successes (2.28M tokens
