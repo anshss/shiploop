@@ -172,7 +172,7 @@ Rules that are both rare and mechanically caught belong here.
 
 **Currently dormant:** every writer of `governor/events.jsonl` on the dispatch path lived in the
 headless dispatch launcher, retired along with it, so `npm run govern:status` and the statusline
-segment below will report an idle fleet even while a worker subagent is genuinely running — that is
+segment below will report an idle fleet even while a worker subagent is genuinely running: that is
 a known gap (no replacement emitter exists yet), not a bug to chase.
 
 A worker is a single-ticket session in its own worktree, and structured state is written only when
@@ -325,7 +325,7 @@ quirk" — and it can't reach the moment a worker is DISPATCHED, before it has t
 line (space-separated globs) close that gap instead: `govern::gotchas_in_file`
 (`scripts/govern/lib/common.sh`) matches a ticket's named files against every tagged entry in the
 ROOT `CLAUDE.md`/`learnings.md` and in each SUB-REPO's own copies, and `scripts/govern/gotchas-for-paths.sh`
-surfaces every match for the worker to read as its own first step, before it touches anything — a
+surfaces every match for the worker to read as its own first step, before it touches anything: a
 sub-repo's own `CLAUDE.md` is never auto-loaded by a worker (its cwd at session start is the
 meta-repo worktree root), so this is the only channel that reaches it at all. Match is dir-boundary,
 either direction, same rule the flow-staleness

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Unit test of the manual-timeout fallback, govern::_run_with_manual_timeout (lib/common.sh),
 # exercised directly regardless of whether `timeout`/`gtimeout` happen to be on THIS machine's
-# PATH — stock macOS ships neither, and the fallback must be independently correct, not just
+# PATH: stock macOS ships neither, and the fallback must be independently correct, not just
 # "never hit in CI".
 #
 # Covered:

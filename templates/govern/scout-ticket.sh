@@ -43,7 +43,7 @@
 #   GOVERN_SCOUT=0            disable the model pass entirely (exit 1, nothing cached)
 #   GOVERN_SCOUT_MODEL        tier the scout pass itself runs at (default `haiku`)
 #   GOVERN_SCOUT_TIMEOUT      wall-clock bound on the scout pass, seconds (default 180)
-#   GOVERN_CLAUDE_BIN         the claude binary (shared with spawn-worker.sh)
+#   GOVERN_CLAUDE_BIN         the claude binary (shared by every headless govern dispatch)
 #   GOVERN_SETTING_SOURCES    forwarded to `claude -p` (default `project,local`)
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -242,8 +242,8 @@ scout::deterministic_from_cache() { # <N> -> compact JSON | nonzero
 
 # ── the findings block ──────────────────────────────────────────────────────────────────────────
 # The scout had to LOCATE the target files, the analogous prior commit, and the test command in order
-# to answer its questions. This prints those pointers as a markdown block for spawn-worker.sh to
-# append to the worker prompt. Silent no-op (rc 1, no output) when there is no cache or the scout
+# to answer its questions. This prints those pointers as a markdown block to append to a worker's
+# prompt. Silent no-op (rc 1, no output) when there is no cache or the scout
 # located nothing.
 #
 # They are HINTS, not instructions, and the block below says so: the scout is a cheap haiku pass and

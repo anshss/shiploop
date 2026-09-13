@@ -91,8 +91,8 @@ scripts/govern/test/test-bench-regression.sh
 scripts/govern/test/test-bench-version-scope.sh
 scripts/govern/test/test-bench-proof-table.sh
 
-# vX.Y.Z: the headless dispatch launcher is retired; the interactive worker subagent
+# v1.19.10: the headless dispatch launcher is retired; the interactive worker subagent
 # (Agent(subagent_type: "worker")) is now the only lane. Its test suite (templates/govern/test/) is
-# unaffected by this entry — that directory is hub-only and never installed, so it needs no entry
+# unaffected by this entry: that directory is hub-only and never installed, so it needs no entry
 # here (see tools/check-manifests.sh's purge-manifest-complete job).
 scripts/govern/spawn-worker.sh

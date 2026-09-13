@@ -55,7 +55,7 @@ and skipped, never fatal.
   a `context-cap` reason), and a reader should not assume every row was ever produced by the hook.
 
   Reason strings: `wall-clock-timeout` (an elapsed-time cap) is the only reason the surviving
-  emitter produces. `context-cap` (a cumulative-token cap) only ever appears in historical rows —
+  emitter produces. `context-cap` (a cumulative-token cap) only ever appears in historical rows:
   the headless dispatch launcher's per-worker token-volume cap retired with it, and the hook has no
   equivalent (deliberately: it has no token-volume cap on a subagent). `turns` counts assistant
   turns, a line count of `"type":"assistant"` over the transcript. `ctxTokens` is a reading reported
@@ -76,7 +76,7 @@ and skipped, never fatal.
   inferring one from the parent would name the wrong model; the reader's own `driverTier` fallback
   already covers a null tier).
 - `resume`: **NO LONGER EMITTED.** Its only emitter lived in the headless dispatch launcher's own
-  retry re-entry into a preserved worktree, retired along with it — nothing currently re-enters a
+  retry re-entry into a preserved worktree, retired along with it: nothing currently re-enters a
   preserved worktree the way it did (see `templates/governor/README.md`'s progress-preservation
   section). The schema stays documented because historical logs still carry these rows. Both sides
   were computed at resume time from state the governor already held; they are

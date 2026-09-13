@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-progress-guard.sh — the SubagentStop + TeammateIdle hook that applies the deterministic
+# agent-progress-guard.sh: the SubagentStop + TeammateIdle hook that applies the deterministic
 # doom signature (govern::early_abort_reason in lib/common.sh) to in-session `Agent`
 # children, which have no pid and no external process for anything to poll.
 #
@@ -28,7 +28,7 @@
 #   19. UNRESOLVABLE TREE — cwd is not a git checkout, so the tree check cannot tell → allowed.
 #       A check that cannot tell must never be the thing that denies a stop.
 #   20. THE GATES DO NOT WIDEN — a lookup child in an identical-command loop is still blocked.
-#   8. NO PRIVATE COPY — the STALL reason text this hook emits for a transcript is byte-identical
+#   8. NO PRIVATE COPY: the STALL reason text this hook emits for a transcript is byte-identical
 #      to calling govern::early_abort_reason() directly on the SAME transcript, because the hook
 #      calls the shared function rather than reimplementing its own copy.
 #
@@ -57,7 +57,7 @@ GUARD="$GOVERN_HOOKS_DIR/agent-progress-guard.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mk_ws_stub "$TMP"   # exports GOVERN_WS_ROOT so the guard's common.sh source resolves hermetically
 
-# STALL transcript: 40 assistant turns, all Read, zero file mutations — the same shape
+# STALL transcript: 40 assistant turns, all Read, zero file mutations, the same shape
 # govern::early_abort_reason detects in any worker transcript.
 gen_stall() {
   for i in $(seq 1 40); do
@@ -78,7 +78,7 @@ gen_healthy() {
 gen_healthy > "$TMP/healthy.jsonl"
 
 # LOOP transcript: 6 turns, the SAME Bash command every time, edits interleaved so STALL can
-# never be what fires — isolates the loop detector.
+# never be what fires: isolates the loop detector.
 gen_loop() {
   for i in $(seq 1 6); do
     printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"npm test -- --run flaky"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/a/b.txt"}}],"usage":{"input_tokens":1,"output_tokens":1}}}\n'
@@ -214,7 +214,7 @@ out6="$(printf '{"session_id":"s6","cwd":"%s","agent_id":"a6","agent_type":"look
   | env GOVERN_AGENT_SUPERVISION=1 bash "$GUARD")"
 assert_eq "$out6" "" "no agent_transcript_path on stdin → silent no-op, never a crash"
 
-# ── 8. NO PRIVATE COPY — the hook's verdict matches calling the shared function directly ────────
+# ── 8. NO PRIVATE COPY: the hook's verdict matches calling the shared function directly ────────
 # Drive govern::early_abort_reason() out of the SAME lib/common.sh this hook sources, directly
 # (bypassing the hook's own transcript-reading plumbing), and compare its verdict on the STALL
 # transcript to the hook's.
@@ -223,7 +223,7 @@ common="$SPAWN_DIR/govern/lib/common.sh"; [ -f "$common" ] || common="$SPAWN_DIR
 if [ -f "$common" ]; then
   direct="$(GOVERN_WS_ROOT="$TMP" bash -c '. "'"$common"'" && govern::early_abort_reason "'"$TMP"'/stall.jsonl"')"
   assert_contains "$out1" "$direct" \
-    "the hook's block reason is the SAME string govern::early_abort_reason computes directly — one signature, not a private copy"
+    "the hook's block reason is the SAME string govern::early_abort_reason computes directly: one signature, not a private copy"
 fi
 
 # ── 9. IDLE STALL via agent_transcript_path — alarm, NEVER a block decision ────────────────────

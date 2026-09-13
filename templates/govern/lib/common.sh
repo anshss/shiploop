@@ -33,7 +33,7 @@ PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
-# The worker's subagent definition — see govern::worker_agent_field below, which reads fields
+# The worker's subagent definition: see govern::worker_agent_field below, which reads fields
 # (e.g. its tool allow-list) out of this file rather than keeping a second hardcoded copy
 # elsewhere. Absent on a fleet scaffolded before this file shipped, or in a hermetic test's stub
 # workspace: callers must treat that as "fall back to your own default", never a hard failure.
@@ -61,7 +61,7 @@ PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
 # across runs until its blocker lands. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
 PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.json}"
 # Cross-run per-ticket outcome ledger, one JSON object per attempt. Per-machine runtime state
-# — gitignored. Defined here (not just for one caller) because pre-dispatch-check.sh's
+# (gitignored). Defined here (not just for one caller) because pre-dispatch-check.sh's
 # failure-streak breaker and resolve-ticket.sh both read/write the SAME file.
 TICKET_HISTORY_FILE="${GOVERN_HISTORY_FILE:-$GOVERNOR_DIR/ticket-history.jsonl}"
 LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
@@ -69,7 +69,7 @@ LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 # ── Fleet event log (govern::event) ─────────────────────────────────────────────────────────────
 # Folded in from the former lib/events.sh (deleted with the dispatch loop, 1.19.2). The emitter is
 # NOT loop machinery: status.sh, statusline-segment.sh and the plugin monitor all read it (status.sh
-# also writes a synthetic staleness row), and every one of them survives the loop purge — though
+# also writes a synthetic staleness row), and every one of them survives the loop purge, though
 # the headless dispatch launcher was the only writer of dispatch-path events (worker_spawned /
 # worker_done / worker_model_clamped / worker_respec_requested) and is retired along with it, so
 # those specific rows no longer accumulate. It lives here now so there is one file to source and no
@@ -111,7 +111,7 @@ govern::_event_jesc() { # <string> -> escaped, WITHOUT surrounding quotes
 #                          that the dispatch loop was deleted, so this only fires when an operator
 #                          or an outside wrapper sets it. When set, the same id tags every worker of
 #                          that run, so events join cleanly against OTel data
-#   GOVERN_RUN_DIR       — basename of the run dir, whenever a caller exports one (e.g. bench's
+#   GOVERN_RUN_DIR       : basename of the run dir, whenever a caller exports one (e.g. bench's
 #                          shiploop arm scopes its own session to one, even standalone)
 #   adhoc-$$             — a manual invocation outside any run
 govern::_event_run_id() {
@@ -439,8 +439,8 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
 # ── Worker agent-definition reader ───────────────────────────────────────────
 # `.claude/agents/worker.md` is the declared source for the parts of the worker's capability
 # posture that live in its frontmatter (currently: tools). This reads a single flat `key: value`
-# frontmatter line out of WORKER_AGENT_FILE — nested keys (experimental.cacheTtl) aren't needed by
-# any caller and aren't supported. No current caller reads this (its one caller was the headless
+# frontmatter line out of WORKER_AGENT_FILE (nested keys, like experimental.cacheTtl, aren't needed by
+# any caller and aren't supported). No current caller reads this (its one caller was the headless
 # dispatch launcher's tool-schema trim, retired along with it); kept for a future caller that
 # needs a frontmatter field without a second hardcoded copy. Prints nothing and returns 1 if the
 # file or the field is missing, so every caller
@@ -519,7 +519,7 @@ govern::gotchas_in_file() { # <file> <max-entries> <path> [path…] -> matched "
 # block for **Paths:**-tagged CLAUDE.md/learnings.md entries matching those <repo>/<path> tokens
 # (root files' entries as-is; each named repo's OWN CLAUDE.md/learnings.md, repo-relative), or
 # nothing if none match. THE single implementation: nothing injects this FOR the worker, so its
-# gotchas-for-paths.sh wrapper calls this directly on the paths it names before it starts editing —
+# gotchas-for-paths.sh wrapper calls this directly on the paths it names before it starts editing:
 # same function, same output, whatever the caller. Honors
 # GOVERN_GOTCHA_INJECT=0 (the mechanism's kill switch), GOVERN_GOTCHA_MAX (per-file cap, default
 # 3), GOVERN_GOTCHA_MAX_BYTES (total cap, default 3000, truncates with a pointer to the source).
@@ -873,7 +873,7 @@ govern::lock_release() { rm -rf "$1" 2>/dev/null || true; }
 
 # ── Process-tree teardown ─────────────────────────────────────
 # Killing a spawned process tree (Stop / SIGTERM) can leave a child process (and any grandchildren
-# it spawned) ALIVE — reparented to init, needing a manual `kill -9` sweep; an orphan left mid-task
+# it spawned) ALIVE, reparented to init, needing a manual `kill -9` sweep; an orphan left mid-task
 # can keep a billable resource alive. The headless dispatch launcher's own `claude -p` worker
 # process used this; that caller is retired, but the same fix applies to any spawned subtree
 # (sync-port.sh's own child is a current caller), with two layers, both wired here:
@@ -1514,7 +1514,7 @@ govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this 
 #         advisor mechanism has something to key on, and so the dispatch record carries a precision
 #         grade at all.
 # Same shape as warm_assertion on purpose: explicit, per-invocation (so it cannot rot in the queue
-# the way a ticket field does — filing-time fields are the wrong place for a dispatch-time
+# the way a ticket field does; filing-time fields are the wrong place for a dispatch-time
 # decision), and scoped to exactly one ticket number. No current caller reads GOVERN_PRECISION or
 # calls this (its one caller was the headless dispatch launcher's precedence chain, retired along
 # with it); kept for a future dispatcher.
@@ -2001,7 +2001,7 @@ govern::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
 # per-session dollar ceiling in its place: not turn-shaped, but the closest available substitute
 # for capping a spend-bearing session, so bench/arms.sh probes this SECOND, only once --max-turns
 # comes back unsupported. GOVERN_WORKER_MAX_BUDGET_USD was the matching per-worker knob in the
-# headless dispatch launcher, retired along with it — nothing currently reads that variable.
+# headless dispatch launcher, retired along with it: nothing currently reads that variable.
 # Test seam: pre-seed _GOVERN_MAXBUDGETUSD_SUPPORTED=1|0 to skip the probe entirely.
 _GOVERN_MAXBUDGETUSD_PROBE_CACHE="${GOVERN_MAXBUDGETUSD_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-budget-usd-support}"
 govern::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 not
@@ -2779,7 +2779,7 @@ govern::paths_overlap() { # "pathsA" "pathsB" -> rc 0 if they intersect
 # Reads $3 (def TICKETS_FILE).
 # NO PRODUCTION CALLER as of 1.19.2. The automatic partitioner ran only inside the deleted
 # dispatch loop; pre-dispatch-check.sh's overlap nudge still SUGGESTS a batch, but nothing accepts
-# one any more — the headless dispatch launcher's manual multi-ticket acceptance retired with it,
+# one any more: the headless dispatch launcher's manual multi-ticket acceptance retired with it,
 # and no other dispatcher folds several tickets into one worker.
 # Kept, with its test, because it is a pure function and the only thing a batch driver would need.
 govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
@@ -3028,9 +3028,9 @@ govern::overlap_nudge() { # named-csv [tickets-file]
       [[ -n "$tier" ]] || continue
 
       if [[ "$tier" == "exact" ]]; then
-        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: batch with scripts/govern/spawn-worker.sh $tn $other"
+        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: hand #$tn and #$other to ONE worker"
       else
-        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider scripts/govern/spawn-worker.sh $tn $other"
+        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider handing #$tn and #$other to ONE worker"
       fi
       shown=$((shown+1))
       if [[ "${GOVERN_EVENTS:-0}" == "1" ]]; then
@@ -3162,7 +3162,7 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
 # plus commit_meta_to_main's push loop. Autostash was added so a co-tenant Claude session's UNRELATED
 # dirty tracked files (e.g. .claude/context/** WIP) never block the rebase. That handles a
 # NON-overlapping dirty tree. But when origin/main advances a file the co-tenant is CONCURRENTLY
-# editing (SAME file+region — e.g. a merged spawn-worker.sh change vs the flows-feature WIP), the
+# editing (SAME file+region, e.g. a merged lib/common.sh change vs the flows-feature WIP), the
 # rebase itself succeeds (it only replays OUR append-only meta diffs) yet the autostash POP hits a real
 # content conflict. Critically, git reports that pop conflict as a mere WARNING and STILL EXITS 0
 # ("Applying autostash resulted in conflicts. Your changes are safe in the stash … Successfully
@@ -3411,8 +3411,8 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
 # A harness bump can ship a `claude` invocation flag/subcommand the fleet's INSTALLED CLI doesn't
 # support yet (version skew, a renamed/removed flag). The CLI then exits fast on the invocation
 # itself, e.g. `error: unknown option '--definitely-not-a-real-flag'` — a single PLAIN-TEXT line,
-# never touching the streaming JSON protocol at all (spawn-worker redirects 2>&1 into $jsonl, so
-# this lands as the whole file). That trips NEITHER worker_killed (a usage rejection exits fast,
+# never touching the streaming JSON protocol at all (a caller that redirects 2>&1 into $jsonl gets
+# that line as the whole file). That trips NEITHER worker_killed (a usage rejection exits fast,
 # not >128) NOR infra/interrupted (no result event, no matching signature) NOR extract_report (not
 # JSON), so without this it falls through to the generic synthesized "failed" bucket — indistinguishable
 # from an ordinary ticket failure, even though every worker in the fleet would die identically until
@@ -3424,8 +3424,8 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
 # invocation before doing any ticket work. Deliberately a GENERAL catch-all (not a per-message regex
 # list): a hardcoded pattern for today's wording would just as easily miss the next CLI version's
 # phrasing, which is the exact failure mode this ticket exists to fix. Callers must check this only
-# AFTER infra/interrupted have been ruled out (see spawn-worker.sh), so a genuine transport outage is
-# never misclassified as a usage error.
+# AFTER infra/interrupted have been ruled out, so a genuine transport outage is never misclassified
+# as a usage error.
 govern::usage_error_signature() { # worker-jsonl -> signature|""
   local jsonl="${1:-}" first
   [[ -n "$jsonl" && -s "$jsonl" ]] || return 0
@@ -3436,12 +3436,11 @@ govern::usage_error_signature() { # worker-jsonl -> signature|""
   return 0
 }
 
-# ── progress signature, shared by the headless watchdog AND in-session supervision ──────
-# Extracted from spawn-worker.sh's early-abort watchdog so the SAME deterministic doom
-# signature (stall / identical-command loop / rising tool-error rate) is available to a second
-# caller: templates/hooks/agent-progress-guard.sh, a SubagentStop hook that reaches this to
-# in-session `Agent` children — which have no pid and no worker.jsonl, so the headless watchdog
-# never covered them. One implementation, two callers, so a doom signature detected here has one definition rather than
+# ── progress signature, shared by every supervisor that reads a session's stream ──────
+# One deterministic doom signature (stall / identical-command loop / rising tool-error rate) that
+# any supervisor can reach: today that is templates/hooks/agent-progress-guard.sh, a SubagentStop
+# hook watching in-session `Agent` children, which have no pid of their own to poll. Living here
+# rather than inside one supervisor means a doom signature has one definition rather than
 # two that can drift apart.
 #
 # HARD CONSTRAINT unchanged from the original: every signal is DETERMINISTIC, read straight off a
@@ -3479,8 +3478,8 @@ govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
 # Echoes a one-line reason when the stream shows a doom signature, and NOTHING when it looks healthy.
 # Empty output is the safe answer for every degenerate input (no file, no parseable events, jq
 # missing): a caller must never treat absence of data as evidence of doom. UNGATED by design — each
-# caller (spawn-worker.sh's GOVERN_EARLY_ABORT, agent-progress-guard.sh's GOVERN_AGENT_SUPERVISION)
-# owns its own on/off switch and default, so this stays a pure function of the stream.
+# caller owns its own on/off switch and default (agent-progress-guard.sh's
+# GOVERN_AGENT_SUPERVISION), so this stays a pure function of the stream.
 # Thresholds read straight from env so both callers share the exact same defaults with no plumbing:
 # GOVERN_EARLY_ABORT_TURNS (30), GOVERN_EARLY_ABORT_REPEATS (5), GOVERN_EARLY_ABORT_ERROR_PCT (60),
 # GOVERN_EARLY_ABORT_ERROR_WINDOW (20).
@@ -3762,8 +3761,8 @@ govern::model_family() { # model alias OR full model id -> haiku|sonnet|opus|fab
   return 0
 }
 # NOTE: this has NO caller as of the removal of automatic tier escalation. Its only production use
-# was spawn-worker.sh's `escalated_model` (the "raise to at least the ceiling" step), which is gone
-# because no failure class raises a tier any more. Kept, not deleted: it is a public primitive on a
+# was the dispatch-time "raise to at least the ceiling" step, which is gone because no failure class
+# raises a tier any more. Kept, not deleted: it is a public primitive on a
 # hub template that downstream fleets and forks may call, and govern::model_rank (which it wraps) is
 # still used by config-check.sh and the model ceiling. Delete it in a deliberate contract change, not
 # as a drive-by of this one.

@@ -11,9 +11,9 @@
 # appositive. Prose means outside fenced code blocks and outside HTML tags (an <img alt="..."> is not
 # where a reader learns a term).
 #
-# Deliberately lane-neutral: the appositive is "single-ticket session", never "headless
-# single-ticket session". A worker has ONE definition and TWO lanes, and the interactive lane is not
-# headless. Baking "headless" into the noun would contradict .claude/agents/worker.md.
+# The appositive is "single-ticket session", never "headless single-ticket session". A worker runs
+# in-session as a subagent, so baking "headless" into the noun would contradict
+# .claude/agents/worker.md.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

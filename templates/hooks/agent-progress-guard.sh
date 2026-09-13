@@ -4,7 +4,7 @@
 # children, which have no pid and no external process for anything to poll. Three behaviors, plus
 # the TeammateIdle branch below:
 #
-#   SCOPE — supervision spans every child, not only governor-spawned work. This is a
+#   SCOPE: supervision spans every child, not only governor-spawned work. This is a
 #            per-subagent frontmatter hook (worker.md/investigator.md/lookup.md `hooks:`) so it
 #            fires for any subagent that carries it, reading `agent_transcript_path` on this
 #            hook's stdin for the child's own turns.
@@ -86,7 +86,7 @@
 # idiom as GOVERN_EARLY_ABORT (root CLAUDE.md anti-pattern 12).
 #
 # HARD CONSTRAINT: every signal is DETERMINISTIC, read straight off the child's OWN transcript. No
-# model call anywhere in this path — an "agent hook" that asked a model whether the child looks
+# model call anywhere in this path: an "agent hook" that asked a model whether the child looks
 # stuck could itself hang or fabricate a verdict, which is exactly the failure class this is closing.
 #
 # Design constraints (a Stop-family hook that always blocks would loop forever):

@@ -39,7 +39,7 @@ You launch regular Claude Code sessions to build your project. What comes out of
 
 How a named ticket actually ships, in one pass:
 
-1. Each ticket gets a fresh **worker**: a subagent in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
+1. Each ticket gets a fresh **worker**: a trim, single-ticket session in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
 2. Advisor-worker orchestration. Intractive claude session becomes a advisor and spawns subagent in right-sized cheap-tier models. A classified judgment failure of subagent raises reasoning effort and files a re-specification request for the advisor.
 3. When a ticket resolves, it leaves a short lesson in CLAUDE.md, which every later session reads, so the next worker starts a little smarter.
 
@@ -109,7 +109,7 @@ agents". In shiploop they mean exactly this:
 | Command | What it does |
 |---|---|
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
-| *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the three-script session lane (`pre-dispatch-check.sh` → `spawn-worker.sh` → `resolve-ticket.sh`), end to end, one ticket at a time |
+| *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the session lane (`pre-dispatch-check.sh` → a worker → `resolve-ticket.sh`), end to end, one ticket at a time |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
 | `/shiploop:compress` | Compress this workspace's `CLAUDE.md` by moving mechanically-triggered rules into just-in-time rule packs, deleting none of them (operator-triggered, never automatic) |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
@@ -123,10 +123,9 @@ agents". In shiploop they mean exactly this:
 
 ### Fleet visibility
 
-A worker is a detached `claude -p` process `spawn-worker.sh` runs to completion, and structured
-state is written only when it finishes, so while one or more are in flight at once *nothing on
-disk says "running"* on its own, which is why no surface could ever show them without
-instrumentation.
+A worker is a subagent the session runs to completion, and structured state is written only when
+it finishes, so while one or more are in flight at once *nothing on disk says "running"* on its
+own, which is why no surface could ever show them without instrumentation.
 
 `GOVERN_EVENTS=1` fixes that with one append-only log, `governor/events.jsonl`, and three readers
 fold it. The emitter can never abort a dispatch: a failed append is swallowed silently, by construction.

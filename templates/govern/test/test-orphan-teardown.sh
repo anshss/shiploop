@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression: stopping/killing a worker must leave ZERO surviving process children. The fix runs a
 # spawned `claude` in its OWN process group so a supervisor's teardown (govern::kill_tree) can reap
-# the whole subtree — leader plus grandchildren — rather than leaving them reparented to init,
+# the whole subtree (leader plus grandchildren) rather than leaving them reparented to init,
 # needing a manual `kill -9` sweep, or holding a billable resource. Hermetic + generic (alpha
 # auto-merge, web frontend; org acme).
 set -euo pipefail

@@ -18,7 +18,7 @@
 # them; the dispatch side that called them (accepting multiple ticket numbers on one spawn, folding
 # their blocks into the prompt) lived in the headless dispatch launcher, retired along with it. The
 # interactive lane dispatches ONE ticket per worker (`.claude/agents/worker.md`), so batching has no
-# current caller — these functions and their tests stay in case a future dispatcher wants them.
+# current caller: these functions and their tests stay in case a future dispatcher wants them.
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network, no worker spawned.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

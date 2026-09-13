@@ -1,6 +1,6 @@
 ---
 name: shiploop
-description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to cheap-floor worker subagents that escalate once on failure, promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
+description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to cheap-floor subagents that escalate once on failure, promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
 ---
 
 # shiploop — self-improving multi-agent harness
@@ -10,9 +10,9 @@ description: Self-improving multi-agent harness: wraps N git sub-repos as one wo
 A workspace root holding N independent git repos as sub-folders — each its own remote, PR queue, CI
 — where the root is *also* its own git repo holding config, cross-cutting scripts, the ticket queue,
 the governor, and shared AI context. A self-improving multi-agent harness sits on top (worktrees +
-tickets + governor + hooks): the governor drives a ticket loop through fresh `worker` subagents
-(a worker is a trim, single-ticket session), one per ticket, dispatched at a cheap model floor and escalated once on a classified failure; every resolved ticket promotes a durable lesson
-into the git-tracked `CLAUDE.md`.
+tickets + governor + hooks): a worker is a trim, single-ticket session, one per ticket, dispatched
+as a `worker` subagent at a cheap model floor and escalated once on a classified failure; every
+resolved ticket promotes a durable lesson into the git-tracked `CLAUDE.md`.
 
 Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git
 repo, a script launcher at the root.
@@ -137,7 +137,7 @@ inside YOUR session, one ticket at a time, near-zero Claude context throughout:
    pre-spawn gate, one verdict line on stdout: `proceed` / `skip: <reason>` / `refuse: <reason>`.
 2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. The worker runs the
    doctrine in `governor/worker-prompt.md`, self-services its own worktree, implements the ticket's
-   proposed solution, and returns a JSON report — it never merges and never touches
+   proposed solution, and returns a JSON report: it never merges and never touches
    `queue/tickets.md`.
 3. `scripts/govern/resolve-ticket.sh <N>`, fed the worker's report on stdin, awaits CI, merges, and
    lands the resolution.
@@ -156,7 +156,7 @@ These differ **only in selection and count**, there is no concurrency knob left 
 gate/dispatch/land steps is the anti-pattern this design replaces; if `pre-dispatch-check.sh`
 returns `skip`/`refuse`, or `resolve-ticket.sh` exits non-zero, report why, don't take over.
 
-Dispatch requires a live session — a worker is a subagent, not a separate process, so there is no
+Dispatch requires a live session: a worker is a subagent, not a separate process, so there is no
 headless or unattended path any more. `claude -p "ping" --model sonnet --strict-mcp-config` should
 print text, not a 401 (`claude login` once if it 401s), if you need to sanity-check the CLI itself.
 
@@ -174,7 +174,7 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   bookkeeping via `land-resolution.sh` (the worker never writes it). Frontend/PR-only repos stop at
   the open PR.
 - **Locality batching (folding two co-located tickets into one worker session) has no dispatcher
-  any more** — it lived in the headless launcher's multi-ticket invocation, retired along with it.
+  any more**: it lived in the headless launcher's multi-ticket invocation, retired along with it.
   `pre-dispatch-check.sh` still prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when an OTHER
   open ticket shares a measured file (or, weaker, a directory) with the one you named; there is no
   action to take on it beyond working both tickets, one at a time, through the normal dispatch.
@@ -239,7 +239,7 @@ Wired into `.claude/settings.json` by setup:
   (registered only in the root `.mcp.json`) for things with no good CLI, authed via env-var expansion
   (`${TOKEN}`) so headless/governor runs inherit them.
 - **MCP servers always at the workspace root.** Never `claude mcp add` from a sub-repo.
-- Governor workers run as `bypassPermissions` subagents in throwaway worktrees — safety comes from
+- Governor workers run as `bypassPermissions` subagents in throwaway worktrees: safety comes from
   doctrine hard-stops + the merge allowlist, not interactive prompts.
 
 ## Anti-patterns

@@ -45,7 +45,7 @@ Ignore only these two things in it, kept for historical shape but never populate
    the advisor for the real proposal (delta 4's channel) — never invent one, never treat the plain
    problem description as the proposal. Nothing pre-computes an advisor budget from the grade for
    you, and shell state does not persist between your tool calls, so pass it inline on the `claim`
-   call in delta 4: `GOVERN_ADVISOR_BUDGET=<n>` on this scale —
+   call in delta 4: `GOVERN_ADVISOR_BUDGET=<n>` on this scale:
    `open`→`${GOVERN_ADVISOR_PER_WORKER_OPEN:-3}`,
    `stated`→`${GOVERN_ADVISOR_PER_WORKER_STATED:-1}`, else `${GOVERN_ADVISOR_PER_WORKER:-2}`.
 4. **The advisor consult goes UP, to the advisor that wrote your brief.** It already holds the

@@ -147,10 +147,10 @@ assert_not_contains "$fm" "isolation:" \
 assert_not_contains "$fm" "hooks:" \
   "6i. worker.md does not declare hooks -- SubagentStop supervision is owned once, at settings.json"
 
-# ── 7. Hazard handoff reaches this lane too ────────────────
-# spawn-worker.sh gets its "Recorded gotchas" section injected FOR it; this lane has no
-# launcher to do that, so worker.md must tell it to run the SAME lookup itself, on the paths it is
-# about to touch, as an explicit step -- not leave it as a passive "go read the file" pointer.
+# ── 7. Hazard handoff reaches the worker ────────────────
+# Nothing injects a "Recorded gotchas" section into a worker's prompt for it, so worker.md must
+# tell it to run the lookup itself, on the paths it is about to touch, as an explicit step -- not
+# leave it as a passive "go read the file" pointer.
 assert_contains "$body" "gotchas-for-paths.sh" \
   "7. worker.md instructs running the shared hazard-lookup script itself"
 GOTCHA_SCRIPT="$(cd "$DIR/.." && pwd)/gotchas-for-paths.sh"

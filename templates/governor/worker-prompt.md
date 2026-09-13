@@ -15,9 +15,9 @@ or duplicated code is OUT OF SCOPE unless the fix cannot land without it — not
 If you cannot tell whether something is in scope, it is not.
 
 1. Read the sub-repo `CLAUDE.md` for the area you're touching (root `CLAUDE.md` is already loaded).
-   A "Recorded gotchas" section carries any `**Paths:**`-tagged entry matching your files — nothing
+   A "Recorded gotchas" section carries any `**Paths:**`-tagged entry matching your files: nothing
    injects it for you, so produce it yourself via `gotchas-for-paths.sh` as your own first step (see
-   its own delta) — a supplement, not a substitute: it never contains the file's untagged rules, so
+   its own delta), a supplement, not a substitute: it never contains the file's untagged rules, so
    still read the file itself.
 2. **Implement the ticket's `**Proposed solution:**`, not your own read of the problem.** It was
    written by the advisor before you were dispatched, readable directly in the ticket if you were
@@ -101,7 +101,7 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
 - **Billable resources → pick a FAST-provisioning provider, RETRY on another** when one is slow or
   returns nothing. Slow ≠ un-automatable; never park "inconclusive / human-driven".
 - **Slow provisioning → BLOCK-AND-POLL in THIS turn; NEVER `ScheduleWakeup` or end your turn on a
-  background wait** — a worker gets NO re-invocation once its turn ends, so a verdict-less turn
+  background wait**: a worker gets NO re-invocation once its turn ends, so a verdict-less turn
   reads as FAILED and burns the resource. Bounded `until` loop under `GOVERN_WORKER_TIMEOUT`, else
   PARK.
 - **About to wait on something long → say so in ONE line before you go quiet, naming what you wait
