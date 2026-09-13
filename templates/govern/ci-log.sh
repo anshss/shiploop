@@ -4,9 +4,8 @@
 # Workers verify on macOS; CI runs Linux. A PR that is correct locally fails on a portability
 # difference — a `sed -i` without a backup arg, a BSD-vs-GNU
 # flag, a case-insensitive filesystem — and the governor dispatches a SECOND FULL WORKER for something
-# entirely deterministic. A caller can re-dispatch by setting `GOVERN_FIX_CI=<repo>#<pr>` on a
-# spawn-worker.sh call, but the re-dispatched worker is handed the SAME ticket prompt as the first
-# one: `GOVERN_FIX_CI` is read in exactly one place (govern::retry_class, to pin the retry class to
+# entirely deterministic. A caller can re-dispatch by setting `GOVERN_FIX_CI=<repo>#<pr>`, but the
+# re-dispatched worker is handed the SAME ticket prompt as the first one: `GOVERN_FIX_CI` is read in exactly one place (govern::retry_class, to pin the retry class to
 # `ci` so the tier is not raised) and nowhere else. So the second worker rediscovers the CI failure
 # from scratch, at full price, when the answer is sitting in a log file.
 #

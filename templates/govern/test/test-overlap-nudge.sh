@@ -51,7 +51,7 @@ EOF
 out="$(GOVERN_OVERLAP_NUDGE=1 govern::overlap_nudge "61" "$TF")"
 assert_contains "$out" "[overlap] queued #72 references templates/govern/spawn-worker.sh, also targeted by #61" \
   "A1: exact shared file (via file:line) between queued #72 and named #61 is nudged"
-assert_contains "$out" "scripts/govern/spawn-worker.sh 61 72" "A2: the nudge names the batch command"
+assert_contains "$out" "hand #61 and #72 to ONE worker" "A2: the nudge names the batch action"
 if printf '%s\n' "$out" | grep -q '#90'; then f=1; else f=0; fi
 assert_eq "$f" "0" "B1: #90 (no shared path at all) produces no nudge line"
 

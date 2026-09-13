@@ -1,6 +1,6 @@
 ---
 name: shiploop
-description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to cheap-floor headless agents that escalate once on failure, promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
+description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to cheap-floor subagents that escalate once on failure, promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
 ---
 
 # shiploop — self-improving multi-agent harness
@@ -10,9 +10,9 @@ description: Self-improving multi-agent harness: wraps N git sub-repos as one wo
 A workspace root holding N independent git repos as sub-folders — each its own remote, PR queue, CI
 — where the root is *also* its own git repo holding config, cross-cutting scripts, the ticket queue,
 the governor, and shared AI context. A self-improving multi-agent harness sits on top (worktrees +
-tickets + governor + hooks): the governor drives a ticket loop through fresh headless `claude -p`
-workers (a worker is a trim, single-ticket session), one per ticket, dispatched at a cheap model floor and escalated once on a classified failure; every resolved ticket promotes a durable lesson
-into the git-tracked `CLAUDE.md`.
+tickets + governor + hooks): a worker is a trim, single-ticket session, one per ticket, dispatched
+as a `worker` subagent at a cheap model floor and escalated once on a classified failure; every
+resolved ticket promotes a durable lesson into the git-tracked `CLAUDE.md`.
 
 Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git
 repo, a script launcher at the root.
@@ -57,7 +57,7 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
 | `npm run govern:pre-dispatch -- <N>` | Every pre-spawn gate for ticket N, one verdict line: `proceed` / `skip: <reason>` / `refuse: <reason>` |
-| `bash scripts/govern/spawn-worker.sh <N>` | Spawn one headless worker for ticket N, prints its JSON report (or say "work on \<tickets\>", see Dispatch below) |
+| *(say "work on \<tickets\>")* | Dispatch a `worker` subagent for ticket N and pipe its JSON report onward (see Dispatch below) |
 | `npm run govern:resolve -- <N>` | Fed a worker's JSON report on stdin: awaits CI, merges, and lands the resolution |
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
@@ -130,15 +130,15 @@ either way: would knowing this save a future session 5+ min?
 
 ## Dispatch, natural language onto the session lane
 
-There is no `/govern` command, and there is no always-on loop behind it either. Dispatch is three
-deterministic Bash scripts, run in order for ONE ticket at a time, near-zero Claude context
-throughout:
+There is no `/govern` command, and there is no always-on loop behind it either. Dispatch runs
+inside YOUR session, one ticket at a time, near-zero Claude context throughout:
 
-1. `scripts/govern/pre-dispatch-check.sh <N>`, every pre-spawn gate, one verdict line on stdout:
-   `proceed` / `skip: <reason>` / `refuse: <reason>`.
-2. `scripts/govern/spawn-worker.sh <N>`, spawns the fresh **headless `claude -p` worker**, prints
-   its JSON report. (Interactively, `Agent(subagent_type: "worker")` for the same ticket runs the
-   same doctrine at the same model floor and the same stopping point instead.)
+1. `scripts/govern/pre-dispatch-check.sh <N>` (or `npm run govern:pre-dispatch -- <N>`), every
+   pre-spawn gate, one verdict line on stdout: `proceed` / `skip: <reason>` / `refuse: <reason>`.
+2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. The worker runs the
+   doctrine in `governor/worker-prompt.md`, self-services its own worktree, implements the ticket's
+   proposed solution, and returns a JSON report: it never merges and never touches
+   `queue/tickets.md`.
 3. `scripts/govern/resolve-ticket.sh <N>`, fed the worker's report on stdin, awaits CI, merges, and
    lands the resolution.
 
@@ -147,21 +147,18 @@ the least spend, with every gate on. There is no backlog sweep and no grind-unti
 
 | You say | Run |
 |---|---|
-| "work on 414" | `pre-dispatch-check.sh 414` → `spawn-worker.sh 414` → pipe its report into `resolve-ticket.sh 414` |
+| "work on 414" | `pre-dispatch-check.sh 414` → dispatch a `worker` subagent → pipe its report into `resolve-ticket.sh 414` |
 | "work on 414 156 234 235" | the same three steps, once per ticket, in severity order, sequential, there is no fan-out |
-| "dry-run 414" | `scripts/govern/dry-run.sh 414`, worker in PLAN mode, merge echoed, nothing committed |
+| "dry-run 414" | `scripts/govern/dry-run.sh 414`, previews the merge decision and the queue-bookkeeping diff, nothing committed |
 
 These differ **only in selection and count**, there is no concurrency knob left to reach for.
-**Do not re-implement the pipeline in-context**, driving a worker by hand instead of through these
-three scripts is the anti-pattern this design replaces; if `pre-dispatch-check.sh` returns
-`skip`/`refuse`, or `resolve-ticket.sh` exits non-zero, report why, don't take over.
+**Do not re-implement the pipeline in-context**, driving a worker by hand instead of through the
+gate/dispatch/land steps is the anti-pattern this design replaces; if `pre-dispatch-check.sh`
+returns `skip`/`refuse`, or `resolve-ticket.sh` exits non-zero, report why, don't take over.
 
-Run from the **main checkout** (not a worktree), in a **plain terminal** — NOT nested inside an
-interactive Claude session. A nested `claude -p` inherits the parent's `CLAUDE_CODE_*` env and the
-headless worker never finalizes (answers but emits no `result`, hangs to timeout); `spawn-worker.sh`
-scrubs those vars defensively, but a manual preflight ping won't survive nesting. Before a live run:
-`claude -p "ping" --model sonnet --strict-mcp-config` should print text, not a 401 (`claude login`
-once if it 401s) — `--strict-mcp-config` matches how workers actually launch (no MCP servers).
+Dispatch requires a live session: a worker is a subagent, not a separate process, so there is no
+headless or unattended path any more. `claude -p "ping" --model sonnet --strict-mcp-config` should
+print text, not a 401 (`claude login` once if it 401s), if you need to sanity-check the CLI itself.
 
 **Autonomy is a ladder — observe → pr-only → auto**, set by `GOVERN_AUTONOMY` in
 `scripts/lib/workspace.sh`. A new workspace starts on **pr-only**: workers open normal PRs but
@@ -176,14 +173,14 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   auto-merge repo, awaits CI and merges on **green-or-no-checks** → deterministic `queue/tickets.md`
   bookkeeping via `land-resolution.sh` (the worker never writes it). Frontend/PR-only repos stop at
   the open PR.
-- **Batching two tickets into one worker is a manual call, never automatic.**
-  `pre-dispatch-check.sh` prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when an OTHER open
-  ticket shares a measured file (or, weaker, a directory) with the one you named; act on it with
-  `scripts/govern/spawn-worker.sh <N> <other>`, which explores once and opens ONE PR for both. There
-  is no automatic locality grouping of a named set any more.
+- **Locality batching (folding two co-located tickets into one worker session) has no dispatcher
+  any more**: it lived in the headless launcher's multi-ticket invocation, retired along with it.
+  `pre-dispatch-check.sh` still prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when an OTHER
+  open ticket shares a measured file (or, weaker, a directory) with the one you named; there is no
+  action to take on it beyond working both tickets, one at a time, through the normal dispatch.
 - **Escalation reconcile runs at SessionStart, not at dispatch time.** `session-reconcile.sh` applies
   any answered escalations and regenerates `governor/pending-escalations.json` the moment a plain
-  session starts, so `pre-dispatch-check.sh` and `spawn-worker.sh` never have to. Run it by hand with
+  session starts, so `pre-dispatch-check.sh` never has to. Run it by hand with
   `npm run govern:escalations-apply` / `npm run govern:escalations-emit` if you don't want to wait
   for the next session.
 - **Worker autonomy:** `--permission-mode bypassPermissions` scoped to throwaway worktrees, with
@@ -242,8 +239,8 @@ Wired into `.claude/settings.json` by setup:
   (registered only in the root `.mcp.json`) for things with no good CLI, authed via env-var expansion
   (`${TOKEN}`) so headless/governor runs inherit them.
 - **MCP servers always at the workspace root.** Never `claude mcp add` from a sub-repo.
-- Governor workers run headless (`-p`, `bypassPermissions`, `--setting-sources user`) — safety comes
-  from doctrine hard-stops + throwaway worktrees + the merge allowlist, not interactive prompts.
+- Governor workers run as `bypassPermissions` subagents in throwaway worktrees: safety comes from
+  doctrine hard-stops + the merge allowlist, not interactive prompts.
 
 ## Anti-patterns
 

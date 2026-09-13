@@ -15,16 +15,14 @@
 #      session cap before either hits its own per-worker cap.
 #   5. No session key available -> degrades the per-session check to the per-worker cap (logged),
 #      never silently unbounded.
-#   6. GOVERN_ADVISOR_BUDGET (spawn-worker.sh's precision-grade export) overrides
-#      GOVERN_ADVISOR_PER_WORKER for that dispatch; set to 0 it denies immediately (the
-#      stated/scoped grades' "carries ZERO budget" behavior, test-precision-grade.sh), and
+#   6. GOVERN_ADVISOR_BUDGET (the worker's own precision-grade export) overrides
+#      GOVERN_ADVISOR_PER_WORKER for that dispatch; set to 0 it denies immediately, and
 #      when UNSET entirely (the interactive lane, which has no launcher and no grade) falls back to
 #      the plain per-worker default rather than being permanently zero-budgeted.
 #   7. An `allow` names NO model. Nothing ever spawns an advisor, so the response carries no model
 #      field for anything to spawn FROM: an allow authorises asking the advisor session that wrote
-#      the proposal, and on the headless lane there is no advisor and an unresolvable fork is an
-#      honest escalation instead. This case is a REGRESSION test: it asserts the field's ABSENCE, so
-#      re-introducing it turns this red.
+#      the proposal; an unresolvable fork is an honest escalation instead. This case is a
+#      REGRESSION test: it asserts the field's ABSENCE, so re-introducing it turns this red.
 #   8. GOVERN_ADVISOR_MAX_TOKENS controls the returned per-consult token ceiling.
 #   9. `record` closes the entry: the ledger's closing row carries the model/tokens/answer and the
 #      budget state after.

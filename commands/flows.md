@@ -88,11 +88,10 @@ scripts/govern/flows-file.sh deploy-gpu.vastai comfyui.vastai --yes  # actually 
 
 Review the dry plan with the operator, confirm, then re-run with `--yes`. A filed flow is now a
 ticket, so it is WORKER work, never a stock subagent: dispatch it in-session as
-`Agent(subagent_type: "worker")`, one worker per ticket, or run the headless lane with no session
-open (`npm run govern:pre-dispatch -- <N>` then `spawn-worker.sh <N>`, one ticket at a time). Either
-way the worker stamps each flow's verdict back into the registry and stops at PR-open plus its
-report; landing it is the same last step either way, piping that report into
-`npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue file.
+`Agent(subagent_type: "worker")`, one worker per ticket, one ticket at a time. The worker stamps
+each flow's verdict back into the registry and stops at PR-open plus its report; landing it is the
+last step, piping that report into `npm run govern:resolve -- <N>`, which awaits CI, merges, and
+edits the queue file.
 
 ## Kill path (an INEFFECTIVE flow the operator wants gone)
 

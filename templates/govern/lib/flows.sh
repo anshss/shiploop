@@ -536,8 +536,8 @@ govern::flows_stamp_from_report() { # report outcome flowids [meta-root]
 }
 
 # Read a ticket's `Flow:` field (space/comma-separated flow ids) from its leading field block —
-# ANCHORED like spawn-worker's Model latch (contiguous field lines between the `## #N` heading and the
-# first blank line), so a `Flow:` mention later in prose can't be parsed as the field. Empty if none.
+# ANCHORED (contiguous field lines between the `## #N` heading and the first blank line), so a
+# `Flow:` mention later in prose can't be parsed as the field. Empty if none.
 govern::ticket_flow_ids() { # N [tickets-file] -> "id id …"
   local n="$1" f="${2:-$TICKETS_FILE}" raw
   raw="$(govern::ticket_block "$n" "$f" \
@@ -557,7 +557,7 @@ GOVERN_FLOW_STALEABLE_STATUSES='PASS FAIL INEFFECTIVE EFFECTIVE'
 # The prefix of a `Paths:` glob up to its first wildcard, with any trailing slash trimmed — the
 # directory a git pathspec would match. `mjolnir/providers/vastai/**` → `mjolnir/providers/vastai`;
 # `backend/**` → `backend`; `console/app/x.ts` → `console/app/x.ts`. Shared by the sweep + the
-# spawn-worker path-match heads-up.
+# path-match heads-up below.
 govern::flow_glob_prefix() { # glob -> dir-prefix
   local g="$1"; g="${g%%\**}"; printf '%s' "${g%/}"
 }
@@ -708,7 +708,7 @@ govern::flows_status_summary() { # [meta-root] -> one line | empty
   printf 'flows: %s total%s' "$total" "${out:+ · $out}"
 }
 
-# ── Path-match heads-up (spawn-worker, NON-validation tickets) ──────────────
+# ── Path-match heads-up (NON-validation tickets) ───────────────────────────
 # Given one or more changed/target paths, print the ids of currently-VALIDATED flows (a settled PASS/
 # FAIL/EFFECTIVE/INEFFECTIVE/MEASURING — not UNTESTED/BLOCKED/TOMBSTONED/already-STALE) whose mapped
 # globs overlap those paths, MOST-SPECIFIC first (longer matching glob prefix ranks higher), capped at

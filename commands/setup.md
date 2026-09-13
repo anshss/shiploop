@@ -459,9 +459,9 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verif
 The govern test suite is hub-only — it is not installed into a workspace and there is nothing to run
 here. Harness regressions are caught by the hub's own CI, which scaffolds a throwaway workspace.
 
-**`dry-run.sh` spawns a live authenticated Claude worker** — inside a nested Claude session or a
-headless env with no worker auth it will fail at "no valid report from worker." That's the auth
-caveat, not a bump regression; run it from a plain terminal.
+**`dry-run.sh` no longer spawns a worker.** It previews what a resolution would do to a ticket's
+open PRs and to `tickets.md`, so it needs `gh` auth but no worker auth, and it is safe to run from
+anywhere.
 
 Commit refreshed tooling to the default branch, staging tooling paths explicitly (never `git add .`):
 

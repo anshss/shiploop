@@ -3,11 +3,9 @@
 # for the given <sub-repo>/<path> tokens, or nothing if none of them are named by a
 # **Paths:**-tagged CLAUDE.md/learnings.md entry.
 #
-# This is the interactive lane's entry point into the SAME lookup the headless launcher
-# (spawn-worker.sh) runs on a ticket's candidate paths — see govern::gotcha_block in lib/common.sh,
-# the one shared implementation both lanes call. The headless lane gets this injected into its
-# dispatch prompt automatically; a worker subagent (.claude/agents/worker.md) has no launcher to do
-# that for it, so it runs THIS as its own first step, for the paths it is about to touch, and
+# A worker's entry point into govern::gotcha_block (lib/common.sh), the one shared implementation.
+# Nothing injects a hazard block into a worker's prompt on its behalf, so a worker subagent
+# (.claude/agents/worker.md) runs THIS as its own first step, for the paths it is about to touch, and
 # treats the output as part of its brief.
 #
 # Usage: scripts/govern/gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...]

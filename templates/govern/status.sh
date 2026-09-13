@@ -143,8 +143,7 @@ NEWEST_TS="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="META"{print $2}')"
 NEWEST_TS="${NEWEST_TS:-0}"
 
 # ── forever-stale governor state guard ────────────────────────────────────────────────────────
-# events.jsonl's only writer on the dispatch path is spawn-worker.sh. Nothing writes a run_done
-# event any more, so without this guard the text below never expires: a dispatch from 30
+# Nothing writes a run_done event any more, so without this guard the text below never expires: a dispatch from 30
 # days ago reads as "running ... up 30d" forever, a claim about the PRESENT built from a log
 # nothing has touched in a month (and a claimed-live pid surviving that long is far more likely PID
 # reuse than a genuinely month-old worker). If the newest event in the WHOLE log is older than
@@ -221,11 +220,11 @@ N_TIME="$(counter timeout)"; N_BUDGET="$(counter budget-exceeded)"; N_ABORT="$(c
 N_INTR="$(counter interrupted)"; N_ESC="$(counter escalated)"; N_STALEC="$(counter stale)"
 
 # ── per-session tier attribution, grouped by model_source ────────────────────────────────────────
-# The gap this closes: `model_source` was already logged (spawn-worker.sh's attempts.jsonl ledger)
-# but nothing aggregated it, so answering "which tier decided what, and what did it cost" took a
+# The gap this closes: `model_source` was already logged into the attempts ledger but nothing
+# aggregated it, so answering "which tier decided what, and what did it cost" took a
 # dedicated agent 38 tool calls on the run that first needed the answer. This reads it straight off
-# the SAME event fold everything else above uses (worker_spawned/worker_done now carry
-# modelSource/precision/costUsd — see spawn-worker.sh), so it costs one more awk pass, not a second
+# the SAME event fold everything else above uses (worker_spawned/worker_done carry
+# modelSource/precision/costUsd), so it costs one more awk pass, not a second
 # file format. `U` rows cover every ticket EVER dispatched in scope (live or done), unlike the
 # live-only `W` rows.
 #

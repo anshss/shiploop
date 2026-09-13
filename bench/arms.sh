@@ -44,9 +44,8 @@ BENCH_ARMS_HUB="$(cd "$BENCH_ARMS_DIR/.." && pwd)"
 # `govern::claude_supports_max_budget_usd` live in templates/govern/lib/common.sh beside the
 # --exclude-dynamic-system-prompt-sections probe: cached, bounded `--help` greps, never a version
 # compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test seam. Both arms need the same
-# answer, and the shiploop arm's own workers reach the same two probes through spawn-worker.sh's
-# GOVERN_WORKER_MAX_TURNS / GOVERN_WORKER_MAX_BUDGET_USD IF the session chooses that path, so the
-# probes are the only way the two arms can be guaranteed to agree.
+# answer for their own `bench::spawn` invocation, so the probe lives beside the other shared
+# capability checks rather than as a bench-local reimplementation.
 #
 # --max-turns is tried FIRST; --max-budget-usd is the fallback for a CLI release that dropped
 # --max-turns entirely (observed: claude 2.1.246 has no --max-turns, only --max-budget-usd). A

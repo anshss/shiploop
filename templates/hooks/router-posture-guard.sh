@@ -35,9 +35,7 @@
 # THIRD behavior, and the only BLOCKING one in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
 # session. The session dispatches one as `Agent(subagent_type: "worker")` and
-# steers it; govern's headless spawn-worker.sh runs the same doctrine unattended
-# for a cron-style run with no open session. Any Agent-tool child that is NOT
-# subagent_type "worker" is a
+# steers it. Any Agent-tool child that is NOT subagent_type "worker" is a
 # **subagent** (the platform's own term). "Ticket-shaped" needs TWO signals, not
 # one keyword: a real ticket REFERENCE (the word "ticket" on its own, or a bare
 # `#<N>`) AND DISPATCH intent (a verb meaning "go make this ticket done") --
@@ -394,7 +392,9 @@ print(json.dumps({
     deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, single-ticket session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
 
-Interactive lane. Paste this instead:
+Paste this instead, one ticket at a time:
+
+  npm run govern:pre-dispatch -- ${tnum}       # verdict: proceed / skip / refuse
 
   Agent(
     subagent_type: "worker",
@@ -402,12 +402,7 @@ Interactive lane. Paste this instead:
     prompt: "<the ticket text plus anything the worker needs to start>"
   )
 
-Headless lane, for no open session, one ticket at a time:
-
-  npm run govern:pre-dispatch -- ${tnum}       # verdict: proceed / skip / refuse
-  bash scripts/govern/spawn-worker.sh ${tnum}  # opens the PR, prints a JSON report
-
-The interactive lane STOPS at PR-open plus the report too. Landing it either way is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. If the worker fails once, retry it once with \`model: opus\`, then stop and report.
+A worker STOPS at PR-open plus the report. Landing it is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. If the worker fails once, retry it once with \`model: opus\`, then stop and report.
 
 Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer, or drafting/authoring prose about a ticket rather than resolving one)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") or an authoring framing ("draft"/"author" plus what you're producing: "prose", "write-up", "entries") with no SURVIVING write marker is already exempt; a write verb inside a prohibition ("do not open a PR", "never commit") does not count against you. Otherwise drop the dispatch verb, the ticket reference, and any item-shaped name/description (t<N>, ticket-<N>, w<N>), and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
@@ -481,7 +476,7 @@ printf '%s' "$((count + 1))" > "$counter" 2>/dev/null || true
 # --- emit the non-blocking warn ---------------------------------------------
 warn=""
 if [ -n "$reason" ]; then
-  warn="[ROUTER POSTURE] About to do ${reason} inline. Delegate it to a subagent (run_in_background if long); relay only its verdict. Size the subagent per CLAUDE.md's delegation table (haiku=mechanical, sonnet=search/edits, inherit=judgment-heavy), reaching for the shipped \`lookup\` or \`investigator\` agent types when they fit. If this is ticket-shaped work it belongs to a worker instead: \`Agent(subagent_type: \"worker\")\` for one ticket in-session, or the headless lane (\`npm run govern:pre-dispatch -- <N>\` then \`spawn-worker.sh <N>\`) with no session open. Proceed inline only for a quick one-off check."
+  warn="[ROUTER POSTURE] About to do ${reason} inline. Delegate it to a subagent (run_in_background if long); relay only its verdict. Size the subagent per CLAUDE.md's delegation table (haiku=mechanical, sonnet=search/edits, inherit=judgment-heavy), reaching for the shipped \`lookup\` or \`investigator\` agent types when they fit. If this is ticket-shaped work it belongs to a worker instead: \`npm run govern:pre-dispatch -- <N>\` for the verdict, then \`Agent(subagent_type: \"worker\")\` for that one ticket. Proceed inline only for a quick one-off check."
 fi
 if [ -n "$vf_reason" ]; then
   vf_warn="[ROUTER POSTURE] ${vf_reason}: wrap it as \`npm run vf -- <cmd>\` (or \`bash scripts/govern/verify-filter.sh -- <cmd>\`) so a passing run emits nothing into context and a failing run still shows its bounded tail."

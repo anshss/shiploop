@@ -227,8 +227,9 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component core-scripts --yes --verif
 ```
 The govern test suite is hub-only (never installed into a workspace) — there is nothing to run here.
 
-**`dry-run.sh` spawns a live authenticated Claude worker** (a trim, single-ticket session) — inside a nested Claude session or headless
-env with no worker auth it will fail. That's the auth caveat, not an update regression.
+**`dry-run.sh` no longer spawns a worker** (a trim, single-ticket session). It previews what a
+resolution would do to a ticket's open PRs and to `tickets.md`, so it needs `gh` auth but no worker
+auth, and it is safe to run from anywhere.
 
 ## Phase 5 — Report
 

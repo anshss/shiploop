@@ -3,14 +3,11 @@
 # Covers the two load-bearing pieces of the fix:
 #   1. worktree/new.sh disk guard is non-interactive-safe (assume-yes / no-TTY / interactive).
 #   2. the "slim a preserved worktree" strip removes regenerable dirs but keeps source + diffs.
-# Plus static assertions that spawn-worker passes WORKTREE_ASSUME_YES, that the pre-flight guard is
-# wired into pre-dispatch-check.sh (the gate a session runs before spawning anything) and that the
-# slim call is wired into spawn-worker.sh (the process that PRESERVES the worktree on a park or a
-# failure, so it is the one that should reclaim the regenerable bulk).
+# Plus a static assertion that the pre-flight guard is wired into pre-dispatch-check.sh (the gate
+# a session runs before spawning anything).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-SPAWN="$DIR/../spawn-worker.sh"
 PDC="$DIR/../pre-dispatch-check.sh"
 COMMON="$DIR/../lib/common.sh"
 
@@ -62,9 +59,7 @@ assert_eq "$(cat "$T/sub/src/app.ts")" "source" "slim keeps source files"
 assert_eq "$(cat "$T/sub/src/wip.ts")" "uncommitted work" "slim keeps uncommitted work"
 
 # ── 3. wiring is actually in place (so the fix can't silently regress) ──
-assert_contains "$(cat "$SPAWN")" "WORKTREE_ASSUME_YES=1" "spawn-worker passes WORKTREE_ASSUME_YES to worktree:new"
 assert_contains "$(cat "$COMMON")" "govern::slim_worktree()" "lib/common.sh defines govern::slim_worktree"
-assert_contains "$(cat "$SPAWN")" "govern::slim_worktree" "spawn-worker calls it on every worktree-preserving outcome"
 assert_contains "$(cat "$PDC")" "GOVERN_MIN_FREE_GB" "pre-dispatch-check carries the pre-flight disk guard"
 
 assert_done

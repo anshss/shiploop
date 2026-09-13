@@ -88,11 +88,10 @@ safe_id="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9._-' '_')"
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── the lever event (the `watchdog-kill` contract) ────────────────────────────────────────────
-# The headless launcher emits this on every one of its watchdog kills (spawn-worker.sh's
-# emit_watchdog_kill). This lane did not, so a reader that already credits the watchdog lever saw
-# only half the fleet's kills, and the interactive half read as "never fired" rather than
-# "unmeasured". Same event name, same field names (ctxTokens / turns / reason), so the two lanes
-# produce ONE event stream rather than two dialects that a reader has to reconcile.
+# A watchdog kill is only creditable as a lever if it is emitted, and this hook is where an
+# in-session kill happens, so it emits here. Field names (ctxTokens / turns / reason) are fixed by
+# the event contract a reader folds, not chosen per emitter, so every watchdog kill lands in ONE
+# event stream rather than a dialect a reader has to reconcile.
 #
 # Differences from the headless emitter, both forced by what this lane actually knows:
 #   - `ticket` is null. A hook sees an agent_id, not a ticket: the interactive worker subagent is
@@ -210,36 +209,35 @@ fi
 exit 0
 
 # ── traps: what does NOT port, and what already covers the case they existed for ───────────────
-# The launcher's EXIT/INT/TERM cleanup (spawn-worker.sh's spawn_worker_cleanup) does three things
-# on every exit path: (1) reap its own wall-clock/token/early-abort watchdog subshells so a killed
-# governor never leaks a `sleep`-holding process, (2) kill_tree the actual `claude -p` OS process
-# plus every grandchild it spawned, so a stopped/killed governor never leaves an orphaned process
-# reparented to init and billing a box, (3) record the attempt outcome into attempts.jsonl so a
-# SIGKILLed attempt is never miscounted as a completed one for sizing history.
+# A wrapping launcher process with an EXIT/INT/TERM trap could do three things on every exit
+# path: (1) reap its own wall-clock/token/early-abort watchdog subshells so a killed governor
+# never leaks a `sleep`-holding process, (2) kill_tree a forked `claude -p` OS process plus every
+# grandchild it spawned, so a stopped/killed governor never leaves an orphaned process reparented
+# to init and billing a box, (3) record the attempt outcome into attempts.jsonl so a SIGKILLed
+# attempt is never miscounted as a completed one for sizing history.
 #
-# None of that has a hook equivalent, and this file does not invent one: the launcher's
-# EXIT/INT/TERM cleanup has no hook counterpart. Whether SessionEnd's own
-# worktree/session-end-cleanup.sh covers the case the traps existed for, checked directly rather
+# None of that has a hook equivalent, and this file does not invent one. Whether SessionEnd's own
+# worktree/session-end-cleanup.sh covers the case those traps existed for, checked directly rather
 # than assumed:
-#   - (1) and (3) do not apply to the interactive lane at all: an in-session Agent child is NOT a
-#     separate OS process the way the launcher's `claude -p` is — it is a sidechain inside the
-#     SAME running `claude` process (verified live: its transcript is a `subagents/` file under
-#     the parent's OWN session directory, not a second top-level session) — so there is no second
-#     process to leak, and no per-attempt sizing ledger on this lane to protect.
-#   - (2)'s actual interactive-lane analogue — SOMETHING left running after a session ends
+#   - (1) and (3) do not apply here at all: an in-session Agent child is NOT a separate OS process
+#     the way a forked `claude -p` is, it is a sidechain inside the SAME running `claude` process
+#     (verified live: its transcript is a `subagents/` file under the parent's OWN session
+#     directory, not a second top-level session), so there is no second process to leak, and no
+#     per-attempt sizing ledger to protect.
+#   - (2)'s actual analogue, SOMETHING left running after a session ends
 #     uncleanly — is PARTIALLY covered. session-end-cleanup.sh kills every process still bound to
 #     this worktree's own dev-server ports (kill_port, scoped to processes whose cwd is under the
 #     worktree), which is the concrete instance of "a dead run leaving something behind" this
-#     workspace actually has (it ships no cloud/deploy infra, so the launcher's sibling
-#     run_deploy_sweep has nothing to sweep here either way). It does NOT reap an arbitrary
-#     background process a child started outside the known REPO_PORTS list — there is no
-#     interactive-lane equivalent of govern::kill_tree's generic PID-tree walk.
+#     workspace actually has (it ships no cloud/deploy infra, so a deploy sweep would have nothing
+#     to sweep here either way). It does NOT reap an arbitrary background process a child started
+#     outside the known REPO_PORTS list: there is no in-session equivalent of govern::kill_tree's
+#     generic PID-tree walk.
 #   - Neither this hook nor SessionEnd survives a hard SIGKILL/OOM/host-restart of the whole
-#     session — but that is not a NEW gap opened by retiring the launcher: the launcher's own EXIT
-#     trap already carries the identical caveat in its own comment ("a hard SIGKILL ... leaves a
-#     worktree with zero cleanup", spawn-worker.sh). SessionEnd's own documented matcher values
+#     session, but that is not a NEW gap opened by retiring the launcher: its own EXIT trap
+#     carried the identical caveat, a hard SIGKILL leaves a worktree with zero cleanup either
+#     way. SessionEnd's own documented matcher values
 #     (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`) list graceful termination only;
 #     the platform's docs do not claim it fires on an unclean kill either.
 # Net: parity on the graceful-exit path for the one resource class this workspace has (worktree
-# dev-server ports); no parity, on either lane, for a hard kill; no interactive-lane equivalent of
-# a generic arbitrary-process reap. Recorded here rather than claimed as full parity.
+# dev-server ports); no parity for a hard kill; no equivalent of a generic arbitrary-process reap.
+# Recorded here rather than claimed as full parity.

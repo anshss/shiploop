@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# The interactive lane (Agent(subagent_type: "worker"), .claude/agents/worker.md)
-# has no launcher to inject **Paths:**-tagged CLAUDE.md/learnings.md gotchas into its prompt the
-# way spawn-worker.sh does for the headless lane — that mechanism fires on the headless
-# dispatch path only. gotchas-for-paths.sh is the interactive lane's own entry point into the SAME
-# lookup: a worker subagent runs it directly, as its first step, on the paths it is about to touch.
+# Nothing injects **Paths:**-tagged CLAUDE.md/learnings.md gotchas into a worker's prompt for it
+# (Agent(subagent_type: "worker"), .claude/agents/worker.md). gotchas-for-paths.sh is a worker's
+# own entry point into that lookup: it runs the script directly, as its first step, on the paths
+# it is about to touch.
 #
-# This pins the CLI wrapper AND (implicitly, since spawn-worker.sh now calls the very same
-# function) that both lanes share ONE implementation — govern::gotcha_block in lib/common.sh — so
-# they can never drift against each other the way a hand-forked second copy would.
+# This pins the CLI wrapper AND that it delegates to the one shared implementation,
+# govern::gotcha_block in lib/common.sh, rather than hand-forking a second copy that could drift.
 #
 # Cases:
 #   1. A root CLAUDE.md entry tagged for a given path is present in the output.

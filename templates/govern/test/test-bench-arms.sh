@@ -212,7 +212,7 @@ mkdir -p "$T/state/wd-y"
   && git -c user.email=a@b -c user.name=a add -A \
   && git -c user.email=a@b -c user.name=a commit -qm init ) >/dev/null 2>&1
 ws="$(armsh "bench::scaffold_workspace '$T/state/wd-y' probe bench" | tail -1)"
-if [ -x "$ws/scripts/govern/spawn-worker.sh" ] && [ -x "$ws/scripts/govern/resolve-ticket.sh" ]; then
+if [ -x "$ws/scripts/govern/resolve-ticket.sh" ]; then
   printf 'ok   - 8. the arm scaffolds a workspace carrying the real lane scripts\n'
   armsh "bench::seed_tickets '$BL' '$ws/queue/tickets.md' bench" >/dev/null
   sel="$(cd "$ws" && GOVERN_WS_ROOT="$ws" bash "$ws/scripts/govern/select-ticket.sh" "" "1,2,3,4,5,6" 2>&1 | tr '\n' ',')"
