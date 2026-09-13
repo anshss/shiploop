@@ -39,7 +39,7 @@ You launch regular Claude Code sessions to build your project. What comes out of
 
 How a named ticket actually ships, in one pass:
 
-1. Each ticket gets a fresh **worker**: a subagent in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
+1. Each ticket gets a fresh **worker**: a trim, single-ticket session in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
 2. Advisor-worker orchestration. Intractive claude session becomes a advisor and spawns subagent in right-sized cheap-tier models. A classified judgment failure of subagent raises reasoning effort and files a re-specification request for the advisor.
 3. When a ticket resolves, it leaves a short lesson in CLAUDE.md, which every later session reads, so the next worker starts a little smarter.
 
@@ -74,12 +74,12 @@ Tokens are the currency. Shiploop breaks work into tickets; you choose the prior
 
 ## The dispatch flow
 
-The runner is a pure-Bash driver (`scripts/govern/run-loop.sh <N> ...`): you name the tickets, and it deterministically owns state and control flow while using near-zero Claude context. Model tokens are spent only by the fresh headless workers it starts. Multiple tickets are grouped by measured file overlap, so concurrent workers never share a file. Every dispatch runs every gate: claim lock, `Depends on:`, staleness, base CI, upstream drift, and failure streak.
+You name the tickets, and the coordination around them is pure Bash using near-zero Claude context: `scripts/govern/pre-dispatch-check.sh <N>` returns one verdict line before anything spawns, and `scripts/govern/resolve-ticket.sh <N>` awaits CI, merges and lands the resolution after. Model tokens are spent only by the worker in between. Every dispatch runs every gate: claim lock, `Depends on:`, staleness, base CI, upstream drift, and failure streak.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh headless worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
+    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
   </picture>
 </p>
 
@@ -97,9 +97,9 @@ agents". In shiploop they mean exactly this:
 
 | Term | Definition |
 |---|---|
-| **governor** | The deterministic script layer under `scripts/govern/`: `pre-dispatch-check.sh` gates a ticket, `spawn-worker.sh` spawns its worker, `resolve-ticket.sh` awaits CI, merges, and lands the resolution. It owns state and control flow deterministically and never calls a model itself; deciding *when* to run it is the driver's job. |
-| **driver** | The orchestrating session: your interactive Claude Code session, or a headless one running the same three governor scripts with no session open. A driver dispatches and relays verdicts; it does not bulk-read product source. |
-| **worker** | The trim, single-ticket session. One definition, **two lanes**: the *headless* lane is the `claude -p` session `spawn-worker.sh` launches with no session open, the *interactive* lane is `Agent(subagent_type: "worker")` in your own session. Both run the same doctrine at the same model floor in their own worktree, and both end at a PR plus a structured report. Never used for any other kind of child. |
+| **governor** | The deterministic script layer under `scripts/govern/`: `pre-dispatch-check.sh` gates a ticket, `resolve-ticket.sh` awaits CI, merges, and lands the resolution. It owns state and control flow deterministically and never calls a model itself; deciding *when* to run it is the driver's job. |
+| **driver** | The orchestrating session: your interactive Claude Code session. A driver dispatches and relays verdicts; it does not bulk-read product source. |
+| **worker** | The trim, single-ticket session: an `Agent(subagent_type: "worker")` subagent in your own session, running at a fixed model floor in its own worktree, ending at a PR plus a structured report. Never used for any other kind of child. |
 | **scout** | The cheap pre-dispatch survey pass (haiku). It only surveys: verified file paths, whether tests cover the area, whether history holds a precedent commit. Cached per run, so a retry never re-scouts. |
 | **supervisor** | The review pass over a run's state (`npm run govern:audit`, `GOVERN_SUPERVISOR_MODEL`). It can return a `halt` verdict; it never edits code. |
 | **subagent** | The platform's own term for an Agent-tool child that is **not** `subagent_type: "worker"` (the shipped `lookup` and `investigator` agent types, or a stock `Agent` call). Sized per the delegation table for investigation, sweeps, and diagnosis. A subagent is never called a worker, and ticket-shaped work never goes to one. |
@@ -109,7 +109,7 @@ agents". In shiploop they mean exactly this:
 | Command | What it does |
 |---|---|
 | `/shiploop:setup` | Scaffold or upgrade a workspace: wrap-in-place inside an existing repo, or from a parent folder of repos |
-| *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the three-script session lane (`pre-dispatch-check.sh` → `spawn-worker.sh` → `resolve-ticket.sh`), end to end, one ticket at a time |
+| *(say "work on \<tickets\>")* | Ship the tickets you name: natural language onto the session lane (`pre-dispatch-check.sh` → a worker → `resolve-ticket.sh`), end to end, one ticket at a time |
 | `/shiploop:flows` | Inventory (`extract`), inspect (`list`), and validate (`file`) your product's user-facing paths |
 | `/shiploop:compress` | Compress this workspace's `CLAUDE.md` by moving mechanically-triggered rules into just-in-time rule packs, deleting none of them (operator-triggered, never automatic) |
 | `/shiploop:update` | Pull the latest hub templates into this workspace (`workspace.sh` is never overwritten) |
@@ -123,10 +123,9 @@ agents". In shiploop they mean exactly this:
 
 ### Fleet visibility
 
-A worker is a detached `claude -p` process `spawn-worker.sh` runs to completion, and structured
-state is written only when it finishes, so while one or more are in flight at once *nothing on
-disk says "running"* on its own, which is why no surface could ever show them without
-instrumentation.
+A worker is a subagent the session runs to completion, and structured state is written only when
+it finishes, so while one or more are in flight at once *nothing on disk says "running"* on its
+own, which is why no surface could ever show them without instrumentation.
 
 `GOVERN_EVENTS=1` fixes that with one append-only log, `governor/events.jsonl`, and three readers
 fold it. The emitter can never abort a dispatch: a failed append is swallowed silently, by construction.

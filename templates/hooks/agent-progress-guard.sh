@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# SubagentStop + TeammateIdle hook: reach the SAME deterministic doom signature the headless
-# watchdog uses (govern::early_abort_reason in scripts/govern/lib/common.sh) to in-session `Agent`
-# children, which have no pid and no worker.jsonl for that watchdog to see. Three behaviors, plus
+# SubagentStop + TeammateIdle hook: apply the deterministic doom signature
+# (govern::early_abort_reason in scripts/govern/lib/common.sh) to in-session `Agent`
+# children, which have no pid and no external process for anything to poll. Three behaviors, plus
 # the TeammateIdle branch below:
 #
-#   SCOPE — supervision spans every child, not only governor-spawned PROCESSES. This is a
+#   SCOPE: supervision spans every child, not only governor-spawned work. This is a
 #            per-subagent frontmatter hook (worker.md/investigator.md/lookup.md `hooks:`) so it
-#            fires for any subagent that carries it, on the SAME transcript shape spawn-worker.sh
-#            already reads off a headless worker's worker.jsonl — `agent_transcript_path` on this
-#            hook's stdin IS that shape, just for the child's own turns instead of a subprocess's.
+#            fires for any subagent that carries it, reading `agent_transcript_path` on this
+#            hook's stdin for the child's own turns.
 #            NOT `transcript_path`: verified live (2026-09-10, claude 2.1.246) that on a
 #            SubagentStop event `transcript_path` is the PARENT session's own transcript — reading
 #            it would measure the driver's activity, not the child's. `agent_transcript_path` is
 #            the child's, at `.../<session>/subagents/agent-<agent_id>.jsonl`.
 #   PROGRESS, NOT LIVENESS — a repeated identical Bash command, or a long run of read-only turns
-#            right before the child tries to stop, is the same STALL/LOOP/ERROR signature the
-#            headless watchdog already detects: reused via govern::early_abort_reason(), never
-#            reimplemented.
+#            right before the child tries to stop, is the STALL/LOOP/ERROR signature
+#            govern::early_abort_reason() detects, called from lib/common.sh rather than
+#            reimplemented here.
 #
 #            THE STALL SIGNAL IS GATED TWICE HERE, and neither gate belongs in the shared function
 #            (one needs the payload's agent_type, the other needs the filesystem, and that function
@@ -86,10 +85,9 @@
 # defect this guard exists to avoid. GOVERN_AGENT_SUPERVISION=0 is the kill switch, same
 # idiom as GOVERN_EARLY_ABORT (root CLAUDE.md anti-pattern 12).
 #
-# HARD CONSTRAINT unchanged from spawn-worker.sh's watchdog: every signal is DETERMINISTIC, read
-# straight off the child's OWN transcript. No model call anywhere in this path — an "agent hook"
-# that asked a model whether the child looks stuck could itself hang or fabricate a verdict,
-# which is exactly the failure class this is closing.
+# HARD CONSTRAINT: every signal is DETERMINISTIC, read straight off the child's OWN transcript. No
+# model call anywhere in this path: an "agent hook" that asked a model whether the child looks
+# stuck could itself hang or fabricate a verdict, which is exactly the failure class this is closing.
 #
 # Design constraints (a Stop-family hook that always blocks would loop forever):
 #   1. Honor stop_hook_active — never add a THIRD loop turn on top of Claude Code's own cap.

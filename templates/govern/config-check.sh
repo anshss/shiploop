@@ -62,8 +62,7 @@ if [[ "${#REPOS[@]}" -eq 0 ]]; then problems+=("REPOS is empty (no sub-repos con
 # Assert it here as a hard PROBLEM (drives exit 1 below), not a warn_only print.
 #
 # Reuse the repo's own tier ordering (govern::model_rank, defined in lib/common.sh and already
-# used on the spawn-worker.sh sizing path) instead of hard-coding a
-# second list of model names here. govern::model_max itself is NOT enough for this check: on a
+# used on the sizing path) instead of hard-coding a second list of model names here. govern::model_max itself is NOT enough for this check: on a
 # tie it returns the second argument (the ceiling) unchanged ("b wins ties"), so
 # `model_max(floor, ceiling) == ceiling` is true both when floor < ceiling (fine) AND when
 # floor == ceiling (the exact no-op this assertion exists to catch): it cannot express a STRICT

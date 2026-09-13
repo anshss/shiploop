@@ -27,8 +27,7 @@
 # OUTRANK that measurement — backwards, and it is gone. Both flags are still ACCEPTED and ignored
 # with one log line so an older caller (or a `/setup` doc a fleet copied) degrades cleanly instead of
 # consuming its value as the ticket title; queue entries still carrying `**Model:**` / `**Effort:**`
-# are likewise inert. `GOVERN_MEASURED_SIZING=0` in spawn-worker.sh restores the old precedence for
-# entries that still have the fields.
+# are likewise inert: nothing on the dispatch path reads them any more.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -43,7 +42,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 flow_field=""
 flow_op_field=""
 # --flow, --flow-op may appear in any order before the title. --flow <id[,id…]> tags this ticket as
-# a flow-registry validation; spawn-worker injects the flow block(s) and land-resolution.sh stamps
+# a flow-registry validation; the worker is handed the flow block(s) and land-resolution.sh stamps
 # the registry. --flow-op remove marks it a KILL removal ticket (land-resolution.sh tombstones the
 # flow on resolve). --model/--effort are accepted-and-ignored (see the header).
 while [[ "${1:-}" == --* ]]; do
@@ -77,14 +76,14 @@ body="$(cat)"
 # Kept as an empty splice slot so the two printf call sites below (legacy append-only path and the
 # atomic path) stay identical in shape. No sizing field is ever emitted any more.
 model_block=""
-# Flow: field. Emitted in the leading field block so spawn-worker's anchored latch can read it.
+# Flow: field. Emitted in the leading field block so govern::ticket_flow_ids' anchored latch reads it.
 flow_block=""
 if [[ -n "$flow_field" ]]; then
   flow_block="**Flow:** $flow_field
 "
 fi
 # Flow-op: field (only emitted for a non-default "remove" — a KILL removal ticket). Sits in the same
-# leading field block so spawn-worker's anchored latch + land-resolution.sh's pre-capture read it.
+# leading field block so that same anchored latch + land-resolution.sh's pre-capture read it.
 if [[ -n "$flow_op_field" ]]; then
   flow_block="${flow_block}**Flow-op:** $flow_op_field
 "

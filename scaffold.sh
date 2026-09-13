@@ -518,9 +518,9 @@ Just say what you want worked, in plain language:
 \`\`\`
 
 That maps onto \`scripts/govern/pre-dispatch-check.sh <N>\` (the pre-spawn gates: staleness,
-dependencies, upstream drift, ...), a worker (\`Agent(subagent_type: "worker")\` interactively, or
-\`scripts/govern/spawn-worker.sh\` headlessly), then \`scripts/govern/resolve-ticket.sh <N>\` once
-the worker's PR is open — it awaits CI, merges, and lands the resolution.
+dependencies, upstream drift, ...), a worker (\`Agent(subagent_type: "worker")\`), then
+\`scripts/govern/resolve-ticket.sh <N>\` once the worker's PR is open: it awaits CI, merges, and
+lands the resolution.
 
 Everyday commands:
 
