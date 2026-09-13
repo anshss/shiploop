@@ -74,7 +74,7 @@ Tokens are the currency. Shiploop breaks work into tickets; you choose the prior
 
 ## The dispatch flow
 
-You name the tickets, and the coordination around them is pure Bash using near-zero Claude context: `scripts/govern/pre-dispatch-check.sh <N>` returns one verdict line before anything spawns, and `scripts/govern/resolve-ticket.sh <N>` awaits CI, merges and lands the resolution after. Model tokens are spent only by the worker in between. Every dispatch runs every gate: claim lock, `Depends on:`, staleness, base CI, upstream drift, and failure streak.
+You name the tickets, and the coordination happens almost entirely outside Claude. A small check runs before anything starts, and another step waits for CI, merges, and completes the ticket. Claude only uses tokens for the actual work in between. Every dispatch checks the same gates: claim lock, dependencies, staleness, base CI, upstream changes, and recent failures.
 
 <p align="center">
   <picture>
