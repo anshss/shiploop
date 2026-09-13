@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.19.10 - 2026-09-13
+
+### Added
+
+**`/shiploop:setup` can now start a project that has no git repo yet.** Fresh mode used to stop when
+a folder contained zero sub-repos, printing `mkdir && git init` instructions for the operator to run
+before re-running setup, so shiploop could only be applied to a folder that already held a repo.
+
+Zero sub-repos now routes to a new Phase G, which creates the first sub-repo as part of setup:
+`wrap.sh --greenfield` makes the directory, moves in whichever loose top-level entries the operator
+selects, runs `git init` and the first commit, then scaffolds the workspace around it. Workspace-owned
+paths (`.specs/`, `.omc/`, `.claude/`, `node_modules` and the scaffold's own directories) are
+classified as reserved and stay at the root, never offered for the move.
+
+Greenfield reuses wrap-in-place's transform machinery rather than duplicating it: the same staging
+directory and rename, the same undo script written before the first move, the same rollback trap and
+exit codes. Its undo differs in one way it has to, removing the sub-repo it created including the
+`.git`, so a rollback cannot leave behind a repo the operator never made. `scaffold.sh` is unchanged,
+because the greenfield path always hands it exactly one repo and the "at least one sub-repo"
+invariant still holds.
+
 ## 1.19.9 - 2026-09-13
 
 ### Changed
