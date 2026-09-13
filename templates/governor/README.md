@@ -61,7 +61,8 @@ asked the operator, so they sat unanswered indefinitely. Now it closes itself, a
 - **Every SessionStart (`session-reconcile.sh`):** applies any answered escalations
   (`escalations-apply-answers.sh`) and regenerates `pending-escalations.json` from the current
   unanswered `## Open` entries (`escalations-emit-pending.sh`), both runnable by hand too, and
-  `GOVERN_NOTIFY_CMD` still fires if set, so an unattended headless dispatch still signals you.
+  `GOVERN_NOTIFY_CMD` still fires if set, so you are signalled even when the answer is needed
+  while you are away from the session.
 - **Relay (the dispatching session):** presents all pending escalations in a **single batched
   `AskUserQuestion`** (≤4 questions per prompt; chunk if >4, never one prompt per ticket) and
   records each operator's **Answer** + a canonical **Disposition** (`do-the-work` | `defer` |

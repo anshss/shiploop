@@ -74,12 +74,12 @@ Tokens are the currency. Shiploop breaks work into tickets; you choose the prior
 
 ## The dispatch flow
 
-The runner is a pure-Bash driver (`scripts/govern/run-loop.sh <N> ...`): you name the tickets, and it deterministically owns state and control flow while using near-zero Claude context. Model tokens are spent only by the fresh headless workers it starts. Multiple tickets are grouped by measured file overlap, so concurrent workers never share a file. Every dispatch runs every gate: claim lock, `Depends on:`, staleness, base CI, upstream drift, and failure streak.
+You name the tickets, and the coordination around them is pure Bash using near-zero Claude context: `scripts/govern/pre-dispatch-check.sh <N>` returns one verdict line before anything spawns, and `scripts/govern/resolve-ticket.sh <N>` awaits CI, merges and lands the resolution after. Model tokens are spent only by the worker in between. Every dispatch runs every gate: claim lock, `Depends on:`, staleness, base CI, upstream drift, and failure streak.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh headless worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
+    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
   </picture>
 </p>
 

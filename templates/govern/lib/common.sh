@@ -1560,11 +1560,9 @@ govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion co
 # (test/assert.sh pins it explicitly, matching GOVERN_GOTCHA_INJECT's own idiom): with it off,
 # `claim` denies immediately and writes NOTHING, a true no-op. Two independent numeric caps: per
 # WORKER (this ticket's own flat ledger, so it accumulates across retries rather than resetting) and
-# per SESSION (every ticket sharing one CLAUDE_CODE_SESSION_ID; the case that matters in practice is
-# the interactive lane, where one human session can dispatch many worker subagents across many
-# tickets; a headless dispatch is its own standalone `claude -p` process now that the run-loop
-# grouping several tickets under one session is retired, so a session key that never repeats
-# collapses this to the per-worker cap on its own). A missing session key degrades to the per-worker
+# per SESSION (every ticket sharing one CLAUDE_CODE_SESSION_ID, which is the case that matters in
+# practice: one human session can dispatch many worker subagents across many tickets, and the
+# per-session cap is what bounds the total interruption the advisor takes from all of them). A missing session key degrades to the per-worker
 # cap LOUDLY (govern::log), never silently unbounded. A missing/absent ledger file means ZERO
 # consults used so far, never a denial: "no evidence" is not "no budget".
 #

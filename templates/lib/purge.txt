@@ -95,4 +95,7 @@ scripts/govern/test/test-bench-proof-table.sh
 # (Agent(subagent_type: "worker")) is now the only lane. Its test suite (templates/govern/test/) is
 # unaffected by this entry: that directory is hub-only and never installed, so it needs no entry
 # here (see tools/check-manifests.sh's purge-manifest-complete job).
+# measure-prefix.sh goes with it: it read the launcher's own dry-run and print-prompt seams to
+# reproduce a real spawn's request payload, and that payload has no in-session counterpart.
 scripts/govern/spawn-worker.sh
+scripts/govern/measure-prefix.sh
