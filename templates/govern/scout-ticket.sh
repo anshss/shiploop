@@ -13,11 +13,6 @@
 #     keys on it, and the worker gets it as a warm start instead of rediscovering it at full price.
 #   - the six former scoring fields — kept as pure MEASUREMENTS (codebase index, batch key, warm
 #     start). Nothing scores them.
-#   - `deterministic` — the largest arbitrage in the harness is not opus→sonnet, it is model→no-model.
-#     A real share of any backlog is mechanical: flip a default, add a key, bump a version, delete a
-#     stale line, apply a known rename. The scout ALREADY runs and ALREADY reads real code, so this is
-#     a NEW FIELD ON THE EXISTING CALL — never a new model invocation. That constraint is absolute:
-#     this script makes exactly ONE `claude` call, same as before.
 #
 # Modes (stdout contract is explicit — callers must not parse anything else):
 #   scout-ticket.sh <N>                run-or-reuse-cache; writes <worker-logdir>/scout.json.
@@ -29,15 +24,11 @@
 #                                      rc 1 + no output when nothing was located.
 #   scout-ticket.sh --paths <N>        cache-READ only, no model. Prints targetPaths, ONE PER LINE.
 #                                      rc 1 + no output when there are none. Batch-key source.
-#   scout-ticket.sh --deterministic <N> cache-READ only, no model. Prints the `deterministic` object
-#                                      as ONE LINE of compact JSON. rc 1 + no output when `kind` is
-#                                      empty (i.e. not deterministic).
 #
 # GUARD — scout output is UNTRUSTED model output:
 #   - not a JSON object, or a required measurement key missing → REJECTED, loudly, nothing cached.
 #   - present but out-of-domain (unknown enum, non-integer, absurd count, oversized string) → CLAMPED,
 #     loudly. Clamping no longer biases "toward hard" (nothing is being scored); it just sanitizes.
-#   - `deterministic.kind` outside the closed set → "" (not deterministic), which is the safe answer.
 #
 # Env knobs:
 #   GOVERN_SCOUT=0            disable the model pass entirely (exit 1, nothing cached)
@@ -54,15 +45,12 @@ SCOUT_TIMEOUT_DEFAULT=180
 SCOUT_MAX_FILES=999
 SCOUT_MAX_REPOS=99
 SCOUT_MAX_PATHS=8
-SCOUT_MAX_DIFF=20000         # a deterministic patch longer than this is not "mechanical" — drop it
-# The CLOSED set for deterministic.kind. Anything else clamps to "" (= not deterministic).
-SCOUT_DET_KINDS=(config-default version-bump dead-line-delete known-rename add-key)
 
 # ── sanitize (pure bash + jq, no LLM) ───────────────────────────────────────────────────────────
 # Reads the raw scope object on stdin, prints a NORMALIZED compact object on stdout. Returns 2 when
 # the input is structurally unusable — the caller then skips caching, loudly.
 scout::sanitize_scope() {
-  local raw files repos tests prec kind dir det_kind det_len det_keep
+  local raw files repos tests prec kind dir
   raw="$(cat)"
 
   if ! printf '%s' "$raw" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -91,44 +79,17 @@ scout::sanitize_scope() {
   kind="$(scout::clamp_enum changeKind "$kind" local local structural)"
   dir="$(scout::clamp_enum fixDirection "$dir" vague concrete vague)"
 
-  det_kind="$(printf '%s' "$raw" | jq -r '
-      (.deterministic? // {}) | if type=="object" then (.kind? // "") else "" end
-      | if type=="string" then . else "" end' 2>/dev/null || echo '')"
-  det_kind="$(scout::clamp_det_kind "$det_kind")"
-  # Length is measured in jq, never in bash: a `$(...)` round-trip strips the diff's trailing
-  # newline, which `git apply` cares about. Every string field below stays inside jq for that reason.
-  det_len="$(printf '%s' "$raw" | jq -r '
-      (.deterministic? // {}) | if type=="object" then (.diff? // "") else "" end
-      | if type=="string" then (length|tostring) else "0" end' 2>/dev/null || echo 0)"
-  [[ "$det_len" =~ ^[0-9]+$ ]] || det_len=0
-  det_keep=1
-  if [[ "$det_len" -gt "$SCOUT_MAX_DIFF" ]]; then
-    govern::log "scout: CLAMPED — deterministic.diff is $det_len chars (> $SCOUT_MAX_DIFF); dropping the patch"
-    det_keep=0
-  fi
-  # A patch with no recognized kind is meaningless — drop it rather than leave it addressable.
-  [[ -n "$det_kind" ]] || det_keep=0
-
   printf '%s' "$raw" | jq -c \
     --argjson files "$files" --argjson repos "$repos" \
     --argjson tests "$tests" --argjson prec "$prec" \
     --arg kind "$kind" --arg dir "$dir" \
-    --arg dk "$det_kind" --argjson keep "$det_keep" \
     --argjson maxp "$SCOUT_MAX_PATHS" \
     '{files:$files, repos:$repos, testsCover:$tests, precedent:$prec,
       changeKind:$kind, fixDirection:$dir,
       targetPaths: ((.targetPaths? // []) | if type=="array" then . else [] end
         | map(select(type=="string" and length>0 and length<400)) | .[0:$maxp]),
       precedentCommit: (.precedentCommit? // "" | if type=="string" then .[0:200] else "" end),
-      testCommand: (.testCommand? // "" | if type=="string" then .[0:400] else "" end),
-      deterministic: {
-        kind: $dk,
-        rationale: ((.deterministic? // {}) | if type=="object" then (.rationale? // "") else "" end
-          | if type=="string" then .[0:500] else "" end),
-        diff: (if $keep == 1
-               then ((.deterministic? // {}) | if type=="object" then (.diff? // "") else "" end
-                     | if type=="string" then . else "" end)
-               else "" end)}}'
+      testCommand: (.testCommand? // "" | if type=="string" then .[0:400] else "" end)}'
   return 0
 }
 
@@ -168,19 +129,6 @@ scout::clamp_enum() { # <field> <value> <fallback> <allowed...>
   return 0
 }
 
-# Closed set. Unrecognized (including "") → "" = NOT deterministic, which is the safe answer: a wrong
-# mechanical patch costs more than dispatching a worker.
-scout::clamp_det_kind() { # <value>
-  local v="$1" a
-  [[ -n "$v" ]] || { printf ''; return 0; }
-  for a in "${SCOUT_DET_KINDS[@]}"; do
-    if [[ "$v" == "$a" ]]; then printf '%s' "$v"; return 0; fi
-  done
-  govern::log "scout: CLAMPED — deterministic.kind='$v' is not in [${SCOUT_DET_KINDS[*]}]; treating as NOT deterministic"
-  printf ''
-  return 0
-}
-
 # ── cache ───────────────────────────────────────────────────────────────────────────────────────
 # Run-scoped (logs/govern/run-<ts>/ticket-N/scout.json via govern::worker_logdir), so a RETRY inside
 # the same run reuses the survey instead of re-scouting, and a fresh run re-measures against fresh
@@ -209,34 +157,6 @@ scout::paths_from_cache() { # <N> -> paths | nonzero
       2>/dev/null || true)"
   [[ -n "$paths" ]] || return 1
   printf '%s\n' "$paths"
-  return 0
-}
-
-# The deterministic object, re-sanitized on read (kind re-clamped against the closed set, oversized
-# diff dropped) so a hand-edited cache can never smuggle an unrecognized kind past the guard.
-scout::deterministic_from_cache() { # <N> -> compact JSON | nonzero
-  local n="$1" scope k dlen keep
-  scope="$(scout::scope_from_cache "$n")" || return 1
-  k="$(printf '%s' "$scope" | jq -r '(.deterministic? // {}) | if type=="object" then (.kind? // "") else "" end | if type=="string" then . else "" end' 2>/dev/null || true)"
-  k="$(scout::clamp_det_kind "$k")"
-  [[ -n "$k" ]] || return 1
-  dlen="$(printf '%s' "$scope" | jq -r '(.deterministic? // {}) | if type=="object" then (.diff? // "") else "" end | if type=="string" then (length|tostring) else "0" end' 2>/dev/null || echo 0)"
-  [[ "$dlen" =~ ^[0-9]+$ ]] || dlen=0
-  keep=1
-  if [[ "$dlen" -gt "$SCOUT_MAX_DIFF" ]]; then
-    govern::log "scout #$n: CLAMPED — cached deterministic.diff is $dlen chars (> $SCOUT_MAX_DIFF); dropping the patch"
-    keep=0
-  fi
-  # Emitted from jq against the cached scope so the diff's exact bytes (trailing newline included)
-  # survive — a `$(...)` round-trip would eat it and a stripped patch can fail `git apply`.
-  printf '%s' "$scope" | jq -c --arg k "$k" --argjson keep "$keep" \
-    '{kind:$k,
-      rationale: ((.deterministic? // {}) | if type=="object" then (.rationale? // "") else "" end
-        | if type=="string" then .[0:500] else "" end),
-      diff: (if $keep == 1
-             then ((.deterministic? // {}) | if type=="object" then (.diff? // "") else "" end
-                   | if type=="string" then . else "" end)
-             else "" end)}'
   return 0
 }
 
@@ -312,20 +232,8 @@ Locate what the fix needs, then report these MEASUREMENTS (they are recorded, no
   testCommand     the real command that runs the covering tests if testsCover=true (copy it from the
                   repo's config/README — do not invent one), else ""
 
-  deterministic   Can this ticket be resolved with NO judgement at all — a purely mechanical edit
-                  that is fully specified by the ticket text plus what you just read?
-                  kind: one of "" | "config-default" | "version-bump" | "dead-line-delete" | "known-rename" | "add-key"
-                  "" IS THE CORRECT ANSWER AND THE DEFAULT. Use a non-empty kind ONLY when all three
-                  hold: (1) the change is entirely mechanical, (2) the ticket specifies it exactly,
-                  (3) no design decision, no naming choice, no "figure out where" remains. If you
-                  find yourself reasoning about the right approach, the answer is "".
-                  A wrong mechanical patch costs MORE than dispatching a worker. When unsure: "".
-                  rationale: one sentence.
-                  diff: a unified diff that applies cleanly at the workspace root (real paths, real
-                  context lines from the file you read), or "" if kind is "".
-
 Output ONLY a single JSON object as the LAST line. No prose, no code fence:
-{"files":0,"repos":0,"testsCover":false,"precedent":false,"changeKind":"local","fixDirection":"vague","targetPaths":[],"precedentCommit":"","testCommand":"","deterministic":{"kind":"","rationale":"","diff":""}}
+{"files":0,"repos":0,"testsCover":false,"precedent":false,"changeKind":"local","fixDirection":"vague","targetPaths":[],"precedentCommit":"","testCommand":""}
 EOF
 }
 
@@ -347,10 +255,10 @@ scout::run_pass() { # <N> <block> -> raw stdout
 }
 
 # The model is asked for a bare object on the last line, but a chatty reply is the common failure.
-# The old `grep -o '{[^{}]*}' | tail -1` cannot survive the nested `deterministic` object — it would
-# return that inner object instead of the survey. So reuse the string/escape-aware balanced-brace
-# scanner from common.sh (govern::_json_objects, the same one govern::extract_report is built on) and
-# keep the LAST top-level object that carries a `files` key, which is what identifies a survey.
+# A naive `grep -o '{[^{}]*}' | tail -1` cannot survive a chatty reply that embeds another brace
+# pair before the survey. So reuse the string/escape-aware balanced-brace scanner from common.sh
+# (govern::_json_objects, the same one govern::extract_report is built on) and keep the LAST
+# top-level object that carries a `files` key, which is what identifies a survey.
 scout::extract_json() { # reads the scout's stdout on stdin
   local raw cand best=""
   raw="$(cat)"
@@ -368,11 +276,10 @@ scout::extract_json() { # reads the scout's stdout on stdin
 }
 
 # ── entrypoints ─────────────────────────────────────────────────────────────────────────────────
-MODE_FINDINGS=0; MODE_PATHS=0; MODE_DET=0
+MODE_FINDINGS=0; MODE_PATHS=0
 case "${1:-}" in
   --findings)      MODE_FINDINGS=1; shift ;;
   --paths)         MODE_PATHS=1;    shift ;;
-  --deterministic) MODE_DET=1;      shift ;;
 esac
 
 N="${1:?ticket number required}"
@@ -382,7 +289,6 @@ N="${1:?ticket number required}"
 # cache that fails the guard surfaces the same loud govern::log line into the run log.
 if [[ "$MODE_FINDINGS" -eq 1 ]]; then scout::findings_from_cache "$N" || exit 1; exit 0; fi
 if [[ "$MODE_PATHS"    -eq 1 ]]; then scout::paths_from_cache    "$N" || exit 1; exit 0; fi
-if [[ "$MODE_DET"      -eq 1 ]]; then scout::deterministic_from_cache "$N" || exit 1; exit 0; fi
 
 if [[ "${GOVERN_SCOUT:-1}" == "0" ]]; then
   govern::log "scout #$N: disabled (GOVERN_SCOUT=0) — no survey, no cache"
@@ -391,7 +297,7 @@ fi
 
 # Cache hit → this is a retry (or a second dispatch) inside the same run. Reuse, don't re-scout.
 if cached="$(scout::scope_from_cache "$N" 2>/dev/null)"; then
-  govern::log "scout #$N: cache hit — $(printf '%s' "$cached" | jq -c '{files,repos,targetPaths,deterministic:.deterministic.kind}' 2>/dev/null || printf '%s' "$cached")"
+  govern::log "scout #$N: cache hit — $(printf '%s' "$cached" | jq -c '{files,repos,targetPaths}' 2>/dev/null || printf '%s' "$cached")"
   exit 0
 fi
 
@@ -429,5 +335,5 @@ jq -nc --argjson n "$N" --argjson scope "$scope" \
    --arg tier "${GOVERN_SCOUT_MODEL:-haiku}" --argjson ts "$(date +%s)" \
    '{ticket:$n, scope:$scope, scoutModel:$tier, ts:$ts}' > "$(scout::cache_path "$N")" 2>/dev/null || true
 
-govern::log "scout #$N: surveyed — $(printf '%s' "$scope" | jq -c '{files,repos,testsCover,precedent,changeKind,fixDirection,paths:(.targetPaths|length),deterministic:.deterministic.kind}' 2>/dev/null || printf '%s' "$scope")"
+govern::log "scout #$N: surveyed — $(printf '%s' "$scope" | jq -c '{files,repos,testsCover,precedent,changeKind,fixDirection,paths:(.targetPaths|length)}' 2>/dev/null || printf '%s' "$scope")"
 exit 0

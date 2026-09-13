@@ -1,17 +1,39 @@
 #!/usr/bin/env bash
 # Externalization review gate — END-TO-END disposition wiring through escalations-apply-answers.sh:
-# stage → operator answers the questionnaire (via record-escalation-answer.sh) → apply-answers dispatches
-# the review-gate disposition. Three scenarios (approve-all / move-back / decide-later) each in a fresh
-# sandbox, gh stubbed on PATH (no network). Scenario A ALSO carries a generic do-the-work escalation to
-# prove the kind-gated review tokens do NOT regress the ordinary lifecycle.
+# stage → operator answers the questionnaire (writing the Answer/Disposition fields directly, the
+# same two fields govern::file_open_escalation stubs and escalations-apply-answers.sh reads back) →
+# apply-answers dispatches the review-gate disposition. Three scenarios (approve-all / move-back /
+# decide-later) each in a fresh sandbox, gh stubbed on PATH (no network). Scenario A ALSO carries a
+# generic do-the-work escalation to prove the kind-gated review tokens do NOT regress the ordinary
+# lifecycle.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 APPLY="$DIR/../escalations-apply-answers.sh"
 STAGE="$DIR/../externalize-low-tickets.sh"
-RECORD="$DIR/../record-escalation-answer.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
+
+# Write the operator's Answer + Disposition fields directly into the named `### #N` entry while it
+# sits under "## Open", anchored on the same section/block scan escalations-apply-answers.sh's own
+# reader uses, so an entry already moved to "## Resolved" is never touched.
+record_answer() { # <escalations-file> <N> <answer> <disposition>
+  local f="$1" n="$2" ans="$3" disp="$4" tmp
+  tmp="$(mktemp)"
+  awk -v n="$n" -v ans="$ans" -v disp="$disp" '
+    BEGIN { section=""; in_block=0 }
+    /^## Open/     { section="open"; print; next }
+    /^## Resolved/ { section="resolved"; in_block=0; print; next }
+    /^### +#/ {
+      m=$0; sub(/^### +#/,"",m); sub(/[^0-9].*/,"",m)
+      in_block = (section=="open" && m==n) ? 1 : 0
+      print; next
+    }
+    in_block && /^- \*\*Answer:\*\*/      { print "- **Answer:** " ans; next }
+    in_block && /^- \*\*Disposition:\*\*/ { print "- **Disposition:** " disp; next }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f"
+}
 
 # Build a hermetic sandbox: git repo + workspace stub (REPOS incl. 'foo') + gh stub. Echoes the env
 # array on stdout via a global; sets GH_CALLS/GH_COUNT for the caller.
@@ -99,8 +121,8 @@ assert_eq "$(grep -cF '**Kind:** externalize-review' "$TA/escalations.md")" "1" 
 # File the GENERIC do-the-work escalation for #20 (separate from the review gate).
 env "${ENVA[@]}" bash -c 'source "'"$DIR"'/../lib/common.sh"; govern::file_open_escalation 20 "generic high bug" "needs retry" "retry?" "do-the-work|defer"' >/dev/null 2>&1
 # Operator answers BOTH: #10 approve-all, #20 do-the-work.
-env "${ENVA[@]}" bash "$RECORD" 10 --answer "approve-all" --disposition "approve-all" >/dev/null 2>&1
-env "${ENVA[@]}" bash "$RECORD" 20 --answer "yes retry it" --disposition "do-the-work" >/dev/null 2>&1
+record_answer "$TA/escalations.md" 10 "approve-all" "approve-all"
+record_answer "$TA/escalations.md" 20 "yes retry it" "do-the-work"
 # Apply.
 outA="$(env "${ENVA[@]}" bash "$APPLY" 2>&1)"
 assert_eq "$(wc -l < "$GH_COUNT" | tr -d ' ')" "2" "A: approve-all filed BOTH staged tickets as public issues (2 gh calls)"
@@ -119,7 +141,7 @@ TB="$(mktemp -d)"; trap 'rm -rf "$TA" "$TB"' EXIT
 setup_sandbox "$TB"; ENVB=("${ENVV[@]}")
 two_foo_tickets "$TB"
 env "${ENVB[@]}" bash "$STAGE" >/dev/null 2>&1
-env "${ENVB[@]}" bash "$RECORD" 10 --answer "move these back: 10" --disposition "move-back:10" >/dev/null 2>&1
+record_answer "$TB/escalations.md" 10 "move these back: 10" "move-back:10"
 env "${ENVB[@]}" bash "$APPLY" >/dev/null 2>&1
 assert_eq "$(wc -l < "$GH_COUNT" | tr -d ' ')" "0" "B: move-back files NO public issue"
 assert_eq "$(grep -cE '^## #10 ' "$TB/tickets.md")" "1" "B: #10 returned to tickets.md"
@@ -136,7 +158,7 @@ TC="$(mktemp -d)"; trap 'rm -rf "$TA" "$TB" "$TC"' EXIT
 setup_sandbox "$TC"; ENVC=("${ENVV[@]}")
 two_foo_tickets "$TC"
 env "${ENVC[@]}" bash "$STAGE" >/dev/null 2>&1
-env "${ENVC[@]}" bash "$RECORD" 10 --answer "not now" --disposition "decide-later" >/dev/null 2>&1
+record_answer "$TC/escalations.md" 10 "not now" "decide-later"
 env "${ENVC[@]}" bash "$APPLY" >/dev/null 2>&1
 assert_eq "$(wc -l < "$GH_COUNT" | tr -d ' ')" "0" "C: decide-later files NO public issue"
 assert_eq "$(grep -cE '^## #1[01] ' "$TC/review.md")" "2" "C: both tickets STAY staged"

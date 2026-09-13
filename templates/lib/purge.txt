@@ -90,3 +90,14 @@ scripts/govern/test/test-bench-levers.sh
 scripts/govern/test/test-bench-regression.sh
 scripts/govern/test/test-bench-version-scope.sh
 scripts/govern/test/test-bench-proof-table.sh
+
+# v1.19.10: two scripts had no caller left. deterministic-apply.sh's entry point (run-loop.sh's
+# spawn_worker_tracked()) was removed with the retired dispatch loop; record-escalation-answer.sh's
+# front door (commands/govern.md) no longer exists. The operator-escalation round-trip stays live,
+# answered by hand-editing governor/escalations.md directly (contract in CLAUDE-APPENDIX.md). The
+# test paths are belt-and-suspenders: the directory-level scripts/govern/test/ entry above already
+# removes the whole folder on every writer run.
+scripts/govern/deterministic-apply.sh
+scripts/govern/record-escalation-answer.sh
+scripts/govern/test/test-deterministic-apply.sh
+scripts/govern/test/test-record-escalation-answer.sh

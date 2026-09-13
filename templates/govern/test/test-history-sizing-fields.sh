@@ -108,12 +108,11 @@ RUNDIR="$T2/logs/run-test"
 # model/effort must come from the workspace floor (GOVERN_WORKER_MODEL), NOT from the scout's cached
 # scope and NOT from the ticket's legacy `**Model:** haiku` field — both must be inert, and if either
 # ever leaks back into the ledger this test goes red. The cache below is pre-seeded in the CURRENT
-# scout.json schema (no `verdict` key) purely to prove spawn-worker doesn't even need to read it for
-# sizing any more; `deterministic.kind` is "" (not deterministic) so it can't short-circuit dispatch
-# either.
+# scout.json schema (no `verdict` key, no `deterministic` key) purely to prove spawn-worker doesn't
+# even need to read it for sizing any more.
 mkdir -p "$RUNDIR/ticket-7"
 cat > "$RUNDIR/ticket-7/scout.json" <<'EOF'
-{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete","targetPaths":[],"precedentCommit":"","testCommand":"","deterministic":{"kind":"","rationale":"","diff":""}},"scoutModel":"haiku","ts":1}
+{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete","targetPaths":[],"precedentCommit":"","testCommand":""},"scoutModel":"haiku","ts":1}
 EOF
 spawn7() { # claude-bin [extra env assignments handled by caller]
   GOVERN_TICKETS_FILE="$T2/tickets.md" \

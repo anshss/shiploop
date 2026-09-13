@@ -209,11 +209,11 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
    entry use its `question` + `options`, and always include: **Do the work** (un-park → the ticket is
    dispatchable again), **Defer / keep-manual** (moves to `tickets-parked.md`), **Keep open** (decide
    later). Batch every escalation from one sweep into one ask, don't fragment it across turns.
-3. Write the answer into `governor/escalations.md` under that `### #N` entry via
-   `scripts/govern/record-escalation-answer.sh <N> --answer "<their words>" --disposition <token>
-   [--rule "<rule text>"]` (`<token>` = `do-the-work` | `defer` | `mitigated` | `keep-open`). The next
-   SessionStart applies it automatically, or run `npm run govern:escalations-apply` yourself to apply
-   it immediately.
+3. Write the answer directly into `governor/escalations.md` under that `### #N` entry: fill in its
+   `- **Answer:** "<their words>"` and `- **Disposition:** <token>` lines (`<token>` = `do-the-work`
+   | `defer` | `mitigated` | `keep-open`); the exact field contract is documented in
+   `CLAUDE-APPENDIX.md`. The next SessionStart applies it automatically, or run
+   `npm run govern:escalations-apply` yourself to apply it immediately.
 
 ## Hooks (deterministic session scaffolding)
 
