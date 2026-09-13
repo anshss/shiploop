@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Prove the whole pipeline with zero real side effects:
-#  - worker runs in PLAN mode (no edits, no PR)
-#  - merge + tickets.md bookkeeping run in ECHO mode (printed, not executed)
-#  - the selected ticket and a synthetic worktree are used; nothing is committed.
+# Preview everything that happens to a ticket AFTER its worker has done the work, with zero real
+# side effects: which PRs would be merged and in what order, what tickets.md bookkeeping the
+# resolution would apply, and whether the CI poller is wired. Nothing is merged, committed or
+# modified. Resolving a ticket for real is `resolve-ticket.sh <N>`.
+#
+# The worker itself is not rehearsed here. A worker runs in-session as Agent(subagent_type:
+# "worker"), so there is no subprocess to launch in a plan mode and capture a report from -- the
+# steps below read the ticket's real open PRs instead of a worker's JSON.
 # Usage: dry-run.sh <ticket-number>
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,61 +18,36 @@ echo "=== govern dry-run ==="
 # 1. The ticket to rehearse. Named, always: there is no backlog selection to fall back on.
 N="${1:-}"
 [[ "$N" =~ ^[0-9]+$ ]] || govern::die "usage: dry-run.sh <ticket-number> — name the ticket to rehearse"
-echo "[1/5] ticket #$N"
+echo "[1/4] ticket #$N"
 
-# 2. Spawn the worker in dry (plan) mode. Plan mode is read-only, so we point the worker at
-#    the REAL main checkout for genuine context — no worktree is created, nothing is copied,
-#    and the worker physically cannot write (no edits / no PR). This is faithful AND fast.
-sandbox="$(mktemp -d)"; trap 'rm -rf "$sandbox"' EXIT
-cat > "$sandbox/wt.sh" <<EOF
-#!/usr/bin/env bash
-echo "$WS_ROOT"
-EOF
-chmod +x "$sandbox/wt.sh"
-
-echo "[2/5] spawning worker in PLAN mode (no edits / no PR)..."
-report="$(GOVERN_MODE=dry GOVERN_WORKTREE_CMD="$sandbox/wt.sh" GOVERN_LOG_ROOT="$sandbox/logs" \
-  "$DIR/spawn-worker.sh" "$N" || true)"
-echo "    worker report:"; printf '%s\n' "$report" | jq . 2>/dev/null || printf '%s\n' "$report"
-
-status="$(printf '%s' "$report" | jq -r '.status // "failed"' 2>/dev/null || echo failed)"
-
-# 3. Echo the merge decision — for EVERY PR of the ticket (reported .pr/.prs[] + discovered open
-#    ticket-<N> heads), merge-repo-first, so a multi-repo ticket's siblings are previewed too, not
-#    just the single reported PR.
-echo "[3/5] merge decision:"
-if [[ "$status" == "resolved" ]]; then
-  pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
-  if [[ -n "$pr_lines" ]]; then
-    while IFS=$'\t' read -r prepo pnum _purl; do
-      [[ -n "$prepo" && -n "$pnum" ]] || continue
-      GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$prepo" "$pnum" || echo "    (would refuse $prepo#$pnum: frontend PR-only — left open)"
-    done <<< "$pr_lines"
-  else
-    echo "    no PR to merge (status=$status) — nothing to do"
-  fi
+# 2. Echo the merge decision, for EVERY open PR of the ticket (discovered `ticket-<N>` heads),
+#    merge-repo-first, so a multi-repo ticket's siblings are previewed too, not just the first one.
+echo "[2/4] merge decision:"
+pr_lines="$(govern::collect_ticket_prs "$N" "")"
+if [[ -n "$pr_lines" ]]; then
+  while IFS=$'\t' read -r prepo pnum _purl; do
+    [[ -n "$prepo" && -n "$pnum" ]] || continue
+    GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$prepo" "$pnum" || echo "    (would refuse $prepo#$pnum: frontend PR-only, left open)"
+  done <<< "$pr_lines"
 else
-  echo "    no PR to merge (status=$status) — nothing to do"
+  echo "    no open PR found for ticket #$N, nothing to merge"
 fi
 
-# 4. Echo the tickets.md bookkeeping diff (computed, NOT applied).
-echo "[4/5] bookkeeping (echo only — tickets.md NOT modified):"
-if [[ "$status" == "resolved" ]]; then
-  echo "    WOULD delete '## #$N' block from tickets.md"
-  echo "    WOULD append $(printf '%s' "$report" | jq '.newTickets | length' 2>/dev/null || echo 0) new ticket(s)"
-  lesson="$(printf '%s' "$report" | jq -r '.lessonToPromote // empty' 2>/dev/null || true)"
-  [[ -n "$lesson" ]] && echo "    WOULD promote lesson to CLAUDE.md: $lesson"
-elif [[ "$status" == "parked" ]]; then
-  echo "    WOULD append escalation to governor/escalations.md ## Open:"
-  printf '%s' "$report" | jq '.escalation' 2>/dev/null || true
-  echo "    WOULD leave ticket #$N in tickets.md"
+# 3. Echo the tickets.md bookkeeping (computed, NOT applied). Which branch fires for real depends
+#    on the status in the worker's report, which only exists once a worker has actually run.
+echo "[3/4] bookkeeping (echo only, tickets.md NOT modified):"
+if [[ -n "$pr_lines" ]]; then
+  echo "    on a resolved report: WOULD delete '## #$N' block from tickets.md, append its newTickets,"
+  echo "                          and apply its lessonPatch to CLAUDE.md"
 else
-  echo "    status=$status → WOULD append a failed escalation and leave ticket #$N"
+  echo "    no open PR, so a report here would not be resolved:"
 fi
+echo "    on a parked report:   WOULD append the escalation to governor/escalations.md ## Open: and leave ticket #$N"
+echo "    on a failed report:   WOULD append a failed escalation and leave ticket #$N"
 
-# 5. Prove the CI poller wiring read-only against an existing open PR, if one exists.
-#    Probe the first auto-merge repo (e.g. a backend) — it's the one whose PRs the loop merges.
-echo "[5/5] CI poller wiring check:"
+# 4. Prove the CI poller wiring read-only against an existing open PR, if one exists.
+#    Probe the first auto-merge repo (e.g. a backend): it's the one whose PRs get merged.
+echo "[4/4] CI poller wiring check:"
 probe_repo="${GOVERN_MERGE_REPOS[0]:-}"
 if [[ -n "$probe_repo" ]]; then
   openpr="$(gh pr list --repo "$GITHUB_ORG/$probe_repo" --state open --json number --jq '.[0].number' 2>/dev/null || true)"

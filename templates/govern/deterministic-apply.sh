@@ -47,7 +47,7 @@
 #                                       (an unverified auto-patch is exactly the risk). 0 = allow the
 #                                       unverified path; the report then says verified:false.
 #   GOVERN_MODE=live|dry, --dry-run     do everything except push + open the PR.
-#   GOVERN_WORKTREE_CMD                 test seam: takes a slug, prints a worktree path (as spawn-worker).
+#   GOVERN_WORKTREE_CMD                 test seam: takes a slug, prints a worktree path.
 #   GOVERN_AUTONOMY                     observe → draft PR · pr-only/auto → normal PR (never merges here).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -208,15 +208,15 @@ if [[ "$DRY" -eq 0 ]] && ! command -v gh >/dev/null 2>&1; then
   det::skip "gh is not installed — cannot open the PR"
 fi
 
-# ── 7. worktree (same mechanics as spawn-worker.sh) ─────────────────────────────────────────────
+# ── 7. worktree ─────────────────────────────────────────────────────────────────────────────────
 slug="ticket-$N"
 wtpath="$WORKTREE_BASE/$slug"
 wt_cmd="${GOVERN_WORKTREE_CMD:-}"
 if [[ -n "$wt_cmd" ]]; then
   wtpath="$("$wt_cmd" "$slug")"
 elif [[ -d "$wtpath" ]]; then
-  # A preserved worktree means a prior attempt on this ticket is mid-flight (spawn-worker treats it
-  # as a resume). A mechanical patch must never land on top of a half-finished human-shaped attempt.
+  # A preserved worktree means a prior attempt on this ticket is mid-flight, and a retry resumes
+  # in it. A mechanical patch must never land on top of a half-finished human-shaped attempt.
   det::skip "a worktree already exists at $wtpath — a prior attempt owns this ticket"
 else
   set +e

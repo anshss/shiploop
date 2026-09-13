@@ -2,24 +2,22 @@
 # Regression: the cross-run history must record the sizing DECISION next to the cost it already
 # records, and a KILLED/failed attempt must record the tokens it burned instead of null.
 #
-# Three parts:
+# Two parts:
 #   1. govern::stream_usage / govern::cumulative_tokens — the usage extractor. Covers the ROOT CAUSE of
 #      the observed null rows: a worker.jsonl whose JSON lines sit behind a run of NUL bytes (a
 #      re-dispatch truncating the file while the prior attempt's fd was still open at a high offset)
 #      makes plain `grep` treat the stream as BINARY and print NOTHING — so a perfectly intact `result`
 #      event read as "no usage". Also covers the kill-before-verdict case: no result event at all, so
 #      tokens are recovered from the per-turn `.message.usage` events (cost stays null — never invented).
-#   2. spawn-worker.sh's per-attempt ledger (attempts.jsonl): attempt numbering, model/effort +
-#      their sources, the retry escalation, stream rotation, and a timed-out attempt recording usage.
-#   3. resolve-ticket.sh's rt_history_enrich() (the loop purge moved run-loop's record()/
+#   2. resolve-ticket.sh's rt_history_enrich() (the loop purge moved run-loop's record()/
 #      history_enrich() here) → ticket-history.jsonl rows carry model/effort/attempt/usageSource when
 #      a per-attempt ledger (attempts.jsonl) exists in the worker log dir; govern-health.sh still
 #      runs and reports, exposes the per-model breakdown, and rows from before this change (no model)
-#      don't break it.
+#      don't break it. The per-attempt ledger itself (attempts.jsonl) was written by the headless
+#      dispatch launcher, retired along with it; seeded directly here, the same shape it used to write.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-SPAWN="$DIR/../spawn-worker.sh"
 HEALTH="$DIR/../govern-health.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
@@ -65,120 +63,14 @@ u="$(govern::stream_usage "$U/does-not-exist.jsonl")"
 assert_eq "$(jq -r '.usageSource' <<<"$u")" "none" "missing stream → usageSource none"
 assert_eq "$(jq -r '.tokens' <<<"$u")" "null"      "missing stream → tokens null (honest, not a fake zero)"
 
-# ── Part 2 — spawn-worker.sh's per-attempt ledger ───────────────────────────
-T2="$(mktemp -d)"; trap 'rm -rf "$U" "$T2"' EXIT
-mk_ws_stub "$T2"
-mkdir -p "$T2/governor" "$T2/wt" "$T2/bin"
-cat > "$T2/tickets.md" <<'EOF'
-## #7 — a ticket whose ledger row records its MEASURED sizing decision
-**Severity:** Medium
-**Model:** haiku
-
-body
----
-EOF
-printf 'DOCTRINE\n' > "$T2/governor/preferences.md"
-printf 'PROMPT {{TICKET_BLOCK}} REPORT={{REPORT_PATH}}\n' > "$T2/governor/worker-prompt.md"
-# Creates the worktree AT $WORKTREE_BASE/<slug> (the stub's wt/ dir) so the second spawn sees the
-# PRESERVED worktree and takes the retry path, exactly as a real re-run does.
-cat > "$T2/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T2/wt/\$1"; echo "$T2/wt/\$1"
-EOF
-chmod +x "$T2/wt.sh"
-cat > "$T2/bin/claude-ok" <<'EOF'
-#!/usr/bin/env bash
-report='{"status":"resolved","pr":{"repo":"alpha","number":7,"url":"http://pr/7"},"lessonPatch":null,"newTickets":[],"escalation":null}'
-[[ -n "${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "$report" > "$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s,"usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.02}\n' \
-  "$(printf '%s' "$report" | jq -Rs .)"
-EOF
-chmod +x "$T2/bin/claude-ok"
-# A worker that emits real per-turn usage and then hangs past the timeout → hard-killed before it can
-# emit a result event. This is the row a sizing loop needs most (proof a tier was too cheap).
-cat > "$T2/bin/claude-hang" <<'EOF'
-#!/usr/bin/env bash
-printf '{"type":"assistant","message":{"usage":{"input_tokens":400,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n'
-sleep 30
-EOF
-chmod +x "$T2/bin/claude-hang"
-
-RUNDIR="$T2/logs/run-test"
-# The scout no longer sizes (it only surveys — see scout-ticket.sh's header). So the ledger's
-# model/effort must come from the workspace floor (GOVERN_WORKER_MODEL), NOT from the scout's cached
-# scope and NOT from the ticket's legacy `**Model:** haiku` field — both must be inert, and if either
-# ever leaks back into the ledger this test goes red. The cache below is pre-seeded in the CURRENT
-# scout.json schema (no `verdict` key) purely to prove spawn-worker doesn't even need to read it for
-# sizing any more; `deterministic.kind` is "" (not deterministic) so it can't short-circuit dispatch
-# either.
-mkdir -p "$RUNDIR/ticket-7"
-cat > "$RUNDIR/ticket-7/scout.json" <<'EOF'
-{"ticket":7,"scope":{"files":3,"repos":1,"testsCover":true,"precedent":false,"changeKind":"local","fixDirection":"concrete","targetPaths":[],"precedentCommit":"","testCommand":"","deterministic":{"kind":"","rationale":"","diff":""}},"scoutModel":"haiku","ts":1}
-EOF
-spawn7() { # claude-bin [extra env assignments handled by caller]
-  GOVERN_TICKETS_FILE="$T2/tickets.md" \
-  GOVERN_PREFERENCES_FILE="$T2/governor/preferences.md" \
-  GOVERN_WORKER_PROMPT_FILE="$T2/governor/worker-prompt.md" \
-  GOVERN_LOG_ROOT="$T2/logs" \
-  GOVERN_RUN_DIR="$RUNDIR" \
-  GOVERN_WORKTREE_CMD="$T2/wt.sh" \
-  GOVERN_CLAUDE_BIN="$1" \
-  GOVERN_WORKER_MODEL=sonnet \
-  GOVERN_WORKER_TIMEOUT="${2:-60}" \
-  GOVERN_SCOUT=1 \
-  "$SPAWN" 7 </dev/null
-}
-
-out="$(spawn7 "$T2/bin/claude-ok")"
-assert_eq "$(printf '%s' "$out" | jq -r '.status')" "resolved" "attempt 1 resolves"
-LEDGER="$RUNDIR/ticket-7/attempts.jsonl"
-[[ -s "$LEDGER" ]] && printf 'ok   - %s\n' "spawn-worker wrote the per-attempt ledger" \
-  || { printf 'FAIL - %s\n' "spawn-worker wrote the per-attempt ledger"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
-r1="$(head -1 "$LEDGER")"
-assert_eq "$(jq -r '.attempt' <<<"$r1")"      "1"                  "attempt is 1-based"
-assert_eq "$(jq -r '.model' <<<"$r1")"        "sonnet"             "ledger records the resolved model (the workspace floor, GOVERN_WORKER_MODEL) — NOT the ticket's legacy Model: haiku"
-assert_eq "$(jq -r '.modelSource' <<<"$r1")"  "GOVERN_WORKER_MODEL" "ledger records WHERE the model came from — the floor, not the scout and not the ticket's legacy Model: field"
-assert_eq "$(jq -r '.effort' <<<"$r1")"       "null"               "no GOVERN_WORKER_EFFORT set -> effort stays unset (the scout no longer supplies one)"
-assert_eq "$(jq -r '.effortSource' <<<"$r1")" "none (unset)"       "ledger records WHERE the (absent) effort came from"
-assert_eq "$(jq -r '.isRetry' <<<"$r1")"      "false"              "attempt 1 is not a retry"
-assert_eq "$(jq -r '.retryClass' <<<"$r1")"   "first-attempt"      "a first attempt records the class too, not null"
-assert_eq "$(jq -r '.respecRequested' <<<"$r1")" "false"           "a first attempt never asks for a re-specification"
-assert_eq "$(jq -r '.status' <<<"$r1")"       "resolved"           "ledger records the attempt's outcome"
-assert_eq "$(jq -r '.tokens.total' <<<"$r1")" "1500"               "ledger records the attempt's tokens"
-assert_eq "$(jq -r '.costUsd' <<<"$r1")"      "0.02"               "ledger records the attempt's cost"
-
-# Attempt 2: the worktree from attempt 1 survives, so this is the retry path. With automatic tier
-# escalation removed it HOLDS the sonnet floor (no prior-attempt evidence exists to classify, so
-# retry_class=unknown, which now routes DOWN rather than to the ceiling) and the ledger row records
-# the classifier verdict beside the sizing it produced. It must land as a SECOND ledger row, and
-# attempt 1's stream must be rotated aside rather than truncated in place.
-out2="$(spawn7 "$T2/bin/claude-hang" 1)"
-assert_eq "$(printf '%s' "$out2" | jq -r '.status')" "timeout" "attempt 2 is killed before its verdict"
-assert_eq "$(awk 'END{print NR}' "$LEDGER")" "2" "the ledger is append-only (one row per attempt)"
-r2="$(tail -1 "$LEDGER")"
-assert_eq "$(jq -r '.attempt' <<<"$r2")" "2"        "attempt number increments across spawns"
-assert_eq "$(jq -r '.isRetry' <<<"$r2")" "true"     "attempt 2 is flagged as a retry"
-assert_eq "$(jq -r '.model' <<<"$r2")"   "sonnet"   "a retry HOLDS the floor tier: nothing escalates automatically any more"
-assert_eq "$(jq -r '.retryClass' <<<"$r2")" "unknown" "the ledger records the classifier verdict the sizing was derived from"
-assert_eq "$(jq -r '.respecRequested' <<<"$r2")" "true" "and records that the outcome was a re-specification request, not a tier purchase"
-[[ -n "$(jq -r '.retryReason // empty' <<<"$r2")" ]] \
-  && printf 'ok   - %s\n' "the ledger row carries the reason string too" \
-  || { printf 'FAIL - %s\n' "the ledger row carries the reason string too"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
-assert_eq "$(jq -r '.status' <<<"$r2")"  "timeout"  "the killed attempt records its real outcome"
-assert_eq "$(jq -r '.tokens.total' <<<"$r2")" "500" "the KILLED attempt records usage, not null"
-assert_eq "$(jq -r '.usageSource' <<<"$r2")" "assistant-partial" "killed attempt's usage came from per-turn events"
-[[ -f "$RUNDIR/ticket-7/worker.attempt1.jsonl" ]] \
-  && printf 'ok   - %s\n' "attempt 1's stream is rotated aside, not clobbered" \
-  || { printf 'FAIL - %s\n' "attempt 1's stream is rotated aside, not clobbered"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
-
-# ── Part 3, resolve-ticket.sh: ticket-history rows carry sizing fields, + govern-health ─────────
+# ── Part 2, resolve-ticket.sh: ticket-history rows carry sizing fields, + govern-health ─────────
 # rt_history_enrich() prefers a per-attempt ledger (attempts.jsonl) in the worker log dir when one
 # exists over the govern::stream_usage fallback over worker.jsonl (that fallback is Part 1's own
-# subject), seed attempts.jsonl directly here, the same shape spawn-worker.sh's Part-2 ledger writes.
+# subject); seed attempts.jsonl directly here in that ledger's documented shape.
 RT="$DIR/../resolve-ticket.sh"
 [[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
 
-T="$(mktemp -d)"; trap 'rm -rf "$U" "$T2" "$T"' EXIT
+T="$(mktemp -d)"; trap 'rm -rf "$U" "$T"' EXIT
 mk_ws_stub "$T"
 export GOVERN_QUEUE_DIR="$T/queue"
 mkdir -p "$T/bin/lib" "$T/queue" "$T/logs/ticket-1"

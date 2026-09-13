@@ -48,38 +48,38 @@ and skipped, never fatal.
 - `watchdog-kill`: `ctxTokens` and `turns` are the values at the instant the watchdog terminates.
   `reason` is free text.
 
-  **DUAL-LANE. Two emitters, one event stream.** The headless lane emits it from
-  `templates/govern/spawn-worker.sh` (its `emit_watchdog_kill`), run-scoped under
-  `logs/govern/<run>/`. The interactive lane emits it from the
-  `templates/hooks/agent-watchdog-guard.sh` PreToolUse hook, on its wall-clock deny path, run-less at
-  `logs/govern/lever-events.jsonl` (see Location above). Same event name and the same
-  `ctxTokens` / `turns` / `reason` field names on both, deliberately: the two lanes produce ONE
-  stream a reader can group, not two dialects it has to reconcile. Before this, a bench crediting
-  the watchdog lever saw only half the fleet's kills, and the interactive half read as "never
-  fired" rather than "unmeasured".
+  **ONE emitter: `templates/hooks/agent-watchdog-guard.sh`**, a PreToolUse hook, on its wall-clock
+  deny path, run-less at `logs/govern/lever-events.jsonl` (see Location above). A second emitter
+  used to exist in the headless dispatch launcher, run-scoped under `logs/govern/<run>/`, retired
+  along with it; historical logs may still carry rows shaped like that emitter's (no `lane` field,
+  a `context-cap` reason), and a reader should not assume every row was ever produced by the hook.
 
-  Reason strings: `wall-clock-timeout` (an elapsed-time cap) is emitted by both lanes and groups
-  across them. `context-cap` (a cumulative-token cap) is HEADLESS-ONLY: the interactive lane has no
-  token-volume cap, deliberately, so no interactive row ever carries that reason. `turns` counts
-  assistant turns the same way on both lanes, a line count of `"type":"assistant"` over the
-  transcript. On the interactive lane `ctxTokens` is a reading reported alongside the kill, never
-  the thing that caused it.
+  Reason strings: `wall-clock-timeout` (an elapsed-time cap) is the only reason the surviving
+  emitter produces. `context-cap` (a cumulative-token cap) only ever appears in historical rows:
+  the headless dispatch launcher's per-worker token-volume cap retired with it, and the hook has no
+  equivalent (deliberately: it has no token-volume cap on a subagent). `turns` counts assistant
+  turns, a line count of `"type":"assistant"` over the transcript. `ctxTokens` is a reading reported
+  alongside the kill, never the thing that caused it.
 
-  Three extra fields ride along on the interactive lane only. A reader skips fields it does not
-  know, so adding them costs nothing:
+  Three extra fields ride along on the hook's own rows. A reader skips fields it does not know, so
+  their presence costs nothing:
 
   | Field | Type | Notes |
   |---|---|---|
-  | `lane` | string | `interactive` from the hook. Absent on the headless lane |
+  | `lane` | string | `interactive`. Absent on a historical row from the retired emitter |
   | `agentType` | string | the child's agent type, `unknown` when the payload omits it |
   | `agentId` | string | the child's `agent_id`, the only stable identifier a hook sees |
 
-  Two common fields are necessarily `null` on the interactive lane, and honest nulls are the
-  deliberate choice over guesses: `ticket` (a hook sees an `agent_id`, never the ticket handed to
-  the child in a prompt it does not read) and `tier` (PreToolUse carries no model field for the
-  child, and inferring one from the parent would name the wrong model; the reader's own
-  `driverTier` fallback already covers a null tier).
-- `resume`: both sides computed at resume time from state the governor already holds; they are
+  Two fields are necessarily `null` on the hook's own rows, and honest nulls are the deliberate
+  choice over guesses: `ticket` (a hook sees an `agent_id`, never the ticket handed to the child in
+  a prompt it does not read) and `tier` (PreToolUse carries no model field for the child, and
+  inferring one from the parent would name the wrong model; the reader's own `driverTier` fallback
+  already covers a null tier).
+- `resume`: **NO LONGER EMITTED.** Its only emitter lived in the headless dispatch launcher's own
+  retry re-entry into a preserved worktree, retired along with it: nothing currently re-enters a
+  preserved worktree the way it did (see `templates/governor/README.md`'s progress-preservation
+  section). The schema stays documented because historical logs still carry these rows. Both sides
+  were computed at resume time from state the governor already held; they are
   unrecoverable afterward. `checkpointTokens` = what the resume actually loads (injected notes
   plus structured handoff).
   `freshStartTokens` = the failed attempt's **context-reconstruction spend only**: its input

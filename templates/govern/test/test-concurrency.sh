@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Regression: two govern drivers may run concurrently on disjoint tickets.
-# Safety rests on three primitives — this proves each:
+# Safety rests on two primitives: this proves each:
 #   1. the mkdir-mutex helpers (lock_try / lock_release + stale reclaim),
 #   2. concurrent bookkeep doesn't lose a block-delete (the corruption the lock prevents),
-#   3. the wiring is in place (the bookkeep lock, and spawn-worker's concurrency-aware sweep gate).
+#   3. the wiring is in place (the bookkeep lock).
 # Note on scope: with the dispatch loop deleted there is no per-ticket CLAIM lock and no single-run
 # lock any more. Two concurrent SESSIONS race exactly the way two concurrent drivers did, and the
 # BK_LOCK/CAS protocol asserted below is what serializes them at land time. The other half of that
@@ -14,7 +14,6 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 REPO="$(cd "$DIR/../../.." && pwd)"
 BK="$DIR/../land-resolution.sh"
-SPAWN="$DIR/../spawn-worker.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export GOVERN_WS_ROOT="$T"
@@ -105,6 +104,5 @@ assert_contains "$heads" "#3" "tickets.md still structurally intact after concur
 # ── 3. wiring assertions (so the safety can't silently regress) ──
 assert_contains "$(cat "$BK")" "BK_LOCK" "bookkeep takes the serialization lock"
 assert_contains "$(cat "$BK")" "lock_acquire" "bookkeep uses the mkdir-mutex helper"
-assert_contains "$(cat "$SPAWN")" "GOVERN_ALLOW_CONCURRENT" "spawn-worker still honours the concurrent opt-in (its orphan sweep is single-session-only)"
 
 assert_done

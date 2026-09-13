@@ -20,8 +20,8 @@ here until answered. Session + relay close the loop automatically:
 
 1. **Surface (every SessionStart).** `session-reconcile.sh` runs `escalations-emit-pending.sh`, which
    writes `governor/pending-escalations.json`, the still-unanswered `## Open` entries, and fires
-   `GOVERN_NOTIFY_CMD` (if set) so a headless, no-session dispatch still signals that decisions are
-   waiting. Runnable by hand too: `npm run govern:escalations-emit`.
+   `GOVERN_NOTIFY_CMD` (if set) so you are signalled that decisions are waiting even when you are
+   away from the session. Runnable by hand too: `npm run govern:escalations-emit`.
 2. **Ask (relay).** The launching session reads that JSON and presents the pending entries
    in a **single batched `AskUserQuestion`** (`AskUserQuestion` takes up to **4 questions per
    prompt**, so one entry → one question and a whole run's blocked tickets are asked **at once**;

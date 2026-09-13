@@ -8,25 +8,18 @@
 #
 # This is the SESSION rail and it is unconditional. It is not the same thing as
 # GOVERN_WORKER_ESCALATION_MODEL, which since automatic escalation was removed is a cap on explicit
-# requests only; both are applied at resolve_sizing's single clamp site, and that interaction is
-# covered in test-retry-escalation.sh.
+# requests only.
 #
-# Three layers are covered here:
+# Two layers are covered here:
 #   1. govern::model_rank: the ladder now has to order a bare alias against a full model id, incl.
 #      versions within a family and the dated `claude-haiku-4-5-20251001` shape.
 #   2. govern::model_ceiling / govern::model_clamp: the policy itself, plus the kill switch.
-#   3. spawn-worker.sh: the integration check that the clamp actually reaches the assembled
-#      `--model`, via the GOVERN_SPAWN_DRY_RUN observation seam (no auth, no claude binary).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-SPAWN="$DIR/../spawn-worker.sh"
-
-command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mk_ws_stub "$TMP"
-mkdir -p "$TMP/governor" "$TMP/wt"
 
 # common.sh is sourced ONCE here and the session-model memo is reset per case below. Every case that
 # changes the session model must clear the latch, or it would read the previous case's answer.
@@ -114,63 +107,4 @@ assert_eq "$(govern::model_clamp opus 2>/dev/null)" "opus" \
 sess sonnet
 assert_eq "$(GOVERN_MODEL_CEILING=0 govern::model_clamp claude-fable-5 2>/dev/null)" "claude-fable-5" \
   "3. GOVERN_MODEL_CEILING=0 disables the rail entirely (pass-through)"
-
-# ── 4. integration: the clamp reaches spawn-worker's assembled --model ──────
-cat > "$TMP/tickets.md" <<'EOF'
-## #201 - a ticket to size
-**Severity:** Medium
-Observed: standard ticket.
-Done when: PR opens.
-
----
-EOF
-printf 'DOCTRINE\n' > "$TMP/governor/preferences.md"
-printf 'PROMPT {{TICKET_BLOCK}} REPORT={{REPORT_PATH}}\n' > "$TMP/governor/worker-prompt.md"
-
-dry() { # <session-model> <GOVERN_WORKER_MODEL> [extra env assignments...]
-  local smodel="$1" wmodel="$2"; shift 2
-  env GOVERN_TICKETS_FILE="$TMP/tickets.md" \
-      GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
-      GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
-      GOVERN_LOG_ROOT="$TMP/logs-dry" \
-      GOVERN_SESSION_MODEL="$smodel" \
-      GOVERN_WORKER_MODEL="$wmodel" \
-      GOVERN_SPAWN_DRY_RUN=1 \
-      "$@" "$SPAWN" 201 2>/dev/null
-}
-
-# An operator raising the floor above what the session runs at is the exact hole this closes: without
-# the clamp the dispatch below would spawn a fable worker from a sonnet driver.
-out="$(dry sonnet claude-fable-5)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "opus" \
-  "4. spawn-worker clamps a fable floor down to opus for a sonnet session"
-assert_contains "$(printf '%s' "$out" | jq -r '.model_source')" "clamped to opus" \
-  "4. the clamp is recorded in model_source, so the dispatch record explains the lower tier"
-
-out="$(dry claude-fable-5 claude-fable-5)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "claude-fable-5" \
-  "4. a fable-5 session may spawn a fable-5 worker (the ceiling is its own model)"
-assert_not_contains "$(printf '%s' "$out" | jq -r '.model_source')" "clamped" \
-  "4. no clamp marker when nothing was clamped"
-
-out="$(dry sonnet sonnet)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "sonnet" \
-  "4. the ordinary sonnet-floor dispatch is untouched by the rail"
-
-# A RETRY no longer picks a tier at all (automatic escalation is removed), so the case that used to
-# assert "the escalation to fable-5 lands on opus" has nothing left to escalate. What replaces it is
-# the inverse guarantee, which is the one that can still go wrong: a retry must not move the tier,
-# and a fable-5 GOVERN_WORKER_ESCALATION_MODEL must not become a destination by any route.
-out="$(dry sonnet sonnet GOVERN_WORKER_ESCALATION_MODEL=claude-fable-5 GOVERN_SPAWN_FORCE_RETRY=1)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "sonnet" \
-  "4. a retry holds the floor tier: GOVERN_WORKER_ESCALATION_MODEL is not a destination"
-assert_eq "$(printf '%s' "$out" | jq -r '.is_retry')" "1" \
-  "4. that case really did take the retry path"
-assert_eq "$(printf '%s' "$out" | jq -r '.model_cap_source')" "" \
-  "4. nothing was clamped, because nothing tried to rise"
-
-out="$(dry sonnet claude-fable-5 GOVERN_MODEL_CEILING=0)"
-assert_eq "$(printf '%s' "$out" | jq -r '.model')" "claude-fable-5" \
-  "4. GOVERN_MODEL_CEILING=0 restores the unclamped dispatch end to end"
-
 assert_done

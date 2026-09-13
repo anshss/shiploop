@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Flow verdict pipeline end-to-end (validations Phase 2): file-ticket --flow emits the Flow: field →
-# ticket_flow_ids reads it → spawn-worker injects the flow block(s) → land-resolution.sh pre-captures the
-# Flow field and stamps the registry on resolve.
+# ticket_flow_ids reads it → land-resolution.sh pre-captures the Flow field and stamps the registry
+# on resolve.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -9,7 +9,6 @@ command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { echo "git/j
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-mkdir -p "$T/governor" "$T/.claude/shiploop/validation"
 export GOVERN_NO_PUSH=1
 source "$DIR/../lib/common.sh"
 
@@ -35,45 +34,6 @@ assert_contains "$tblk" "Two flows" "file-ticket: the deprecated flag's value wa
 # ── ticket_flow_ids: parses the Flow field (comma → space), anchored to the leading block.
 assert_eq "$(govern::ticket_flow_ids "$n1" "$T/tickets.md")" "deploy.correctness" "ticket_flow_ids: single id"
 assert_eq "$(govern::ticket_flow_ids "$n2" "$T/tickets.md")" "a.b c.d" "ticket_flow_ids: comma-list → space-list"
-
-# ── spawn-worker: injects the FULL flow block + the flowIds reminder for a Flow ticket.
-cat > "$T/.claude/shiploop/validation/flows.md" <<'EOF'
-## deploy.correctness
-- **Kind:** correctness
-- **Surface:** console UI → backend
-- **Paths:** backend/**
-- **Status:** UNTESTED
-EOF
-cat > "$T/tickets2.md" <<'EOF'
-## #5 — VALIDATION: deploy path
-**Severity:** Medium
-**Flow:** deploy.correctness
-
-Drive the real deploy.
----
-EOF
-printf 'DOCTRINE\n' > "$T/governor/preferences.md"
-printf 'HEADER {{TICKET_BLOCK}} REPORT={{REPORT_PATH}}\n' > "$T/governor/worker-prompt.md"
-cat > "$T/fake-wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$T/wt/\$1"; echo "$T/wt/\$1"
-EOF
-chmod +x "$T/fake-wt.sh"
-cat > "$T/fake-claude.sh" <<EOF
-#!/usr/bin/env bash
-prompt=""; while [[ \$# -gt 0 ]]; do [[ "\$1" == "-p" ]] && { prompt="\$2"; shift 2; continue; }; shift; done
-printf '%s' "\$prompt" > "$T/seen.txt"
-printf '{"type":"result","result":"{\\"status\\":\\"resolved\\"}"}\n'
-EOF
-chmod +x "$T/fake-claude.sh"
-GOVERN_TICKETS_FILE="$T/tickets2.md" GOVERN_PREFERENCES_FILE="$T/governor/preferences.md" \
-  GOVERN_WORKER_PROMPT_FILE="$T/governor/worker-prompt.md" GOVERN_LOG_ROOT="$T/logs" \
-  GOVERN_WORKTREE_CMD="$T/fake-wt.sh" GOVERN_CLAUDE_BIN="$T/fake-claude.sh" \
-  "$DIR/../spawn-worker.sh" 5 >/dev/null 2>&1
-seen="$(cat "$T/seen.txt")"
-assert_contains "$seen" "Flow(s) this ticket validates" "spawn-worker: injects the flow-validation section"
-assert_contains "$seen" "## deploy.correctness" "spawn-worker: injects the full flow block"
-assert_contains "$seen" "(echo: deploy.correctness)" "spawn-worker: reminds the worker to echo flowIds"
 
 # ── land-resolution.sh: pre-captures Flow + stamps the registry PASS on resolve, and deletes the ticket.
 M="$T/m"; mkdir -p "$M/queue" "$M/.claude/shiploop/validation" "$M/backend"

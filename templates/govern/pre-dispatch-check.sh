@@ -153,11 +153,10 @@ fi
 # ── 6. failure-streak breaker (ported verbatim from run-loop.sh's consecutive_fails) ─────────
 # Trailing CONSECUTIVE failed / timeout / budget-exceeded / early-abort outcomes for THIS ticket
 # across the cross-run history (a resolved or parked outcome resets the streak). Its data source,
-# governor/ticket-history.jsonl, is written by govern::record-style writers that survive the loop
-# (resolve-ticket.sh's rt_record_history and spawn-worker's own ledger), so this is a MOVE of
-# default-ON behaviour, not a new mechanism: an item that fails cleanly every attempt (worker
-# converges, opens a PR, CI never passes, or the item is mis-scoped) trips none of spawn-worker's
-# live early-abort signals but does trip this one. Without it such an item burns a fresh worker on
+# governor/ticket-history.jsonl, is written on every resolve (resolve-ticket.sh's
+# rt_record_history), so this is a MOVE of default-ON behaviour, not a new mechanism: an item that
+# fails cleanly every attempt (worker converges, opens a PR, CI never passes, or the item is
+# mis-scoped) trips no live in-run doom signal but does trip this one. Without it such an item burns a fresh worker on
 # every future dispatch, forever, with no operator-facing signal.
 _consecutive_fails() { # ticket -> count
   [[ -f "$TICKET_HISTORY_FILE" ]] || { echo 0; return 0; }

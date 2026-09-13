@@ -3,11 +3,9 @@
 # fields, or nothing if the ticket carries
 # neither yet (absent, or still the filing-time placeholder — filing is not specifying).
 #
-# This is the interactive lane's entry point into the SAME extraction the headless launcher
-# (spawn-worker.sh) runs via govern::ticket_proposal / govern::ticket_precision before it ever
-# assembles a dispatch prompt — see lib/common.sh, the one shared implementation both lanes call.
-# The headless lane gets this injected into its dispatch prompt automatically; a worker subagent
-# (.claude/agents/worker.md) has no launcher to do that for it, so it runs THIS as its own first
+# A worker's entry point into govern::ticket_proposal / govern::ticket_precision (lib/common.sh),
+# the one shared implementation. Nothing assembles a dispatch prompt on a worker's behalf, so a
+# worker subagent (.claude/agents/worker.md) runs THIS as its own first
 # step, the same pattern gotchas-for-paths.sh already established for hazard handoff.
 #
 # Usage: scripts/govern/ticket-proposal.sh <N> [tickets-file]
