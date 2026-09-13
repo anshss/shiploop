@@ -56,16 +56,14 @@ export GOVERN_SESSION_MODEL=opus
 #
 # This follows the GOVERN_FIX_CI precedent and the standing rule it produced: a new mechanism on the
 # dispatch path perturbs this suite, because the suite drives stateful fake-`claude` stubs that COUNT
-# and TRACK every invocation and script per-attempt outcomes. A mechanism that resolves a ticket
-# without spawning a worker (deterministic lane), skips a dispatch entirely (staleness gate, self-ref
-# cap), or kills a worker early (early abort) shifts those fixtures by one and reddens tests that have
-# nothing to do with it. Each feature's OWN test enables what it needs explicitly — never a per-test
-# patch here.
+# and TRACK every invocation and script per-attempt outcomes. A mechanism that skips a dispatch
+# entirely (staleness gate, self-ref cap) or kills a worker early (early abort) shifts those
+# fixtures by one and reddens tests that have nothing to do with it. Each feature's OWN test
+# enables what it needs explicitly — never a per-test patch here.
 #
 # All of these already default to the same value in their scripts; setting them here is the seam that
 # stops a LIVE governor session's exported env from leaking into a suite run inside it (the documented
 # failure mode where GOVERN_ALLOW_CONCURRENT=1 leaks in and reddens the orphan sweep by design).
-export GOVERN_DETERMINISTIC=0        # zero-model resolution lane
 export GOVERN_STALENESS_GATE=0       # pre-dispatch staleness skip
 export GOVERN_STALENESS_RUN_TESTS=0  # never execute a queue-authored command in a test run
 export GOVERN_EARLY_ABORT=0          # in-flight worker watchdog

@@ -97,5 +97,16 @@ scripts/govern/test/test-bench-proof-table.sh
 # here (see tools/check-manifests.sh's purge-manifest-complete job).
 # measure-prefix.sh goes with it: it read the launcher's own dry-run and print-prompt seams to
 # reproduce a real spawn's request payload, and that payload has no in-session counterpart.
+# deterministic-apply.sh and record-escalation-answer.sh lose their only callers in the same cut:
+# deterministic-apply.sh's entry point (run-loop.sh's spawn_worker_tracked()) was removed with the
+# retired dispatch loop, and record-escalation-answer.sh's front door (commands/govern.md) no
+# longer exists. The operator-escalation round-trip stays live, answered by hand-editing
+# governor/escalations.md directly (contract in CLAUDE-APPENDIX.md). The two test paths below are
+# belt-and-suspenders: the directory-level scripts/govern/test/ entry above already removes the
+# whole folder on every writer run.
 scripts/govern/spawn-worker.sh
 scripts/govern/measure-prefix.sh
+scripts/govern/deterministic-apply.sh
+scripts/govern/record-escalation-answer.sh
+scripts/govern/test/test-deterministic-apply.sh
+scripts/govern/test/test-record-escalation-answer.sh

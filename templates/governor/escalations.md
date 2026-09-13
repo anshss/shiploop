@@ -13,6 +13,10 @@ gap (they PARK the ticket: clean exit, no PR). Format of an open entry:
 - **Make this a rule?:** _(yes + the rule text → appended to preferences.md)_
 ```
 
+Answer by editing the Answer/Disposition lines above directly, there is no separate script for
+this: the exact field contract `escalations-apply-answers.sh` parses, including every recognized
+Disposition token, is documented in `CLAUDE-APPENDIX.md`'s "Escalation answer format" section.
+
 ## Lifecycle (escalations are no longer write-only)
 
 `pre-dispatch-check.sh` skips any ticket # that has an entry under `## Open`, so a parked ticket sits
