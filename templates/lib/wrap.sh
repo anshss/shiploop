@@ -37,6 +37,24 @@
 #   WRAP_TEST_FAIL_AT=<moving|pre-rename|renamed|scaffolding>  force failure at a phase
 #   WRAP_TEST_HANG_BEFORE_RENAME=1                             sleep before the rename (for SIGINT injection)
 #
+# ── --greenfield mode ─────────────────────────────────────────────────────────
+# A second mode of THIS script (not a new script) for the mirror-image case: fresh mode
+# found ZERO sub-repos, so there is no existing repo to wrap — one must be materialized.
+# Reuses the dangerous parts (staging move, pre-written undo, rollback trap, scaffold
+# invocation, final verify); skips the git-repo-specific preflight and verify_move, which
+# assert things about a repo that does not exist yet.
+#
+#   wrap.sh --greenfield --name <N> --org <ORG> [--move "<e1> <e2> …"] [--preflight] [--yes]
+#
+# Order: write undo -> move ONLY --move entries into staging, rename staging to <N> (empty
+# --move = just an empty <N>) -> git init -q in <N> -> if <N> has no non-.git content, write
+# a one-line README.md -> git add -A + commit (operator identity, falling back to
+# -c user.email=scaffold@shiploop -c user.name=scaffold when unset) -> detect-inputs.sh
+# --mode fresh (run AFTER the move, so a just-moved package.json is visible) -> run_scaffold
+# with the resulting repos_spec -> verify_final. Greenfield's undo differs from wrap's: it
+# restores only the originally-moved entries to root, then rm -rf's <N> INCLUDING the .git
+# this mode created — there is no pre-existing repo to preserve, unlike wrap-in-place.
+#
 set -uo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -70,6 +88,8 @@ KEEP_UNDO=0
 DETECT=0
 PREFLIGHT_ONLY=0
 YES=0
+GREENFIELD=0
+MOVE_LIST=""
 # Confirm flags for the warn+confirm preflights.
 CONFIRM_CLOUD=0
 CONFIRM_NESTED=0
@@ -94,6 +114,8 @@ while [ "$#" -gt 0 ]; do
     --detect)            DETECT=1; shift ;;
     --preflight)         PREFLIGHT_ONLY=1; shift ;;
     --yes|-y)            YES=1; shift ;;
+    --greenfield)        GREENFIELD=1; shift ;;
+    --move)              MOVE_LIST="$2"; shift 2 ;;
     --confirm-cloud-sync)   CONFIRM_CLOUD=1; shift ;;
     --confirm-nested)       CONFIRM_NESTED=1; shift ;;
     --confirm-symlinks)     CONFIRM_SYMLINKS=1; shift ;;
@@ -140,7 +162,11 @@ fi
 [ -n "$NAME" ] || { printf 'wrap.sh: --name <subfolder> is required\n' >&2; exit 2; }
 if [ "$PREFLIGHT_ONLY" -eq 0 ]; then
   [ -n "$ORG" ] || { printf 'wrap.sh: --org is required (forwarded to scaffold)\n' >&2; exit 2; }
-  [ -n "$REPOS_SPEC" ] || { printf 'wrap.sh: --repos is required (forwarded to scaffold)\n' >&2; exit 2; }
+  # Greenfield computes REPOS_SPEC itself from detect-inputs.sh AFTER the move (a
+  # package.json that just moved in is invisible before then) — not a caller input.
+  if [ "$GREENFIELD" -eq 0 ]; then
+    [ -n "$REPOS_SPEC" ] || { printf 'wrap.sh: --repos is required (forwarded to scaffold)\n' >&2; exit 2; }
+  fi
 fi
 
 # Resolve scaffold.sh + templates (defaults relative to this script: templates/lib/wrap.sh).
@@ -167,6 +193,20 @@ _restore_from_dir() {
     [ -n "$e" ] || continue
     mv -- "$e" ./ 2>/dev/null || warn "rollback: could not move $e back"
   done
+}
+
+# Greenfield-only restore: move back ONLY the entries that were originally moved
+# (never .git or the synthetic README this mode writes — those never existed at
+# the root), then rm -rf the whole $NAME dir. Unlike wrap's _restore_from_dir,
+# this must NOT sweep every top-level entry of $NAME back — that would drag the
+# .git this mode created out into the workspace root as a loose directory.
+_restore_greenfield() {
+  local m
+  for m in $MOVE_LIST; do
+    [ -n "$m" ] || continue
+    [ -e "$NAME/$m" ] && { mv -- "$NAME/$m" ./ 2>/dev/null || warn "rollback: could not move $m back"; }
+  done
+  rm -rf -- "$NAME" 2>/dev/null || warn "rollback: could not remove $NAME"
 }
 
 # Delete scaffold outputs left at root (everything EXCEPT the wrapped subfolder and
@@ -200,14 +240,22 @@ rollback_and_exit() {
       ;;
     renamed)
       # staging was renamed to <name>; move its entries back, drop <name>
-      _restore_from_dir "$NAME"
-      rmdir "$NAME" 2>/dev/null || true
+      if [ "$GREENFIELD" -eq 1 ]; then
+        _restore_greenfield
+      else
+        _restore_from_dir "$NAME"
+        rmdir "$NAME" 2>/dev/null || true
+      fi
       ;;
     scaffolding)
       # scaffold (partly) ran; delete its outputs, then move <name> back
       _delete_scaffold_outputs
-      _restore_from_dir "$NAME"
-      rmdir "$NAME" 2>/dev/null || true
+      if [ "$GREENFIELD" -eq 1 ]; then
+        _restore_greenfield
+      else
+        _restore_from_dir "$NAME"
+        rmdir "$NAME" 2>/dev/null || true
+      fi
       ;;
   esac
   # Drop the (now-stale) manifest: post-rollback the paths it lists (.git,
@@ -452,6 +500,63 @@ preflight() {
   info "preflight OK — HEAD=${PRE_HEAD:-<none>} branch=${PRE_BRANCH:-<detached>}"
 }
 
+# Names greenfield refuses to use for <N> — they clash with a path scaffold.sh
+# itself owns at the workspace root; a sub-repo with one of these names could
+# never coexist with the workspace it is about to be scaffolded into.
+GREENFIELD_RESERVED_NAMES="scripts governor queue logs validation .worktrees .claude node_modules"
+# Top-level entries a greenfield run never offers to move — they are either the
+# reserved names above or paths a fresh setup run legitimately leaves at root
+# (agent/session state, specs, plans) and must not fold into the new sub-repo.
+GREENFIELD_RESERVED_ENTRIES=".git .claude .omc .specs .plans node_modules scripts governor queue logs validation .worktrees"
+
+greenfield_preflight() {
+  log "greenfield preflight (all fail-closed) — $WORKSPACE_DIR"
+
+  local mode; mode="$(detect_mode)"
+  [ "$mode" = "fresh" ] || refuse "not a greenfield folder (detect_mode=$mode) — greenfield only applies where detect_mode is fresh (no existing repo, no existing workspace)."
+
+  case "$NAME" in
+    .*) refuse "greenfield name '$NAME' cannot start with '.'." ;;
+    */*) refuse "greenfield name '$NAME' cannot contain '/'." ;;
+  esac
+  local r
+  for r in $GREENFIELD_RESERVED_NAMES; do
+    if [ "$NAME" = "$r" ]; then
+      printf 'COLLISION: "%s" is a workspace-owned path — choose a different sub-repo name.\n' "$NAME" >&2
+      exit 4
+    fi
+  done
+
+  # 9 — subfolder name collision, case-insensitively (same check as wrap's).
+  local existing
+  existing="$(find . -maxdepth 1 -mindepth 1 -iname "$NAME" 2>/dev/null | head -1)"
+  if [ -n "$existing" ]; then
+    printf 'COLLISION: an entry named "%s" already exists here — choose a different sub-repo name.\n' "$(basename "$existing")" >&2
+    exit 4
+  fi
+
+  # 10 — no pre-existing wrap artifacts.
+  if [ -e "$UNDO_FILE" ]; then refuse "$UNDO_FILE already exists — remove it first (a stale one would be clobbered)."; fi
+  if [ -e "$MANIFEST_FILE" ]; then refuse "$MANIFEST_FILE already exists — remove it first."; fi
+  if ls -d $STAGING_GLOB >/dev/null 2>&1; then refuse "a $STAGING_GLOB staging dir already exists — remove it first."; fi
+
+  [ -w "$WORKSPACE_DIR" ] || refuse "$WORKSPACE_DIR is not writable."
+
+  # Print the loose top-level entries, classified, so the caller can render a
+  # choice without parsing `ls` itself. Reserved entries are never movable.
+  local e b
+  while IFS= read -r -d '' e; do
+    b="$(basename "$e")"
+    case "$b" in "$UNDO_FILE"|"$MANIFEST_FILE") continue ;; esac
+    case " $GREENFIELD_RESERVED_ENTRIES " in
+      *" $b "*) printf 'loose=%s|reserved\n' "$b" ;;
+      *)        printf 'loose=%s|movable\n' "$b" ;;
+    esac
+  done < <(find . -maxdepth 1 -mindepth 1 -print0)
+
+  info "greenfield preflight OK — $WORKSPACE_DIR ready to become $NAME/"
+}
+
 # ── The move ─────────────────────────────────────────────────────────────────
 write_undo_script() {
   # Written BEFORE any move so a hard crash still leaves a usable undo. It reads
@@ -554,6 +659,111 @@ verify_move() {
   info "move verified — repo intact at $NAME/"
 }
 
+write_greenfield_undo_script() {
+  # Written BEFORE any move, same lifeline discipline as write_undo_script. Differs
+  # in what it restores: it moves back ONLY the entries this run originally moved
+  # (never .git or the synthetic README — neither existed at the root before this
+  # run), then removes <name>/ entirely. There is no pre-existing repo to preserve.
+  cat > "$UNDO_FILE" <<UNDO
+#!/usr/bin/env bash
+# .wrap-undo.sh — reverse a shiploop greenfield scaffold. Safe to run from the
+# workspace root. Deletes ONLY the scaffold-created paths listed in .wrap-manifest,
+# moves the entries this run moved back to root, then removes <name>/ entirely —
+# including the .git this mode created, since (unlike wrap-in-place) there is no
+# pre-existing repo underneath it to preserve.
+set -uo pipefail
+cd "\$(dirname "\$0")" || exit 1
+SUBDIR="$NAME"
+
+# 1. delete scaffold-created paths (explicit manifest — never a blind wipe)
+if [ -f .wrap-manifest ]; then
+  while IFS= read -r p; do
+    [ -n "\$p" ] || continue
+    case "\$p" in "\$SUBDIR"|.wrap-undo.sh|.wrap-manifest) continue ;; esac
+    rm -rf -- "\$p" 2>/dev/null || echo "undo: could not remove \$p" >&2
+  done < .wrap-manifest
+fi
+
+# 2. move back only the originally-moved entries, then drop <name>/ wholesale
+for e in $MOVE_LIST; do
+  [ -e "\$SUBDIR/\$e" ] && { mv -- "\$SUBDIR/\$e" ./ || echo "undo: could not move \$e back" >&2; }
+done
+rm -rf -- "\$SUBDIR"
+for s in .wrap-staging.*; do rm -rf -- "\$s"; done
+
+# 3. remove manifest + self
+rm -f .wrap-manifest
+rm -f -- "\$0"
+echo "un-scaffolded: original layout restored."
+UNDO
+  chmod +x "$UNDO_FILE"
+  log "wrote undo script: $WORKSPACE_DIR/$UNDO_FILE (run it to reverse the greenfield scaffold before completion)"
+}
+
+do_greenfield_move() {
+  STAGING=".wrap-staging.$$"
+  mkdir "$STAGING" || abort "could not create staging dir $STAGING"
+
+  write_greenfield_undo_script
+
+  PHASE="moving"
+  local -a entries=()
+  local e
+  for e in $MOVE_LIST; do
+    [ -n "$e" ] || continue
+    [ -e "$e" ] || abort "cannot move '$e' — no such entry at $WORKSPACE_DIR"
+    entries+=("$e")
+  done
+  local moved=0
+  for e in "${entries[@]:-}"; do
+    [ -n "$e" ] || continue
+    mv -- "$e" "$STAGING/" || abort "move failed for $e"
+    moved=$((moved+1))
+    if [ "${WRAP_TEST_FAIL_AT:-}" = "moving" ] && [ "$moved" -ge 1 ]; then
+      abort "test-injected failure during moving"
+    fi
+  done
+  info "moved $moved entr$([ "$moved" = 1 ] && echo y || echo ies) into staging"
+
+  PHASE="pre-rename"
+  [ "${WRAP_TEST_FAIL_AT:-}" = "pre-rename" ] && abort "test-injected failure before rename"
+
+  mv -- "$STAGING" "$NAME" || abort "could not rename staging to $NAME"
+  PHASE="renamed"
+  [ "${WRAP_TEST_FAIL_AT:-}" = "renamed" ] && abort "test-injected failure after rename"
+
+  git init -q -- "$NAME" || abort "git init failed in $NAME"
+
+  # If nothing but .git landed in <N>, write a one-line README so there is
+  # something to commit.
+  if [ -z "$(find "$NAME" -mindepth 1 -maxdepth 1 ! -name .git -print -quit)" ]; then
+    printf '# %s\n' "$NAME" > "$NAME/README.md"
+  fi
+
+  (
+    cd "$NAME" || exit 1
+    git add -A || exit 1
+    if git config user.email >/dev/null 2>&1; then
+      git commit -q -m "init: greenfield scaffold"
+    else
+      git -c user.email=scaffold@shiploop -c user.name=scaffold commit -q -m "init: greenfield scaffold"
+    fi
+  ) || abort "initial commit failed in $NAME"
+}
+
+verify_greenfield() {
+  log "verify greenfield init ($NAME/.git created, clean initial commit)"
+  [ -d "$NAME/.git" ] || abort "git init did not create $NAME/.git"
+  # PRE_HEAD is verify_final's shared drift check (used by both modes) — seed it
+  # here with the commit this run just created, since greenfield has no PRE-move
+  # HEAD to compare against.
+  PRE_HEAD="$(git -C "$NAME" rev-parse HEAD 2>/dev/null || echo '')"
+  [ -n "$PRE_HEAD" ] || abort "no commit found in $NAME after git init"
+  local st; st="$(git -C "$NAME" status --porcelain 2>/dev/null || true)"
+  [ -z "$st" ] || abort "git status not clean in $NAME after the initial commit"
+  info "greenfield verified — $NAME/ is a clean git repo"
+}
+
 # ── Scaffold + manifest ──────────────────────────────────────────────────────
 run_scaffold() {
   # Seed the manifest with the KNOWN scaffold top-level paths BEFORE scaffold runs,
@@ -615,21 +825,44 @@ verify_final() {
 # ── Main ─────────────────────────────────────────────────────────────────────
 trap on_signal INT TERM
 
-preflight
+if [ "$GREENFIELD" -eq 1 ]; then
+  greenfield_preflight
 
-if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
-  log "preflight-only: all checks pass — nothing moved. Safe to wrap."
-  exit 0
+  if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
+    log "preflight-only: all checks pass — nothing moved. Safe to scaffold as $NAME/."
+    exit 0
+  fi
+
+  log "greenfield scaffold — a new sub-repo will be created at $NAME/"
+  do_greenfield_move
+  verify_greenfield
+
+  # Compute repos_spec now that the move landed — detection must run AFTER the
+  # move, or a package.json that just moved in is invisible.
+  DET_OUT="$(bash "$SCRIPT_DIR/detect-inputs.sh" --workspace-dir "$WORKSPACE_DIR" --mode fresh)" \
+    || abort "detect-inputs.sh failed after greenfield init"
+  REPOS_SPEC="$(printf '%s\n' "$DET_OUT" | sed -n 's/^repos_spec=//p')"
+  [ -n "$REPOS_SPEC" ] || abort "detect-inputs.sh found no repos_spec for $NAME after greenfield init"
+
+  run_scaffold
+  verify_final
+else
+  preflight
+
+  if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
+    log "preflight-only: all checks pass — nothing moved. Safe to wrap."
+    exit 0
+  fi
+
+  log "wrapping $WORKSPACE_DIR — repo will move into $NAME/"
+  # Clear stale (prunable) worktree pointers so they don't ride along into the moved
+  # repo. Only dead-gitdir pointers are removed; live worktrees were refused in preflight.
+  git worktree prune 2>/dev/null || true
+  do_move
+  verify_move
+  run_scaffold
+  verify_final
 fi
-
-log "wrapping $WORKSPACE_DIR — repo will move into $NAME/"
-# Clear stale (prunable) worktree pointers so they don't ride along into the moved
-# repo. Only dead-gitdir pointers are removed; live worktrees were refused in preflight.
-git worktree prune 2>/dev/null || true
-do_move
-verify_move
-run_scaffold
-verify_final
 
 # Success: retire the undo lifeline (unless asked to keep it).
 PHASE="done"
@@ -641,5 +874,9 @@ else
   rm -f "$UNDO_FILE" "$MANIFEST_FILE"
 fi
 
-log "wrap-in-place complete: $WORKSPACE_DIR/  (repo now at $NAME/)"
+if [ "$GREENFIELD" -eq 1 ]; then
+  log "greenfield scaffold complete: $WORKSPACE_DIR/  (new repo at $NAME/)"
+else
+  log "wrap-in-place complete: $WORKSPACE_DIR/  (repo now at $NAME/)"
+fi
 exit 0

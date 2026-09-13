@@ -79,6 +79,9 @@ echo "mode: $MODE"
 | `refuse:below-root` | inside a git repo, below its root | STOP — "cd to the repo root and re-run" (print root path) |
 | `refuse:bare` | bare repository | STOP — nothing to wrap |
 
+`fresh` with **zero** sub-repos detected in Phase 1 does not stop — it routes to **Phase G**
+(greenfield), which materializes the first sub-repo itself.
+
 Back-compat: an older meta-repo predating `scripts/lib/workspace.sh` but with a `package.json` whose
 `"doctor"` script is `"bash scripts/doctor.sh"` is still **upgrade** even though `--detect` returns
 `fresh` — treat as BUMP MODE (scaffold.sh re-parameterizes the core scripts). Very old installs also
@@ -239,8 +242,8 @@ It scans every `*/` with its own `.git`; detects port + dev command (package.jso
 marks visibility (`PUBLIC` enables auto-externalization; `unknown` = no `gh`, treat as private). Only
 override a value you can SEE is wrong.
 
-**Zero `repo=` lines** → stop, tell the operator to add at least one sub-repo (its own `.git`). **One
-sub-repo is enough** — a single-repo workspace is fully valid; don't nudge toward a multi-repo split.
+**Zero `repo=` lines** → **Phase G**. **One sub-repo is enough** — a single-repo workspace is fully
+valid; don't nudge toward a multi-repo split.
 
 **The single interview:** print the detected table (repos, ports, dev commands, org, root PM,
 worktree base) with *"these apply as shown — pick Other to override, or name extra repo clone URLs to
@@ -256,6 +259,92 @@ add them"*, then ONE `AskUserQuestion` call:
    — `enable auto-externalization of Low tickets`.
 
 Everything after this runs WITHOUT pausing.
+
+## Phase G — Greenfield (fresh mode, zero sub-repos)
+
+A folder with loose source and no `.git` anywhere cannot be started under shiploop without hand-
+building the first sub-repo first — `/shiploop:setup` materializes it instead. Gather everything
+first (G0), then run the single interview (G1). Do NOT ask anything before G1.
+
+### G0 — Detect + preflight (ONE combined bash call)
+
+```bash
+DEFAULT_NAME="$(basename "$(pwd)")"
+DET="$(bash "$PLUGIN_ROOT/templates/lib/detect-inputs.sh" --workspace-dir "$(pwd)" --mode fresh)"
+bash "$WRAP" --greenfield --preflight --workspace-dir "$(pwd)" --name "$DEFAULT_NAME"
+# → loose=<entry>|movable / loose=<entry>|reserved, one line per top-level entry
+```
+
+`detect-inputs.sh --mode fresh` still runs here even though it will find zero `repo=` lines (that IS
+the trigger for Phase G) — its `root_pm=` / `worktree_base=` output is still needed. `wrap.sh
+--greenfield --preflight` is read-only and lists every top-level entry classified `movable` or
+`reserved`; reserved entries (`.git`, `.claude`, `.omc`, `.specs`, `.plans`, `node_modules`, and the
+workspace-owned paths `scripts`/`governor`/`queue`/`logs`/`validation`/`.worktrees`) are never offered
+as move candidates.
+
+- **exit 4** (name collision) → pick the next default (`<name>-app`), re-run preflight. Don't pause.
+- **exit 3** (hard refusal — not actually fresh, e.g. a repo appeared mid-session) → print verbatim
+  and STOP.
+- **exit 0** → clean, proceed to G1.
+
+### G1 — The single interview (the ONLY pause)
+
+Print in one message: (a) a one-paragraph explanation — this creates `<name>/` as a new git repo
+seeded from whichever loose top-level entries you pick, then scaffolds the workspace root around it,
+same guarded rollback machinery as wrap-in-place; (b) the detected-defaults table (sub-repo name,
+GitHub org, root PM, worktree base) with *"these apply as shown — say so if you want something
+different"*, then (c) ONE `AskUserQuestion` call, four questions:
+
+1. **Proceed?** — `create <DEFAULT_NAME> from the selected files (recommended)` / `cancel`.
+2. **Sub-repo name** — `<DEFAULT_NAME>` (default) / `Other` (free text; re-run G0's preflight against
+   the new name before G2 if it differs).
+3. **GitHub org** — the value `gh api user -q .login` returned when `gh` is available (default) /
+   `Other`. Required — scaffold dies without it.
+4. **What goes into `<name>/`, plus the standard extras** (multiSelect) — one `move: <entry>` option
+   per G0 `loose=<entry>|movable` line, all preselected; plus the shared interview content that a
+   single-sub-repo flow reduces to toggles (autonomy rung has no separate question here since there
+   is only ever one sub-repo to allowlist, mirroring W1's "auto allowlists THIS repo" fold): `autonomy:
+   observe` / `autonomy: pr-only (default)` / `autonomy: auto` (pick at most one; none picked =
+   pr-only), `run <ROOT_PM> install + doctor at the end (recommended)`, `file a starter ticket if a
+   small tractable one surfaces (recommended)`, and — only when the org lookup found a `gh` session
+   — `enable auto-externalization of Low tickets` once the new repo is pushed public.
+
+`cancel` → stop. Everything after this point runs WITHOUT pausing.
+
+Build `MOVE_SPEC` from the selected `move:` options (space-separated entry names, matching `wrap.sh
+--move`'s interface). `REPOS_SPEC` is NOT built here — greenfield computes it itself, after the move,
+inside G2's `wrap.sh` call (see `templates/lib/wrap.sh`'s greenfield mode: `detect-inputs.sh` re-runs
+post-move because a `package.json` that just moved in is invisible before then).
+
+### G2 — Invoke wrap.sh --greenfield (single guarded call)
+
+```bash
+bash "$WRAP" \
+  --greenfield \
+  --workspace-dir "$(pwd)" \
+  --name "$NAME" \
+  --pm "$ROOT_PM" --org "$ORG" \
+  --move "$MOVE_SPEC" \
+  --merge-allowlist "$GOVERN_MERGE_REPOS" \
+  --worktree-base "$WORKTREE_BASE" \
+  --confirm-live-writer \
+  --yes
+# exit 0 = scaffolded; 3 = hard refusal; 4 = name collision; 1 = rolled back
+```
+
+Setup itself never runs `mkdir`, `mv`, or `git init` — wrap.sh owns every filesystem step, same
+discipline as W2. Branch on exit codes exactly as W2 does:
+- **0** → continue to G3.
+- **3** / **4** / **1** → same handling as W2's corresponding codes (print verbatim and stop / re-name
+  and retry / print the rollback reason and stop, don't retry blindly).
+
+### G3 — Hooks, verify, report
+
+Identical finalization to W4 — one combined bash block (sub-repo commit hooks via `githooks.sh`,
+`config-check.sh`), then the interview's extras (install + doctor), then continue to the normal
+**Phase 4** starter-ticket step and **Phase Z** report. The new sub-repo is already gitignored at root
+and was NOT swept into the root commit — wrap.sh asserts both before removing the undo script, same
+as wrap mode.
 
 ## Interview content shared by BOTH modes
 
