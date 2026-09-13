@@ -85,11 +85,11 @@ production.
 ## Lever attribution counts occurrences; it does not price them
 
 Section "Attribution inside the treatment arm" (`README.md`) reads `lever-events.jsonl` against an
-explicit five-name allow-list, and separately counts a malformed line and an unrecognized event
+explicit three-name allow-list, and separately counts a malformed line and an unrecognized event
 name — never silently dropping either. It does **not** convert any of those counts into a token or
 dollar credit: there is currently no live per-class token-estimate table anywhere in this
-repository (a would-be constant for exactly that was calibrated on the wrong worker shape and was
-deleted rather than carried forward unfixed — see `bench/LEVER-EVENTS.md`'s `scripted-action` entry).
+repository, and none of the three events carries a class needing one: each prices directly off its
+own fields (`ctxTokens`, `checkpointTokens`/`freshStartTokens`, `withheldBytes`).
 A run with no `lever-events.jsonl` at all is reported as uninstrumented, never as a measured zero.
 
 A live interactive session (the shape the with-shiploop arm's advisor and its worker subagents run
