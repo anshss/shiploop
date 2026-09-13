@@ -26,6 +26,7 @@ test-reconcile-update
 test-scaffold-verify-standalone
 test-scaffold-teammate-idle-hook
 test-detect-inputs
+test-greenfield
 test-events-monitor
 test-vocab-agent-worker
 
