@@ -7,7 +7,7 @@
 # ---------------
 # Worktrees accumulate from two directions and neither is a bug in worktree:rm:
 #
-#   1. spawn-worker.sh PRESERVES the worktree for parked/failed tickets on purpose, you
+#   1. A worker PRESERVES its worktree for parked/failed tickets on purpose, you
 #      want the evidence when you come back to it. Nothing ever ages those out.
 #   2. Worktrees created BY HAND (`<pm> run worktree:new -- <slug>` from a session) have
 #      no cleanup path at all. resolve-ticket.sh only ever removes the one it just landed.

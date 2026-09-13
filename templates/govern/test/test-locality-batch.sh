@@ -14,8 +14,11 @@
 #   (F) per-ticket outcome mapping is FAIL-CLOSED: only an explicit `resolved` entry in the report's
 #       `tickets` array maps to resolved; a different status, a missing entry, an empty array and an
 #       unparseable report all map to "" (⇒ the caller leaves the ticket in tickets.md).
-#   (G) spawn-worker.sh accepts co-batched ticket numbers, folds their blocks into the prompt, and
-#       injects the per-ticket report contract — while a single-ticket spawn stays unbatched.
+# These functions folded co-batched tickets into one dispatch, amortizing exploration cost across
+# them; the dispatch side that called them (accepting multiple ticket numbers on one spawn, folding
+# their blocks into the prompt) lived in the headless dispatch launcher, retired along with it. The
+# interactive lane dispatches ONE ticket per worker (`.claude/agents/worker.md`), so batching has no
+# current caller — these functions and their tests stay in case a future dispatcher wants them.
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network, no worker spawned.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,63 +149,5 @@ assert_eq "$(govern::batch_ticket_status '{"status":"resolved","tickets":[]}' 9)
 assert_eq "$(govern::batch_ticket_status '{"status":"resolved"}' 9)"             "" "F7: no tickets array at all ⇒ '' (legacy single-ticket report)"
 assert_eq "$(govern::batch_ticket_status 'not json at all' 9)"                   "" "F8: unparseable report ⇒ '' — fail closed, never resolved"
 assert_eq "$(govern::batch_ticket_status '{"tickets":[{"ticket":9}]}' 9)"        "" "F9: entry present but status missing ⇒ ''"
-
-# ── (G) spawn-worker.sh folds a batch into the prompt ──────────────────────
-# Same prompt-capture seam test-pr-footer.sh / test-spawn-worker.sh use: a fake `claude` that dumps
-# the assembled prompt (the arg after -p) to a sink, plus a fake worktree cmd. No worker is launched.
-if command -v jq >/dev/null 2>&1; then
-  SW="$DIR/../spawn-worker.sh"
-  mkdir -p "$ROOT/ws/governor" "$ROOT/wt"
-  printf 'Resolve EXACTLY ONE ticket.\n\n{{TICKET_BLOCK}}\n\nreport: {{REPORT_PATH}}\n' > "$ROOT/ws/governor/worker-prompt.md"
-  printf 'DOCTRINE-MARKER\n' > "$ROOT/ws/governor/preferences.md"
-  cat > "$ROOT/fake-worktree.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$ROOT/wt/\$1"; echo "$ROOT/wt/\$1"
-EOF
-  chmod +x "$ROOT/fake-worktree.sh"
-  cat > "$ROOT/fake-claude.sh" <<EOF
-#!/usr/bin/env bash
-prompt=""
-while [[ \$# -gt 0 ]]; do [[ "\$1" == "-p" ]] && { prompt="\$2"; shift 2; continue; }; shift; done
-printf '%s' "\$prompt" > "\${PROMPT_SINK:?}"
-report='{"status":"resolved","pr":{"repo":"alpha","number":99,"url":"u"},"newTickets":[],"escalation":null}'
-[[ -n "\${GOVERN_REPORT_PATH:-}" ]] && printf '%s' "\$report" > "\$GOVERN_REPORT_PATH"
-printf '{"type":"result","result":%s}\n' "\$(printf '%s' "\$report" | jq -Rs .)"
-EOF
-  chmod +x "$ROOT/fake-claude.sh"
-
-  run_spawn() { # <sink> <ticket...>  — prompt lands in <sink>
-    local sink="$1"; shift
-    env PROMPT_SINK="$sink" \
-      GOVERN_TICKETS_FILE="$TF" \
-      GOVERN_PREFERENCES_FILE="$ROOT/ws/governor/preferences.md" \
-      GOVERN_WORKER_PROMPT_FILE="$ROOT/ws/governor/worker-prompt.md" \
-      GOVERN_LOG_ROOT="$ROOT/logs-$(basename "$sink")" \
-      GOVERN_WORKTREE_CMD="$ROOT/fake-worktree.sh" \
-      GOVERN_CLAUDE_BIN="$ROOT/fake-claude.sh" \
-      "$SW" "$@" >/dev/null
-    cat "$sink"
-  }
-
-  batched="$(run_spawn "$ROOT/p-batch" 1 2 3)"
-  assert_contains "$batched" "## #1, spawn-worker knob"      "G1: primary ticket block present"
-  assert_contains "$batched" "## #2 — bookkeep field"     "G2: batched ticket #2 block folded in"
-  assert_contains "$batched" "## #3 — spawn-worker retry" "G3: batched ticket #3 block folded in"
-  assert_contains "$batched" "LOCALITY BATCH"             "G4: batch addendum overrides 'EXACTLY ONE ticket'"
-  assert_contains "$batched" '"tickets": ['               "G5: per-ticket report contract injected"
-  assert_contains "$batched" "#1, #2, #3"                 "G6: the group roster is stated to the worker"
-
-  single="$(run_spawn "$ROOT/p-single" 1)"
-  assert_contains "$single" "## #1, spawn-worker knob"  "G7: single spawn still carries its block"
-  assert_absent   "$single" "LOCALITY BATCH"         "G8: a single-ticket spawn is NOT batched"
-  assert_absent   "$single" "## #2 — bookkeep field" "G9: …and carries no other ticket's block"
-
-  # A batched number no longer in tickets.md (a concurrent driver resolved it) is DROPPED, not fatal.
-  gone="$(run_spawn "$ROOT/p-gone" 1 999)"
-  assert_contains "$gone" "## #1, spawn-worker knob" "G10: an already-resolved batch member does not fail the spawn"
-  assert_absent   "$gone" "LOCALITY BATCH"        "G11: …and the group collapses back to a plain single spawn"
-else
-  printf 'skip - G: jq not installed\n'
-fi
 
 assert_done

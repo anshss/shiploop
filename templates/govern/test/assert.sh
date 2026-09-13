@@ -78,7 +78,7 @@ export GOVERN_GOTCHA_INJECT=0        # CLAUDE.md/learnings.md **Paths:** gotcha 
                                       # existing tests (test-claudemd-trim.sh etc.) write their OWN CLAUDE.md at
                                       # the stub root for unrelated reasons; a coincidental `### `+`**Paths:**`
                                       # match there must never leak into an unrelated test's assembled prompt.
-                                      # Its own test (test-spawn-gotcha-inject.sh) opts back in.
+                                      # Its own test (test-gotchas-for-paths.sh) opts back in.
 export GOVERN_ADVISOR=0              # the advisor consult kill switch. Already the
                                       # script's own default, restated here per the GOVERN_FIX_CI precedent
                                       # (a live governor session's exported env must never leak into a suite

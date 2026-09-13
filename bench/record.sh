@@ -267,11 +267,11 @@ bench::read_lever_events() { # <lever-events.jsonl> -> {instrumented, events:{na
   return 0
 }
 
-# `worker_model_clamped` is a FLEET event (govern::event, GOVERN_EVENTS), never a lever event — it
-# is emitted from spawn-worker.sh's own model-ceiling check, not from govern::emit_lever_event, so
-# it never appears in lever-events.jsonl. It is the exact mirror of the retired `escalation` lever
-# (spec section 7 item 4) and was measured nowhere before this: a run that has GOVERN_EVENTS=1 set
-# gets a real count here, one that does not gets an honest 0, never a guess.
+# `worker_model_clamped` is a FLEET event (govern::event, GOVERN_EVENTS), never a lever event, so it
+# never appears in lever-events.jsonl. It was emitted from the headless dispatch launcher's own
+# model-ceiling check; that launcher is retired and nothing currently emits this event, so this
+# counter reads an honest 0 on any run dispatched since — never a guess, but no longer a live signal
+# either. It is the exact mirror of the retired `escalation` lever (spec section 7 item 4).
 bench::count_model_clamps() { # <governor/events.jsonl> -> count of worker_model_clamped rows
   local f="$1" n
   [[ -f "$f" ]] || { printf '0\n'; return 0; }

@@ -97,9 +97,9 @@ agents". In shiploop they mean exactly this:
 
 | Term | Definition |
 |---|---|
-| **governor** | The deterministic script layer under `scripts/govern/`: `pre-dispatch-check.sh` gates a ticket, `spawn-worker.sh` spawns its worker, `resolve-ticket.sh` awaits CI, merges, and lands the resolution. It owns state and control flow deterministically and never calls a model itself; deciding *when* to run it is the driver's job. |
-| **driver** | The orchestrating session: your interactive Claude Code session, or a headless one running the same three governor scripts with no session open. A driver dispatches and relays verdicts; it does not bulk-read product source. |
-| **worker** | The trim, single-ticket session. One definition, **two lanes**: the *headless* lane is the `claude -p` session `spawn-worker.sh` launches with no session open, the *interactive* lane is `Agent(subagent_type: "worker")` in your own session. Both run the same doctrine at the same model floor in their own worktree, and both end at a PR plus a structured report. Never used for any other kind of child. |
+| **governor** | The deterministic script layer under `scripts/govern/`: `pre-dispatch-check.sh` gates a ticket, `resolve-ticket.sh` awaits CI, merges, and lands the resolution. It owns state and control flow deterministically and never calls a model itself; deciding *when* to run it is the driver's job. |
+| **driver** | The orchestrating session: your interactive Claude Code session. A driver dispatches and relays verdicts; it does not bulk-read product source. |
+| **worker** | The trim, single-ticket session: an `Agent(subagent_type: "worker")` subagent in your own session, running at a fixed model floor in its own worktree, ending at a PR plus a structured report. Never used for any other kind of child. |
 | **scout** | The cheap pre-dispatch survey pass (haiku). It only surveys: verified file paths, whether tests cover the area, whether history holds a precedent commit. Cached per run, so a retry never re-scouts. |
 | **supervisor** | The review pass over a run's state (`npm run govern:audit`, `GOVERN_SUPERVISOR_MODEL`). It can return a `halt` verdict; it never edits code. |
 | **subagent** | The platform's own term for an Agent-tool child that is **not** `subagent_type: "worker"` (the shipped `lookup` and `investigator` agent types, or a stock `Agent` call). Sized per the delegation table for investigation, sweeps, and diagnosis. A subagent is never called a worker, and ticket-shaped work never goes to one. |

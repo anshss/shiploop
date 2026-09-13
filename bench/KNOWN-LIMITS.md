@@ -203,6 +203,7 @@ calls a version- or driver-model-stamping function on that directory: the two st
 used to write (`shiploop-version`, `driver-model`) existed to feed a corpus-modeling reader, and this
 design's own reader gets the model directly off the session's `result` event and forwarded subagent
 messages instead of a sibling stamp file. `govern::stamp_run_version` / `govern::stamp_driver_model`
-(`templates/govern/lib/common.sh`) themselves are unchanged and still called from
-`spawn-worker.sh`'s own dispatch path — they are a general governor mechanism, not bench's to
-retire, and whether they still have a live consumer outside bench is tracked separately.
+(`templates/govern/lib/common.sh`) themselves are unchanged — they are a general governor mechanism,
+not bench's to retire — but neither has a known live caller any more (verified by grep: bench/arms.sh
+stopped calling them per this section, and the headless dispatch launcher that used to is deleted),
+so whether they are worth keeping at all is tracked separately.

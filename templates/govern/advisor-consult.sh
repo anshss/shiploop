@@ -31,10 +31,9 @@
 # three of the bounded-by-construction caps. GOVERN_ADVISOR_BUDGET, when set, overrides the per-worker
 # cap for this dispatch only, scaled by how well-specified the work is (NEVER zero — every grade gets
 # at least one consult): GOVERN_ADVISOR_PER_WORKER_OPEN's default 3, plain GOVERN_ADVISOR_PER_WORKER's
-# default 2 for scoped, GOVERN_ADVISOR_PER_WORKER_STATED's default 1. The headless launcher
-# (spawn-worker.sh) sets it from the ticket's precision grade before the live spawn; the interactive
-# lane has no launcher, so its own worker (`.claude/agents/worker.md`) sets it inline on the
-# `claim` invocation itself, after reading the grade off the ticket the same way. Unset (grade
+# default 2 for scoped, GOVERN_ADVISOR_PER_WORKER_STATED's default 1. There is no launcher to
+# pre-compute this, so the worker (`.claude/agents/worker.md`) sets it inline on the `claim`
+# invocation itself, after reading the ticket's precision grade off the ticket. Unset (grade
 # genuinely unreadable) falls back to plain GOVERN_ADVISOR_PER_WORKER, the same nonzero default
 # every grade is built on top of.
 set -euo pipefail

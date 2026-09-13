@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Regression: stopping/killing a worker must leave ZERO surviving
-# spawn-worker / claude children. Before the fix, SIGTERM on spawn-worker.sh left its
-# child `claude -p` (and tool grandchildren) ALIVE — reparented to init, needing a manual `kill -9`
-# sweep; a worker orphaned mid-task could keep holding a billable resource. The fix runs the worker
-# `claude` in its OWN process group and installs INT/TERM/EXIT traps in spawn-worker.sh that
-# tear the whole subtree down on stop. Hermetic + generic (alpha auto-merge, web frontend; org acme).
+# Regression: stopping/killing a worker must leave ZERO surviving process children. The fix runs a
+# spawned `claude` in its OWN process group so a supervisor's teardown (govern::kill_tree) can reap
+# the whole subtree — leader plus grandchildren — rather than leaving them reparented to init,
+# needing a manual `kill -9` sweep, or holding a billable resource. Hermetic + generic (alpha
+# auto-merge, web frontend; org acme).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-SPAWN="$DIR/../spawn-worker.sh"
 
 # A live-process assertion: pid file exists, recorded pid is NOT alive.
 assert_dead() { # pidfile message
@@ -44,61 +42,5 @@ wait_gone "$lead" 50; [[ -n "$grand" ]] && wait_gone "$grand" 50
 assert_dead "$T0/marks/leader.pid" "kill_tree reaps the process-group leader"
 assert_dead "$T0/marks/grand.pid"  "kill_tree reaps the GRANDCHILD (subtree teardown)"
 rm -rf "$T0"
-
-# ── End-to-end: SIGTERM the spawn-worker → claude + grandchild torn down ──
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; pkill -f "$TMP/fake-claude" 2>/dev/null || true' EXIT
-mk_ws_stub "$TMP"
-mkdir -p "$TMP/governor" "$TMP/wt" "$TMP/marks"
-printf '## #7 — sample\n**Severity:** Medium.\n---\n' > "$TMP/tickets.md"
-printf 'DOC\n' > "$TMP/governor/preferences.md"
-printf 'P {{TICKET_BLOCK}} {{REPORT_PATH}}\n' > "$TMP/governor/worker-prompt.md"
-cat > "$TMP/wt.sh" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$TMP/wt/\$1"; echo "$TMP/wt/\$1"
-EOF
-chmod +x "$TMP/wt.sh"
-
-# Fake claude modelling a real worker tree: records its own pid, forks a long-lived GRANDCHILD (a
-# tool/deploy child) recording ITS pid, then sleeps far past teardown. An orphaned grandchild is
-# the leak this regression closes.
-cat > "$TMP/fake-claude" <<EOF
-#!/usr/bin/env bash
-echo \$\$ > "$TMP/marks/claude.pid"
-( echo \$\$ > "$TMP/marks/grandchild.pid"; exec sleep 300 ) &
-sleep 300
-EOF
-chmod +x "$TMP/fake-claude"
-
-# _GOVERN_EDP_SUPPORTED=1 + _GOVERN_TOOLS_SUPPORTED=1: skip BOTH --help capability probes. Each
-# one invokes $claude_bin, so an un-seeded probe is an extra fake-claude call — the --help capability probe (common.sh test seam). Without it the
-# probe runs `fake-claude --help` BEFORE $cpid is assigned below — this stub has no arg handling,
-# so it forks its grandchild and sleeps regardless of args, and a probe invocation racing ahead of
-# the real spawn left the SIGTERM trap tearing down an empty $cpid (a no-op) while the probe's own
-# fake-claude process leaked. Pre-seeding the seam removes the probe call entirely.
-GOVERN_TICKETS_FILE="$TMP/tickets.md" \
-  GOVERN_PREFERENCES_FILE="$TMP/governor/preferences.md" \
-  GOVERN_WORKER_PROMPT_FILE="$TMP/governor/worker-prompt.md" \
-  GOVERN_LOG_ROOT="$TMP/logs" \
-  GOVERN_WORKTREE_CMD="$TMP/wt.sh" \
-  GOVERN_CLAUDE_BIN="$TMP/fake-claude" \
-  GOVERN_WORKER_TIMEOUT=120 \
-  _GOVERN_EDP_SUPPORTED=1 \
-  _GOVERN_TOOLS_SUPPORTED=1 \
-  "$SPAWN" 7 >/dev/null 2>&1 </dev/null &
-sw_pid=$!
-wait_file "$TMP/marks/grandchild.pid" 50
-[[ -s "$TMP/marks/claude.pid" ]] && cpid="$(cat "$TMP/marks/claude.pid")" || cpid=""
-gpid="$(cat "$TMP/marks/grandchild.pid" 2>/dev/null || true)"
-if [[ -n "$cpid" ]] && kill -0 "$cpid" 2>/dev/null; then printf 'ok   - worker claude tree is up before signal\n'; else printf 'FAIL - worker claude never came up\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
-
-kill -TERM "$sw_pid" 2>/dev/null || true     # signal the worker (spawn-worker.sh's own trap tears the subtree down)
-wait_gone "$sw_pid" 100
-[[ -n "$cpid" ]] && wait_gone "$cpid" 100
-[[ -n "$gpid" ]] && wait_gone "$gpid" 100
-
-if kill -0 "$sw_pid" 2>/dev/null; then printf 'FAIL - spawn-worker.sh survived its own SIGTERM\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); kill -KILL "$sw_pid" 2>/dev/null || true
-else printf 'ok   - spawn-worker.sh exits on SIGTERM\n'; fi
-assert_dead "$TMP/marks/claude.pid"     "SIGTERM to worker → child claude killed (no orphan)"
-assert_dead "$TMP/marks/grandchild.pid" "SIGTERM to worker → GRANDCHILD killed (process-group teardown)"
 
 assert_done

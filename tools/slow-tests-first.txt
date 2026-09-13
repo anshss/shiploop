@@ -20,18 +20,11 @@
 #
 # Measured 2026-09-04 on a full green run: 158 tests, 552.8s total.
 test-history-sizing-fields
-test-budget-exceeded-classification
 test-valjob
-test-spawn-early-abort
-test-timeout-classification
 test-sync-port
 test-local-first-migration
 test-na-permanent-nudge
-test-spawn-warm-escalation
-test-interrupted-classification
-test-spawn-exclude-dynamic-prompt
 test-sync-port-fork-funnel
 test-install-semaphore
 test-orphan-teardown
 test-autonomy-gate
-test-spawn-worker-sweep
