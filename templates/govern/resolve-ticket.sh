@@ -269,8 +269,8 @@ elif [[ -n "$pr_lines" ]]; then
         rt_print_ci_excerpt "$_mrepo" "$_mnum"
         ALL_MERGED=0
         ;;
-      4) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI state could not be verified (gh network/auth/rate-limit/5xx). Investigate, then re-run." >&2; ALL_MERGED=0 ;;
-      5) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — external-PR safety guard blocked it (not this governor's own PR/branch). Merge it by hand via gh/web if trusted, then re-run with --no-merge." >&2; ALL_MERGED=0 ;;
+      4) echo "resolve-ticket #$N: $_mrepo#$_mnum refused: CI state could not be verified (gh network/auth/rate-limit/5xx). Investigate, then re-run." >&2; ALL_MERGED=0 ;;
+      5) echo "resolve-ticket #$N: $_mrepo#$_mnum refused: external-PR safety guard blocked it (not this governor's own PR/branch). Merge it by hand via gh/web if trusted, then re-run with --no-merge." >&2; ALL_MERGED=0 ;;
       *) echo "resolve-ticket #$N: $_mrepo#$_mnum — merge-pr.sh exited $_mrc (unexpected)." >&2; ALL_MERGED=0 ;;
     esac
   done <<< "$pr_lines"
