@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # router-posture-guard.sh: the ticket-route guard (the file's one BLOCKING path).
 #
-# Vocabulary under test: a **worker** is the trim, single-ticket session, two lanes
-# (interactive `Agent(subagent_type: "worker")`, autonomous spawn-worker.sh). Anything
-# else the Agent tool spawns is a **subagent**. Ticket-shaped work belongs to a worker,
-# so a ticket-shaped `Agent` call WITHOUT subagent_type "worker" is denied.
+# Vocabulary under test: a **worker** is the trim, single-ticket session dispatched as
+# `Agent(subagent_type: "worker")`. Anything else the Agent tool spawns is a **subagent**.
+# Ticket-shaped work belongs to a worker, so a ticket-shaped `Agent` call WITHOUT
+# subagent_type "worker" is denied.
 #
 # Contract:
 #   1. A ticket-shaped Agent prompt (`#42`) without subagent_type "worker" is DENIED,
@@ -151,7 +151,7 @@ out="$(env -u GOVERN_RUN GOVERN_TICKET_ROUTE_GUARD=0 bash "$GUARD" < "$PL" 2>&1)
 assert_eq "$out" "" "5. GOVERN_TICKET_ROUTE_GUARD=0 silences the ticket-route guard"
 clear_counter "$sid"
 
-# ── 6. never fires inside a worker (either lane) ────────────────────────────
+# ── 6. never fires inside a worker ──────────────────────────────────────────
 sid="ticketroute-autonomous"; clear_counter "$sid"
 payload "" "You are fixing ticket #42." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(GOVERN_RUN=1 bash "$GUARD" < "$PL" 2>&1)"

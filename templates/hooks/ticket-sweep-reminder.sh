@@ -24,10 +24,11 @@
 #      read-only sessions change nothing vs the baseline, so they stop silently.
 set -uo pipefail
 
-# A dispatch worker (the caller sets GOVERN_RUN=1) must not reconcile the queue: its own
-# prompt (governor/worker-prompt.md) explicitly forbids editing tickets.md, so blocking here would
-# order it to do the one thing it's told not to do. Worktrees inherit the git-tracked root
-# .claude/settings.json, so this hook fires inside worker sessions too unless it self-exempts.
+# A governor-spawned headless session (today: the sync-porter's claude -p spawn in
+# templates/govern/sync-port.sh, the only thing that sets GOVERN_RUN=1) must not reconcile the
+# queue: it is not resolving a ticket and has no business touching tickets.md, so blocking here
+# would order it to edit a file outside its own job. Worktrees inherit the git-tracked root
+# .claude/settings.json, so this hook fires inside any such session too unless it self-exempts.
 [ -n "${GOVERN_RUN:-}" ] && exit 0
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
