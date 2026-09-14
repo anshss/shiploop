@@ -1,0 +1,14 @@
+ok   - A1: exact shared file (via file:line) between queued #72 and named #61 is nudged
+ok   - A2: the nudge points at the group dispatch path
+ok   - B1: #90 (no shared path at all) produces no nudge line
+ok   - C1: a ticket in the current named set is never nudged about itself
+ok   - D1: at most 5 overlap lines are ever printed, even with 7 candidates
+ok   - E1: GOVERN_OVERLAP_NUDGE=0 prints nothing at all
+ok   - F1: a directory-only overlap is labeled with the weak-tier marker
+ok   - F2: a directory-only overlap is never printed as an exact-file [overlap] line
+ok   - F3: the queued ticket number is named
+ok   - F4: the named ticket it overlaps is named
+ok   - H1: pre-dispatch-check.sh calls the nudge before it verdicts proceed
+ok   - H2: and documents the kill switch at the call site
+
+all assertions passed

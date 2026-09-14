@@ -18,10 +18,11 @@ There is no backlog sweep and no grind-until-empty loop.
 ```
 Or directly: `scripts/govern/pre-dispatch-check.sh <N>`, then `Agent(subagent_type: "worker")` for
 that ticket, then pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`.
-Naming several tickets works them one at a time through the same three steps, there is no fan-out
-and no automatic grouping. `pre-dispatch-check.sh` still nudges you when two OPEN tickets share a
-measured file, but there is no dispatcher left that folds them into one worker: locality batching
-lived in the headless launcher's multi-ticket invocation, retired along with it.
+Naming several tickets works them one at a time through the same three steps by default, no
+automatic grouping. `pre-dispatch-check.sh` still nudges you when two OPEN tickets share a measured
+file; naming them as one group instead dispatches ONE worker that opens one branch and one PR and
+reports a per-ticket outcome array, which `resolve-ticket.sh` lands per ticket (see "Batching several
+tickets into one worker" below).
 
 The trigger changed, and so did the substrate under it. Verdict files, resumable worktrees and
 reaping are still what survive a closed session (a later one can reap a worktree an earlier one
@@ -242,18 +243,24 @@ worker is spawned — no LLM call, no network, no writes.
 Codemod auto-detection is deliberately **not** implemented: a false positive that "resolves" a ticket
 without fixing it is far worse than a missed opportunity, and no narrow, safe detector was found.
 
-## Batching two tickets into one worker (no dispatcher any more)
+## Batching several tickets into one worker
 
 Exploration is the dominant cost of a resolved ticket (~98% cacheRead): two tickets that touch the
-same code paying full discovery cost twice is real waste. There is no more automatic locality
-grouping of a named set (`GOVERN_BATCH_MAX` and the partitioner it fed retired with the run-level
-driver), and the manual fold (one worker handed several ticket numbers, one branch, one PR) lived
-in the headless launcher's multi-ticket invocation, retired along with it.
+same code paying full discovery cost twice is real waste. Tickets sharing a measured file path can go
+to ONE worker as a named group: you name the set, `pre-dispatch-check.sh` still gates each member
+individually, and a member a gate skips or refuses drops out of the group while the rest proceed. The
+worker opens one branch and one PR keyed on the primary (first-named) ticket, and its report carries
+a `tickets` array, one `{ticket,status,note}` entry per group member. `resolve-ticket.sh` merges the
+PR once and lands each `resolved` entry on its own; a `parked`/`failed` entry, or a ticket the array
+never names, stays in the queue. `govern::locality_groups` is the VALIDATOR: it confirms the named set
+actually shares files (capped at the size you pass it) and refuses to co-batch two tickets in a
+dependency relation. Naming the group is a judgment call the session makes per dispatch, not a
+configured setting: it has read the tickets and knows which ones sit in the same area.
 
 `pre-dispatch-check.sh` still prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when some OTHER
 open ticket shares a measured file (or, weaker, a directory) with the one you named
-(`GOVERN_OVERLAP_NUDGE`, on by default), but there is nothing left to act on it with beyond working
-both tickets, one at a time, through the normal dispatch.
+(`GOVERN_OVERLAP_NUDGE`, on by default): it now points at naming that ticket into the group instead
+of dispatching it separately.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees
