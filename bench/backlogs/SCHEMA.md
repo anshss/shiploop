@@ -2,7 +2,7 @@
 
 One backlog is a directory under `bench/backlogs/` (published) or `bench/pilot-backlogs/`
 (candidate pool, gitignored, never pushed) containing a single `backlog.jsonl`: one JSON object per
-line, 6 to 10 lines, applied in file order.
+line, 2 lines, applied in file order.
 
 | Field | Type | Meaning |
 |---|---|---|

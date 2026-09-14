@@ -85,6 +85,14 @@ export GOVERN_PROPOSAL_GATE=0        # unlike the knobs
                                       # pre-existing pre-dispatch-check.sh fixture (none of which
                                       # carry a **Proposed solution:** section) keeps testing what it
                                       # was written to test. Its own tests opt back in explicitly.
+export GOVERN_VF_DENY=0              # same shape of divergence: router-posture-guard.sh's
+                                      # verify-filter denial ships ON by default (per CLAUDE.md
+                                      # rule 12, a new blocking mechanism defaults off in THIS
+                                      # file, not in the shipped script). Forced off so no
+                                      # pre-existing fixture whose command field happens to look
+                                      # like an unwrapped test/build runner picks up a surprise
+                                      # deny. Its own test (test-router-posture-vf-deny.sh) opts
+                                      # back in explicitly.
 export GOVERN_AGENT_SUPERVISION=1    # same shape
                                       # of divergence as GOVERN_PROPOSAL_GATE just above — this
                                       # hook's SHIPPED default is ON.
