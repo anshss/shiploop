@@ -9,8 +9,8 @@
 # (`GOVERN_WORKER_ESCALATION_MODEL`). So the difficulty verdict is gone — the survey stays.
 #
 # What the survey is FOR now:
-#   - `targetPaths` — real, verified, repo-relative paths. The load-bearing field: the batching layer
-#     keys on it, and the worker gets it as a warm start instead of rediscovering it at full price.
+#   - `targetPaths`: real, verified, repo-relative paths. The load-bearing field: it gives the
+#     worker a warm start instead of rediscovering the scope cold, at full price.
 #   - the six former scoring fields — kept as pure MEASUREMENTS (codebase index, batch key, warm
 #     start). Nothing scores them.
 #
