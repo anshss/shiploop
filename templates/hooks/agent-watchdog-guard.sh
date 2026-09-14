@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# PreToolUse(*) hook, subagent-scoped: the one headless-launcher watchdog that has no stop/idle
-# equivalent. agent-progress-guard.sh already ports the other two carried signals (the early-abort
-# signature and idle supervision); this ports the remaining one:
-#   - wall-clock       (the launcher's GOVERN_WORKER_TIMEOUT)
-# The launcher's other remaining item, EXIT/INT/TERM cleanup traps, has NO hook equivalent and is
-# NOT ported here. See the comment at the bottom of this file for what does and does not cover it.
+# PreToolUse(*) hook, subagent-scoped: caps a worker subagent's wall-clock runtime. This is one of
+# three watchdog signals a worker subagent gets; agent-progress-guard.sh covers the other two (the
+# early-abort signature and idle supervision). This hook covers the remaining one:
+#   - wall-clock       (GOVERN_AGENT_WALLCLOCK, see below)
+# A retired headless dispatch launcher used a wrapping process with EXIT/INT/TERM cleanup traps for
+# its own process reaping; a hook has no equivalent for that, and none is invented here. See the
+# comment at the bottom of this file for what does and does not cover the case those traps existed for.
 #
 # DO NOT RE-ADD A PER-AGENT TOKEN-VOLUME CAP HERE. A cumulative token total sums cache reads, which
 # are re-paid every turn for the same prefix, so the number tracks turn count rather than spend.
@@ -14,8 +15,9 @@
 # to the stall, identical-command-loop and tool-error-rate detection agent-progress-guard.sh
 # carries, both of which measure whether the child is getting anywhere rather than how much it read.
 #
-# The cap also emits the `watchdog-kill` lever event the headless launcher already emits, so bench
-# sees ONE watchdog stream across both lanes instead of crediting only the headless half. See
+# This cap emits the `watchdog-kill` lever event so bench sees the watchdog stream at all. The
+# event's shape (field names, the `watchdog-kill` type) is unchanged from the retired launcher's own
+# emission, so historical bench data and anything reading this stream keeps working. See
 # emit_watchdog_kill below for what this lane can and cannot fill in.
 #
 # WHY PreToolUse, not SubagentStop/TeammateIdle. Those two only fire when a child STOPS or
@@ -62,9 +64,9 @@
 # THE CAP SHIPS ON, with its own kill switch (0 disables it): an inert-by-default watchdog is the
 # defect this whole design exists to close. The default is not a derived constant, it is a starting
 # point, tunable per fleet:
-#   GOVERN_AGENT_WALLCLOCK (seconds, default 3600): the SAME 1h starting point the launcher's own
-#     GOVERN_WORKER_TIMEOUT already ships, ported unchanged rather than inventing a new number for
-#     the identical question ("how long is too long for one child").
+#   GOVERN_AGENT_WALLCLOCK (seconds, default 3600): the SAME 1h starting point the retired
+#     launcher's own GOVERN_WORKER_TIMEOUT used to ship, carried over unchanged rather than
+#     inventing a new number for the identical question ("how long is too long for one child").
 # Deliberately its OWN switch, NOT GOVERN_AGENT_SUPERVISION (the idle-supervision knob).
 # Conflating them would mean one kill switch silently disables unrelated mechanisms.
 set -uo pipefail
@@ -93,7 +95,7 @@ SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # the event contract a reader folds, not chosen per emitter, so every watchdog kill lands in ONE
 # event stream rather than a dialect a reader has to reconcile.
 #
-# Differences from the headless emitter, both forced by what this lane actually knows:
+# Differences from the retired launcher's own emitter, forced by what this lane actually knows:
 #   - `ticket` is null. A hook sees an agent_id, not a ticket: the interactive worker subagent is
 #     handed its ticket in a prompt this hook never reads. A guessed ticket number would be worse
 #     than an honest null.
@@ -111,9 +113,9 @@ SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # FAIL OPEN, always. A PreToolUse hook that dies denies every later tool call in the session that
 # installed it, so the whole emission runs in a subshell whose failure is swallowed, and the
 # `declare -F` check means a common.sh that is missing (a bare checkout, a hook installed without
-# the library) is a silent no-op rather than an error. GOVERN_LEVER_EVENTS is honoured exactly as
-# the headless path honours it: checked HERE too, so the sourcing work is skipped entirely when an
-# operator has opted out, not done and then discarded by the emitter's own gate.
+# the library) is a silent no-op rather than an error. GOVERN_LEVER_EVENTS is checked HERE first, so
+# an operator who has opted out skips the sourcing work entirely, rather than paying it only to have
+# the shared emitter's own gate discard the result anyway.
 emit_watchdog_kill() { # <reason> <ctxTokens> <turns>
   [ "${GOVERN_LEVER_EVENTS:-1}" = "1" ] || return 0
   (
@@ -170,8 +172,9 @@ child_tokens() { # -> the child's cumulative tokens, or "" when unreadable
   return 0
 }
 
-# Assistant turns so far, counted the same way the headless emitter counts them (a line-count of
-# `"type":"assistant"` over the frozen transcript), so `turns` means the same thing on both lanes.
+# Assistant turns so far, counted the same way the retired launcher's own emitter counted them (a
+# line-count of `"type":"assistant"` over the frozen transcript), so `turns` still means the same
+# thing it always has, for anything comparing against the older stream.
 child_turns() { # -> assistant-turn count, 0 when unreadable
   local n
   [ -n "$child_transcript" ] || { printf '0'; return 0; }
@@ -200,7 +203,8 @@ if [ "$wallclock_cap" != "0" ]; then
   fi
   elapsed=$(( now - first ))
   if [ "$elapsed" -ge "$wallclock_cap" ] 2>/dev/null; then
-    # Same reason string the headless lane uses for the identical cap, so the two streams group.
+    # Same reason string the retired launcher used for its identical cap, so this stream stays
+    # groupable with the older one rather than splitting into a second dialect.
     emit_watchdog_kill "wall-clock-timeout" "$(child_tokens)" "$(child_turns)"
     deny "[AGENT WATCHDOG] wall-clock: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has been running ~${elapsed}s, past the ${wallclock_cap}s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_WALLCLOCK if this task genuinely needs longer."
   fi
@@ -209,8 +213,8 @@ fi
 exit 0
 
 # ── traps: what does NOT port, and what already covers the case they existed for ───────────────
-# A wrapping launcher process with an EXIT/INT/TERM trap could do three things on every exit
-# path: (1) reap its own wall-clock/token/early-abort watchdog subshells so a killed governor
+# The retired launcher's own wrapping process used an EXIT/INT/TERM trap to do three things on
+# every exit path: (1) reap its own wall-clock/token/early-abort watchdog subshells so a killed governor
 # never leaks a `sleep`-holding process, (2) kill_tree a forked `claude -p` OS process plus every
 # grandchild it spawned, so a stopped/killed governor never leaves an orphaned process reparented
 # to init and billing a box, (3) record the attempt outcome into attempts.jsonl so a SIGKILLed

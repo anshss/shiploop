@@ -2,8 +2,8 @@
 # Vocabulary lint: the phrase "Agent worker" is BANNED across the hub's prose surfaces.
 #
 # Why a mechanical check and not a review note: the hub used "worker" in two senses at once.
-# One sense is the trim, single-ticket session (two lanes: interactive
-# `Agent(subagent_type: "worker")`, autonomous spawn-worker.sh). The other, in three files,
+# One sense is the trim, single-ticket session dispatched as
+# `Agent(subagent_type: "worker")`. The other, in three files,
 # meant a stock Agent-tool child. A model told to "delegate to an `Agent` worker" then spawns
 # a full-fat subagent while believing it complies with the worker doctrine, so the collision
 # routed real spend the wrong way. The platform's own noun for an Agent-tool child that is not
