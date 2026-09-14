@@ -3026,9 +3026,9 @@ govern::overlap_nudge() { # named-csv [tickets-file]
       [[ -n "$tier" ]] || continue
 
       if [[ "$tier" == "exact" ]]; then
-        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: hand #$tn and #$other to ONE worker"
+        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: expect overlapping exploration if both are dispatched"
       else
-        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider handing #$tn and #$other to ONE worker"
+        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): expect overlapping exploration if both are dispatched"
       fi
       shown=$((shown+1))
       if [[ "${GOVERN_EVENTS:-0}" == "1" ]]; then

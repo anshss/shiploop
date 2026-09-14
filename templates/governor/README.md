@@ -39,7 +39,8 @@ is not a detached process making its own connection.
 - `escalations.md` — parked decisions awaiting you (output). Answer inline (or via the relay, below);
   mark "make this a rule" to grow the doctrine.
 - `pending-escalations.json` — machine-readable driver→relay hand-off of the unanswered `## Open`
-  entries (regenerated every run-end; gitignored runtime state).
+  entries (regenerated at SessionStart by `templates/hooks/session-reconcile.sh`; gitignored runtime
+  state).
 - `worker-prompt.md` / `supervisor-prompt.md`: the templates workers run / the manual audit
   (`npm run govern:audit`) runs.
 - `improvements.md`, operator-maintained notes on harness friction (no automated pipeline writes to
@@ -108,8 +109,9 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   ask for. The scout used to score its survey into a `(model, effort)` verdict; that was measured as
   a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
   `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
-  `--verdict`/`--score` modes are deleted. `haiku` still runs the scout survey and the supervisor
-  audit — it is not a ticket-work tier.
+  `--verdict`/`--score` modes are deleted. `haiku` runs the scout survey by default
+  (`GOVERN_SCOUT_MODEL`); the supervisor audit defaults to `sonnet` (`GOVERN_SUPERVISOR_MODEL`).
+  Neither is a ticket-work tier.
 - Tickets do **not** carry effective `Model:` / `Effort:` fields. An entry still holding them is
   inert: ignored, never an error, because a filing-time guess is made before any evidence exists.
   `GOVERN_MEASURED_SIZING=0` restores the old precedence in which those fields win.
@@ -271,8 +273,8 @@ both tickets, one at a time, through the normal dispatch.
   read the durable history and event log instead of a per-run summary.
 
 ## Self-ROI telemetry
-Every run-end **automatically** surfaces a governor-health summary — no manual log spelunking —
-computed from `governor/ticket-history.jsonl` (the cross-run outcome log): **park rate**
+A governor-health summary is available on demand, no manual log spelunking, computed from
+`governor/ticket-history.jsonl` (the cross-run outcome log): **park rate**
 (resolved vs parked vs failed/timeout), **self-referential churn** (share of resolved tickets whose
 PR(s) only touched the harness / skill-template repos — governor self-work with near-zero product
 value, a known waste class), and **tokens-per-ticket** + cost (from the tokenjam-tagged worker
@@ -335,8 +337,8 @@ history keeps working unchanged.
 ## CLAUDE.md compression (evidence-based, suggest-only, zero model calls)
 
 Root `CLAUDE.md` is re-sent every turn of every session, so it has a budget
-(`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000). `claudemd-trim.sh` (run at every governor run-end,
-by `govern:context-budgets`, or alone as `govern:trim`) keeps it honest without ever guessing and, as of
+(`SHIPLOOP_CLAUDEMD_MAX_CHARS`, default 14000). `claudemd-trim.sh` (run by `govern:context-budgets`,
+or alone as `govern:trim`) keeps it honest without ever guessing and, as of
 this fix, **without ever editing it**. The unit it works in is a markdown block: a heading, a bullet
 with its indented continuation lines, a paragraph, or a whole fenced code block, so a removal can
 never produce invalid markdown. Every removal is a reversible move into `CLAUDE-APPENDIX.md` under a

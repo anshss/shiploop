@@ -149,7 +149,7 @@ Drifted files:  <N>
 Porter:         ported cleanly · gate PASSED
 PR:             <url>   (opened for HUMAN review — NOT merged)
 Next:           review the PR on GitHub. On approval + merge, the local marker advances the next
-                time /push runs (or when the governor auto-triggers sync-port at run-end).
+                time /push runs.
 Preserved:      workspace.sh, package.json, repo lists — never pushed.
 ```
 
@@ -172,7 +172,8 @@ then STOP. The operator inspects and resolves per the standard escalations flow.
 
 - **Never merges.** `--no-merge` is unconditional in this command.
 - **Reuses sync-port.sh** — no duplicated logic. Same gates, same escalation flow, same lock, same
-  fingerprint dedup as the governor's auto-triggered run-end path.
+  fingerprint dedup as running `sync-port.sh` directly; this command is a wrapper around it, the
+  only other real caller being the test suite.
 - **Workspace files preserved.** `sync-templates.sh` filters out `workspace.sh`, `package.json`,
   operator-owned governor files.
 - **No side effects on dry-run** — no branch, no PR, no marker change.
