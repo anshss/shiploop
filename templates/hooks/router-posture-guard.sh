@@ -42,7 +42,7 @@
 # for the rest of the session. Kill switch: GOVERN_VF_DENY=0, independent of GOVERN_VF_NUDGE so the
 # block can be turned off without losing the advice.
 #
-# THIRD behavior, and the only BLOCKING one in this file: the ticket-route guard.
+# THIRD behavior, one of three BLOCKING behaviors in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
 # session. The session dispatches one as `Agent(subagent_type: "worker")` and
 # steers it. Any Agent-tool child that is NOT subagent_type "worker" is a
@@ -109,8 +109,8 @@
 # its OWN file and its OWN kill switch -- a worker dispatch is a materially
 # different event from an inline-Read/verbose-build advisory and the two must not
 # share a budget or a cap. Advisory only, exactly like those: it never blocks a
-# dispatch, only flags one past MAX_WORKERS_PER_SESSION for the driver to notice.
-# The deny path above stays the only blocking mechanism in this file. Kill switch:
+# dispatch, only flags one past MAX_WORKERS_PER_SESSION for the driver to notice,
+# unlike the deny paths elsewhere in this file. Kill switch:
 # GOVERN_WORKER_FANOUT_NUDGE=0.
 #
 # Output contract: a PreToolUse hook that prints
@@ -191,7 +191,7 @@ case "$transcript_path" in
 esac
 
 # --- ticket-route guard: ticket-shaped Agent work belongs to a worker --------
-# The one BLOCKING path in this file (see the header). A worker is already exempt above via the
+# One of three BLOCKING paths in this file (see the header). A worker is already exempt above via the
 # .../subagents/ transcript-path check, which is what actually identifies one. GOVERN_RUN=1 marks
 # a governor-spawned headless session (today: the sync-porter, not a worker) and is exempted above
 # for that unrelated reason. Either way, a worker sub-delegating with the Agent tool is never
