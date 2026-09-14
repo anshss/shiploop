@@ -104,9 +104,6 @@ export GOVERN_STEER_CAP=12           # advisor-steer-guard.sh's per-session cap 
                                       # not forced off: this gate only ever DENIES a message, it
                                       # never spawns, so no dispatch fixture is perturbed by it.
                                       # Explicit so a live session's own override cannot leak in.
-export GOVERN_BATCH_MAX=1            # locality batching cap (govern::locality_groups): 1 makes
-                                      # every candidate a singleton, the shipped default and today's
-                                      # exact behavior. Its own test opts into a higher value.
 
 # Index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

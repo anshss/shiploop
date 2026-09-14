@@ -6,7 +6,7 @@
 #       whose only scope signal is `Where:` PROSE — prose is not a measurement, and keying on it
 #       forced a leaf-directory approximation that collapsed the backlog into a couple of buckets.
 #       govern::paths_overlap then batches on EXACT shared paths.
-#   (B) GOVERN_BATCH_MAX=1 partitions into SINGLETONS — the pre-re-key behavior.
+#   (B) max=1 (the caller's default when it passes none) partitions into SINGLETONS.
 #   (C) max>1 partitions into DISJOINT, order-preserving, size-capped groups sharing real files.
 #   (D) an UNMEASURED ticket is never batched on a guess — no measurement means no batch.
 #   (E) dependency-related tickets are NEVER co-batched — in EITHER direction, including the implicit
@@ -104,7 +104,7 @@ assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "$(govern::
 assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "" && echo yes || echo no)" \
   "no"  "A8: an unmeasured ticket never overlaps anything"
 
-# ── (B) GOVERN_BATCH_MAX=1 preserves today's behavior exactly ───────────────
+# ── (B) max=1 preserves today's behavior exactly ─────────────────────────────
 assert_eq "$(govern::locality_groups 1 "1,2,3,4,5,6" "$TF" | tr '\n' ' ')" \
   "1 2 3 4 5 6 " "B: max=1 → one ticket per group (today's behavior)"
 assert_eq "$(govern::locality_groups 0 "1,2,3" "$TF" | tr '\n' ' ')" \
