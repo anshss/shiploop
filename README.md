@@ -50,11 +50,9 @@ The goal is simple: spend the fewest tokens per shipped ticket. Here is what act
 
 - **Every worker shares a scripted codebase map.** A worker is a single-ticket session that reads the code and does the job. Pre-dispatch scripts index files, symbols, and structure, so workers do not repeatedly rediscover the repository. Retries inherit prior findings, and manual audits read only what changed.
 
-- **Workers share one cached prompt prefix.** Claude Code puts per-session details like the working directory, git-status snapshot, and memory paths near the top of each worker’s system prompt. That means workers on different jobs diverge within the first few hundred bytes, eliminating the cacheable prefix. Every worker then pays the full cache-write cost for the prompt and tool schemas on turn one. With dozens of workers, retries, and escalations, that cost compounds on every spawn instead of being amortized across a long-lived session. Shiploop keeps the shared system prompt byte-identical, moves worker-specific context into the first user message, and keeps trims static. Later workers can then reuse the expensive cached prefix instead of rewriting it.
+- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no MCP servers or unused definitions.
 
-- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no MCP servers or unused definitions. Trimming the tool list alone cuts tool bytes by 66.7%.
-
-- **Model orchestration.** The costly mistake is asking low-cost workers to rediscover a solution at the wrong tier. A high-tier session must turn the change into a proposed solution before dispatch; the lower-cost worker implements it in an isolated worktree and stops at a PR. Dispatches without a proposal are refused, steering is capped, and failures first raise reasoning effort rather than model tier.
+- **Model orchestration.** The costly mistake is asking low-cost workers to rediscover a solution at the wrong tier. A high-tier session must turn the change into a proposed solution before dispatch; the lower-cost worker implements it in an isolated worktree and stops at a PR.
 
 - **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker.
 
@@ -123,20 +121,19 @@ agents". In shiploop they mean exactly this:
 
 ### Fleet visibility
 
-A worker is an in-session subagent, not a separate OS process with a pid of its own, so nothing can
-poll it the way you'd poll a real process.
+A worker is a subagent the session runs to completion, and structured state is written only when
+it finishes, so while one or more are in flight at once *nothing on disk says "running"* on its
+own, which is why no surface could ever show them without instrumentation.
 
-`GOVERN_EVENTS=1` turns on one append-only log, `governor/events.jsonl`. A `SubagentStart`/
-`SubagentStop` hook (`worker-event-emit.sh`) writes `worker_spawned`/`worker_done` for it, keyed on
-its `agent_id`, and three readers fold that into "running right now". The emitter can never abort a
-dispatch: a failed append is swallowed silently, by construction.
+`GOVERN_EVENTS=1` fixes that with one append-only log, `governor/events.jsonl`, and three readers
+fold it. The emitter can never abort a dispatch: a failed append is swallowed silently, by construction.
 
 ```
 $ npm run govern:status
 fleet: 2 active · 3 resolved · 1 parked · 0 failed · 1 escalated
 run:   gov-20260901T101500Z-4242 (running, mode=live, up 41m)
-  agent_a1b2c3             worker         opus     22m effort=high
-  agent_d4e5f6             worker         sonnet   4m effort=medium
+  #94    opus     22m    pid 44112  effort=high
+  #97    sonnet   4m     pid 44530  effort=medium
 ```
 
 ## Configuration
