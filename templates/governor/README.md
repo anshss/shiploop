@@ -185,11 +185,6 @@ breaker (`GOVERN_MAX_TICKET_FAILS`, default 2 consecutive failed/timed-out/budge
 files an escalation and stops re-spawning that ONE ticket rather than retrying it forever.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall. `0` = unbounded.
-- `GOVERN_WORKER_MAX_TOKENS` (`0` = unlimited, default) — per-worker cumulative token cap; a wandering
-  worker is killed once it crosses this, same as the wall-clock timeout. Recorded as a DISTINCT
-  `budget-exceeded` outcome (not `timeout`) in `state.jsonl` / the cross-run history, so a worker that
-  ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
-  preserved and a re-run resumes it, exactly like a timeout.
 - No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
   (`npm run govern:audit -- <run-dir>`) that reads `<run-dir>/state.jsonl`; it costs zero model spend
   otherwise. Nothing in the session lane writes `state.jsonl` any more, that was the retired
