@@ -14,11 +14,11 @@
 #   (F) per-ticket outcome mapping is FAIL-CLOSED: only an explicit `resolved` entry in the report's
 #       `tickets` array maps to resolved; a different status, a missing entry, an empty array and an
 #       unparseable report all map to "" (⇒ the caller leaves the ticket in tickets.md).
-# These functions folded co-batched tickets into one dispatch, amortizing exploration cost across
-# them; the dispatch side that called them (accepting multiple ticket numbers on one spawn, folding
-# their blocks into the prompt) lived in the headless dispatch launcher, retired along with it. The
-# interactive lane dispatches ONE ticket per worker (`.claude/agents/worker.md`), so batching has no
-# current caller: these functions and their tests stay in case a future dispatcher wants them.
+# These functions fold co-batched tickets into one dispatch, amortizing exploration cost across
+# them. The advisor calls govern::locality_groups directly to validate a named group before
+# dispatching it; the interactive lane's worker (`.claude/agents/worker.md`) then resolves one ticket
+# OR one named group, and resolve-ticket.sh calls govern::batch_ticket_status/note to land a group
+# report per ticket (see worker-prompt.md's "Ticket groups" section).
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network, no worker spawned.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -2775,11 +2775,10 @@ govern::paths_overlap() { # "pathsA" "pathsB" -> rc 0 if they intersect
 #     edit inside one worker, and pre-dispatch-check.sh's dependency gate already defers a
 #     dependent whose blocker is unlanded, so nothing is lost.
 # Reads $3 (def TICKETS_FILE).
-# NO PRODUCTION CALLER as of 1.19.2. The automatic partitioner ran only inside the deleted
-# dispatch loop; pre-dispatch-check.sh's overlap nudge still SUGGESTS a batch, but nothing accepts
-# one any more: the headless dispatch launcher's manual multi-ticket acceptance retired with it,
-# and no other dispatcher folds several tickets into one worker.
-# Kept, with its test, because it is a pure function and the only thing a batch driver would need.
+# The advisor calls this directly to validate a named group before dispatching it (worker-prompt.md's
+# "Ticket groups" section); pre-dispatch-check.sh needs no new argument form for this, so there is no
+# separate wrapper script. govern::batch_ticket_status/govern::batch_ticket_note below it are the
+# landing-side counterpart, called from resolve-ticket.sh once a group worker reports a `tickets` array.
 govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
   local max="${1:-1}" csv="${2:-}" f="${3:-$TICKETS_FILE}"
   max="${max//[^0-9]/}"; [[ -n "$max" ]] || max=1
@@ -3026,9 +3025,9 @@ govern::overlap_nudge() { # named-csv [tickets-file]
       [[ -n "$tier" ]] || continue
 
       if [[ "$tier" == "exact" ]]; then
-        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: hand #$tn and #$other to ONE worker"
+        echo "[overlap] queued #$other references $match_path, also targeted by #$tn: dispatch #$tn and #$other as one named group"
       else
-        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider handing #$tn and #$other to ONE worker"
+        echo "[overlap-dir] queued #$other shares a directory ($match_path) with #$tn (weak tier, no exact file match): consider dispatching #$tn and #$other as one named group"
       fi
       shown=$((shown+1))
       if [[ "${GOVERN_EVENTS:-0}" == "1" ]]; then

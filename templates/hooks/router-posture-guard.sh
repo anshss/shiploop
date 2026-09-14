@@ -392,9 +392,9 @@ print(json.dumps({
     tnum="$(resolve_tnum)"
     [ -n "$tnum" ] || tnum="N"
     deny="$(cat <<EOF
-[ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, single-ticket session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
+[ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, ticket/group session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
 
-Paste this instead, one ticket at a time:
+Paste this instead, one ticket or group:
 
   npm run govern:pre-dispatch -- ${tnum}       # verdict: proceed / skip / refuse
 
