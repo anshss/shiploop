@@ -33,7 +33,7 @@ Credit in the release notes on request.
 
 ## Scope: what a "harness vulnerability" means here
 
-The harness's job is to run headless Claude workers with `--permission-mode bypassPermissions` inside throwaway worktrees and, on the merge allowlist, auto-merge those workers' PRs on green-or-no-checks CI. That elevated permission model is intentional and is documented in `README.md` under **"The governor + trust model"** — a headless worker cannot answer permission prompts, so the design gives it broad rights inside a bounded workspace and enforces boundaries through the governor's guard rails, not through the worker's runtime prompts.
+The harness's job is to run Claude worker subagents with `--permission-mode bypassPermissions` inside throwaway worktrees and, on the merge allowlist, auto-merge those workers' PRs on green-or-no-checks CI. That elevated permission model is intentional and is documented in `README.md` under **"The governor + trust model"** — a worker cannot answer permission prompts, so the design gives it broad rights inside a bounded workspace and enforces boundaries through the governor's guard rails, not through the worker's runtime prompts.
 
 Given that design, in scope for a security report:
 
@@ -47,7 +47,7 @@ Given that design, in scope for a security report:
 
 Out of scope (these are documented design choices, not defects):
 
-- The worker running with `bypassPermissions` inside its own worktree. This is the entire point of a headless worker and is a load-bearing property of the harness. See the README's trust-model section.
+- The worker running with `bypassPermissions` inside its own worktree. This is the entire point of the worker lane and is a load-bearing property of the harness. See the README's trust-model section.
 - The governor auto-merging its own PRs on green-or-no-checks CI when the operator has explicitly added a repo to `GOVERN_MERGE_REPOS`. The operator opted in.
 - Operator-provided values in `scripts/lib/workspace.sh` behaving as documented (e.g. setting `GOVERN_MAX_TICKETS=1000` letting the governor run for a long time). Configuration is not a vulnerability.
 - Anything requiring the attacker to already be an authenticated operator on the machine running the governor.
