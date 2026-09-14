@@ -34,7 +34,10 @@ Ignore only these two things in it, kept for historical shape but never populate
    `npm run worktree:new -- t<N>` from the workspace root, `cd` into the path it prints, and do all
    work there. **NEVER use the Agent tool's `isolation: "worktree"`**: it worktrees the root repo
    only, and a meta-repo's nested sub-repo `.git` directories do not come along, so you would edit a
-   tree that cannot commit or push.
+   tree that cannot commit or push. If whoever dispatched you says a preserved worktree already
+   exists for this ticket, add `--adopt` to that same command instead of dropping it: you land back
+   in the earlier attempt's tree, uncommitted edits and all, rather than starting cold. If that tree
+   already holds a `.governor-notes.md`, worker-prompt.md §3 covers how to treat it.
 2. **Run the hazard lookup yourself, before you touch anything.** Nothing injects
    worker-prompt.md §1's "Recorded gotchas" section for you, so produce it: from the workspace root,
    run `scripts/govern/gotchas-for-paths.sh <repo>/<path> [<repo>/<path> ...]` for every path you

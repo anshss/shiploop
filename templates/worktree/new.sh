@@ -4,11 +4,25 @@
 # at main (workspace files commit directly to main in the main checkout, never
 # on a worktree branch — see the `worktree add --detach` below).
 #
-# Usage:  <pm> run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]
+# Usage:  <pm> run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>] [--adopt]
 #
 # --base <branch> bases the new sub-repo branch on that ref (origin/<branch> when
 # reachable, else the local ref) instead of the sub-repo's default base — use it to
 # stack a worktree on an open PR's branch, typically together with --only <repo>.
+#
+# --adopt hands back an EXISTING path at $WORKTREE_BASE/<name> instead of erroring, for a retry
+# that wants the worktree a prior attempt on the same ticket left behind (worker-prompt.md has a
+# worker preserve that tree on failure/timeout and append findings to .governor-notes.md in it, so
+# a retry starting there skips re-deriving what the prior attempt already worked out). Off by
+# default: without the flag an existing path is still a hard error, because silently reusing a
+# tree would let two independent dispatches collide on one working copy. With the flag, adoption
+# still only fires when the path is registered under this exact <name> (worker.md's own convention
+# names a ticket dispatch's worktree `t<N>` or `t<N>-<slug>`, so the ticket identity IS <name>,
+# and a registry match already proves "same ticket"), the sub-repos in --only are on branch <name>,
+# and no other process has its cwd inside the tree. Any of those failing falls straight back to
+# the same "path already exists" error as a plain retry with no flag. A dirty adopted tree is
+# handed back exactly as it sits: no checkout/stash/reset/clean runs anywhere on this path,
+# because those uncommitted edits are the preserved work a retry exists to reuse.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,13 +39,15 @@ NAME=""
 ONLY=""
 SKIP_BOOTSTRAP=0
 BASE_OVERRIDE=""
+ADOPT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="$2"; shift 2 ;;
     --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
     --base) BASE_OVERRIDE="$2"; shift 2 ;;
+    --adopt) ADOPT=1; shift ;;
     -h|--help)
-      echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]"
+      echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>] [--adopt]"
       exit 0
       ;;
     --) shift ;;
@@ -43,7 +59,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$NAME" ] || { echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>]" >&2; exit 2; }
+[ -n "$NAME" ] || { echo "usage: $ROOT_PM run worktree:new -- <name> [--only a,b] [--skip-bootstrap] [--base <branch>] [--adopt]" >&2; exit 2; }
 
 # Validate name — safe for paths and branches
 if ! [[ "$NAME" =~ ^[a-z0-9._/-]+$ ]]; then
@@ -81,6 +97,78 @@ fi
 WORKTREE_PATH="$WORKTREE_BASE/$NAME"
 
 if [ -e "$WORKTREE_PATH" ]; then
+  if [ "$ADOPT" -eq 1 ]; then
+    # Adoption only fires when every check below clears; the first miss falls straight
+    # through to the same "path already exists" error a plain retry with no flag gets.
+    ADOPT_REFUSAL=""
+
+    # Registered under this exact name AND pointing at this exact path: the only way an
+    # on-disk directory proves it is really the worktree a prior attempt on THIS name (and
+    # so, by worker.md's `t<N>` convention, this ticket) left behind, rather than something
+    # foreign that merely landed at the same path.
+    REGISTERED_PATH="$(wt_registry_path_for "$NAME" 2>/dev/null || true)"
+    if [ "$REGISTERED_PATH" != "$WORKTREE_PATH" ]; then
+      ADOPT_REFUSAL="'$NAME' is not a registered worktree at this path"
+    fi
+
+    # No other process has its cwd inside the tree. Test seam: WORKTREE_ADOPT_HELD_OVERRIDE
+    # forces this branch without needing a real background process holding the tree.
+    if [ -z "$ADOPT_REFUSAL" ]; then
+      if [ -n "${WORKTREE_ADOPT_HELD_OVERRIDE:-}" ]; then
+        ADOPT_REFUSAL="held by another agent (pids: ${WORKTREE_ADOPT_HELD_OVERRIDE})"
+      else
+        ADOPT_LIVE_PIDS="$(lsof -a +D "$WORKTREE_PATH" -d cwd 2>/dev/null | tail -n +2 | awk '{print $2}' | sort -u | tr '\n' ' ')"
+        [ -n "$ADOPT_LIVE_PIDS" ] && ADOPT_REFUSAL="held by another agent (pids: ${ADOPT_LIVE_PIDS% })"
+      fi
+    fi
+
+    # Every sub-repo this call scopes to (--only, default all) sits on the ticket's own
+    # branch: a worktree left on some other branch (or detached) isn't a clean adoption
+    # target even if the registry entry matches.
+    if [ -z "$ADOPT_REFUSAL" ]; then
+      for repo in "${REPOS[@]}"; do
+        [[ ",$ONLY," == *",$repo,"* ]] || continue
+        dst="$WORKTREE_PATH/$repo"
+        { [ -d "$dst/.git" ] || [ -f "$dst/.git" ]; } || { ADOPT_REFUSAL="$repo has no checkout at $dst"; break; }
+        branch="$(git -C "$dst" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
+        if [ "$branch" != "$NAME" ]; then
+          ADOPT_REFUSAL="$repo is on branch '$branch', not '$NAME'"
+          break
+        fi
+      done
+    fi
+
+    if [ -z "$ADOPT_REFUSAL" ]; then
+      # Adopted: skip slot allocation entirely and hand back the existing path. Report
+      # per-repo dirty state so the caller knows what it's inheriting; never touch it:
+      # no checkout/stash/reset/clean runs here, because those uncommitted edits are
+      # exactly the preserved work adoption exists to hand back.
+      ADOPT_DIRTY=""
+      for repo in "${REPOS[@]}"; do
+        [[ ",$ONLY," == *",$repo,"* ]] || continue
+        dst="$WORKTREE_PATH/$repo"
+        { [ -d "$dst/.git" ] || [ -f "$dst/.git" ]; } || continue
+        if [ -n "$(git -C "$dst" status --porcelain 2>/dev/null)" ]; then
+          ADOPT_DIRTY="$ADOPT_DIRTY $repo"
+        fi
+      done
+      echo "Adopting existing worktree '$NAME' (slot $(wt_registry_slot_for "$NAME" 2>/dev/null || echo '?'))"
+      if [ -n "$ADOPT_DIRTY" ]; then
+        echo "  dirty:$ADOPT_DIRTY, uncommitted edits from the earlier attempt are left exactly as they are"
+      else
+        echo "  clean: no uncommitted changes in the adopted tree"
+      fi
+      if [ -f "$WORKTREE_PATH/.governor-notes.md" ]; then
+        echo "  notes: $WORKTREE_PATH/.governor-notes.md, the earlier attempt's OWN notes, not verified fact"
+      fi
+      echo
+      echo "✓ Worktree '$NAME' adopted."
+      echo "  Path: $WORKTREE_PATH"
+      exit 0
+    fi
+
+    echo "adoption refused ($ADOPT_REFUSAL): falling back to the path-exists error" >&2
+  fi
   echo "path already exists: $WORKTREE_PATH" >&2
   exit 1
 fi
