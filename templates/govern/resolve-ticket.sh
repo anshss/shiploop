@@ -319,10 +319,52 @@ elif [[ "$mneeded" == "true" ]]; then
 fi
 
 # ── 5. Land: pipe the report into the EXISTING land-resolution.sh (the real tickets.md edit +
-#    commit + BK_LOCK/CAS push). Never reimplemented here. ─────────────────────────────────────
-if ! printf '%s' "$report" | "$DIR/land-resolution.sh" "$N"; then
-  echo "resolve-ticket #$N: land-resolution.sh failed — ticket NOT bookkept. Check the error above and retry." >&2
-  exit 8
+#    commit + BK_LOCK/CAS push). Never reimplemented here.
+#
+#    A GROUP report (a non-empty `.tickets` array, a worker batched onto one branch/one PR via
+#    govern::locality_groups) lands PER TICKET instead of once: loop the array, and for each entry
+#    read govern::batch_ticket_status (fail-closed: "" for a missing entry, an empty array, an
+#    absent array, unparseable JSON, or an entry with no status). A "resolved" entry lands via
+#    land-resolution.sh for THAT ticket number; "parked"/"failed" record the outcome in ticket
+#    history and leave the queue block in place; anything else (including a ticket the array never
+#    names) is left untouched too, never a guess at what the worker meant. `newTickets`/
+#    `lessonPatch` are group-wide findings the worker states once, so only the PRIMARY ticket's
+#    (the $N this script was invoked with) landing call carries them through; every other group
+#    member's call gets them stripped so a filed ticket or a promoted lesson is never applied twice
+#    for one worker run.
+#
+#    An EMPTY or absent `.tickets` array is the single-ticket path and lands exactly as it always
+#    has: a worker that never named a group must not have to remember to omit the field. ─────────
+_group_tickets_n="$(jq -r '(.tickets // []) | length' <<<"$report" 2>/dev/null || echo 0)"
+if [[ "${_group_tickets_n:-0}" -gt 0 ]]; then
+  _group_stripped_report="$(jq -c '.newTickets = [] | .lessonPatch = null' <<<"$report" 2>/dev/null || echo "$report")"
+  while IFS= read -r _gt; do
+    [[ "$_gt" =~ ^[0-9]+$ ]] || continue
+    _gstatus="$(govern::batch_ticket_status "$report" "$_gt")"
+    _gnote="$(govern::batch_ticket_note "$report" "$_gt")"
+    case "$_gstatus" in
+      resolved)
+        _lreport="$_group_stripped_report"
+        [[ "$_gt" == "$N" ]] && _lreport="$report"
+        if ! printf '%s' "$_lreport" | "$DIR/land-resolution.sh" "$_gt"; then
+          echo "resolve-ticket #$N: land-resolution.sh failed for group member #$_gt, ticket NOT bookkept. Check the error above and retry." >&2
+          exit 8
+        fi
+        ;;
+      parked|failed)
+        echo "resolve-ticket #$N: group member #$_gt reported '$_gstatus', left in the queue" >&2
+        rt_record_history "$_gstatus" "${_gnote:-group landing: reported $_gstatus, not resolved}"
+        ;;
+      *)
+        echo "resolve-ticket #$N: group member #$_gt has no explicit 'resolved' entry in the report's tickets array, left in the queue" >&2
+        ;;
+    esac
+  done < <(jq -r '.tickets[].ticket // empty' <<<"$report" 2>/dev/null || true)
+else
+  if ! printf '%s' "$report" | "$DIR/land-resolution.sh" "$N"; then
+    echo "resolve-ticket #$N: land-resolution.sh failed, ticket NOT bookkept. Check the error above and retry." >&2
+    exit 8
+  fi
 fi
 
 # ── 6. Worker-boundary cleanup that belongs wherever a resolution lands (ported from

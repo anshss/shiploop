@@ -1,0 +1,18 @@
+ok   - 1a. group primary #40 lands
+ok   - 1b. group secondary #41 lands too
+ok   - 1c. exactly two land calls for a two-member group
+ok   - 1d. the shared PR is merged exactly once
+ok   - 2a. the resolved member lands
+ok   - 2b. the parked member is never landed
+ok   - 2c. exactly one land call
+ok   - 3a. the named member lands
+ok   - 3b. a ticket the array never mentions is never landed
+ok   - 4a. unparseable stdin lands nothing
+ok   - 4b. and exits non-zero
+ok   - 5a. the single ticket lands
+ok   - 5b. exactly one land call, unchanged from the legacy path
+ok   - 6a. the primary ticket's (#40) land call carries newTickets
+ok   - 6b. the secondary ticket's (#41) land call has newTickets stripped
+ok   - 6c. …and lessonPatch stripped too
+
+all assertions passed

@@ -6,7 +6,7 @@
 #       whose only scope signal is `Where:` PROSE — prose is not a measurement, and keying on it
 #       forced a leaf-directory approximation that collapsed the backlog into a couple of buckets.
 #       govern::paths_overlap then batches on EXACT shared paths.
-#   (B) GOVERN_BATCH_MAX=1 partitions into SINGLETONS — the pre-re-key behavior.
+#   (B) max=1 (the caller's default when it passes none) partitions into SINGLETONS.
 #   (C) max>1 partitions into DISJOINT, order-preserving, size-capped groups sharing real files.
 #   (D) an UNMEASURED ticket is never batched on a guess — no measurement means no batch.
 #   (E) dependency-related tickets are NEVER co-batched — in EITHER direction, including the implicit
@@ -14,11 +14,11 @@
 #   (F) per-ticket outcome mapping is FAIL-CLOSED: only an explicit `resolved` entry in the report's
 #       `tickets` array maps to resolved; a different status, a missing entry, an empty array and an
 #       unparseable report all map to "" (⇒ the caller leaves the ticket in tickets.md).
-# These functions folded co-batched tickets into one dispatch, amortizing exploration cost across
-# them; the dispatch side that called them (accepting multiple ticket numbers on one spawn, folding
-# their blocks into the prompt) lived in the headless dispatch launcher, retired along with it. The
-# interactive lane dispatches ONE ticket per worker (`.claude/agents/worker.md`), so batching has no
-# current caller: these functions and their tests stay in case a future dispatcher wants them.
+# These functions fold co-batched tickets into one dispatch, amortizing exploration cost across
+# them. The advisor calls govern::locality_groups directly to validate a named group before
+# dispatching it; the interactive lane's worker (`.claude/agents/worker.md`) then resolves one ticket
+# OR one named group, and resolve-ticket.sh calls govern::batch_ticket_status/note to land a group
+# report per ticket (see worker-prompt.md's "Ticket groups" section).
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network, no worker spawned.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,7 +104,7 @@ assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "$(govern::
 assert_eq "$(govern::paths_overlap "$(govern::ticket_paths 1 "$TF")" "" && echo yes || echo no)" \
   "no"  "A8: an unmeasured ticket never overlaps anything"
 
-# ── (B) GOVERN_BATCH_MAX=1 preserves today's behavior exactly ───────────────
+# ── (B) max=1 preserves today's behavior exactly ─────────────────────────────
 assert_eq "$(govern::locality_groups 1 "1,2,3,4,5,6" "$TF" | tr '\n' ' ')" \
   "1 2 3 4 5 6 " "B: max=1 → one ticket per group (today's behavior)"
 assert_eq "$(govern::locality_groups 0 "1,2,3" "$TF" | tr '\n' ' ')" \
