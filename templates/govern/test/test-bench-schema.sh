@@ -12,11 +12,9 @@
 #   6. a rollup's costUsdTotal equals the sum of its cell's session costs
 #   7. a session hard-killed before emitting a result recovers TOKENS but never a fabricated cost
 #   8. the fixture backlog is refused by a non-dry run
-#   9. verify applies the golden test_patch to the ARM'S tree and only then runs verify_cmd, and
-#      records one ledger line per ticket
-#  10. a test_patch that will not apply records the distinct sentinel and leaves the ticket
-#      unresolved: no 3-way merge, no fuzz, no silent repair of the oracle
-#  11. every rollup row carries a checksum over its own numeric fields, so a hand-edited row is
+#   9. verify runs `verify_cmd` against the arm's tree with a plain `eval`, nothing else, and
+#      records one ledger line per ticket: no patch, no golden test, no apply-failure sentinel
+#  10. every rollup row carries a checksum over its own numeric fields, so a hand-edited row is
 #      detectable; a row's subagent activity is asserted off its OWN result event, never the exit
 #      code; and the lever-events reader uses an explicit allow-list, counting a malformed line and
 #      an unrecognized event name rather than silently dropping either
@@ -112,52 +110,30 @@ out="$(BENCH_OUT_ROOT="$T/live" bash "$HUB/bench/run.sh" --run-id live \
 assert_eq "$?" "1" "8. a non-dry run on the fixture backlog exits non-zero"
 assert_contains "$out" "is a TEST FIXTURE" "8. and says why, before spending anything"
 
-# ── 9. the golden test_patch is applied at verify time, on the arm's tree ───
-# The dry run's checkout is a bare repo with a README. The fixture backlog's patches ADD their test
-# files, so a clean apply is what makes verify_cmd runnable at all: if the patch step were skipped
-# or ordered before the arm, nothing would clear.
+# ── 9. verify_cmd runs against the arm's tree with a plain eval, nothing else ───
+# The dry run's checkout is a bare repo with just a README, and the fixture's verify_cmd names a
+# test file nothing in this path ever creates any more, so every ticket fails deterministically
+# (rc 127, command not found). That is the honest behavior with no golden patch in the picture: the
+# ledger shape is what this locks down, not a clear result.
 L="$T/results/schema-dry/verify/fixture-backlog-vanilla-1.jsonl"
 assert_eq "$(jq -sr 'length' "$L")" "6" "9. one verify ledger line per ticket"
-assert_eq "$(jq -sr '[ .[] | select(.patchApplied) ] | length' "$L")" "6" \
-  "9. every golden test_patch applied to the arm's tree"
-assert_eq "$(jq -sr '[ .[] | select(.cleared) ] | length' "$L")" "6" \
-  "9. and verify_cmd then passed for every ticket"
+assert_eq "$(jq -sr '[ .[] | keys_unsorted ] | unique | length' "$L")" "1" \
+  "9. every ledger line has the same key set"
+assert_eq "$(jq -sr '.[0] | keys_unsorted | sort | join(",")' "$L")" "cleared,ticket,verifyExit" \
+  "9. the ledger carries ticket/verifyExit/cleared only, no patchApplied"
+assert_eq "$(jq -sr '[ .[] | select(.verifyExit == 127) ] | length' "$L")" "6" \
+  "9. verify_cmd ran directly against the arm's tree and failed the same deterministic way for every ticket"
 # The ledger must NOT sit beside the session streams: record_sessions globs *.jsonl there, so a
 # ledger written into that dir would be folded in as an extra zero-cost session.
 assert_eq "$(ls "$T/results/schema-dry/sessions/fixture-backlog-vanilla-1"/*.jsonl | wc -l | tr -d ' ')" "1" \
   "9. the ledger is not counted as a session stream"
+# The verify path never shells out to `git apply` any more: there is no golden patch left to apply.
+assert_eq "$(grep -c -e 'git apply' "$HUB/bench/run.sh")" "0" \
+  "9. the verify path applies no patch at all"
 
-# ── 10. an unappliable patch records the sentinel, never a repair ───────────
-mkdir -p "$T/badpatch"
-jq -c '.test_patch = "diff --git a/nope.txt b/nope.txt\n--- a/nope.txt\n+++ b/nope.txt\n@@ -1 +1 @@\n-was\n+now\n"' \
-  "$HUB/bench/backlogs/fixture-backlog/backlog.jsonl" > "$T/badpatch/backlog.jsonl"
-mkdir -p "$T/badwd" && ( cd "$T/badwd" && git init -q -b main && echo x > README.md \
-  && git -c user.email=a@b -c user.name=a add -A \
-  && git -c user.email=a@b -c user.name=a commit -qm init ) >/dev/null 2>&1
-read -r bc bt bw < <(BENCH_STATE_DIR="$T/state" bash -c '
-  source "'"$HUB"'/bench/record.sh"
-  bench::load_govern_lib "'"$T"'/state"
-  BENCH_VERIFY_PATCH_FAILED=90
-  '"$(sed -n '/^bench::verify_backlog()/,/^}/p' "$HUB/bench/run.sh")"'
-  bench::verify_backlog "'"$T"'/badpatch/backlog.jsonl" "'"$T"'/badwd" "'"$T"'/bad.jsonl"
-' 2>/dev/null)
-assert_eq "$bc" "0" "10. no ticket clears when the golden patch cannot apply"
-assert_eq "$bw" "90" "10. the worst exit is the distinct patch-failure sentinel, not a test failure"
-assert_eq "$(jq -sr '[ .[] | select(.patchApplied == false) ] | length' "$T/bad.jsonl")" "6" \
-  "10. every ledger line records that the patch did not apply"
-assert_eq "$(jq -sr '[ .[] | select(.verifyExit == 90) ] | length' "$T/bad.jsonl")" "6" \
-  "10. and carries the sentinel rather than a plain non-zero"
-# The oracle is never repaired to make a run look better. Inspect the INVOCATION lines only: the
-# comments above them say the words "3-way" and "reject" on purpose, and a naive file-wide grep
-# would match its own documentation and never fail on real code.
-applies="$(grep -e 'git apply' "$HUB/bench/run.sh" | grep -v -e '^ *#')"
-assert_contains "$applies" "git apply -" "10. the verify path does apply the golden patch"
-assert_eq "$(printf '%s' "$applies" | grep -c -e '3way' -e 'apply -3' -e 'reject' -e 'unidiff-zero')" "0" \
-  "10. and never 3-way merges, fuzzes, or partially applies it"
-
-# ── 11. rollup checksum, subagent activity, and the lever-events reader ─────
+# ── 10. rollup checksum, subagent activity, and the lever-events reader ─────
 assert_eq "$(jq -sr '[ .[] | select(.kind=="rollup") | select(has("checksum")|not) ] | length' "$R")" "0" \
-  "11. every rollup row carries a checksum"
+  "10. every rollup row carries a checksum"
 recheck="$(jq -sr '[ .[] | select(.kind=="rollup") ][0]' "$R")"
 recomputed="$(RECHECK="$recheck" BENCH_STATE_DIR="$T/state" bash -c '
   source "'"$HUB"'/bench/record.sh"
@@ -165,7 +141,7 @@ recomputed="$(RECHECK="$recheck" BENCH_STATE_DIR="$T/state" bash -c '
   bench::row_checksum "$RECHECK"
 ' 2>/dev/null)"
 assert_eq "$(printf '%s' "$recheck" | jq -r '.checksum')" "$recomputed" \
-  "11. the checksum is exactly bench::row_checksum's own function applied to the row"
+  "10. the checksum is exactly bench::row_checksum's own function applied to the row"
 
 got="$(BENCH_STATE_DIR="$T/state" bash -c '
   source "'"$HUB"'/bench/record.sh"
@@ -174,7 +150,7 @@ got="$(BENCH_STATE_DIR="$T/state" bash -c '
   bench::stream_had_subagent_activity "'"$HUB"'/bench/fixtures/shiploop-session.jsonl"
   echo "rc=$?"
 ' 2>&1)"
-assert_contains "$got" "rc=0" "11. the shiploop fixture's own result event shows completed subagent activity"
+assert_contains "$got" "rc=0" "10. the shiploop fixture's own result event shows completed subagent activity"
 
 mkdir -p "$T/levers"
 {
@@ -188,21 +164,21 @@ lv="$(BENCH_STATE_DIR="$T/state" bash -c '
   bench::load_govern_lib "'"$T"'/state"
   bench::read_lever_events "'"$T"'/levers/lever-events.jsonl"
 ' 2>/dev/null)"
-assert_eq "$(printf '%s' "$lv" | jq -r '.instrumented')" "true" "11. a present lever-events.jsonl is instrumented"
+assert_eq "$(printf '%s' "$lv" | jq -r '.instrumented')" "true" "10. a present lever-events.jsonl is instrumented"
 assert_eq "$(printf '%s' "$lv" | jq -r '.events."output-suppression"')" "1" \
-  "11. the allow-listed output-suppression event is counted by name"
+  "10. the allow-listed output-suppression event is counted by name"
 assert_eq "$(printf '%s' "$lv" | jq -r '.events."watchdog-kill"')" "1" \
-  "11. and so is watchdog-kill"
+  "10. and so is watchdog-kill"
 assert_eq "$(printf '%s' "$lv" | jq -r '.malformed')" "1" \
-  "11. the non-JSON line is counted as malformed, never silently dropped"
+  "10. the non-JSON line is counted as malformed, never silently dropped"
 assert_eq "$(printf '%s' "$lv" | jq -r '.unrecognized')" "1" \
-  "11. an event name outside the three-name allow-list is counted as unrecognized, never silently dropped"
+  "10. an event name outside the three-name allow-list is counted as unrecognized, never silently dropped"
 absent="$(BENCH_STATE_DIR="$T/state" bash -c '
   source "'"$HUB"'/bench/record.sh"
   bench::load_govern_lib "'"$T"'/state"
   bench::read_lever_events "'"$T"'/levers/does-not-exist.jsonl"
 ' 2>/dev/null)"
 assert_eq "$(printf '%s' "$absent" | jq -r '.instrumented')" "false" \
-  "11. a run with no lever-events.jsonl is uninstrumented, never zero-saving"
+  "10. a run with no lever-events.jsonl is uninstrumented, never zero-saving"
 
 assert_done

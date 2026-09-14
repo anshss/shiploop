@@ -81,30 +81,18 @@ assert_contains "$full" "$body" "3. the backlog prompt carries ticket t3's body 
 assert_contains "$one" "$title" "3. the per-ticket prompt carries the same title"
 assert_contains "$one" "$body" "3. the per-ticket prompt carries the same body"
 assert_not_contains "$full" "shiploop" "3. neither arm's prompt hints at the treatment"
-assert_not_contains "$full" "upstream_pr" "3. the prompt never leaks the upstream PR"
-# The oracle must stay invisible to the session. The golden test_patch is applied at VERIFY time,
-# after the arm has finished; a prompt carrying it (or the merge sha, or the test file name) would
-# hand the arm the answer and void the whole measurement.
-patch="$(jq -r 'select(.id=="t3") | .test_patch' "$BL")"
-sha="$(jq -r 'select(.id=="t3") | .merge_sha' "$BL")"
-assert_not_contains "$full" "$sha" "3. the prompt never leaks merge_sha"
-assert_not_contains "$one" "$sha" "3. nor does the per-ticket prompt"
-assert_not_contains "$full" "diff --git" "3. the prompt never carries a golden test_patch"
-assert_not_contains "$one" "diff --git" "3. nor does the per-ticket prompt"
-assert_not_contains "$full" "tests/t3.sh" "3. and it never names the test file the oracle will add"
+# verify_cmd names the ticket's own test and must stay out of the prompt entirely: handing either
+# arm the exact command that clears the ticket is steering, not the problem statement a real
+# engineer starts with.
+assert_not_contains "$full" "tests/t3.sh" "3. the prompt never names the ticket's own test file"
 assert_not_contains "$one" "tests/t3.sh" "3. nor does the per-ticket prompt"
 assert_not_contains "$full" "Verify with" \
-  "3. verify_cmd is not in the prompt at all: it names the gold test the oracle adds later"
+  "3. verify_cmd is not in the prompt at all"
 # The seeded governor queue is the shiploop arm's prompt source, so it must be just as clean.
 slug="$(armsh "bench::repo_slug '$BL'")"
 armsh "bench::seed_tickets '$BL' '$T/leak.md' '$slug'" >/dev/null
 leak="$(cat "$T/leak.md")"
-assert_not_contains "$leak" "diff --git" "3. the seeded queue carries no golden test_patch"
-assert_not_contains "$leak" "$sha" "3. and no merge_sha"
-assert_not_contains "$leak" "local://pr" "3. and no upstream PR link"
-assert_not_contains "$leak" "tests/t1.sh" "3. and never the gold test file name"
-[ -n "$patch" ] && printf 'ok   - 3. (the fixture really does carry a non-empty test_patch to leak)\n' || \
-  { printf 'FAIL - 3. fixture has no test_patch, so the leak checks prove nothing\n'; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+assert_not_contains "$leak" "tests/t1.sh" "3. and the seeded queue never names a test file either"
 
 # 4. No curated tool list on the spawn path at all, for either arm, and no worker-tier override
 # from the shiploop arm either — every one of those was a lever under test (spec section 3a/3b).

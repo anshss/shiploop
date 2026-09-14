@@ -4,20 +4,18 @@ Led by the least flattering true facts, per the operator's own instruction. If a
 `README.md` or `METHODOLOGY.md` looks better than this file, this file is right and the number
 needs another look.
 
-## There is no published (6+ ticket) live backlog yet
+## There is no published live backlog yet
 
-`bench/backlogs/` holds only the test fixture. Building a real SWE-bench-shaped backlog (a merged
-PR whose diff cleanly separates into a source fix and test-only changes, with the fail-to-pass
-property holding at the pinned ref) is real curation work, not yet done, at the design's own
-6-ticket usability bar (`bench/validate-backlog.sh --min-tickets`, default 6).
+`bench/backlogs/` holds only the test fixture. A published backlog is purpose-built: its own tests
+already ship in the tree at the pinned `ref`, already failing, and an arm's job is to make
+`verify_cmd` pass on each one. Building and curating a wider one is real work, not yet done.
 
 The one live run to date used a **2-ticket pilot backlog**, `bench/pilot-backlogs/shiploop-mini/`
-(gitignored, never published), mined from two of shiploop's own past commits against shiploop's own
-repo — a real fail-to-pass pair each, validated offline by `bench/validate-backlog.sh` before the
-live run touched a single dollar. It is below the design's own bar for a *published* backlog and is
-reported as a small pilot, not the full benchmark. A wider backlog (more tickets, ideally against an
-external repo so shiploop is never grading its own commit messages) is the next real piece of work
-here, not a nice-to-have.
+(gitignored, never published), built from two of shiploop's own past commits against shiploop's own
+repo, a real fail-to-pass pair each, validated offline before the live run touched a single
+dollar. It is reported as a small pilot, not the full benchmark. A wider backlog (more tickets,
+ideally against an external repo so shiploop is never grading its own commit messages) is the next
+real piece of work here, not a nice-to-have.
 
 ## The offline guard closes git remotes, not the network
 
@@ -112,17 +110,6 @@ which makes the child work LONGER, not shorter. Crediting it would be crediting 
 saving. Locked by case 14 of `templates/govern/test/test-agent-progress-guard.sh` and recorded in
 the deliberate-exclusions section of `bench/LEVER-EVENTS.md`.
 
-## Golden-test-patch quality is bounded by whoever mines the backlog
-
-`bench/validate-backlog.sh` proves the mechanical fail-to-pass property (patch applies at `ref`,
-`verify_cmd` fails there, the test is present and passes at `merge_sha`). It cannot prove that
-`test_patch` is semantically test-only in intent, only that the diff it was handed touches only
-files the backlog author selected. A careless backlog author could still hand-pick a "test" file
-that happens to also carry a source change if they generated the split by hand instead of by path
-filter. Every backlog in this repo so far (the fixture, and the mined pilot) built `test_patch` by
-filtering the real merged diff to test-file paths only, which is mechanical and auditable, but the
-mechanism does not stop a differently-authored backlog from getting this wrong.
-
 ## A local-path clone leaked the answer, and it was caught mid-run
 
 `bench::prepare_workdir`'s `git clone` of a LOCAL path (the common case when a backlog is mined
@@ -150,8 +137,8 @@ success rate as upper-bound-flattering for this reason, independent of anything 
 ## The honest live run: both arms scored 0/2 on the mechanical oracle
 
 The live A/B run (`bench/pilot-backlogs/shiploop-mini`, 2 tickets, model default, git-leak fix
-applied) finished with **neither arm clearing either ticket** by `verify_cmd` + the golden
-`test_patch`:
+applied) finished with **neither arm clearing either ticket** by `verify_cmd` against the golden
+test patch each ticket carried at the time:
 
 - **flows-grammar**: both arms wrote a real fix; both arms' own test additions conflict with the
   golden patch's exact context lines, so `git apply` fails (sentinel 90) for both — the documented,
