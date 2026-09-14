@@ -51,8 +51,8 @@ emit() {
 # emit_default <lever-events-file> <emit_lever_event args...> -> stdout+stderr, with
 # GOVERN_LEVER_EVENTS genuinely UNSET (env -u, not merely un-passed): assert.sh exports it as 0 for
 # the whole suite, so without the explicit -u this subshell would inherit that pin and prove
-# nothing about the actual runtime default. Same idiom test-model-ceiling.sh and
-# test-driver-model-stamp.sh already use for "genuinely undetectable".
+# nothing about the actual runtime default. Same idiom test-model-ceiling.sh already uses for
+# "genuinely undetectable".
 emit_default() {
   local f="$1"; shift
   ( env -u GOVERN_LEVER_EVENTS GOVERN_WS_ROOT="$U" GOVERN_LOG_ROOT="$U/logs" GOVERN_LEVER_EVENTS_FILE="$f" \

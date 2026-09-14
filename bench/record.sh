@@ -267,36 +267,21 @@ bench::read_lever_events() { # <lever-events.jsonl> -> {instrumented, events:{na
   return 0
 }
 
-# `worker_model_clamped` is a FLEET event (govern::event, GOVERN_EVENTS), never a lever event, so it
-# never appears in lever-events.jsonl. It was emitted from the headless dispatch launcher's own
-# model-ceiling check; that launcher is retired and nothing currently emits this event, so this
-# counter reads an honest 0 on any run dispatched since: never a guess, but no longer a live signal
-# either. It is the exact mirror of the retired `escalation` lever (spec section 7 item 4).
-bench::count_model_clamps() { # <governor/events.jsonl> -> count of worker_model_clamped rows
-  local f="$1" n
-  [[ -f "$f" ]] || { printf '0\n'; return 0; }
-  n="$(grep -ac '"type":"worker_model_clamped"' "$f" 2>/dev/null || true)"
-  [[ "$n" =~ ^[0-9]+$ ]] || n=0
-  printf '%s\n' "$n"
-  return 0
-}
-
 # Attribution inside the treatment arm (section 4): NEVER the headline, logged for the record only.
 # subagent_stats and modelUsage come straight off the advisor session's own result event (the SAME
 # event bench::session_row already reads for the headline cost, so this never double-reads a
-# different source); lever/model-clamp counts come from the run directory bench::arm_shiploop
-# scoped this cell to. Printed via bench::log, never written into results.jsonl: rollup.mjs's cost
-# cuts are computed from usage/costUsd alone and must never depend on whether attribution succeeded.
-bench::report_attribution() { # <workspace> <jsonl> <rundir> <name>
-  local ws="$1" jsonl="$2" rundir="$3" name="$4"
-  local top levers clamps
+# different source); lever counts come from the run directory bench::arm_shiploop scoped this cell
+# to. Printed via bench::log, never written into results.jsonl: rollup.mjs's cost cuts are computed
+# from usage/costUsd alone and must never depend on whether attribution succeeded.
+bench::report_attribution() { # <jsonl> <rundir> <name>
+  local jsonl="$1" rundir="$2" name="$3"
+  local top levers
   top="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
     | jq -c '{subagentStats: (.subagent_stats // null), modelUsage: (.modelUsage // null)}' 2>/dev/null || echo '{}')"
   [[ -n "$top" ]] || top='{}'
   levers="$(bench::read_lever_events "$rundir/lever-events.jsonl")"
-  clamps="$(bench::count_model_clamps "$ws/governor/events.jsonl")"
-  bench::log "arm shiploop ($name) attribution: $(jq -nc --argjson top "$top" --argjson levers "$levers" --argjson clamps "$clamps" \
-    '$top + {leverEvents:$levers, modelClamps:$clamps}' 2>/dev/null || echo '{}')"
+  bench::log "arm shiploop ($name) attribution: $(jq -nc --argjson top "$top" --argjson levers "$levers" \
+    '$top + {leverEvents:$levers}' 2>/dev/null || echo '{}')"
   return 0
 }
 

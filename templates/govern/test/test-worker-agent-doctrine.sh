@@ -30,11 +30,9 @@ WORKER_MD="$AGENTS_DIR/worker.md"
 PROMPT_MD="$GOVERN_PROMPTS_DIR/worker-prompt.md"
 WORKSPACE_LIB="$(cd "$DIR/../.." && pwd)/lib/workspace.sh"
 SYNC_PORT="$(cd "$DIR/.." && pwd)/sync-port.sh"
-SCOUT_TICKET="$(cd "$DIR/.." && pwd)/scout-ticket.sh"
 [ -f "$PROMPT_MD" ] || { echo "SKIP: canonical worker-prompt.md not found" >&2; exit 77; }
 [ -f "$WORKSPACE_LIB" ] || { echo "SKIP: lib/workspace.sh not found at $WORKSPACE_LIB" >&2; exit 77; }
 [ -f "$SYNC_PORT" ] || { echo "SKIP: sync-port.sh not found at $SYNC_PORT" >&2; exit 77; }
-[ -f "$SCOUT_TICKET" ] || { echo "SKIP: scout-ticket.sh not found at $SCOUT_TICKET" >&2; exit 77; }
 
 body="$(cat "$WORKER_MD")"
 # Frontmatter = everything between the first two `---` lines.
@@ -116,16 +114,10 @@ assert_eq "$([ -n "$shared_permission" ] && echo yes || echo no)" "yes" \
 assert_eq "$(sed -n 's/^permissionMode: *//p' <<<"$fm")" "$shared_permission" \
   "6c. worker.md permissionMode matches the shared default ($shared_permission)"
 
-# mcpServers: zero MCP tools everywhere, by two different mechanisms. Govern's other headless
-# `claude` dispatches (scout-ticket.sh) get there at the CONNECTION level (--strict-mcp-config, no
-# --mcp-config passed). The interactive lane has no flag to attach that to, so it gets there at the
-# TOOL level instead: a `tools:` allow-list with no `mcp__` entry already means no MCP tool is
-# invocable regardless of what connects, and disallowedTools makes that explicit and keeps it true
-# even if `tools:` is ever loosened. See the mcpServers finding in CLAUDE-APPENDIX.md
-# (merge-vs-replace, sourced against the installed CLI) that this pins.
-scout_body="$(cat "$SCOUT_TICKET")"
-assert_contains "$scout_body" "strict-mcp-config" \
-  "6d. govern's other headless dispatches still default to zero MCP servers (strict-mcp-config)"
+# mcpServers: zero MCP tools, at the TOOL level: a `tools:` allow-list with no `mcp__` entry already
+# means no MCP tool is invocable regardless of what connects, and disallowedTools makes that
+# explicit and keeps it true even if `tools:` is ever loosened. See the mcpServers finding in
+# CLAUDE-APPENDIX.md (merge-vs-replace, sourced against the installed CLI) that this pins.
 assert_contains "$fm" "disallowedTools:" \
   "6e. worker.md declares a disallowedTools line"
 assert_contains "$(sed -n 's/^disallowedTools: *//p' <<<"$fm")" "mcp__" \

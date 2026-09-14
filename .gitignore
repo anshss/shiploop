@@ -7,3 +7,7 @@
 bench/pilot-backlogs/
 bench/results/*
 !bench/results/README.md
+
+# A test run's own stdout redirected to a file at the repo root (e.g. `bash test-foo.sh > x.out`)
+# must never get committed by accident.
+*.out

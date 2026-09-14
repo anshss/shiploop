@@ -33,11 +33,6 @@ PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
 SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
-# The worker's subagent definition: see govern::worker_agent_field below, which reads fields
-# (e.g. its tool allow-list) out of this file rather than keeping a second hardcoded copy
-# elsewhere. Absent on a fleet scaffolded before this file shipped, or in a hermetic test's stub
-# workspace: callers must treat that as "fall back to your own default", never a hard failure.
-WORKER_AGENT_FILE="${GOVERN_WORKER_AGENT_FILE:-$WS_ROOT/.claude/agents/worker.md}"
 # The live + parked queues live in one folder at the meta-repo root: queue/. Override QUEUE_DIR to
 # relocate the whole folder; the individual GOVERN_*_FILE overrides still win per-file (the tests
 # point them at temp dirs).
@@ -56,10 +51,6 @@ EXTERNALIZE_REVIEW_FILE="${GOVERN_EXTERNALIZE_REVIEW_FILE:-$QUEUE_DIR/tickets-ex
 TICKETS_PARKED_FILE="${GOVERN_TICKETS_PARKED_FILE:-$QUEUE_DIR/tickets-parked.md}"
 # Driver→relay escalation hand-off — regenerated every run-end, gitignored runtime state.
 PENDING_FILE="${GOVERN_PENDING_FILE:-$GOVERNOR_DIR/pending-escalations.json}"
-# Cross-run wait-for-merge / dependency deferrals. Persists supervisor "defer #N until PR #M
-# merges" advice (an in-memory skipThisRun evaporated at run-end) so a blocked ticket stays skipped
-# across runs until its blocker lands. Per-machine runtime state (like ticket-history.jsonl) — gitignored.
-PENDING_WAITS_FILE="${GOVERN_PENDING_WAITS_FILE:-$GOVERNOR_DIR/pending-waits.json}"
 # Cross-run per-ticket outcome ledger, one JSON object per attempt. Per-machine runtime state
 # (gitignored). Defined here (not just for one caller) because pre-dispatch-check.sh's
 # failure-streak breaker and resolve-ticket.sh both read/write the SAME file.
@@ -209,23 +200,6 @@ AWKLIB
   return 0
 }
 
-# Resolve the workspace event log by walking UP from a directory. Used by every surface that is
-# handed a cwd rather than a workspace root (the statusline segment, the plugin monitor): a session
-# is usually inside a sub-repo or a worktree, several levels below governor/.
-# Prints the path and returns 0 when found; prints nothing and returns 1 otherwise.
-govern::event_find_log() { # [start-dir]
-  local d="${1:-$PWD}" i=0
-  if [[ -n "${GOVERN_EVENTS_FILE:-}" && -f "${GOVERN_EVENTS_FILE:-}" ]]; then
-    printf '%s' "$GOVERN_EVENTS_FILE"; return 0
-  fi
-  d="$(cd "$d" 2>/dev/null && pwd)" || return 1
-  while [[ -n "$d" && "$d" != "/" && "$i" -lt 12 ]]; do
-    if [[ -f "$d/governor/events.jsonl" ]]; then printf '%s' "$d/governor/events.jsonl"; return 0; fi
-    d="$(dirname "$d")"; i=$((i+1))
-  done
-  return 1
-}
-
 # ── lever-events emitter (bench multi-lever redesign, spec 4b) ─────────────────────────────────
 # Append-only sibling of $GOVERN_RUN_DIR/state.jsonl: one JSON object per line, one of the four
 # lever-event shapes the contract in bench/LEVER-EVENTS.md defines (watchdog-kill / resume /
@@ -306,78 +280,6 @@ govern::worker_logdir() { # ticket -> dir
   if [[ -n "${GOVERN_RUN_DIR:-}" ]]; then echo "$GOVERN_RUN_DIR/ticket-$n"; else echo "$LOG_ROOT/ticket-$n"; fi
 }
 
-# Reclaim disk from a PRESERVED (parked/failed/timed-out) worktree WITHOUT discarding any work.
-# node_modules / .next / dist are gitignored + regenerable, never uncommitted work, so stripping
-# them frees the bulk of a bootstrapped worktree while keeping the source checkout + any diffs for
-# inspection/resume. This is what stops a fleet from self-bricking: a handful of parks no longer
-# fills the disk. Moved here from run-loop.sh's slim_worktree() when the loop was deleted, beside
-# the caller that PRESERVES a worktree. That caller was the headless dispatch launcher, since
-# retired; no current caller invokes this, kept for a future one that needs the same reclaim.
-# Skipped in dry mode and when a worktree-cmd override is set (tests).
-govern::slim_worktree() { # <ticket> [worktree-path]
-  local n="$1" wt="${2:-}"
-  [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]] || return 0
-  [[ -n "$wt" ]] || wt="${WORKTREE_BASE:-}/ticket-$n"
-  [[ -d "$wt" ]] || return 0
-  local before after
-  before=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
-  find "$wt" -type d \( -name node_modules -o -name .next -o -name dist \) -prune -exec rm -rf {} + 2>/dev/null || true
-  after=$(du -sm "$wt" 2>/dev/null | awk '{print $1}')
-  govern::log "slimmed worktree ticket-$n: ${before:-?}MB → ${after:-?}MB (node_modules/.next/dist stripped; source + diffs kept)"
-  return 0
-}
-
-# Stamps a run dir with the workspace's synced hub version, so a corpus can be scoped to the
-# sessions that ran under one CURRENT harness version instead of blending every version a
-# workspace has ever run: no transcript event carries the shiploop package version itself.
-# Source: scripts/lib/.harness-version, the hub VERSION scaffold.sh last synced this workspace
-# against (same file doctor.sh / govern-health.sh already read for the update-channel check). Best-
-# effort ONLY: an absent stamp file, an unreadable one, or a workspace that never ran scaffold.sh
-# must never abort a dispatch, so failures here are silent and the run proceeds unstamped. Only
-# useful to a caller that both creates a run directory and calls this on it; nothing in the
-# current dispatch path does, so a session runs unstamped unless something opts in explicitly.
-# A workspace-relative $RUN_DIR keeps this callable from a test harness that overrides
-# GOVERN_WS_ROOT.
-#
-# `|| true` on the write: a bare `[[ cond ]] && cmd` is NOT a no-op on failure under `set -e`, even
-# with a `return 0` two lines down, because the failing command is a plain statement outside any
-# if/while/&&-that-is-not-last context, so `-e` aborts the CALLER right there, before `return 0` is
-# ever reached (confirmed empirically against an unwritable run_dir). Without the guard this
-# function contradicts its own "failures here are silent" claim above.
-govern::stamp_run_version() { # <run_dir>
-  local run_dir="$1"
-  local stamp="$WS_ROOT/scripts/lib/.harness-version"
-  local v=""
-  v="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$stamp" 2>/dev/null || true)"
-  [[ -n "$v" ]] && { printf '%s\n' "$v" > "$run_dir/shiploop-version" 2>/dev/null || true; }
-  return 0
-}
-
-# Stamps a run dir with the orchestrating (driver) session's own model tier, so a cost comparison
-# can price what it credits at the tier that actually dispatched the run instead of falling back to
-# the highest tier observed anywhere in it, which is a guess biased toward the most expensive tier
-# and so toward shiploop's own credit. Same shape and the same never-abort contract
-# as govern::stamp_run_version above (a sibling stamp, NOT a lever event: this is run-scoped context
-# that has to exist before GOVERN_LEVER_EVENTS ever comes into it, and bench/LEVER-EVENTS.md does not
-# define it). Source: govern::session_model, the SAME signal govern::model_ceiling already trusts to
-# clamp every worker's escalation tier on this exact dispatch path, normalised to a bare family name
-# (govern::model_family) because a driver-tier baseline's own vocabulary is haiku/sonnet/opus, not
-# a full model id. Best-effort ONLY: an undetectable session model, or one outside the known family list,
-# writes nothing rather than a guess, exactly the standard govern::stamp_run_version already holds
-# to. Called by whoever creates a run directory, beside the version stamp.
-govern::stamp_driver_model() { # <run_dir>
-  local run_dir="$1"
-  local fam=""
-  fam="$(govern::model_family "$(govern::session_model)")"
-  # `|| true`: a bare `[[ c ]] && cmd` is NOT a no-op on failure under `set -e` even with a `return
-  # 0` further down the function, because the failing command is not the function's LAST statement
-  # but IS a plain command outside any if/while/&&-that-is-not-last context, so `-e` still aborts
-  # the CALLER right here (root CLAUDE.md rule 11's "returns the test's status" applies to more
-  # than just a literal last line). Confirmed by writing to a deliberately unwritable run_dir.
-  [[ -n "$fam" ]] && { printf '%s\n' "$fam" > "$run_dir/driver-model" 2>/dev/null || true; }
-  return 0
-}
-
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
 # GOVERN_MERGE_REPOS. Frontend (PR-only) = the sub-repos NOT in that allowlist,
 # derived from REPOS. `harness` / a cross-owner skill-template repo live OUTSIDE
@@ -436,26 +338,6 @@ govern::tickets_relpath() { # -> path relative to the meta-repo root
   local qd prefix; qd="$(dirname "$TICKETS_FILE")"
   prefix="$(cd "$qd" 2>/dev/null && git rev-parse --show-prefix 2>/dev/null || true)"
   printf '%s%s' "$prefix" "$(basename "$TICKETS_FILE")"
-}
-
-# ── Worker agent-definition reader ───────────────────────────────────────────
-# `.claude/agents/worker.md` is the declared source for the parts of the worker's capability
-# posture that live in its frontmatter (currently: tools). This reads a single flat `key: value`
-# frontmatter line out of WORKER_AGENT_FILE (nested keys, like experimental.cacheTtl, aren't needed by
-# any caller and aren't supported). No current caller reads this (its one caller was the headless
-# dispatch launcher's tool-schema trim, retired along with it); kept for a future caller that
-# needs a frontmatter field without a second hardcoded copy. Prints nothing and returns 1 if the
-# file or the field is missing, so every caller
-# MUST fall back to its own hardcoded default rather than treat absence as "empty list" — a fleet
-# that hasn't synced templates/.claude/agents/ yet, or a hermetic test's stub workspace (neither
-# carries this file), must spawn exactly as it did before this function existed.
-govern::worker_agent_field() { # <field-name> -> the field's value, rc 1 if unresolvable
-  local field="$1" fm val
-  [[ -f "$WORKER_AGENT_FILE" ]] || return 1
-  fm="$(awk 'NR==1 && $0=="---"{inb=1;next} inb && $0=="---"{exit} inb{print}' "$WORKER_AGENT_FILE")"
-  val="$(sed -n "s/^${field}: *//p" <<<"$fm" | head -1)"
-  [[ -n "$val" ]] || return 1
-  printf '%s\n' "$val"
 }
 
 # ── Gotcha injection ────────────────────────────────────────────────────────────
@@ -827,13 +709,6 @@ govern::_lock_holder_dead() { # lockdir -> 0 (dead / no holder), 1 (alive)
   local hpid; hpid="$(govern::_lock_holder_read "$1")"
   [[ -n "$hpid" ]] || return 0
   kill -0 "$hpid" 2>/dev/null && return 1 || return 0
-}
-# Refresh the lock's mtime so its "age" measures time since the last heartbeat, NOT time
-# since acquire, so a long-running holder never appears stale. Retained for the BK_LOCK/CAS
-# protocol in land-resolution.sh; the per-ticket claim lock it was also written for went away with
-# the dispatch loop.
-govern::lock_heartbeat() { # lockdir
-  [[ -d "$1" ]] && { touch "$1" 2>/dev/null || true; }
 }
 # Parse a YYYY-MM-DD date into epoch seconds, portably across BSD (macOS) and GNU date.
 # Prints the epoch on success; returns 1 (prints nothing) on a malformed/empty date.
@@ -1458,93 +1333,6 @@ govern::tickets_missing_validation_doc() { # [tickets-file] [meta-root] -> "N" l
   return 0
 }
 
-# ── warm-parent dispatch assertion (not every ticket earns a full worker) ────────────────────────
-# Dispatch is otherwise UNCONDITIONAL: every ticket gets a fresh worker that re-derives the
-# codebase from scratch, regardless of what the parent session already knows. The criterion for
-# reaching for a subagent at all is that the side task would flood the parent with search results,
-# logs and file contents it will not reference again — so when the parent ALREADY holds the context,
-# the spawn buys nothing and costs a cold start.
-#
-# The split is by TOKEN WEIGHT, not by task. The parent DECIDES (it states the change it already
-# knows); the worker EXECUTES (the edits, the test runs, the build errors, the retry loop, the PR) —
-# the verbose part, which stays in a throwaway context. That preserves the flat-parent property the
-# governor exists for; "let the parent do the work" would destroy it.
-#
-# The signal is EXPLICIT and NARROW by construction — never inferred, never a heuristic:
-#   GOVERN_WARM="<ticket-number>|<what the parent read, and the change it believes is needed>"
-# It names exactly ONE ticket, it is per-invocation (so it cannot rot in the queue the way a ticket
-# field does), and an empty change means "no worker at all". `GOVERN_EXECUTE_ONLY=0` hard-disables
-# the branch even when GOVERN_WARM is set, restoring unconditional dispatch fleet-wide.
-#
-# Returns rc 0 and sets GOVERN_WARM_TEXT when the assertion applies to <N>; rc 1 otherwise. A
-# malformed value (no `|`, non-numeric ticket) is IGNORED with a log line rather than guessed at —
-# the whole point is that this branch is never taken by accident. No current caller reads
-# GOVERN_WARM or calls this (its one caller was the headless dispatch launcher, retired along with
-# it); kept for a future dispatcher.
-GOVERN_WARM_TEXT=""
-govern::warm_assertion() { # <ticket-N> -> rc 0 if a warm assertion covers this ticket
-  GOVERN_WARM_TEXT=""
-  local n="${1:-}" raw="${GOVERN_WARM:-}" wn
-  [[ -n "$raw" ]] || return 1
-  [[ "${GOVERN_EXECUTE_ONLY:-1}" != "0" ]] || {
-    govern::log "warm assertion for #$n ignored: GOVERN_EXECUTE_ONLY=0 (branch disabled fleet-wide)"
-    return 1
-  }
-  case "$raw" in
-    *"|"*) ;;
-    *) govern::log "GOVERN_WARM is malformed (expected '<ticket>|<stated change>', got '${raw:0:40}…') — ignoring, dispatching normally"; return 1 ;;
-  esac
-  wn="${raw%%|*}"; wn="${wn//[[:space:]]/}"
-  [[ "$wn" =~ ^[0-9]+$ ]] || {
-    govern::log "GOVERN_WARM does not start with a ticket number — ignoring, dispatching normally"; return 1
-  }
-  [[ "$wn" == "$n" ]] || return 1      # scoped to exactly one ticket
-  GOVERN_WARM_TEXT="${raw#*|}"
-  return 0
-}
-
-# ── precision grade ─────────────────────────────────────────────────────────────────────────────
-# "Tier is chosen by how well-specified the work is, not by how hard it looks." `govern::warm_assertion`
-# above already implements the top of that scale (a parent that STATED the change gets the
-# execute-only shortcut at sonnet, never haiku), but it was still a single binary (warm or not)
-# with nothing between "fully specified" and "ordinary dispatch". This generalises it into three
-# grades:
-#   stated: parent stated the change; GOVERN_WARM already covers this, unchanged, below.
-#   scoped: intent clear, files named or trivially locatable. The ORDINARY case; nothing to assert.
-#   open: requires discovery of where and what. Same tier as scoped today (sonnet, since the advisor
-#         budget half of "open" is not built), but the grade is still worth RECORDING so a later
-#         advisor mechanism has something to key on, and so the dispatch record carries a precision
-#         grade at all.
-# Same shape as warm_assertion on purpose: explicit, per-invocation (so it cannot rot in the queue
-# the way a ticket field does; filing-time fields are the wrong place for a dispatch-time
-# decision), and scoped to exactly one ticket number. No current caller reads GOVERN_PRECISION or
-# calls this (its one caller was the headless dispatch launcher's precedence chain, retired along
-# with it); kept for a future dispatcher.
-#   GOVERN_PRECISION="<ticket-number>|open|scoped"
-# Returns rc 0 and sets GOVERN_PRECISION_TEXT (the grade) when the assertion applies to <N>; rc 1
-# otherwise (unset, malformed, wrong ticket, or an unrecognized grade: absence of evidence routes
-# down to the caller's own "scoped" default rather than being guessed at).
-GOVERN_PRECISION_TEXT=""
-govern::precision_assertion() { # <ticket-N> -> rc 0 if a precision assertion covers this ticket
-  GOVERN_PRECISION_TEXT=""
-  local n="${1:-}" raw="${GOVERN_PRECISION:-}" pn pg
-  [[ -n "$raw" ]] || return 1
-  case "$raw" in
-    *"|"*) ;;
-    *) govern::log "GOVERN_PRECISION is malformed (expected '<ticket>|open|scoped', got '${raw:0:40}…'), ignoring, dispatching normally"; return 1 ;;
-  esac
-  pn="${raw%%|*}"; pn="${pn//[[:space:]]/}"
-  [[ "$pn" =~ ^[0-9]+$ ]] || {
-    govern::log "GOVERN_PRECISION does not start with a ticket number, ignoring, dispatching normally"; return 1
-  }
-  [[ "$pn" == "$n" ]] || return 1      # scoped to exactly one ticket
-  pg="${raw#*|}"; pg="${pg//[[:space:]]/}"
-  case "$pg" in
-    open|scoped) GOVERN_PRECISION_TEXT="$pg"; return 0 ;;
-    *) govern::log "GOVERN_PRECISION names an unrecognized grade '${pg:0:40}…' (want open|scoped), ignoring, dispatching normally"; return 1 ;;
-  esac
-}
-
 # ── advisor consult ──────────────────────────────────────────────────────────────────────────────
 # A sonnet worker that reaches a decision it cannot make asks the advisor session that wrote its
 # proposal, receives an answer, and continues at sonnet. The budget for asking is script-owned, so
@@ -1641,11 +1429,7 @@ govern::advisor_claim() { # <N> [<question>] [<turn>]
     return 1
   fi
   # No advisorModel is issued. Nothing ever spawns an advisor: the worker asks the session
-  # that wrote the proposal, and an unresolvable fork is an honest escalation instead. The field
-  # this response used to carry existed only to name a model for a worker to SPAWN, so it is gone
-  # rather than left inert. govern::model_request_cap is untouched, but its one caller (the headless
-  # dispatch launcher's own explicit ticket `Model:` request handling) is retired along with it, so
-  # it currently has none.
+  # that wrote the proposal, and an unresolvable fork is an honest escalation instead.
   local max_tokens consult_id wr2 sr2
   max_tokens="${GOVERN_ADVISOR_MAX_TOKENS:-4000}"
   consult_id=$(( used_worker + 1 ))
@@ -1898,45 +1682,14 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
   [[ "$v" == "public" ]]
 }
 
-# Capability probe: does $claude_bin support --exclude-dynamic-system-prompt-sections? This is a
-# NEW claude-code CLI flag (present in 2.1.220+; absent on older builds). This file ships to every
-# fleet as a hub template via /shiploop:update, so trusting a version-string compare (this repo
-# tracks no CLI version anywhere, and version strings drift) would let a routine harness bump pass
-# an unrecognized flag on any fleet still running an older CLI — `claude -p` fails at argument
-# parsing and EVERY worker dies before its first turn, a fleet-wide outage from a harness update.
-# Probe via `--help` instead, and cache the result in a RUN-SCOPED file (same idiom as the
-# repo-visibility cache above) so a long run shells out to `--help` at most ONCE, not once per
-# spawned worker. Test seam: pre-seed _GOVERN_EDP_SUPPORTED=1|0 to skip the probe entirely.
-_GOVERN_EDP_PROBE_CACHE="${GOVERN_EDP_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-edp-support}"
-# Bound (seconds) for the `--help` probe below. A synchronous probe ahead of a real spawn's kill
-# traps being armed means a `claude` wrapper/shim that hangs on `--help` would otherwise hang the
-# ENTIRE spawn with no cleanup path. 5s is ample for a real CLI's --help. Override via
-# GOVERN_EDP_PROBE_TIMEOUT_S. No current caller (`--exclude-dynamic-system-prompt-sections` was the
-# headless dispatch launcher's own flag, retired along with it); kept for a future caller.
+# Bound (seconds) for the `--help` capability probes below (--tools, --max-turns, --max-budget-usd,
+# and the real-vs-stub claude_bin check further down). A synchronous probe ahead of a real spawn's
+# kill traps being armed means a `claude` wrapper/shim that hangs on `--help` would otherwise hang
+# the ENTIRE spawn with no cleanup path. 5s is ample for a real CLI's --help. Override via
+# GOVERN_EDP_PROBE_TIMEOUT_S.
 _GOVERN_EDP_PROBE_TIMEOUT_S="${GOVERN_EDP_PROBE_TIMEOUT_S:-5}"
-govern::claude_supports_exclude_dynamic_prompt() { # <claude_bin> -> rc 0 supported, 1 not
-  local bin="$1"
-  local cached=""
-  if [[ -n "${_GOVERN_EDP_SUPPORTED:-}" ]]; then
-    if [[ "$_GOVERN_EDP_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
-  fi
-  [[ -f "$_GOVERN_EDP_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true)"
-  if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--exclude-dynamic-system-prompt-sections'; then
-      cached="1"
-    else
-      cached="0"
-    fi
-    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim) — treating as unsupported this run; omitting --exclude-dynamic-system-prompt-sections"
-    fi
-    mkdir -p "$(dirname "$_GOVERN_EDP_PROBE_CACHE")" 2>/dev/null || true
-    printf '%s' "$cached" > "$_GOVERN_EDP_PROBE_CACHE" 2>/dev/null || true
-  fi
-  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
 
-# Capability probe: does $claude_bin support `--tools`? Same reasoning as the probe above — this
+# Capability probe: does $claude_bin support `--tools`? This
 # file ships to every fleet, the fleet's CLI version is not ours, and an unknown flag kills EVERY
 # worker at argument parsing (an outage that govern's failure classifier cannot even see; see
 # learnings.md). Same run-scoped `--help` cache so a long run probes at most once.
@@ -2047,7 +1800,7 @@ govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
 # macOS-safe name), and falls back to the hand-rolled watchdog below when NEITHER is on PATH — so a
 # bare macOS box with no coreutils still gets a bound instead of an unbounded hang. Exits 124 on
 # expiry in every branch, mirroring GNU `timeout`, so the caller can tell "timed out" from "ran and
-# exited nonzero on its own". Shared by the capability probe above and scout-ticket.sh.
+# exited nonzero on its own". Shared by every capability probe above.
 govern::run_bounded() { # <secs> <cmd...>
   local secs="$1"; shift
   if command -v timeout >/dev/null 2>&1; then
@@ -2451,27 +2204,6 @@ govern::harness_pr_verify() { # repo number -> "repo\tnumber\turl"
   printf '%s\t%s\t%s\n' "$repo" "$num" "$url"
 }
 
-# ── cross-run wait-for-merge / dependency deferrals ───────────────────
-# skipThisRun defers a ticket for the CURRENT run only (in-memory excludes), so a supervisor
-# "defer #N until PR #M merges" advisory vanished at run-end and the selector re-picked the blocked
-# ticket next run (re-deriving — or failing to re-derive — the same conflict). These helpers persist
-# such waits to governor/pending-waits.json and re-evaluate them at every run-start, so the deferral
-# SURVIVES across runs and auto-clears only once the blocker actually lands.
-
-# Remove value $2 from a comma-list $1; print the cleaned list (no surrounding commas, "" if empty).
-govern::csv_remove() { # list value -> cleaned-list
-  local list=",${1}," v="$2"; list="${list//,$v,/,}"; list="${list#,}"; list="${list%,}"; printf '%s' "$list"
-}
-
-# Print a PR's state — OPEN | MERGED | CLOSED — or "" when it can't be verified (no gh, offline,
-# unknown PR/repo). The caller treats "" as "still blocking" (fail-CLOSED) so a transient network
-# blip never silently evaporates a persisted wait, which is the whole point of persisting it.
-govern::pr_state() { # repo pr -> STATE|""
-  local repo="$1" pr="$2"
-  command -v gh >/dev/null 2>&1 || return 0
-  gh pr view "$pr" --repo "$(govern::repo_slug "$repo")" --json state -q .state 2>/dev/null || true
-}
-
 # NOTE — if you ever need to MUTATE an open PR here (retarget its base branch after a
 # dependency-reorder in select-ticket.sh or a preflight-main.sh base reconciliation; rewrite a body),
 # do NOT use `gh pr edit` at all. It resolves the PR through gh's GraphQL `projectCards` query, which
@@ -2634,91 +2366,16 @@ govern::dangling_dep_refs() { # [tickets-file] -> "#N: depends on #M, which has 
   ' "$f" "$f"
 }
 
-# ── locality batching ────────────────────────────────────────────────
-# Exploration is the dominant cost term of a resolved ticket (~98% cacheRead): three tickets that all
-# touch the same directory currently mean THREE workers each paying full discovery cost on the same
-# code — three repo loads, three CLAUDE.md reads, three architecture explorations. One worker fixing
-# all three pays that ONCE. Grouping also makes the --parallel fan-out SAFER: today N concurrent
-# drivers are selected purely by severity with no regard for whether they touch the same files, so two
-# workers can race the same file; disjoint locality groups remove that race by construction.
-#
-# The signal is the ticket's MEASURED file scope, and only that. Two sources, both machine-produced:
-#   1. the scout's verified `targetPaths` (`scout-ticket.sh --paths N`) — paths it confirmed exist
-#   2. an explicit `**Files:**` field on the ticket
-#
-# `**Where:**` is deliberately NOT a source. It is PROSE, written before anything was measured — the
-# same failure mode that retired the `Model:`/`Effort:` fields. Worse, keying on prose forced a
-# leaf-DIRECTORY-NAME approximation, and depth-1 leaf names collapse a whole backlog into a couple of
-# buckets ("govern", "src", "lib"). That made grouping effectively arbitrary, which is the losing side
-# of the batching trade: co-batched tickets shared no discovery, yet the worker still paid full
-# context accumulation across all of them. Accumulation is superlinear, so an arbitrary 3-ticket batch
-# is strictly worse than 3 workers.
-#
-# So: batch ONLY on real file-set overlap, and NO MEASUREMENT MEANS NO BATCH — a ticket with no
-# measured paths returns empty and locality_groups keeps it a singleton, which is exactly today's safe
-# default. Note this drops the old deliberate hub/workspace mirror collapse
-# (`shiploop/templates/govern/x.sh` + `scripts/govern/x.sh` no longer share a key): those are two
-# different repos, and porting between them is the sync-porter's job, not a batch.
-# ALLOCATION. The harness auto-files tickets ABOUT ITSELF (workers file their own
-# `newTickets[]` through file-ticket.sh), pays full worker price for them, and files more.
-# govern-health.sh already splits self-referential from product spend in its REPORTING — which means
-# somebody already suspected this — and root CLAUDE.md states the principle "gate dispatch cost, never
-# discovery", but nothing ENFORCES it. This is the pre-dispatch predicate that lets it be enforced.
-#
-# Deliberately structural, not semantic: a ticket is self-referential when the surfaces it names are
-# the harness's own. govern::is_selfref_repo is the post-hoc counterpart (it classifies a ticket by
-# the repos its PRs landed in, which is only knowable AFTER a worker ran); this one answers the same
-# question from the ticket text, before anything is spent.
-govern::is_selfref_ticket() { # N [tickets-file] -> rc 0 if the ticket is about the harness itself
-  local n="$1"
-  local f="${2:-$TICKETS_FILE}"
-  local block
-  [[ -f "$f" ]] || return 1
-  block="$(govern::ticket_block "$n" "$f")" || true
-  [[ -n "$block" ]] || return 1
-  # The standing self-improvement ticket an operator maintains, matched by its title.
-  case "$block" in *"Harness self-improvement:"*) return 0;; esac
-  # Otherwise: does it name ONLY harness surfaces? Any product path disqualifies it, so a ticket that
-  # touches both is treated as product work — the cap must never defer real product delivery.
-  local line hits=0 misses=0 p
-  while IFS= read -r p; do
-    [[ -n "$p" ]] || continue
-    case "$p" in
-      scripts/govern/*|scripts/lib/*|governor/*|templates/govern/*|templates/governor/*|templates/hooks/*|templates/lib/*|queue/*)
-        hits=$((hits+1)) ;;
-      *) misses=$((misses+1)) ;;
-    esac
-  done < <(govern::ticket_paths "$n" "$f" 2>/dev/null || true)
-  # Fall back to the prose `Where:` line only for this classification (NOT for batching — an
-  # imprecise key there produces a bad batch, whereas here the worst case is a deferred harness
-  # ticket, which is the conservative direction).
-  if [[ "$hits" -eq 0 && "$misses" -eq 0 ]]; then
-    line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ww]here(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
-    case "$line" in
-      *scripts/govern/*|*templates/govern/*|*templates/governor/*|*governor/*) return 0;;
-    esac
-    return 1
-  fi
-  [[ "$hits" -gt 0 && "$misses" -eq 0 ]] && return 0
-  return 1
-}
-
 govern::ticket_paths() { # N [tickets-file] -> measured repo-relative paths, one per line ("" = unmeasured)
   local n="$1"
   local f="${2:-$TICKETS_FILE}"
-  local libdir scout out="" block line
-  libdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  scout="$libdir/../scout-ticket.sh"
-  # 1. Scout-measured paths win — they were verified to exist against real code.
-  #    Tolerate the scout being absent, disabled (GOVERN_SCOUT=0), or having no cached survey.
-  #    Short-circuit on GOVERN_SCOUT=0 rather than paying a subshell per candidate to be told "no":
-  #    the batcher probes every candidate, so this is on a hot path in every test run.
-  if [[ "${GOVERN_SCOUT:-1}" != "0" && -x "$scout" ]]; then
-    out="$("$scout" --paths "$n" 2>/dev/null || true)"
-  fi
-  # 2. Fall back to an explicit `**Files:**` list. Matched the way govern::ticket_deps matches
-  #    `**Depends on:**`: anchored to the START of a line, bold-wrapping optional, COLON REQUIRED.
-  if [[ -z "$out" && -f "$f" ]]; then
+  local out="" block line
+  # The measured file scope comes from ONE source: an explicit `**Files:**` list on the ticket.
+  # Matched the way govern::ticket_deps matches `**Depends on:**`: anchored to the START of a line,
+  # bold-wrapping optional, COLON REQUIRED. `**Where:**` is deliberately NOT a source — it is PROSE,
+  # written before anything was measured, and keying on it forced a leaf-DIRECTORY-NAME approximation
+  # that collapsed a whole backlog into a couple of buckets ("govern", "src", "lib").
+  if [[ -f "$f" ]]; then
     block="$(govern::ticket_block "$n" "$f" | tail -n +2)"   # drop the heading (its title may say "files")
     if [[ -n "$block" ]]; then
       line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
@@ -2749,90 +2406,6 @@ govern::ticket_paths() { # N [tickets-file] -> measured repo-relative paths, one
   return 0
 }
 
-# Do two newline-separated path sets share at least one EXACT path? Exact, because the whole point of
-# re-keying was to stop approximating. Returns 0 on overlap, 1 otherwise (including either side empty).
-govern::paths_overlap() { # "pathsA" "pathsB" -> rc 0 if they intersect
-  local a="$1" b="$2"
-  [[ -n "$a" && -n "$b" ]] || return 1
-  local p
-  while IFS= read -r p; do
-    [[ -n "$p" ]] || continue
-    case $'\n'"$b"$'\n' in *$'\n'"$p"$'\n'*) return 0;; esac
-  done <<< "$a"
-  return 1
-}
-
-# Partition an ORDERED candidate list (the selector hands them over in severity order) into DISJOINT
-# locality groups of at most $1 tickets. Prints one group per line as a comma-separated ticket list,
-# preserving candidate order both between and within groups. Guarantees, in order of importance:
-#   • max <= 1  → every candidate is its own singleton group (today's exact behavior, the default).
-#   • An UNMEASURED ticket (no measured file paths) is ALWAYS a singleton — never batched on a guess.
-#   • A candidate joins a group only if it shares at least one EXACT file path with that group's SEED
-#     ticket. Intersecting the seed rather than the group's running union is deliberate: union
-#     membership chains (A∩B, B∩C, A∩C=∅) and would readmit exactly the arbitrary grouping this
-#     re-key exists to remove. Every member provably shares files with the seed.
-#   • Two tickets in a dependency relation (either direction, via govern::ticket_deps) are NEVER
-#     co-batched. Constraint (b) allows co-batching in dependency order instead, but keeping them in
-#     separate groups is the strictly safer half of that choice: it cannot produce an out-of-order
-#     edit inside one worker, and pre-dispatch-check.sh's dependency gate already defers a
-#     dependent whose blocker is unlanded, so nothing is lost.
-# Reads $3 (def TICKETS_FILE).
-# The advisor calls this directly to validate a named group before dispatching it (worker-prompt.md's
-# "Ticket groups" section); pre-dispatch-check.sh needs no new argument form for this, so there is no
-# separate wrapper script. govern::batch_ticket_status/govern::batch_ticket_note below it are the
-# landing-side counterpart, called from resolve-ticket.sh once a group worker reports a `tickets` array.
-govern::locality_groups() { # max "n1,n2,n3" [tickets-file] -> "n1,n2" lines
-  local max="${1:-1}" csv="${2:-}" f="${3:-$TICKETS_FILE}"
-  max="${max//[^0-9]/}"; [[ -n "$max" ]] || max=1
-  local -a raw=() cand=() keys=() deps=() used=()
-  local i j t nc=0
-  IFS=',' read -r -a raw <<< "$csv" || true
-  for t in ${raw[@]+"${raw[@]}"}; do
-    t="${t//[^0-9]/}"; [[ -n "$t" ]] || continue
-    cand[nc]="$t"
-    # Only pay for the path/dep probes when batching is actually enabled.
-    if [[ "$max" -gt 1 ]]; then
-      keys[nc]="$(govern::ticket_paths "$t" "$f" 2>/dev/null || true)"
-      # Comma-wrapped for O(1) substring membership: ",9,11,"
-      deps[nc]=",$(govern::ticket_deps "$t" "$f" 2>/dev/null | tr '\n' ',' || true)"
-    else
-      keys[nc]=""; deps[nc]=","
-    fi
-    used[nc]=0
-    nc=$((nc+1))
-  done
-  [[ "$nc" -gt 0 ]] || return 0
-  # Is candidate index $1 dependency-related (EITHER direction) to any ticket in group CSV $2?
-  _rel() {
-    local x="$1" g="$2" m k
-    for m in ${g//,/ }; do
-      case "${deps[x]}" in *",$m,"*) return 0;; esac          # x depends on m
-      for (( k=0; k<nc; k++ )); do
-        [[ "${cand[k]}" == "$m" ]] || continue
-        case "${deps[k]}" in *",${cand[x]},"*) return 0;; esac # m depends on x
-        break
-      done
-    done
-    return 1
-  }
-  for (( i=0; i<nc; i++ )); do
-    [[ "${used[i]}" -eq 0 ]] || continue
-    used[i]=1
-    local group="${cand[i]}" size=1
-    if [[ "$max" -gt 1 && -n "${keys[i]}" ]]; then
-      for (( j=i+1; j<nc; j++ )); do
-        [[ "$size" -lt "$max" ]] || break
-        [[ "${used[j]}" -eq 0 ]] || continue
-        govern::paths_overlap "${keys[j]}" "${keys[i]}" || continue
-        _rel "$j" "$group" && continue   # dependency-related ⇒ leave it for its own group
-        used[j]=1; group="$group,${cand[j]}"; size=$((size+1))
-      done
-    fi
-    printf '%s\n' "$group"
-  done
-  unset -f _rel
-}
-
 # Per-ticket outcome lookup for a BATCHED worker report: a group that partially
 # fails must report per-ticket outcomes, never collapse to one verdict — otherwise bookkeeping marks
 # unfixed tickets resolved and DELETES them. Reads the report's `tickets` array (one
@@ -2859,16 +2432,16 @@ govern::batch_ticket_note() { # report-json ticket -> note|""
 # ── dispatch-time overlap nudge, zero model calls ────────────────────
 # Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45% of
 # overlapping pairs were ALREADY QUEUED at dispatch time, batchable if the operator had known.
-# Named dispatch is the only front door, and govern::locality_groups already batches
-# overlap WITHIN a named set, but it has no visibility into the rest of the queue: a ticket the
-# operator did not name is invisible to it. This is the gap-surfacing counterpart: a cheap,
+# Named dispatch is the only front door, and naming a group batches overlap WITHIN that named set,
+# but a session has no visibility into the rest of the queue: a ticket the operator did not name is
+# invisible to it. This is the gap-surfacing counterpart: a cheap,
 # non-blocking hint, not a batching decision. It never changes what gets dispatched.
 #
 # Two path-extraction tiers, deliberately asymmetric:
-#   • The NAMED set's own paths trust the scout's MEASURED targetPaths first (cache-read only, no
-#     model call, `scout-ticket.sh --paths N`). Falling back to prose here would let a vague
-#     mention drag a real dispatch off course, so the fallback is narrow: only BACKTICKED tokens
-#     in the ticket's own body (an operator/worker who wrote `path/to/file.sh` meant it as a path).
+#   • The NAMED set's own paths trust govern::ticket_paths (the ticket's explicit `**Files:**` list)
+#     first. Falling back to prose here would let a vague mention drag a real dispatch off course, so
+#     the fallback is narrow: only BACKTICKED tokens in the ticket's own body (an operator/worker who
+#     wrote `path/to/file.sh` meant it as a path).
 #   • Every OTHER open ticket's paths are extracted from its WHOLE body, backticks or not: the
 #     candidate is only ever printed as a hint, never dispatched, so a broader net costs nothing
 #     and a missed nudge (false negative) is the worse failure mode there.
@@ -2914,8 +2487,7 @@ govern::_overlap_pathlike_tokens_backticked() {
 }
 
 # A single named ticket's target paths for the nudge, most to least trusted:
-#   1. govern::ticket_paths, the scout's MEASURED targetPaths (cache-read only, no model call), or
-#      an explicit `**Files:**` field: the same measured signal locality batching keys off.
+#   1. govern::ticket_paths, the ticket's explicit `**Files:**` field.
 #   2. backticked path-like tokens from the ticket's own body, narrower than the general body-text
 #      extraction used for OTHER (non-named) tickets below: a bare mention in prose is too weak a
 #      signal to steer a nudge about the ticket actually being dispatched.
@@ -3040,100 +2612,6 @@ govern::overlap_nudge() { # named-csv [tickets-file]
   return 0
 }
 
-# Add/merge ONE wait entry (a JSON object carrying at least `.ticket`; optional `.pr`+`.repo` and/or
-# `.dependsOn`) into pending-waits.json, de-duped by ticket number (newest wins). Creates the file if
-# absent. No-op without jq / a ticket field. Live-only side effect — callers gate on MODE.
-govern::waits_add() { # entry-json
-  local entry="$1" f="$PENDING_WAITS_FILE" t cur tmp
-  command -v jq >/dev/null 2>&1 || return 0
-  t="$(jq -r '.ticket // empty' <<<"$entry" 2>/dev/null || true)"
-  [[ "$t" =~ ^[0-9]+$ ]] || return 0
-  mkdir -p "$(dirname "$f")" 2>/dev/null || true
-  cur="$([[ -s "$f" ]] && cat "$f" || echo '{"waits":[]}')"
-  # tmp+mv (never `> $f` directly): the redirect truncates $f BEFORE jq runs, so a jq failure
-  # (corrupt pre-existing JSON, disk full) would EMPTY pending-waits.json and evaporate every
-  # deferral. Matches the na_skip_bump / waits_remove pattern.
-  tmp="$f.tmp.$$"
-  if printf '%s' "$cur" | jq -c --argjson e "$entry" --argjson t "$t" \
-       '{waits: (((.waits // []) | map(select(.ticket != $t))) + [$e])}' > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$f"
-  else
-    rm -f "$tmp" 2>/dev/null || true
-  fi
-}
-
-# Drop the wait entry for ticket $1 from pending-waits.json (no-op if absent). Used when a blocker
-# lands mid-run (an attemptNext for a wait-deferred ticket).
-govern::waits_remove() { # ticket
-  local t="$1" f="$PENDING_WAITS_FILE" tmp
-  [[ -s "$f" ]] && command -v jq >/dev/null 2>&1 || return 0
-  tmp="$f.tmp.$$"
-  jq -c --argjson t "$t" '{waits: ((.waits // []) | map(select(.ticket != $t)))}' "$f" > "$tmp" 2>/dev/null \
-    && mv "$tmp" "$f" || rm -f "$tmp" 2>/dev/null || true
-}
-
-# Re-check every entry in pending-waits.json against its blocker; REWRITE the file keeping only the
-# still-blocking entries, and print "ticket<TAB>why" for each so a caller can exclude + log it.
-# An entry blocks while: its PR is still OPEN (or its state can't be verified — fail-closed), OR its
-# `.dependsOn` ticket is still in tickets.md. It CLEARS (entry dropped, ticket selectable again) when:
-# the PR merged/closed, the dep resolved, or the waiting ticket itself is gone from tickets.md.
-govern::waits_refresh() { # -> "ticket\twhy" lines (for still-blocked); rewrites pending-waits.json
-  local f="$PENDING_WAITS_FILE"
-  [[ -s "$f" ]] || return 0
-  command -v jq >/dev/null 2>&1 || return 0
-  local kept="[]" line t pr repo dep why blocking state
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    t="$(jq -r '.ticket // empty' <<<"$line" 2>/dev/null || true)"
-    [[ "$t" =~ ^[0-9]+$ ]] || continue
-    # The waiting ticket itself was resolved/closed → its wait is moot; drop it.
-    if ! grep -qE "^## #$t([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
-      govern::log "wait #$t — ticket no longer in tickets.md; clearing wait"; continue
-    fi
-    # a wait must NEVER hold back a ticket whose OWN open PR is in an auto-merge repo. Such a PR
-    # is the governor's to DRIVE TO MERGE (resume → merge; on conflict → rebase-resolve → merge), not
-    # an external PR to "wait on" — the defer is for PRs a human / another lane lands (frontend,
-    # or a true cross-ticket dependency the ticket has no PR for). Conflating the two left the 2nd of
-    # two interdependent un-parked tickets permanently deferred while its blocker was green+MERGEABLE,
-    # needing a manual merge. If #t has its OWN open PR (head ticket-$t) in an auto-merge repo, drop
-    # the wait so the selector resumes + merges it. Frontend own-PRs (is_merge_repo false) and
-    # dependency waits where #t has no own PR fall through to the normal block logic below.
-    local own o_repo o_pr _o_url
-    own="$(govern::find_pr "$t" 2>/dev/null || true)"
-    if [[ -n "$own" ]]; then
-      read -r o_repo o_pr _o_url <<<"$own"
-      if govern::is_merge_repo "$o_repo"; then
-        govern::log "wait #$t — ticket owns open $o_repo PR #$o_pr in an auto-merge repo; governor will resume+merge it (not defer); clearing wait"
-        continue
-      fi
-    fi
-    pr="$(jq -r '.pr // empty' <<<"$line" 2>/dev/null || true)"
-    repo="$(jq -r '.repo // "harness"' <<<"$line" 2>/dev/null || echo harness)"
-    dep="$(jq -r '.dependsOn // empty' <<<"$line" 2>/dev/null || true)"
-    why=""; blocking=0
-    if [[ "$pr" =~ ^[0-9]+$ ]]; then
-      state="$(govern::pr_state "$repo" "$pr")"
-      case "$state" in
-        OPEN)          blocking=1; why="waiting on $repo PR #$pr (still open)";;
-        MERGED|CLOSED) govern::log "wait #$t — $repo PR #$pr is $state; clearing wait";;
-        *)             blocking=1; why="waiting on $repo PR #$pr (state unverifiable — keeping wait)";;
-      esac
-    fi
-    if [[ "$blocking" -eq 0 && "$dep" =~ ^[0-9]+$ ]]; then
-      if grep -qE "^## #$dep([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null; then
-        blocking=1; why="depends on #$dep (still open)"
-      else
-        govern::log "wait #$t — dependency #$dep resolved; clearing wait"
-      fi
-    fi
-    if [[ "$blocking" -eq 1 ]]; then
-      kept="$(jq -c --argjson e "$line" '. + [$e]' <<<"$kept" 2>/dev/null || echo "$kept")"
-      printf '%s\t%s\n' "$t" "$why"
-    fi
-  done < <(jq -c '.waits[]?' "$f" 2>/dev/null)
-  jq -n --argjson w "$kept" '{waits:$w}' > "$f" 2>/dev/null || true
-}
-
 # govern::ticket_present_on_origin — cross-driver re-selection guard for parallel drivers
 # (GOVERN_ALLOW_CONCURRENT=1). After a FRESH fetch, is a `## #N` block still present in
 # origin/main's tickets.md? When two drivers share one origin/main, a second driver may have
@@ -3252,23 +2730,6 @@ govern::commit_meta_to_main() {
   return 0
 }
 
-# ── infra/auth-outage detection ───────────────────────────────────────
-# An infra outage (expired OAuth token, API unreachable, network down) kills a worker with a
-# transport-level error BEFORE it can emit any report — on the surface IDENTICAL to a genuine
-# ticket-fault failure. Recording it as a ticket `failed` (a) pollutes the cross-run history
-# (two such runs for the same ticket would FALSELY auto-escalate it as a systemic blocker) and
-# (b) misleads any later review of the history (it would read an auth outage as if the tickets were
-# hard). These helpers tell the two apart: tag the outage distinctly (status:"infra"), skip the
-# history record, and halt with a re-auth signal instead of the generic bad-streak message.
-#
-# The signature set is deliberately NARROW — auth (401 / invalid credentials / expired token) and
-# transport (API unreachable / connection refused / socket / DNS / network) — and is only ever
-# matched against the worker's AUTHORITATIVE result event (why the session ended) or the CLI's
-# explicit "API Error:" stream lines, never arbitrary ticket content, so ordinary worker output
-# can't trip it. Observed signatures: "API Error: Unable to connect to API (FailedToOpenSocket)" /
-# "(ConnectionRefused)" and "401 Invalid authentication credentials".
-GOVERN_INFRA_ERROR_RE='401[^A-Za-z0-9]*(Invalid authentication|Unauthorized)|Invalid authentication credentials|invalid x-api-key|authentication_error|OAuth token (has )?expired|token (has )?expired|Unable to connect to API|FailedToOpenSocket|Connection ?Refused|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|getaddrinfo (ENOTFOUND|EAI_AGAIN)|Could not resolve host|network is unreachable'
-
 # ── worker-stream reading (binary/NUL-hole safe) ────────────────────────────
 # EVERY read of a worker.jsonl must go through this helper instead of a bare `grep`.
 # A worker.jsonl can legitimately end up with a BINARY prefix: a ticket can be spawned more than
@@ -3313,8 +2774,8 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 # Separately: the design doc's "costUsd is null on all 80 sonnet rows" figure is inflated by a
 # CONTAMINATED run in aquanode's own log tree, `logs/govern/run-20260908-005554-81792/ticket-7/`,
 # which holds 64 synthetic attempts (fabricated exactly-100/50-token rows, an injected
-# `error: unknown option '--definitely-not-a-real-flag'`, the literal example string from
-# govern::usage_error_signature's own doc comment below), almost certainly manual/ad-hoc testing
+# `error: unknown option '--definitely-not-a-real-flag'`, the literal example string used to
+# exercise the CLI usage-error classifier), almost certainly manual/ad-hoc testing
 # run directly against the real fleet checkout rather than a scaffolded workspace (the anti-pattern
 # root CLAUDE.md rule 13 exists to prevent), sitting in the SAME directory shape a real run uses
 # with nothing to tell them apart. Excluding that one run, aquanode's real sonnet population is 3
@@ -3356,25 +2817,6 @@ govern::stream_usage() { # worker-jsonl -> usage JSON
     || printf '{"tokens":null,"costUsd":null,"usageSource":"none"}'
 }
 
-# Print a short human signature of an infra/auth outage if the worker's stream ($1 = worker.jsonl)
-# shows one in its final (error) result event or an explicit "API Error:" line; print nothing
-# otherwise. Always returns 0 — the caller branches on whether the output is non-empty.
-govern::infra_error_signature() { # worker-jsonl -> signature|""
-  local jsonl="${1:-}" msg
-  [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
-  # Authoritative: the LAST result event, only when it ended in an error. Read via
-  # govern::stream_grep so a NUL-holed stream can never silently classify an outage as a failure.
-  msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 \
-        | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
-  if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INFRA_ERROR_RE"; then
-    printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
-  fi
-  # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
-  msg="$(govern::stream_grep "$jsonl" -oiE 'API Error:[^"]*' | grep -iE "$GOVERN_INFRA_ERROR_RE" | tail -1 || true)"
-  [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
-  return 0
-}
-
 # ── interrupted/mid-stream-drop detection ─────────────────────────────
 # A laptop that sleeps mid-run (e.g. clamshell-on-battery) suspends the worker's process tree and
 # drops the network, so the in-flight `claude -p` API stream dies mid-response with "API Error:
@@ -3383,14 +2825,13 @@ govern::infra_error_signature() { # worker-jsonl -> signature|""
 # (the laptop woke; the network returned), and the worktree is preserved + resumable. So it gets its
 # OWN status, `interrupted`: the worktree is preserved and the caller can simply re-spawn (it is not
 # a genuine failure, and re-authenticating would not help the way it does for infra). The signature
-# set is deliberately NARROW and DISJOINT from
-# GOVERN_INFRA_ERROR_RE (a clean auth/connection-refused outage stays `infra` → halt): it matches
-# only the mid-stream connection-drop class that a suspend/resume produces.
+# set is deliberately NARROW, matching only the mid-stream connection-drop class that a
+# suspend/resume produces.
 GOVERN_INTERRUPTED_ERROR_RE='Connection closed mid-response|Connection closed|Premature close|socket ?hang ?up|stream (disconnected|closed|interrupted)|response closed before|terminated.*mid-response'
 
 # Print a short human signature of a transient mid-stream connection drop if the worker's stream
 # ($1 = worker.jsonl) shows one in its final (error) result event or an explicit "API Error:" line;
-# print nothing otherwise. Mirror of govern::infra_error_signature; always returns 0.
+# print nothing otherwise. Always returns 0.
 govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   local jsonl="${1:-}" msg
   [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
@@ -3403,35 +2844,6 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
   msg="$(govern::stream_grep "$jsonl" -oiE 'API Error:[^"]*' | grep -iE "$GOVERN_INTERRUPTED_ERROR_RE" | tail -1 || true)"
   [[ -n "$msg" ]] && printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160
-  return 0
-}
-
-# ── CLI usage-error detection ──────────────────────────────────────────
-# A harness bump can ship a `claude` invocation flag/subcommand the fleet's INSTALLED CLI doesn't
-# support yet (version skew, a renamed/removed flag). The CLI then exits fast on the invocation
-# itself, e.g. `error: unknown option '--definitely-not-a-real-flag'` — a single PLAIN-TEXT line,
-# never touching the streaming JSON protocol at all (a caller that redirects 2>&1 into $jsonl gets
-# that line as the whole file). That trips NEITHER worker_killed (a usage rejection exits fast,
-# not >128) NOR infra/interrupted (no result event, no matching signature) NOR extract_report (not
-# JSON), so without this it falls through to the generic synthesized "failed" bucket — indistinguishable
-# from an ordinary ticket failure, even though every worker in the fleet would die identically until
-# the flag/CLI mismatch is fixed.
-#
-# Distinguishing signal: the stream's FIRST line fails to parse as JSON at all. A real worker's
-# stream-json protocol wraps EVERY outcome (success, model error, is_error result) in a JSON object,
-# so a first line that isn't JSON means the CLI never entered the protocol — it rejected the
-# invocation before doing any ticket work. Deliberately a GENERAL catch-all (not a per-message regex
-# list): a hardcoded pattern for today's wording would just as easily miss the next CLI version's
-# phrasing, which is the exact failure mode this ticket exists to fix. Callers must check this only
-# AFTER infra/interrupted have been ruled out, so a genuine transport outage is never misclassified
-# as a usage error.
-govern::usage_error_signature() { # worker-jsonl -> signature|""
-  local jsonl="${1:-}" first
-  [[ -n "$jsonl" && -s "$jsonl" ]] || return 0
-  first="$(LC_ALL=C head -n1 "$jsonl" 2>/dev/null || true)"
-  [[ -n "$first" ]] || return 0
-  printf '%s' "$first" | jq empty >/dev/null 2>&1 && return 0   # a real JSON first line → not this class
-  printf '%s' "$first" | tr -d '\r' | cut -c1-160
   return 0
 }
 
@@ -3650,54 +3062,6 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
-# Sibling of govern::cumulative_tokens, NOT a mode flag on it: other callers (the budget
-# watchdog, the timeout/park report synthesis) depend on the FULL total, so this is a separate
-# function rather than a behavior change on a shared one.
-#
-# bench/LEVER-EVENTS.md `resume`'s freshStartTokens: the failed attempt's context-reconstruction
-# spend only, input_tokens plus cache_creation_input_tokens, EXCLUDING output_tokens (a retry has
-# to redo the actual work either way, so the failed attempt's output is not a cost resuming avoids)
-# and EXCLUDING cache_read_input_tokens. cache_read is re-paid on EVERY turn for the SAME prefix,
-# so summing it across a session counts the same context once per turn: an artifact of turn count,
-# not a reconstruction cost at all. The scale is not marginal: a real governor/ticket-history.jsonl
-# row from this workspace shows cacheRead 6.9M against cacheCreation 351K on one ticket, roughly
-# 20x, so folding cache_read in would inflate freshStartTokens by about that much and hand the
-# resume lever an enormous fake saving. Deliberately narrower than the total: under-counted, not
-# over-counted, when in doubt, which is the standard spec section 4a holds this whole build to.
-govern::cumulative_context_tokens() { # worker-jsonl -> integer input+cache_creation total (0 if none/unreadable)
-  local jsonl="${1:-}" total
-  [[ -n "$jsonl" && -s "$jsonl" ]] || { echo 0; return 0; }
-  total="$( { govern::stream_grep "$jsonl" '"type":"assistant"' || true; } \
-    | jq -c '(.message.usage // {}) | ((.input_tokens//0)+(.cache_creation_input_tokens//0))' 2>/dev/null \
-    | awk '{s+=$1} END{print s+0}')"
-  echo "${total:-0}"
-}
-
-# ── evidence-based retry escalation (retry-class) ───────────────────────────────────
-# Before this, EVERY retry escalated to GOVERN_WORKER_MODEL (default opus) and discarded the
-# ticket's `Model:`/`Effort:` fields, on the reasoning that "a cheap bet that didn't land shouldn't
-# be re-bet". That reasoning only holds when the MODEL TIER was the axis that failed. The most
-# expensive real failure in this workspace was a Linux-vs-macOS PORTABILITY bug that burned BOTH
-# attempts at the top tier — re-betting the tier there is pure waste. So: classify the failure
-# signature, then escalate the axis that actually failed.
-#
-#   class      | evidence                                            | response
-#   -----------|-----------------------------------------------------|--------------------------
-#   infra      | gh/network/auth outage, transient drop, CI state     | retry IDENTICALLY — do not
-#              | unverifiable (driver-declared)                      | escalate at all
-#   ci         | this dispatch IS the CI-fix re-dispatch, or the      | SAME tier; the failing axis
-#              | prior attempt died on red CI (driver-tagged)        | is portability/env, not tier
-#   budget     | prior attempt burned its token budget         | scope underestimated → raise
-#              |                                                     | TIER
-#   judgment   | prior attempt opened a PR that did not land — a      | judgment failure → raise
-#              | coherent but wrong fix                              | EFFORT and TIER
-#   unknown    | anything else (incl. wall-clock timeout, no history) | TODAY's behavior — escalate
-#              |                                                     | to GOVERN_WORKER_MODEL
-#
-# Unrecognized signature → `unknown` → the pre-classifier fallback, unchanged. The ONLY classes allowed to
-# keep a tier BELOW GOVERN_WORKER_MODEL on a retry are infra/ci, which positively identify a
-# non-model cause — that preserves the "a retry never silently down-grades" invariant.
-
 # ── model ladder, session ceiling, and the clamp ────────────────────────────────────────────────
 # The ladder used to be three bare aliases (haiku/sonnet/opus) because that was the entire tier set
 # the harness could dispatch at. It now has to compare a bare alias against a FULL model id, because
@@ -3852,88 +3216,6 @@ govern::model_clamp() { # <tier> -> <tier>, or the ceiling when <tier> outranks 
     printf '%s' "$tier"
   fi
   return 0
-}
-
-# govern::model_request_cap <requested-model> -> <requested-model>, or GOVERN_WORKER_ESCALATION_MODEL
-# when the request outranks it. Rank comparison, not string equality, so an at-or-below request
-# passes through untouched and an unrankable ceiling (rank 0) caps nothing rather than inventing a
-# tier: the exact comparison the headless dispatch launcher's resolve_sizing used to run inline for
-# the ticket `Model:` field cap, its one caller, retired along with it, so it currently has none.
-# Never logs (a caller that logs the ticket-Model-field case would do so itself, unchanged) and
-# never fails: an unrankable requested model just passes through.
-govern::model_request_cap() { # <requested> -> <requested-or-capped>
-  local requested="${1:-}" wcap wrank crank
-  wcap="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
-  wrank="$(govern::model_rank "$wcap")"
-  crank="$(govern::model_rank "$requested")"
-  if [[ "$wrank" -gt 0 && "$crank" -gt "$wrank" ]]; then
-    printf '%s' "$wcap"
-  else
-    printf '%s' "$requested"
-  fi
-  return 0
-}
-
-govern::effort_bump() { # effort -> the next rung UP the reasoning-effort ladder
-  # Raising effort is far cheaper than raising tier, so it is the first rung of the escalation
-  # ladder. An UNSET effort has no rung to step from (nothing invents a default), so an
-  # escalation from unset lands on the ladder's first EXPLICIT rung, `high`. An unrecognized value
-  # is left untouched (fail-safe — the caller's allowlist drops it anyway).
-  case "${1:-}" in
-    "") echo high ;;
-    low) echo medium ;; medium) echo high ;; high) echo xhigh ;; xhigh|max) echo max ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
-govern::retry_class() { # N -> "<class>\t<reason>" (tab-separated; class ∈ infra|ci|budget|judgment|unknown)
-  local n="${1:-}" hist last st rc nrepos
-  # Kill switch: GOVERN_RETRY_CLASSIFY=0 pins every retry to `unknown`, i.e. the exact pre-classifier
-  # escalate-to-GOVERN_WORKER_MODEL rail. One env var reverts the whole policy.
-  if [[ "${GOVERN_RETRY_CLASSIFY:-1}" == "0" ]]; then
-    printf 'unknown\tclassifier disabled (GOVERN_RETRY_CLASSIFY=0) — using the pre-classifier escalation\n'; return 0
-  fi
-  # 1. Caller-declared class wins: the caller knows things the ledger cannot show (e.g. it is
-  #    re-dispatching THIS ticket right now because the last worker died on a transport drop).
-  #    An unrecognized value is IGNORED (never trusted) and falls through to the evidence path.
-  case "${GOVERN_RETRY_CLASS:-}" in
-    infra|ci|budget|judgment)
-      printf '%s\t%s\n' "$GOVERN_RETRY_CLASS" "declared by the driver (GOVERN_RETRY_CLASS=$GOVERN_RETRY_CLASS)"; return 0 ;;
-  esac
-  # 2. This spawn IS the CI-fix re-dispatch. (injecting the failing CI log into the
-  #    worker prompt is owned separately; this classifier owns ONLY the escalation policy — the
-  #    seam between them is this one env var.)
-  if [[ -n "${GOVERN_FIX_CI:-}" ]]; then
-    printf 'ci\tCI-fix re-dispatch for %s (GOVERN_FIX_CI set) — the failing axis is CI/portability, not model tier\n' "$GOVERN_FIX_CI"
-    return 0
-  fi
-  # 3. Evidence: the ticket's LAST recorded cross-run outcome.
-  hist="${GOVERN_HISTORY_FILE:-$TICKET_HISTORY_FILE}"
-  if [[ -s "$hist" ]] && command -v jq >/dev/null 2>&1 && [[ "$n" =~ ^[0-9]+$ ]]; then
-    last="$(jq -sc --argjson t "$n" '[ .[] | select(.ticket == $t) ] | last // empty' "$hist" 2>/dev/null || true)"
-  fi
-  if [[ -n "${last:-}" ]]; then
-    st="$(printf '%s' "$last" | jq -r '.status // ""' 2>/dev/null || echo "")"
-    rc="$(printf '%s' "$last" | jq -r '.retryClass // ""' 2>/dev/null || echo "")"
-    nrepos="$(printf '%s' "$last" | jq -r '(.repos // []) | length' 2>/dev/null || echo 0)"
-    # 3a. The driver tagged the recorded outcome (e.g. "parked because CI stayed red") — authoritative.
-    case "$rc" in
-      infra|ci|budget|judgment)
-        printf '%s\t%s\n' "$rc" "prior attempt recorded $st, tagged retryClass=$rc by the driver"; return 0 ;;
-    esac
-    case "$st" in
-      budget-exceeded)
-        printf 'budget\tprior attempt burned its token budget while still exploring — scope was underestimated\n'; return 0 ;;
-      failed|parked)
-        if [[ "${nrepos:-0}" -gt 0 ]]; then
-          printf 'judgment\tprior attempt opened a PR that did not land (%s) — a coherent but wrong fix\n' "$st"; return 0
-        fi
-        printf 'unknown\tprior attempt recorded %s with no PR — signature unrecognized\n' "$st"; return 0 ;;
-      *)
-        printf 'unknown\tprior attempt recorded %s — signature unrecognized\n' "${st:-<none>}"; return 0 ;;
-    esac
-  fi
-  printf 'unknown\tno recorded evidence for a prior attempt\n'
 }
 
 # ── tolerant worker-report extraction ─────────────────────────────────

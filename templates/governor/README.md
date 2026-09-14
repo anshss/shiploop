@@ -252,10 +252,11 @@ individually, and a member a gate skips or refuses drops out of the group while 
 worker opens one branch and one PR keyed on the primary (first-named) ticket, and its report carries
 a `tickets` array, one `{ticket,status,note}` entry per group member. `resolve-ticket.sh` merges the
 PR once and lands each `resolved` entry on its own; a `parked`/`failed` entry, or a ticket the array
-never names, stays in the queue. `govern::locality_groups` is the VALIDATOR: it confirms the named set
-actually shares files (capped at the size you pass it) and refuses to co-batch two tickets in a
-dependency relation. Naming the group is a judgment call the session makes per dispatch, not a
-configured setting: it has read the tickets and knows which ones sit in the same area.
+never names, stays in the queue. Two constraints make a named set valid: every member must share at
+least one measured file path with the others, and two tickets in a dependency relation, either
+direction, never go to one worker. Naming the group is a judgment call the session makes per
+dispatch, not a configured setting: it has read the tickets and knows which ones sit in the same
+area, and confirms both constraints itself before dispatching.
 
 `pre-dispatch-check.sh` still prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when some OTHER
 open ticket shares a measured file (or, weaker, a directory) with the one you named

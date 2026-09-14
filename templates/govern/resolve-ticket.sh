@@ -342,8 +342,8 @@ fi
 # ── 5. Land: pipe the report into the EXISTING land-resolution.sh (the real tickets.md edit +
 #    commit + BK_LOCK/CAS push). Never reimplemented here.
 #
-#    A GROUP report (a non-empty `.tickets` array, a worker batched onto one branch/one PR via
-#    govern::locality_groups) lands PER TICKET instead of once: loop the array, and for each entry
+#    A GROUP report (a non-empty `.tickets` array, a worker batched onto one branch/one PR as a
+#    named group) lands PER TICKET instead of once: loop the array, and for each entry
 #    read govern::batch_ticket_status (fail-closed: "" for a missing entry, an empty array, an
 #    absent array, unparseable JSON, or an entry with no status). A "resolved" entry lands via
 #    land-resolution.sh for THAT ticket number; "parked"/"failed" record the outcome in ticket
