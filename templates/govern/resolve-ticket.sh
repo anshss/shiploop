@@ -50,6 +50,9 @@
 #      governor's to merge, so the ticket still lands with the PR surfaced in the history note,
 #      exactly as the loop bookkept it. rc 3/4/5 (and anything unexpected) mean the PR is not
 #      known-good: do NOT land, print what happened and why, exit non-zero so the session can act.
+#      On rc 3, also print ci-log.sh's bounded excerpt of the failing run on stderr, alongside the
+#      refusal, so the reader gets the actual failure instead of re-dispatching blind to find
+#      it. ci-log.sh is fail-open, so this never changes the refusal itself.
 #      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
 #      or with --no-merge once they handled it by hand).
@@ -207,6 +210,20 @@ if govern::is_validation_ticket "$tblock"; then
   esac
 fi
 
+# Print ci-log.sh's bounded excerpt for a refused PR on stderr, alongside the refusal above it.
+# the advisor's cheapest next move without it is a full re-dispatch to rediscover what CI already
+# knows. ci-log.sh is fail-open by design: a missing `gh`, a network failure, a run still pending
+# with no failing check yet, or any other problem prints nothing and exits nonzero, so this call
+# can never change what caller prints or how it exits. `|| true` plus the explicit `return 0`
+# below keep it that way under `set -euo pipefail`: this function's exit status is never checked
+# and must never propagate.
+rt_print_ci_excerpt() { # <repo> <pr>
+  local excerpt
+  excerpt="$("$DIR/ci-log.sh" "$1" "$2" 2>/dev/null || true)"
+  [[ -n "$excerpt" ]] && printf '%s\n' "$excerpt" >&2
+  return 0
+}
+
 # ── 3. Await CI + merge every PR the report names (ported from run-loop.sh's per-PR merge walk).
 #    merge-pr.sh calls await-ci.sh internally (never reimplemented here). ─────────────────────
 pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
@@ -247,7 +264,11 @@ elif [[ -n "$pr_lines" ]]; then
         echo "resolve-ticket #$N: $_mrepo#$_mnum left open, GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
         PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
         ;;
-      3) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2; ALL_MERGED=0 ;;
+      3)
+        echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2
+        rt_print_ci_excerpt "$_mrepo" "$_mnum"
+        ALL_MERGED=0
+        ;;
       4) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI state could not be verified (gh network/auth/rate-limit/5xx). Investigate, then re-run." >&2; ALL_MERGED=0 ;;
       5) echo "resolve-ticket #$N: $_mrepo#$_mnum refused — external-PR safety guard blocked it (not this governor's own PR/branch). Merge it by hand via gh/web if trusted, then re-run with --no-merge." >&2; ALL_MERGED=0 ;;
       *) echo "resolve-ticket #$N: $_mrepo#$_mnum — merge-pr.sh exited $_mrc (unexpected)." >&2; ALL_MERGED=0 ;;

@@ -2,16 +2,16 @@
 # ci-log.sh <repo> <pr> — print a BOUNDED excerpt of the failing CI job's log for a PR.
 #
 # Workers verify on macOS; CI runs Linux. A PR that is correct locally fails on a portability
-# difference — a `sed -i` without a backup arg, a BSD-vs-GNU
-# flag, a case-insensitive filesystem — and the governor dispatches a SECOND FULL WORKER for something
-# entirely deterministic. A caller can re-dispatch by setting `GOVERN_FIX_CI=<repo>#<pr>`, but the
-# re-dispatched worker is handed the SAME ticket prompt as the first one: `GOVERN_FIX_CI` is read in exactly one place (govern::retry_class, to pin the retry class to
-# `ci` so the tier is not raised) and nowhere else. So the second worker rediscovers the CI failure
-# from scratch, at full price, when the answer is sitting in a log file.
+# difference: a `sed -i` without a backup arg, a BSD-vs-GNU flag, a case-insensitive filesystem.
+# and the reader of a bare refusal has no evidence of which one it was.
+#
+# `resolve-ticket.sh` calls this script on a red-CI refusal and prints its output on stderr
+# alongside the refusal, so the advisor reading the refusal sees the actual failure instead of
+# re-dispatching a worker to rediscover it from scratch.
 #
 # This script is the missing input. It is DETERMINISTIC — `gh` only, zero model calls — and
-# fail-open: any problem prints nothing and exits 1, so a caller that cannot get a log simply
-# dispatches the worker exactly as it does today.
+# fail-open: any problem prints nothing and exits 1, so a caller that cannot get a log is left with
+# exactly the refusal it would have printed without this script.
 #
 # Env:
 #   GOVERN_CI_LOG_MAX_LINES=120   tail bound on the excerpt (the whole point is bytes, not completeness)
