@@ -49,7 +49,7 @@ Out of scope (these are documented design choices, not defects):
 
 - The worker running with `bypassPermissions` inside its own worktree. This is the entire point of the worker lane and is a load-bearing property of the harness. See the README's trust-model section.
 - The governor auto-merging its own PRs on green-or-no-checks CI when the operator has explicitly added a repo to `GOVERN_MERGE_REPOS`. The operator opted in.
-- Operator-provided values in `scripts/lib/workspace.sh` behaving as documented (e.g. setting `GOVERN_MAX_TICKETS=1000` letting the governor run for a long time). Configuration is not a vulnerability.
+- Operator-provided values in `scripts/lib/workspace.sh` behaving as documented (e.g. raising `GOVERN_WORKER_TIMEOUT` to let a worker run for a long time). Configuration is not a vulnerability.
 - Anything requiring the attacker to already be an authenticated operator on the machine running the governor.
 - Vulnerabilities in `gh`, `git`, `bash`, `jq`, `claude`, GitHub, or the transitive dependencies of a scaffolded workspace's sub-repos. Report those upstream.
 

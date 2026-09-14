@@ -32,7 +32,7 @@ The trigger changed, and so did the substrate under it. Verdict files, resumable
 reaping are still what survive a closed session (a later one can reap a worktree an earlier one
 left behind), but a worker itself no longer survives past the session that spawned it: it is a
 subagent, not a detached process, so there is no more single-run lock, per-ticket claim lock, or
-run-level ceiling (`GOVERN_MAX_TICKETS` is retired along with it) either. Each dispatch is a fresh,
+run-level ceiling either. Each dispatch is a fresh,
 short-lived pass through gate → worker → land, and the operator naming tickets is the only ceiling
 on how many get worked in one sitting.
 
