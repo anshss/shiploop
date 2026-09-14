@@ -217,8 +217,8 @@ exit 0
 # every exit path: (1) reap its own wall-clock/token/early-abort watchdog subshells so a killed governor
 # never leaks a `sleep`-holding process, (2) kill_tree a forked `claude -p` OS process plus every
 # grandchild it spawned, so a stopped/killed governor never leaves an orphaned process reparented
-# to init and billing a box, (3) record the attempt outcome into attempts.jsonl so a SIGKILLed
-# attempt is never miscounted as a completed one for sizing history.
+# to init and billing a box, (3) record the attempt outcome so a SIGKILLed attempt is never
+# miscounted as a completed one for sizing history.
 #
 # None of that has a hook equivalent, and this file does not invent one. Whether SessionEnd's own
 # worktree/session-end-cleanup.sh covers the case those traps existed for, checked directly rather

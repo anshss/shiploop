@@ -1356,9 +1356,9 @@ govern::tickets_missing_validation_doc() { # [tickets-file] [meta-root] -> "N" l
 # cap LOUDLY (govern::log), never silently unbounded. A missing/absent ledger file means ZERO
 # consults used so far, never a denial: "no evidence" is not "no budget".
 #
-# The flat ledger path ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped) is deliberate: unlike
-# attempts.jsonl, which IS run-scoped via govern::worker_logdir, nothing sets GOVERN_RUN_DIR any
-# more, so there is no run to scope this ledger under even for a caller that still sets it.
+# The flat ledger path ($LOG_ROOT/ticket-N/advisor.jsonl, never run-scoped) is deliberate: nothing
+# sets GOVERN_RUN_DIR any more, so there is no run to scope this ledger under even for a caller
+# that still sets it.
 govern::advisor_ledger_path() { # <N> -> the flat advisor.jsonl path for this ticket (dir mkdir -p'd)
   local n="${1:?ticket number required}"
   local dir="$LOG_ROOT/ticket-$n"
@@ -2761,8 +2761,8 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 #                       a tier was too cheap), so they must not come back empty.
 #   none              — nothing readable (no stream, or no usage anywhere in it).
 #
-# ROOT CAUSE of null costUsd, verified 2026-09-10 against aquanode's own
-# logs/govern/**/attempts.jsonl, not just this repo's: `total_cost_usd` exists ONLY on the CLI's
+# ROOT CAUSE of null costUsd, verified 2026-09-10 against aquanode's own real govern run logs,
+# not just this repo's: `total_cost_usd` exists ONLY on the CLI's
 # final `"type":"result"` event. Every `"type":"assistant"` event's `.message.usage` was checked
 # directly and carries token counts but NO price field at all, at any point in the stream. So a
 # null costUsd is not a parsing defect; it is EVERY attempt this watchdog hard-kills before that

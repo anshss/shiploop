@@ -300,28 +300,15 @@ repos count as self-referential is `GOVERN_SELFREF_REPOS` (defaults to the merge
 outside `$REPOS` — the meta-repo + any skill-template repo).
 
 ### The sizing decision, not just the cost
-**Currently dormant:** `attempts.jsonl`, the per-attempt ledger this whole section describes, was
-written by the headless dispatch launcher, retired along with it: nothing writes a new row any
-more, so everything below is read-only history for tickets dispatched before this change. History
-rows already on disk stay readable, and `govern-health.sh`'s per-model breakdown still works against
-them; it just stops accumulating for tickets dispatched by a worker subagent.
-
 A row that says a ticket cost `$9.66` but not *what tier produced that* is unlearnable — "does this
 class of ticket actually succeed at sonnet?" has no answer, so any scope→tier table stays hand-tuned
 forever. So each history row also carries the **decision**: `model`, `effort`, `attempt` (1-based),
 and `usageSource`. `govern-health.sh` groups spend + resolve rate **by model** from those fields
 (`.byModel` in `--json`; a `by model :` block in the human output), which is the sizing table read off
-real runs. Mechanics (historical, no current writer, see above):
+real runs. Nothing currently writes `model`/`effort`/`attempt`, so those fields sit null on every new
+row; `govern-health.sh`'s per-model breakdown still runs and stays correct against whatever rows do
+carry them. Mechanics:
 
-- The headless launcher appended one row per spawn to `logs/govern/run-*/ticket-N/attempts.jsonl`: the
-  resolved model/effort **and where each came from** (a brain-decided ticket field vs the workspace
-  fallback vs a retry escalation), plus that attempt's measured usage. `resolve-ticket.sh` reads the
-  ledger and writes `ticket-history.jsonl`, the only file `govern-health.sh` reads: spend is
-  **summed across the ticket's attempts** (an earlier re-dispatch's tokens belong to the ticket
-  too), while the decision fields come from the **last** attempt — the one that produced the outcome.
-  So when reading per-tier success rates, filter to `attempt == 1`: a row with `attempt > 1` records
-  the tier that *finished* the ticket, after a cheaper bet had already been tried and escalated away
-  (`byModel.retries` counts those, so the contamination is visible rather than silent).
 - **A killed attempt records its usage too.** A worker hard-killed before its verdict (wall-clock
   timeout, token budget, a stop signal) never emits the final `result` event that carries usage, so
   those rows used to be null — biased in the worst possible direction, since a failed attempt is
@@ -336,10 +323,10 @@ real runs. Mechanics (historical, no current writer, see above):
   forces text semantics; the headless launcher also rotated a prior attempt's stream to
   `worker.attempt<K>.jsonl` so a fresh inode made the corruption unreachable in the first place.
 
-- **Land-time safety, not dispatch-time locking.** There is no more per-ticket claim lock,
-  sibling-driver exclude list, or `--orchestrated` coordination, that was run-loop-only machinery,
-  retired with it. Two concurrent worker dispatches on the SAME ticket are not prevented before they
-  start; what still holds is that only one resolution ever lands: `resolve-ticket.sh` →
+- **Land-time safety, not dispatch-time locking.** There is no per-ticket claim lock, sibling-driver
+  exclude list, or `--orchestrated` coordination. Two concurrent worker dispatches on the SAME
+  ticket are not prevented before they start; what still holds is that only one resolution ever
+  lands: `resolve-ticket.sh` →
   `land-resolution.sh` serializes the `tickets.md` edit and the history append under the bookkeep
   lock (`BK_LOCK`) and a CAS push, so a second resolve on an already-landed ticket fails cleanly
   instead of double-counting a history row (`GOVERN_ALLOW_CONCURRENT=1`).
