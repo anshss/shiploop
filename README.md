@@ -60,7 +60,7 @@ The goal is simple: spend the fewest tokens per shipped ticket. Here is what act
 
 - **A watchdog stops runaway sessions.** It enforces a time limit, while the stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress—not how much it read. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
 
-- **Related work can share exploration.** A worker can handle tickets whose scout-measured file paths overlap, exploring an area once instead of once per ticket. A five-ticket batch is therefore far cheaper than five separate workers.
+- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket. A five-ticket batch is therefore far cheaper than five separate workers.
 
 - **Retries resume instead of restart.** Failed workers keep their worktree and findings, avoiding another clone and repeated exploration.
 

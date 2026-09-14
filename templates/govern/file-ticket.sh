@@ -21,13 +21,12 @@
 #     "Short title" [Severity] < body.md
 #   printf 'Where: ...\nObserved: ...\nDone when: ...\n' | scripts/govern/file-ticket.sh "Title" Low
 #
-# REMOVED — `--model` / `--effort`. Worker sizing is a MEASUREMENT now, not a filing-time guess: the
-# scout (scout-ticket.sh) greps the real code pre-dispatch and its verdict decides the tier. A field
-# written at filing time, before any evidence exists, by whoever happened to notice the bug used to
-# OUTRANK that measurement — backwards, and it is gone. Both flags are still ACCEPTED and ignored
-# with one log line so an older caller (or a `/setup` doc a fleet copied) degrades cleanly instead of
-# consuming its value as the ticket title; queue entries still carrying `**Model:**` / `**Effort:**`
-# are likewise inert: nothing on the dispatch path reads them any more.
+# `--model` / `--effort` are NOT dispatch-time inputs. GOVERN_WORKER_MODEL is the floor every ticket
+# dispatches at, and a retry escalates off that floor on failure — a field set at filing time, before
+# any evidence exists, by whoever happened to notice the bug never outranks that. Both flags are still
+# ACCEPTED and ignored with one log line so an older caller (or a `/setup` doc a fleet copied)
+# degrades cleanly instead of consuming its value as the ticket title; queue entries still carrying
+# `**Model:**` / `**Effort:**` are likewise inert: nothing on the dispatch path reads them.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -50,7 +49,7 @@ while [[ "${1:-}" == --* ]]; do
     --model|--effort)
       # Deprecated: sizing is measured, not guessed at filing time. Swallow the value so it can
       # never be mistaken for the title, say so once, and carry on.
-      govern::log "file-ticket: $1 is no longer used — worker sizing is measured by the scout pre-dispatch; ignoring '${2:-}'"
+      govern::log "file-ticket: $1 is not a dispatch-time input — every ticket dispatches at the GOVERN_WORKER_MODEL floor; ignoring '${2:-}'"
       shift 2 ;;
     --flow)
       [[ -n "${2:-}" ]] || govern::die "--flow requires a value (flow-id[,flow-id…])"

@@ -17,10 +17,10 @@ export GOVERN_TICKETS_FILE="$T/tickets.md" GOVERN_TICKET_SEQ_FILE="$T/.ticket-se
 : > "$GOVERN_TICKETS_FILE"
 n1="$(printf 'Where: x\nDone when: y\n' | "$DIR/../file-ticket.sh" --flow "deploy.correctness" "Validate deploy path" Low)"
 assert_contains "$(cat "$T/tickets.md")" "**Flow:** deploy.correctness" "file-ticket --flow emits the Flow: field"
-# --model is RETIRED (worker sizing is measured by the scout pre-dispatch, not declared at filing
-# time) but must still be ACCEPTED and ignored: an older caller — or a `/setup` doc a fleet already
-# copied — would otherwise have its tier value consumed as the ticket TITLE. So: no Model: field is
-# emitted, the --flow that follows it still lands, and the title is intact.
+# --model is not a dispatch-time input (every ticket dispatches at the GOVERN_WORKER_MODEL floor, not
+# a filing-time guess) but must still be ACCEPTED and ignored: an older caller — or a `/setup` doc a
+# fleet already copied — would otherwise have its tier value consumed as the ticket TITLE. So: no
+# Model: field is emitted, the --flow that follows it still lands, and the title is intact.
 n2="$(printf 'body\n' | "$DIR/../file-ticket.sh" --model haiku --flow "a.b,c.d" "Two flows" Low)"
 tblk="$(govern::ticket_block "$n2" "$T/tickets.md")"
 if printf '%s' "$tblk" | grep -qF "**Model:**"; then
