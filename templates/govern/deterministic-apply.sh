@@ -19,7 +19,7 @@
 #   - kill switch off, or no --patch data was supplied, or the patch is empty
 #   - the patch renames files, is binary, or touches > GOVERN_DETERMINISTIC_MAX_FILES files
 #   - any patched path is OUTSIDE the ticket's measured paths (govern::ticket_paths — its explicit
-#     `**Files:**` field, or a cached scout survey)
+#     `**Files:**` field)
 #   - the patch spans more than one sub-repo, or a path that is not under a known sub-repo
 #   - the target sub-repo is dirty, or is not on its default branch
 #   - a worktree for this ticket already exists (a prior attempt is mid-flight — not our lane)
@@ -175,11 +175,11 @@ if [[ "${#DIFF_PATHS[@]}" -gt "$MAX_FILES" ]]; then
 fi
 
 # ── 3. every path must sit inside the ticket's MEASURED paths ───────────────────────────────────
-# govern::ticket_paths's live source is the ticket's explicit `**Files:**` field (falling back to a
-# cached scout survey when one exists); a ticket carrying neither yields "" here, so this guard fires
-# rather than guessing at what the advisor meant to bound the patch against.
+# govern::ticket_paths's only source is the ticket's explicit `**Files:**` field; a ticket carrying
+# none yields "" here, so this guard fires rather than guessing at what the advisor meant to bound
+# the patch against.
 TARGETS="$(govern::ticket_paths "$N" 2>/dev/null || true)"
-[[ -n "$TARGETS" ]] || det::skip "the ticket has no measured paths (no \`**Files:**\` field, no scout survey) — nothing to bound the patch against"
+[[ -n "$TARGETS" ]] || det::skip "the ticket has no measured paths (no \`**Files:**\` field): nothing to bound the patch against"
 for p in "${DIFF_PATHS[@]}"; do
   det::path_allowed "$p" "$TARGETS" || det::skip "patched path '$p' is outside the ticket's measured paths"
 done

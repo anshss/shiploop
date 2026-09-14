@@ -12,7 +12,6 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_WORKER_MODEL` | `sonnet` | First-attempt **floor**: the tier every ticket dispatches at. A ticket's own `Model:`/`Effort:` fields no longer participate in dispatch |
 | `GOVERN_WORKER_ESCALATION_MODEL` | `opus` | **Cap**, not a destination: the highest tier an explicit request (a ticket's `Model:` field, honoured only under `GOVERN_MEASURED_SIZING=0`) may ask for. Nothing escalates to it automatically |
-| `GOVERN_RESPEC_ON_CAPABILITY_FAIL` | `1` | A retry classified `judgment` or unrecognized files an operator re-specification request in `escalations.md` instead of buying a tier. `0` disables the filing (the tier still never escalates) |
 | `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model govern's other headless `claude` dispatches (scout, supervisor, sync porter) launch is clamped to `max(opus, the model of the session that spawned it)`. A sonnet or haiku session still buys opus on a retry; only a session above opus may spawn above opus, and never above itself. The worker subagent is not clamped by this: its model is a fixed value in `.claude/agents/worker.md`'s frontmatter, not a per-dispatch decision. `0` disables the clamp |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |
 | `GOVERN_STALENESS_RUN_TESTS` | `0` (off) | On top of the staleness check, also execute a test command read out of `tickets.md`. A separate opt-in on purpose: the queue is partly machine-written, and a stat() is not a `bash -c` |
@@ -27,7 +26,6 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 | `GOVERN_DETERMINISTIC_MAX_FILES` | `3` | A patch touching more files than this is not "mechanical" — the lane skips and falls through to a worker |
 | `GOVERN_DETERMINISTIC_VERIFY_CMD` | empty | The verification command run inside the patched sub-repo before the lane commits. Operator-supplied only, never read out of the patch or the ticket: this lane never runs a command a model wrote |
 | `GOVERN_DETERMINISTIC_VERIFY_REQUIRED` | `1` (on) | No `GOVERN_DETERMINISTIC_VERIFY_CMD` configured ⇒ the lane skips rather than land an unverified patch. `0` allows the unverified path; the report then records `verified:false` |
-| `GOVERN_RETRY_NOTES_MAX_BYTES` | `16000` | Byte cap on the findings scratchpad (`.governor-notes.md`) a retry inherits from the previous attempt; the full file stays on disk in the preserved worktree |
 | `GOVERN_LESSON_MAX_CHARS` | `600` | Char cap on a single lesson promoted into `CLAUDE.md`; overflow keeps the lead rule inline and parks the full text in `CLAUDE-APPENDIX.md` |
 | `GOVERN_LESSON_EVICT` | `1` (on) | Forced eviction at budget: once root `CLAUDE.md` is at/over `GOVERN_LESSON_BUDGET_CHARS`, a new always-on lesson must name the existing entry it displaces (`lessonPatch.evicts`, matching exactly one heading/rule line) or it is routed to `CLAUDE-APPENDIX.md` instead of growing the always-on file. `0` restores the old always-insert-into-`CLAUDE.md` behaviour |
 | `SHIPLOOP_CLAUDEMD_MAX_CHARS` | `14000` | Total budget for root `CLAUDE.md` (alias `GOVERN_LESSON_BUDGET_CHARS`); checked by `doctor` and at every governor run-end. Past the ceiling the evidence-based trim CLASSIFIES and PROPOSES candidates: it never edits `CLAUDE.md`, automatically or otherwise. `/shiploop:compress` is the operator path |
@@ -64,16 +62,12 @@ prints nothing at all when there is no fleet.
 | Knob | Default | Turns on |
 |---|---|---|
 | `GOVERN_PERMISSION_MODE` | `bypassPermissions` | The `--permission-mode` govern's other headless `claude` dispatches (`sync-port.sh` and friends) run under: the single widest grant in the harness. The worker subagent's `permissionMode` is fixed separately in `.claude/agents/worker.md`'s frontmatter (`bypassPermissions` by default, matching this), since a subagent has no per-run CLI flag to attach an env override to |
-| `GOVERN_WORKER_MCP` | `0` (off) | Give workers the workspace's MCP servers. Off by default: MCP tool schemas are re-sent on every turn, so this is a standing per-turn cost |
 
 ### Hard bounds: how a worker is guaranteed to end
 
 | Knob | Default | Turns on |
 |---|---|---|
 | `GOVERN_WORKER_TIMEOUT` | `3600` (1h) | No longer enforced as a hard kill (that lived in the headless dispatch launcher, retired along with it); still read by `flows-file.sh` as the number a slow-provision flow is measured against for its scheduling estimate |
-| `GOVERN_WORKER_MAX_TOKENS` | `0` (unlimited) | Dead: the per-worker token-budget watchdog that enforced this lived in the headless dispatch launcher, retired along with it. Nothing reads this any more |
-| `GOVERN_WORKER_MAX_TURNS` | `0` (off) | Dead: the `--max-turns` ceiling this fed lived in the headless dispatch launcher, retired along with it. Nothing reads this any more |
-| `GOVERN_WORKER_MAX_BUDGET_USD` | `0` (off) | Dead: the `--max-budget-usd` ceiling this fed lived in the headless dispatch launcher, retired along with it. Nothing reads this any more |
 | `GOVERN_MIN_FREE_GB` | `5` | Free-disk floor checked by `pre-dispatch-check.sh` before spawning; below it, dispatch refuses rather than filling the volume |
 
 ### CI and cadence

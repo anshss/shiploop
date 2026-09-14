@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Dispatch-time overlap nudge, zero model calls. Named dispatch batches overlap
-# WITHIN the named set (govern::locality_groups), but has no visibility into a ticket the operator
-# did not name. Measured: 81% of dispatched tickets touched files an earlier ticket touched, and 45%
+# Dispatch-time overlap nudge, zero model calls. Naming a group batches overlap WITHIN that named
+# set, but has no visibility into a ticket the operator did not name. Measured: 81% of dispatched
+# tickets touched files an earlier ticket touched, and 45%
 # of overlapping pairs were both ALREADY QUEUED at dispatch - batchable if the operator had known.
 # govern::overlap_nudge is a non-blocking hint only: it never changes DISPATCH_GROUPS, never touches
 # the queue, and never blocks. Proves:

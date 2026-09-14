@@ -11,8 +11,9 @@
 #   6. `newTickets`/`lessonPatch` (group-wide findings the worker states once) ride only the
 #      PRIMARY ticket's landing call; every other group member's call has them stripped, so one
 #      worker run never double-files a newTicket or double-promotes a lesson.
-# A named set containing a dependency pair is never grouped in the first place — proven by
-# test-locality-batch.sh's (E) section (govern::locality_groups), not re-proven here.
+# A named set containing a dependency pair is never grouped in the first place: naming a group is a
+# judgment call the dispatching session makes, per the two constraints templates/governor/README.md's
+# "Batching several tickets into one worker" section states. Not re-proven here.
 # Sandboxed exactly like test-resolve-ticket.sh: stubbed land-resolution.sh/merge-pr.sh/await-ci.sh/
 # gh, no network, no real push.
 set -uo pipefail
