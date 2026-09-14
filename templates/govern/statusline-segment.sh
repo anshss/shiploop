@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # One statusline segment describing the running fleet, e.g.
 #
-#   ⚙ 4/6 · #94 opus 22m
-#    │ │ │    └ oldest live worker: ticket, tier, elapsed
-#    │ │ └──── tickets answered so far this run
+#   ⚙ 4/6 · agent_001 opus 22m
+#    │ │ │    └ oldest live worker: agent id, tier, elapsed
+#    │ │ └──── workers answered so far this run
 #    │ └────── live workers right now
 #
 # Reads the statusline stdin JSON (documented fields: `cwd`, `workspace.current_dir`,
@@ -59,15 +59,15 @@ if [[ -z "$LOG" || ! -f "$LOG" ]]; then
 fi
 [[ -n "$LOG" && -s "$LOG" ]] || exit 0
 
-# One awk pass, last-event-wins per (run_id, ticket) — the same fold status.sh uses, inlined here so
-# the segment stays a single process. Only the NEWEST run counts (state is reset whenever run_id
+# One awk pass, last-event-wins per (run_id, agent_id): the same fold status.sh uses, inlined here
+# so the segment stays a single process. Only the NEWEST run counts (state is reset whenever run_id
 # changes), and a finished run emits nothing at all.
 #
 # Output is TSV on stdout only — no awk `> "/dev/stderr"` (non-portable across BSD awk / mawk) and no
 # temp file (a statusline runs on every keystroke-ish update; a temp file per invocation is litter
 # and a race):
-#   P <ticket> <pid> <since> <model>   one per worker the log claims is live
-#   N <answered>                       tickets already answered this run
+#   P <agent_id> <agent_type> <since> <model>   one per worker the log claims is live
+#   N <answered>                                workers already answered this run
 OUT="$(awk '
 function jget(line, key,   pat, i, s, c, out, esc, n) {
   pat = "\"" key "\":"
@@ -91,14 +91,16 @@ function jget(line, key,   pat, i, s, c, out, esc, n) {
 {
   rid = jget($0, "run_id"); typ = jget($0, "type")
   if (rid == "" || typ == "") next
-  if (rid != cur) { cur = rid; split("", st); split("", pid); split("", mod); split("", since); split("", doneModel); done = 0; answered = 0 }
+  if (rid != cur) { cur = rid; split("", st); split("", atyp); split("", mod); split("", since); split("", doneModel); done = 0; answered = 0 }
   if (typ == "run_done") { done = 1 }
   else if (typ == "worker_spawned") {
-    t = jget($0,"ticket"); st[t] = 1; pid[t] = jget($0,"pid"); mod[t] = jget($0,"model"); since[t] = jget($0,"ts")
+    aid = jget($0,"agent_id"); if (aid == "") next
+    st[aid] = 1; atyp[aid] = jget($0,"agent_type"); mod[aid] = jget($0,"model"); since[aid] = jget($0,"ts")
   }
-  else if (typ == "worker_escalated") { t = jget($0,"ticket"); if (t in mod) mod[t] = jget($0,"to") }
+  else if (typ == "worker_escalated") { aid = jget($0,"agent_id"); if (aid in mod) mod[aid] = jget($0,"to") }
   else if (typ == "worker_done") {
-    t = jget($0,"ticket"); st[t] = 0; answered++
+    aid = jget($0,"agent_id"); if (aid == "") next
+    st[aid] = 0; answered++
     # Tier mix (the terse counterpart of `status.sh`s full "by source": this stays a raw
     # MODEL tally, not the full model_source string, on purpose: one more awk pass is affordable,
     # but the segment must stay a single glance, and model_source prose is not.
@@ -107,7 +109,7 @@ function jget(line, key,   pat, i, s, c, out, esc, n) {
 }
 END {
   if (done) exit 0
-  for (t in st) if (st[t] == 1) printf "P\t%s\t%s\t%s\t%s\n", t, pid[t], since[t], mod[t]
+  for (aid in st) if (st[aid] == 1) printf "P\t%s\t%s\t%s\t%s\n", aid, atyp[aid], since[aid], mod[aid]
   printf "N\t%d\n", answered
   for (m in doneModel) printf "M\t%s\t%s\n", m, doneModel[m]
 }
@@ -115,38 +117,34 @@ END {
 
 [[ -n "$OUT" ]] || exit 0
 
-# Verify liveness. A spawn with no matching done is a CLAIM, not a fact — a killed driver leaves it
-# in the log forever, and a statusline still reading "4 workers" an hour after the fleet died is
-# worse than silence. `kill -0` is the arbiter, exactly as in status.sh.
+# Verify liveness. A spawn with no matching done is a CLAIM, not a fact: a worker that went quiet
+# without reaching SubagentStop (a killed session, an OOM) leaves it in the log forever, and a
+# statusline still reading "4 workers" an hour after the fleet died is worse than silence. A worker
+# is an in-session subagent with no pid of its own, so age is the arbiter instead of `kill -0`: a
+# claim older than GOVERN_WORKER_STALE_S is treated as dead. Same knob status.sh uses for its own
+# reap, so the two surfaces can't disagree. Kill switch: GOVERN_STATUSLINE_STALE_CHECK=0.
 NOW="$(date +%s)"
-_STALE_DAYS="${GOVERN_EVENTS_STALE_DAYS:-7}"
+_STALE_WORKER_S="${GOVERN_WORKER_STALE_S:-7200}"
 _STALE_CHECK="${GOVERN_STATUSLINE_STALE_CHECK:-1}"
-LIVE=0; NDONE=0; BEST_T=""; BEST_M=""; BEST_S=0; MIX=""; N_MIX=0
+LIVE=0; NDONE=0; BEST_A=""; BEST_M=""; BEST_S=0; MIX=""; N_MIX=0
 while IFS=$'\t' read -r _k _a _b _c _d; do
   case "${_k:-}" in
     N) NDONE="${_a:-0}" ;;
     M)
-      # Tier mix among ALREADY-ANSWERED tickets this run — the raw model, not the full
+      # Tier mix among ALREADY-ANSWERED workers this run: the raw model, not the full
       # model_source (see the fold above). Only ever printed alongside a live worker below (the
       # segment's own silence contract), so this never fires on an idle fleet.
       N_MIX=$((N_MIX+1))
       MIX="${MIX:+$MIX }${_a}${_b:+×$_b}"
       ;;
     P)
-      [[ "${_b:-0}" -gt 0 ]] 2>/dev/null || continue
-      kill -0 "$_b" 2>/dev/null || continue
-      # A pid can be REUSED by an unrelated process long after the worker that originally held it
-      # died: `kill -0` alone can't tell the difference, so a claim whose OWN spawn event is older
-      # than GOVERN_EVENTS_STALE_DAYS is treated as dead rather than as a genuinely week-plus-old
-      # worker (workers are bounded well under a day by GOVERN_WORKER_TIMEOUT). This is what keeps
-      # the segment SILENT (its own contract, see header) instead of reading a ghost as live
-      # forever. Same knob status.sh uses so the two surfaces can't disagree. Kill switch:
-      # GOVERN_STATUSLINE_STALE_CHECK=0.
-      if [[ "$_STALE_CHECK" != "0" ]] && [[ "${_c:-0}" -gt 0 ]] 2>/dev/null; then
-        [[ $(( NOW - _c )) -gt $(( _STALE_DAYS * 86400 )) ]] && continue
+      # _a=agent_id _b=agent_type _c=since (spawn ts) _d=model
+      [[ "${_c:-0}" -gt 0 ]] 2>/dev/null || continue
+      if [[ "$_STALE_CHECK" != "0" ]]; then
+        [[ $(( NOW - _c )) -ge "$_STALE_WORKER_S" ]] && continue
       fi
       LIVE=$((LIVE+1))
-      if [[ "$BEST_S" -eq 0 || "${_c:-0}" -lt "$BEST_S" ]]; then BEST_S="${_c:-0}"; BEST_T="$_a"; BEST_M="${_d:-}"; fi
+      if [[ "$BEST_S" -eq 0 || "${_c:-0}" -lt "$BEST_S" ]]; then BEST_S="${_c:-0}"; BEST_A="$_a"; BEST_M="${_d:-}"; fi
       ;;
   esac
 done <<<"$OUT"
@@ -162,10 +160,14 @@ _hms() {
   return 0
 }
 
+# A statusline is one line in a narrow terminal, so a long platform-issued agent_id is truncated
+# rather than pushing the rest of the segment off-screen.
+_trunc() { local s="${1:-}"; if [[ "${#s}" -gt 12 ]]; then printf '%s…' "${s:0:12}"; else printf '%s' "$s"; fi; return 0; }
+
 TOTAL=$((LIVE + NDONE))
 printf '%s %s/%s' "${GOVERN_STATUSLINE_ICON:-⚙}" "$LIVE" "$TOTAL"
-if [[ -n "$BEST_T" ]]; then
-  printf ' · #%s' "$BEST_T"
+if [[ -n "$BEST_A" ]]; then
+  printf ' · %s' "$(_trunc "$BEST_A")"
   [[ -n "$BEST_M" ]] && printf ' %s' "$BEST_M"
   [[ "${BEST_S:-0}" -gt 0 ]] && printf ' %s' "$(_hms "$(( NOW - BEST_S ))")"
 fi

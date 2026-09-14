@@ -123,19 +123,20 @@ agents". In shiploop they mean exactly this:
 
 ### Fleet visibility
 
-A worker is a subagent the session runs to completion, and structured state is written only when
-it finishes, so while one or more are in flight at once *nothing on disk says "running"* on its
-own, which is why no surface could ever show them without instrumentation.
+A worker is an in-session subagent, not a separate OS process with a pid of its own, so nothing can
+poll it the way you'd poll a real process.
 
-`GOVERN_EVENTS=1` fixes that with one append-only log, `governor/events.jsonl`, and three readers
-fold it. The emitter can never abort a dispatch: a failed append is swallowed silently, by construction.
+`GOVERN_EVENTS=1` turns on one append-only log, `governor/events.jsonl`. A `SubagentStart`/
+`SubagentStop` hook (`worker-event-emit.sh`) writes `worker_spawned`/`worker_done` for it, keyed on
+its `agent_id`, and three readers fold that into "running right now". The emitter can never abort a
+dispatch: a failed append is swallowed silently, by construction.
 
 ```
 $ npm run govern:status
 fleet: 2 active · 3 resolved · 1 parked · 0 failed · 1 escalated
 run:   gov-20260901T101500Z-4242 (running, mode=live, up 41m)
-  #94    opus     22m    pid 44112  effort=high
-  #97    sonnet   4m     pid 44530  effort=medium
+  agent_a1b2c3             worker         opus     22m effort=high
+  agent_d4e5f6             worker         sonnet   4m effort=medium
 ```
 
 ## Configuration

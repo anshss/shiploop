@@ -25,6 +25,7 @@ test-purge-removed
 test-reconcile-update
 test-scaffold-verify-standalone
 test-scaffold-teammate-idle-hook
+test-scaffold-worker-event-hook
 test-detect-inputs
 test-greenfield
 test-events-monitor
