@@ -100,22 +100,28 @@ emit() { # <dedupe-key> <message>
 }
 
 handle() { # <event line>
-  local line="$1" typ t st model to frm lbl
+  local line="$1" typ aid atype st model to frm lbl
   typ="$(jget "$line" type)"
   case "$typ" in
     run_started)
       emit "run-start" "shiploop fleet: governor run started (mode=$(jget "$line" mode), target=$(jget "$line" target), up to $(jget "$line" parallel) driver(s))" ;;
     worker_spawned)
-      t="$(jget "$line" ticket)"; model="$(jget "$line" model)"
-      emit "spawn-$t" "shiploop fleet: worker started on #$t (${model:-?})" ;;
+      # Keyed on the worker's own agent_id, not a ticket: a worker is an in-session subagent, and
+      # templates/hooks/worker-event-emit.sh (the only writer of this event) sees an agent_id, never
+      # a ticket number.
+      aid="$(jget "$line" agent_id)"; [[ -n "$aid" ]] || return 0
+      atype="$(jget "$line" agent_type)"
+      emit "spawn-$aid" "shiploop fleet: worker started ($aid, ${atype:-worker})" ;;
     worker_escalated)
-      t="$(jget "$line" ticket)"; frm="$(jget "$line" from)"; to="$(jget "$line" to)"
-      emit "esc-$t-$to" "shiploop fleet: #$t escalated ${frm:-?} -> ${to:-?} ($(jget "$line" reason))" ;;
+      aid="$(jget "$line" agent_id)"; [[ -n "$aid" ]] || return 0
+      frm="$(jget "$line" from)"; to="$(jget "$line" to)"
+      emit "esc-$aid-$to" "shiploop fleet: $aid escalated ${frm:-?} -> ${to:-?} ($(jget "$line" reason))" ;;
     worker_done)
-      t="$(jget "$line" ticket)"; st="$(jget "$line" status)"
+      aid="$(jget "$line" agent_id)"; [[ -n "$aid" ]] || return 0
+      st="$(jget "$line" status)"
       # `stale` is a bookkeeping reap written by status.sh, not something that happened to a worker.
       [[ "$st" == "stale" ]] && return 0
-      emit "done-$t-$st" "shiploop fleet: #$t $st ($(jget "$line" model), $(jget "$line" elapsed)s)" ;;
+      emit "done-$aid-$st" "shiploop fleet: worker $st ($aid, $(jget "$line" model))" ;;
     ticket_parked)
       t="$(jget "$line" ticket)"
       emit "park-$t" "shiploop fleet: #$t PARKED — needs a human decision" ;;

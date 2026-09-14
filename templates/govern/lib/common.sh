@@ -69,11 +69,13 @@ LOG_ROOT="${GOVERN_LOG_ROOT:-$WS_ROOT/logs/govern}"
 # ── Fleet event log (govern::event) ─────────────────────────────────────────────────────────────
 # Folded in from the former lib/events.sh (deleted with the dispatch loop, 1.19.2). The emitter is
 # NOT loop machinery: status.sh, statusline-segment.sh and the plugin monitor all read it (status.sh
-# also writes a synthetic staleness row), and every one of them survives the loop purge, though
-# the headless dispatch launcher was the only writer of dispatch-path events (worker_spawned /
-# worker_done / worker_model_clamped / worker_respec_requested) and is retired along with it, so
-# those specific rows no longer accumulate. It lives here now so there is one file to source and no
-# existence guard to get wrong on an old workspace.
+# also writes a synthetic staleness row), and every one of them survives the loop purge. A dispatched
+# governed run has no dedicated launcher writing `driver_spawned`/`driver_reaped`/
+# `worker_model_clamped`/`worker_respec_requested` any more, so those rows do not accumulate; a
+# worker's own `worker_spawned`/`worker_done` come instead from `templates/hooks/worker-event-emit.sh`
+# (SubagentStart/PreToolUse/SubagentStop), keyed on the subagent's `agent_id` rather than a pid or a
+# ticket. It lives here now so there is one file to source and no existence guard to get wrong on an
+# old workspace.
 #
 # HARD CONTRACT — the emitter can NEVER abort a caller. Every govern:: caller runs under
 # `set -euo pipefail`. A broken emitter (unwritable governor/, full disk, a malformed key) that

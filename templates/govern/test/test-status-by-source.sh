@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # status.sh's "by source" summary: per-session tier attribution grouped by model_source.
 #
-# Why it exists: model_source was already logged (spawn-worker.sh's attempts.jsonl ledger) but
-# nothing aggregated it anywhere a person would look. Diagnosing a real overcharge took a dedicated
-# agent 38 tool calls to answer what this summary answers in one read. worker_spawned/worker_done
-# now carry modelSource/precision/costUsd (spawn-worker.sh); this locks in that status.sh's fold
-# turns those into a grouped summary.
+# Why it exists: model_source is worth aggregating wherever it is logged, but nothing aggregated it
+# anywhere a person would look. Diagnosing a real overcharge took a dedicated agent 38 tool calls to
+# answer what this summary answers in one read. A `worker_spawned`/`worker_done` row MAY carry
+# modelSource/precision/costUsd alongside its agent_id, when the writer knows them; this locks in
+# that status.sh's fold turns those into a grouped summary when they are present.
 #
 # Contract:
 #   1. Grouped by modelSource, not raw model: two sources that happen to pick the same tier stay
 #      distinct rows.
-#   2. Counts EVERY ticket ever dispatched in scope (done or still live), not just live ones.
+#   2. Counts EVERY agent_id ever dispatched in scope (done or still live), not just live ones.
 #   3. Cost sums only PRICED rows; an unpriced (killed-before-result-event) row still counts toward
 #      the dispatch total but is called out separately, never silently folded into a fake $0.
 #   4. Scoped to the newest run by default; --all-runs widens it, same as every other section.
@@ -34,20 +34,19 @@ TS="$(date +%s)"
 
 # run-old: a resolved GOVERN_WORKER_MODEL dispatch. Must NOT count by default (scoped to run-new).
 ev "{\"ts\":$((TS-600)),\"run_id\":\"run-old\",\"type\":\"run_started\",\"mode\":\"live\",\"target\":\"backlog\"}"
-ev "{\"ts\":$((TS-590)),\"run_id\":\"run-old\",\"type\":\"worker_spawned\",\"ticket\":21,\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"pid\":0}"
-ev "{\"ts\":$((TS-580)),\"run_id\":\"run-old\",\"type\":\"worker_done\",\"ticket\":21,\"status\":\"resolved\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"costUsd\":\"9.99\"}"
+ev "{\"ts\":$((TS-590)),\"run_id\":\"run-old\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-21\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
+ev "{\"ts\":$((TS-580)),\"run_id\":\"run-old\",\"type\":\"worker_done\",\"agent_id\":\"aid-21\",\"status\":\"resolved\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"costUsd\":\"9.99\"}"
 
 # run-new: two GOVERN_WORKER_MODEL dispatches (one resolved+priced, one timed-out+unpriced) and one
 # execute-only (haiku) dispatch, plus one still-LIVE dispatch (no done event yet).
 ev "{\"ts\":$((TS-300)),\"run_id\":\"run-new\",\"type\":\"run_started\",\"mode\":\"live\",\"target\":\"backlog\"}"
-ev "{\"ts\":$((TS-290)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"ticket\":11,\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"pid\":0}"
-ev "{\"ts\":$((TS-280)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"ticket\":11,\"status\":\"resolved\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"costUsd\":\"2.94\"}"
-ev "{\"ts\":$((TS-270)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"ticket\":12,\"model\":\"haiku\",\"modelSource\":\"execute-only (parent stated the change)\",\"precision\":\"stated\",\"pid\":0}"
-ev "{\"ts\":$((TS-260)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"ticket\":12,\"status\":\"resolved\",\"model\":\"haiku\",\"modelSource\":\"execute-only (parent stated the change)\",\"precision\":\"stated\",\"costUsd\":\"0.12\"}"
-ev "{\"ts\":$((TS-250)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"ticket\":13,\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"pid\":0}"
-ev "{\"ts\":$((TS-240)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"ticket\":13,\"status\":\"timeout\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
-sleep 60 & LIVE_PID=$!
-ev "{\"ts\":$((TS-100)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"ticket\":14,\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"pid\":$LIVE_PID}"
+ev "{\"ts\":$((TS-290)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-11\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
+ev "{\"ts\":$((TS-280)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"agent_id\":\"aid-11\",\"status\":\"resolved\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\",\"costUsd\":\"2.94\"}"
+ev "{\"ts\":$((TS-270)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-12\",\"model\":\"haiku\",\"modelSource\":\"execute-only (parent stated the change)\",\"precision\":\"stated\"}"
+ev "{\"ts\":$((TS-260)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"agent_id\":\"aid-12\",\"status\":\"resolved\",\"model\":\"haiku\",\"modelSource\":\"execute-only (parent stated the change)\",\"precision\":\"stated\",\"costUsd\":\"0.12\"}"
+ev "{\"ts\":$((TS-250)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-13\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
+ev "{\"ts\":$((TS-240)),\"run_id\":\"run-new\",\"type\":\"worker_done\",\"agent_id\":\"aid-13\",\"status\":\"timeout\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
+ev "{\"ts\":$((TS-100)),\"run_id\":\"run-new\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-14\",\"model\":\"sonnet\",\"modelSource\":\"GOVERN_WORKER_MODEL\",\"precision\":\"scoped\"}"
 
 # ── text ────────────────────────────────────────────────────────────────────────────────────────
 out="$(run_status --no-reap)"
@@ -91,5 +90,4 @@ gwm_all="$(printf '%s\n' "$out_all" | grep 'GOVERN_WORKER_MODEL')"
 assert_contains "$gwm_all" "4 dispatch" "status --all-runs: folds run-old's dispatch in too"
 assert_contains "$gwm_all" "12.93" "status --all-runs: and its cost (run-new's 2.94 + run-old's 9.99)"
 
-kill "$LIVE_PID" 2>/dev/null; wait 2>/dev/null
 assert_done

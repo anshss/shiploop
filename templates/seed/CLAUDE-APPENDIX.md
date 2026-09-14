@@ -170,15 +170,12 @@ Rules that are both rare and mechanically caught belong here.
 
 ## Fleet visibility — seeing what the governor is actually doing
 
-**Currently dormant:** every writer of `governor/events.jsonl` on the dispatch path lived in the
-headless dispatch launcher, retired along with it, so `npm run govern:status` and the statusline
-segment below will report an idle fleet even while a worker subagent is genuinely running: that is
-a known gap (no replacement emitter exists yet), not a bug to chase.
-
-A worker is a single-ticket session in its own worktree, and structured state is written only when
-it finishes, so while one or more are in flight nothing on disk says "running" on its own. Claude's
-own subagent panel cannot help: it renders Task-tool children of *this* session, and there is no way
-to inject a row into it from outside.
+A worker is an in-session subagent, not a separate OS process with a pid of its own. `SubagentStart`
+and `SubagentStop` hooks (`worker-event-emit.sh`) write `worker_spawned`/`worker_done` for it, keyed
+on its `agent_id`; `npm run govern:status` and the statusline segment below fold that into "running
+right now" without ever needing to poll a process. Claude's own subagent panel cannot substitute for
+this: it renders Task-tool children of *this* session, and there is no way to inject a row into it
+from outside.
 
 `GOVERN_EVENTS=1` turns on one append-only log, `governor/events.jsonl`, and everything else folds
 it. Off by default; nothing about a run changes when you enable it, and a failed append is swallowed
@@ -192,11 +189,14 @@ rather than aborting the run.
 
 Three things worth knowing before you go looking for a bug in it:
 
-- **A "live" worker in the log is a claim, not a fact.** A killed driver or a `pkill claude` leaves a
-  `worker_spawned` with no matching `worker_done` forever. Every reader arbitrates with `kill -0`;
-  `govern:status` additionally appends a synthetic `status:"stale"` row so the log self-heals.
-- **The fold is last-event-wins per (run_id, ticket)**, not spawned-minus-done. A retry is
-  spawn → done → spawn, and a subtraction would call that ticket idle.
+- **A "live" worker in the log is a claim, not a fact.** A worker is an in-session subagent with no
+  pid of its own, so a killed session or an OOM leaves a `worker_spawned` with no matching
+  `worker_done` forever. Every reader arbitrates by AGE (`GOVERN_WORKER_STALE_S`, 2h by default):
+  `govern:status` additionally appends a synthetic `status:"stale"` row past that bound so the log
+  self-heals. A driver (a real forked `claude -p` process, not a subagent) is a separate case and is
+  still arbitrated with `kill -0`.
+- **The fold is last-event-wins per (run_id, agent_id)** for a worker, not spawned-minus-done. A
+  retry is spawn → done → spawn, and a subtraction would call that worker idle.
 - **The monitor is deliberately stingy.** Every line it prints becomes a notification in the driver's
   context — the exact resource shiploop exists to conserve. It emits transitions only, dedupes, caps
   at `GOVERN_MONITOR_MAX_PER_MIN` (6) per minute, and never replays history. If you want the raw

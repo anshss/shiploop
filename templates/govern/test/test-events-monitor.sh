@@ -70,8 +70,8 @@ assert_eq "$(wc -c < "$T/silent.log" | tr -d ' ')" "0" \
 
 # ── 2. never replays history ────────────────────────────────────────────────────────────────────
 ev "{\"ts\":$((TS-900)),\"run_id\":\"r0\",\"type\":\"run_started\",\"mode\":\"live\",\"target\":\"backlog\",\"parallel\":2}"
-ev "{\"ts\":$((TS-800)),\"run_id\":\"r0\",\"type\":\"worker_spawned\",\"ticket\":1,\"model\":\"sonnet\",\"pid\":1}"
-ev "{\"ts\":$((TS-700)),\"run_id\":\"r0\",\"type\":\"worker_done\",\"ticket\":1,\"status\":\"resolved\",\"model\":\"sonnet\",\"elapsed\":100}"
+ev "{\"ts\":$((TS-800)),\"run_id\":\"r0\",\"type\":\"worker_spawned\",\"agent_id\":\"a0\",\"agent_type\":\"worker\",\"model\":\"sonnet\"}"
+ev "{\"ts\":$((TS-700)),\"run_id\":\"r0\",\"type\":\"worker_done\",\"agent_id\":\"a0\",\"status\":\"resolved\",\"model\":\"sonnet\",\"elapsed\":100}"
 
 LOG="$T/mon.log"
 ( cd "$WS/sub/deep" && env -u GOVERN_EVENTS_FILE -u CLAUDE_PROJECT_DIR \
@@ -83,11 +83,11 @@ assert_eq "$(wc -c < "$LOG" | tr -d ' ')" "0" \
 
 # ── 3/4. transitions only, deduped ──────────────────────────────────────────────────────────────
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"driver_spawned\",\"label\":\"#94\",\"pid\":222,\"running\":1,\"cap\":4}"
-ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":94,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":333}"
-ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":94,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":334}"
-ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_escalated\",\"ticket\":94,\"from\":\"sonnet\",\"to\":\"opus\",\"reason\":\"budget\"}"
-ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":94,\"status\":\"resolved\",\"model\":\"opus\",\"elapsed\":812}"
-ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":95,\"status\":\"stale\",\"pid\":9,\"reapedBy\":\"status.sh\"}"
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-94\",\"agent_type\":\"worker\"}"
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-94\",\"agent_type\":\"worker\"}"
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_escalated\",\"agent_id\":\"aid-94\",\"from\":\"sonnet\",\"to\":\"opus\",\"reason\":\"budget\"}"
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"agent_id\":\"aid-94\",\"status\":\"stopped\",\"model\":\"opus\"}"
+ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_done\",\"agent_id\":\"aid-95\",\"status\":\"stale\",\"reapedBy\":\"status.sh\"}"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"ticket_parked\",\"ticket\":96,\"note\":\"needs a human\"}"
 # agent-progress-guard.sh (SubagentStop) writes this when it catches an in-session
 # `Agent` child about to stop on a doom signature. Same event stream, same dedupe/rate-limit rules —
@@ -97,23 +97,23 @@ ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"driver_reaped\",\"label\":\"#94\",\
 sleep 3
 
 out="$(cat "$LOG")"
-assert_contains "$out" "#94" "monitor: surfaces the worker_spawned transition"
+assert_contains "$out" "aid-94" "monitor: surfaces the worker_spawned transition, identified by agent id"
 assert_contains "$out" "opus" "monitor: surfaces the escalation"
-assert_contains "$out" "resolved" "monitor: surfaces the completion"
+assert_contains "$out" "stopped" "monitor: surfaces the completion"
 assert_contains "$out" "PARKED" "monitor: surfaces a park, which is the one outcome needing a human"
 assert_contains "$out" "general-purpose" "monitor: surfaces an in-session Agent child's progress alarm, not just governor workers"
 assert_contains "$out" "LOOP: the same command" "monitor: the alarm line carries the deterministic signature, not just a bare notice"
 assert_not_contains "$out" "driver" "monitor: driver fan-out plumbing is NOT surfaced"
-assert_not_contains "$out" "#95" "monitor: a status.sh bookkeeping reap (status=stale) is not reported as a worker outcome"
-assert_eq "$(grep -c 'worker started on #94' "$LOG" | tr -d ' ')" "1" \
-  "monitor: the duplicate spawn of #94 is deduped to one line"
+assert_not_contains "$out" "aid-95" "monitor: a status.sh bookkeeping reap (status=stale) is not reported as a worker outcome"
+assert_eq "$(grep -c 'worker started (aid-94' "$LOG" | tr -d ' ')" "1" \
+  "monitor: the duplicate spawn of aid-94 is deduped to one line"
 
 # ── 5. rate limit ───────────────────────────────────────────────────────────────────────────────
 # 20 distinct transitions in a burst against a cap of 6/min. The window already holds ~4 lines from
 # above, so the cap must bite well before 20 and the excess must collapse into ONE suppression line.
 before="$(wc -l < "$LOG" | tr -d ' ')"
 for i in $(seq 200 219); do
-  ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":$i,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":$((1000+i))}"
+  ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-$i\",\"agent_type\":\"worker\"}"
 done
 sleep 3
 after="$(wc -l < "$LOG" | tr -d ' ')"

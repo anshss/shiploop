@@ -59,8 +59,13 @@ assert_contains "$merged" '"TeammateIdle"' "2. settings-merge adds the missing T
 assert_eq "$(jq -r '.hooks.TeammateIdle[0].hooks[0].command' "$W2/.claude/settings.json")" \
   "$(jq -r '.hooks.SubagentStop[0].hooks[0].command' "$W2/.claude/settings.json")" \
   "2. merged TeammateIdle hook matches the existing SubagentStop command"
-assert_eq "$(jq -r '.hooks.SubagentStop | length' "$W2/.claude/settings.json")" "1" \
-  "2. the pre-existing SubagentStop entry is untouched (still exactly one matcher block)"
+# NOT a block-count assertion: another hook (worker-event-emit.sh) shares this same event and is
+# itself missing from this pre-fix fixture, so settings-merge legitimately appends a SECOND matcher
+# block for it, alongside this one, never rewriting or duplicating the FIRST. What must hold is
+# that the pre-existing entry's own hook survives, verbatim, in exactly one block.
+still_there="$(jq -r '[.hooks.SubagentStop[].hooks[].command] | map(select(contains("agent-progress-guard.sh"))) | length' "$W2/.claude/settings.json")"
+assert_eq "$still_there" "1" \
+  "2. the pre-existing SubagentStop -> agent-progress-guard.sh entry survives untouched"
 
 # ── 3. re-running settings-merge is idempotent — no duplicate TeammateIdle stanza ──
 bash "$SCAFFOLD" --workspace-dir "$W2" --templates "$TEMPLATES" \
