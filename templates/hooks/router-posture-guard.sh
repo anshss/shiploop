@@ -20,9 +20,9 @@
 #     Bash call, its own switch), the ticket-route guard (an Agent call), and
 #     the proposed-solution gate (an Agent call, worker dispatches only).
 #     Either way the script itself always exits 0.
-#   • Low-noise / no per-turn token cost — a small per-session warn CAP (not a
+#   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
-#   • DRIVER only — skip when the call originates from a sub-agent (its
+#   • DRIVER only: skip when the call originates from a sub-agent (its
 #     transcript_path lives under a .../subagents/ dir) or a governor worker
 #     (GOVERN_RUN set): those throwaway sub-sessions are the delegation *target*,
 #     so nudging them to "delegate" is noise.
