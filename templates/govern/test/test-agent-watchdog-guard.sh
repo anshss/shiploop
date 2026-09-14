@@ -95,8 +95,8 @@ assert_eq "$out8" "" "no transcript_path/session_id on stdin → silent no-op, n
 # has no token ceiling, and the reading is never compared against one.
 EV="$TMP/lever-events.jsonl"
 
-# 10. wall-clock. Same event name and same reason string the headless lane uses for the same cap,
-#     so the two lanes produce ONE stream a reader can group, not two dialects.
+# 10. wall-clock. Same event name and same reason string the retired launcher's own emitter
+#     used for the same cap, so this stream stays groupable with the older one, not a new dialect.
 echo $(( $(date +%s) - 4000 )) > "$TMPDIR/metarepo-agent-watchdog-wallclock-wc-lever"
 mk_child_transcript "$PROJ" s10 wc-lever 12000000
 rm -f "$EV"

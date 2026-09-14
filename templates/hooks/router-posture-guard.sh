@@ -76,7 +76,7 @@
 # plus the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0
 # (default ON, same polarity as GOVERN_VF_NUDGE above). It never fires
 # inside a worker (the GOVERN_RUN and .../subagents/ exemptions below
-# already cover both lanes, and workers hold the Agent tool for their own
+# already cover it, and workers hold the Agent tool for their own
 # sub-delegation) and never on a call that already carries subagent_type
 # "worker".
 #
@@ -229,7 +229,7 @@ if [ "$tool_name" = "Agent" ]; then
     # nothing RUNS that script for an advisor dispatching a worker in-session: it is a command
     # the advisor has to remember, and a gate that only fires when someone remembers it reads
     # as configured while controlling nothing. This is the same gate on the event that actually
-    # starts the work, so ONE kill switch governs both lanes and neither can be dispatched around.
+    # starts the work, so ONE kill switch governs it, whether or not pre-dispatch-check.sh ran first.
     #
     # The advisor IS the driver, so the DRIVER-only guards at the top of this file (GOVERN_RUN,
     # .../subagents/) are exactly right here: a worker sub-delegating to another worker is

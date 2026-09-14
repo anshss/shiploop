@@ -2,7 +2,7 @@
 # Regression for interactive-lane idle supervision actually being WIRED, not just
 # reachable by agent-progress-guard.sh's own tests. The hook was taught to handle a
 # `TeammateIdle` event, but nothing ever registered that event with the CLI — SubagentStop is the
-# ONLY place either lane's supervision gets wired (test-worker-agent-doctrine.sh's own case 6i:
+# ONLY place a worker's supervision gets wired (test-worker-agent-doctrine.sh's own case 6i:
 # "SubagentStop supervision is owned once, at settings.json"), so a TeammateIdle branch with no
 # matching settings.json entry was dead code in production even though it was green in CI.
 #
