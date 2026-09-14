@@ -55,6 +55,12 @@
 #      or with --no-merge once they handled it by hand).
 #   6. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD: refuse a destructive
 #      migration, neutralize it locally first, then apply, verify, and classify any failure.
+#   6b. If the report names `rootScope.commits` (root-only work with no PR of its own — a fix
+#       confined to scripts/**, governor/**), cherry-pick them onto local main here; refuse if any
+#       commit reaches into a sub-repo path or the cherry-pick fails. Then refuse the WHOLE resolve,
+#       before any bookkeeping, if a report claiming "resolved" produced no PR, no landed
+#       root-scope commit, no lessonPatch and no applied migration (GOVERN_ALLOW_EMPTY_RESOLVE=1
+#       overrides a genuinely deliberate no-op).
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
@@ -309,10 +315,101 @@ elif [[ "$mneeded" == "true" && "$MERGE_REPO_MERGED" == "1" ]]; then
     exit 7
   fi
   echo "resolve-ticket #$N: prod migration applied + verified" >&2
+  MIGRATION_APPLIED=1
 elif [[ "$mneeded" == "true" ]]; then
   echo "resolve-ticket #$N: needs an additive prod migration but no merge-repo PR merged this pass — NOT landing (migration would not be applied). Apply it manually, or re-run once a merge-repo PR is merged." >&2
   rt_record_history parked "additive prod migration needed, no merge-repo PR merged"
   exit 6
+fi
+
+# ── 4b. Root-scope landing: cherry-pick a worker's meta-worktree commits (scripts/**, governor/**
+#    work that has no PR of its own — root paths never route through a sub-repo PR) onto local
+#    `main` BEFORE land-resolution.sh runs. Ordering is load-bearing: land-resolution.sh is what
+#    deletes the queue block, so a landing failure here must refuse the WHOLE resolve while the
+#    ticket is still queued, never delete the block against work that never actually landed.
+#
+#    A remote-less meta-repo root is a first-class supported state, never a precondition: this
+#    lands unconditionally on LOCAL main and pushes ONLY when an origin happens to exist, mirroring
+#    land-resolution.sh's own publish guard (`GOVERN_NO_PUSH` + `git remote get-url origin`). ─────
+ROOT_SCOPE_LANDED=0
+_rs_n="$(jq -r '(.rootScope.commits // []) | length' <<<"$report" 2>/dev/null || echo 0)"
+if [[ "${_rs_n:-0}" -gt 0 ]]; then
+  git -C "$WS_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "resolve-ticket #$N: rootScope.commits reported but $WS_ROOT is not a git repo — NOT landing." >&2
+    rt_record_history parked "rootScope: main checkout is not a git repo"
+    exit 10
+  }
+  [[ -z "$(git -C "$WS_ROOT" status --porcelain 2>/dev/null)" ]] || {
+    echo "resolve-ticket #$N: rootScope.commits reported but the main checkout has uncommitted changes — NOT landing. Clean it by hand, then re-run." >&2
+    rt_record_history parked "rootScope: main checkout dirty"
+    exit 10
+  }
+  _rs_branch="$(git -C "$WS_ROOT" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  [[ "$_rs_branch" == "main" ]] || {
+    echo "resolve-ticket #$N: rootScope.commits reported but the main checkout's HEAD is '${_rs_branch:-detached}', not 'main' — NOT landing. Check out main by hand, then re-run." >&2
+    rt_record_history parked "rootScope: main checkout not on main"
+    exit 10
+  }
+
+  _rs_prehead="$(git -C "$WS_ROOT" rev-parse HEAD)"
+  declare -a _rs_shas=()
+  while IFS= read -r _rs_sha; do [[ -n "$_rs_sha" ]] && _rs_shas+=("$_rs_sha"); done \
+    < <(jq -r '.rootScope.commits[]' <<<"$report" 2>/dev/null || true)
+
+  _rs_bad=""
+  for _rs_sha in "${_rs_shas[@]}"; do
+    if ! git -C "$WS_ROOT" cat-file -e "${_rs_sha}^{commit}" 2>/dev/null; then
+      _rs_bad="$_rs_sha (no such commit)"; break
+    fi
+    _rs_paths="$(git -C "$WS_ROOT" diff-tree --no-commit-id --name-only -r "$_rs_sha" 2>/dev/null || true)"
+    while IFS= read -r _rs_p; do
+      [[ -n "$_rs_p" ]] || continue
+      for _rs_sub in "${REPOS[@]}"; do
+        case "$_rs_p" in "$_rs_sub"/*) _rs_bad="$_rs_sha touches sub-repo path $_rs_p"; break 2 ;; esac
+      done
+    done <<< "$_rs_paths"
+    [[ -z "$_rs_bad" ]] || break
+  done
+  if [[ -n "$_rs_bad" ]]; then
+    echo "resolve-ticket #$N: rootScope commit $_rs_bad — only root paths are ever cherry-picked here, never a sub-repo. NOT landing; fix the report and re-run." >&2
+    rt_record_history parked "rootScope: bad commit ($_rs_bad)"
+    exit 10
+  fi
+
+  if ! ( cd "$WS_ROOT" && git cherry-pick -x "${_rs_shas[@]}" ); then
+    git -C "$WS_ROOT" cherry-pick --abort >/dev/null 2>&1 || true
+    # Narrow rollback, never `reset --hard` a repo this script does not exclusively own — mirrors
+    # land-resolution.sh's own sub-repo-lesson rollback (reset --mixed to the captured prehead).
+    git -C "$WS_ROOT" reset --mixed "$_rs_prehead" >/dev/null 2>&1 || true
+    echo "resolve-ticket #$N: rootScope cherry-pick failed — main checkout rolled back to $_rs_prehead. NOT landing; resolve the conflict by hand, then re-run." >&2
+    rt_record_history parked "rootScope: cherry-pick failed"
+    exit 10
+  fi
+  if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$WS_ROOT" remote get-url origin >/dev/null 2>&1; then
+    git -C "$WS_ROOT" push origin HEAD:main >/dev/null 2>&1 \
+      || echo "resolve-ticket #$N: rootScope commits landed on local main but push to origin failed — reconcile by hand ('git pull --rebase origin main && git push')" >&2
+  fi
+  ROOT_SCOPE_LANDED=1
+  echo "resolve-ticket #$N: rootScope landed ${#_rs_shas[@]} commit(s) onto main" >&2
+fi
+
+# ── 4c. Refuse an EMPTY resolve: a report claiming status "resolved" that produced no PR, no
+#    landed root-scope commit, no lessonPatch and no applied migration must not bookkeep the ticket
+#    off the queue — that would delete the block while nothing about it actually changed. Escape
+#    hatch for a genuinely deliberate no-op: GOVERN_ALLOW_EMPTY_RESOLVE=1. ──────────────────────────
+_rs_changed=0
+# The report's OWN claim, not this script's discovery/verification pipeline: `pr_lines` folds in
+# `gh`-verified/discovered PRs (govern::collect_ticket_prs), which can legitimately come back empty
+# in an environment that can't reach `gh` even though the worker genuinely reported a PR — that is
+# an environment limit, never evidence the resolve was empty.
+[[ "$(jq -r '((.pr // null) != null) or ((.prs // []) | length > 0)' <<<"$report" 2>/dev/null || echo false)" == "true" ]] && _rs_changed=1
+[[ "$ROOT_SCOPE_LANDED" == "1" ]] && _rs_changed=1
+[[ "$(jq -r '.lessonPatch != null' <<<"$report" 2>/dev/null || echo false)" == "true" ]] && _rs_changed=1
+[[ "${MIGRATION_APPLIED:-0}" == "1" ]] && _rs_changed=1
+if [[ "$_rs_changed" -ne 1 && "${GOVERN_ALLOW_EMPTY_RESOLVE:-0}" != "1" ]]; then
+  echo "resolve-ticket #$N: report claims status 'resolved' but nothing actually changed (no PR, no landed root-scope commit, no lessonPatch, no migration) — refusing BEFORE bookkeeping so the ticket stays queued. If this is a deliberate no-op, re-run with GOVERN_ALLOW_EMPTY_RESOLVE=1." >&2
+  rt_record_history parked "empty resolve refused: nothing changed"
+  exit 11
 fi
 
 # ── 5. Land: pipe the report into the EXISTING land-resolution.sh (the real tickets.md edit +
@@ -370,27 +467,60 @@ if [[ "${GOVERN_INDEX:-1}" != "0" ]]; then
   "$DIR/codebase-index.sh" build >/dev/null 2>&1 || true
 fi
 if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
-  # Never ASSUME the worktree is named ticket-$N: the interactive lane is
-  # self-service (worker.md: `npm run worktree:new -- t<N>`, or any other slug for non-ticket
-  # work) and does not share the headless lane's naming. Try the headless convention first, but
-  # VERIFY it rather than assume it: worktree/rm.sh's ONLY early-exit is an unregistered name
-  # (wt_registry_path_for, checked BEFORE anything is touched — everything after is best-effort
-  # `|| true`), so a nonzero exit here is a clean "not this name" signal, never a half-torn-down
-  # worktree to recover from. Fall back to the merged PR's own headRefName: worktree:new.sh
-  # always uses ONE name as the branch in every sub-repo, so the PR the ticket actually landed
-  # recovers whatever name was really used, with zero assumption about its shape.
-  if ! ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "ticket-$N" --force >/dev/null 2>&1 ); then
-    _wt_name=""
+  # Resolve which worktree we're about to tear down via a NON-destructive registry lookup FIRST, so
+  # we can inspect it for unreported commits before rm.sh --force ever runs (the safety net below).
+  # Priority: the report's own rootScope.worktree — the ONLY signal available when a root-scope-only
+  # ticket has no PR to derive a name from — then the headless convention ticket-$N, then the merged
+  # PR's own headRefName. `wt_registry_path_for` fails closed (empty path) when the lookup helper
+  # isn't present or the name isn't registered, so this degrades exactly like the old blind-attempt
+  # probe did: "not found" here, never a hard error.
+  _wt_registry_lib="$WS_ROOT/scripts/worktree/lib/registry.sh"
+  [[ -f "$_wt_registry_lib" ]] && source "$_wt_registry_lib"
+  _wt_name="$(jq -r '.rootScope.worktree // ""' <<<"$report" 2>/dev/null || true)"
+  _wt_path=""
+  [[ -n "$_wt_name" ]] && _wt_path="$(wt_registry_path_for "$_wt_name" 2>/dev/null || true)"
+  if [[ -z "$_wt_path" ]]; then
+    _wt_path="$(wt_registry_path_for "ticket-$N" 2>/dev/null || true)"
+    [[ -n "$_wt_path" ]] && _wt_name="ticket-$N"
+  fi
+  if [[ -z "$_wt_path" ]]; then
     while IFS=$'\t' read -r _wrepo _wnum _wurl; do
       [[ -n "$_wrepo" && -n "$_wnum" ]] || continue
-      _wt_name="$(gh pr view "$_wnum" --repo "$(govern::repo_slug "$_wrepo")" --json headRefName -q '.headRefName' 2>/dev/null || true)"
-      [[ -n "$_wt_name" ]] && break
+      _cand="$(gh pr view "$_wnum" --repo "$(govern::repo_slug "$_wrepo")" --json headRefName -q '.headRefName' 2>/dev/null || true)"
+      [[ -n "$_cand" ]] || continue
+      _cand_path="$(wt_registry_path_for "$_cand" 2>/dev/null || true)"
+      if [[ -n "$_cand_path" ]]; then _wt_name="$_cand"; _wt_path="$_cand_path"; break; fi
     done <<< "$pr_lines"
-    if [[ -n "$_wt_name" && "$_wt_name" != "ticket-$N" ]]; then
-      ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "$_wt_name" --force >/dev/null 2>&1 ) \
-        || echo "resolve-ticket #$N: worktree:rm $_wt_name (derived from the PR's head branch) failed — clean up manually" >&2
+  fi
+
+  if [[ -z "$_wt_path" ]]; then
+    echo "resolve-ticket #$N: no registered worktree found (checked rootScope.worktree, ticket-$N, and the PR's head branch) — nothing to tear down here; clean up manually if one exists under another name." >&2
+  else
+    # Safety net: a worker that forgot to report root-scope commits must not lose them silently to
+    # the teardown below. Compare the worktree's commits ahead of local main against what
+    # rootScope.commits named; leave the worktree INTACT (never --force it) if anything is
+    # unaccounted for — the ticket's own resolution already landed above, this only protects
+    # whatever ELSE is sitting on that worktree's detached HEAD.
+    declare -a _wt_reported=()
+    while IFS= read -r _wt_c; do [[ -n "$_wt_c" ]] && _wt_reported+=("$_wt_c"); done \
+      < <(jq -r '.rootScope.commits[]?' <<<"$report" 2>/dev/null || true)
+    _wt_unreported=""
+    if git -C "$_wt_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      while IFS= read -r _wt_sha; do
+        [[ -n "$_wt_sha" ]] || continue
+        _wt_known=0
+        for _wt_c in ${_wt_reported[@]+"${_wt_reported[@]}"}; do
+          [[ "$_wt_sha" == "$_wt_c"* ]] && { _wt_known=1; break; }
+        done
+        [[ "$_wt_known" -eq 1 ]] || _wt_unreported="$_wt_unreported $_wt_sha"
+      done < <(git -C "$_wt_path" rev-list main..HEAD 2>/dev/null || true)
+    fi
+    _wt_unreported="${_wt_unreported# }"
+    if [[ -n "$_wt_unreported" ]]; then
+      echo "resolve-ticket #$N: worktree '$_wt_name' has commit(s) not reachable from local main and not named in rootScope.commits ($_wt_unreported) — refusing to tear it down. Recover them by hand from $_wt_path, then run 'npm run worktree:rm -- $_wt_name --force' yourself once they're safe." >&2
     else
-      echo "resolve-ticket #$N: worktree:rm ticket-$N failed and no other worktree name was recoverable from the PR's head branch — clean up manually" >&2
+      ( cd "$WS_ROOT" && bash "$WS_ROOT/scripts/worktree/rm.sh" "$_wt_name" --force >/dev/null 2>&1 ) \
+        || echo "resolve-ticket #$N: worktree:rm $_wt_name failed — clean up manually" >&2
     fi
   fi
 fi

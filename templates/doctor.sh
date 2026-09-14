@@ -108,7 +108,7 @@ if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   if [ -n "$(git -C "$ROOT" remote 2>/dev/null)" ]; then
     ok "root has a git remote ($(git -C "$ROOT" remote | tr '\n' ' '))"
   else
-    warn "root has no remote: governor CAS pushes and cross-driver ticket sync are DISABLED — add one (gh repo create / git remote add origin <url>)"
+    warn "root has no remote: governor CAS pushes and cross-driver ticket sync are DISABLED"
   fi
 else
   warn "root is not a git repo yet — run setup's git-init step"
