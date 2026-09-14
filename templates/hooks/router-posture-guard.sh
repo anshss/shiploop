@@ -74,11 +74,12 @@
 # skips the worker doctrine, and costs multiples of a worker for the same
 # ticket. That call is DENIED with the correct call written out to paste,
 # plus the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0
-# (default ON, same polarity as GOVERN_VF_NUDGE above). It never fires
-# inside a worker (the GOVERN_RUN and .../subagents/ exemptions below
-# already cover it, and workers hold the Agent tool for their own
-# sub-delegation) and never on a call that already carries subagent_type
-# "worker".
+# (default ON, same polarity as GOVERN_VF_NUDGE above). It never fires inside a worker: the
+# .../subagents/ exemption below is what actually identifies one. The GOVERN_RUN exemption below
+# also happens to exempt it, but for an unrelated reason -- GOVERN_RUN=1 marks any governor-spawned
+# headless session (today: the sync-porter, not a worker), not a worker-dispatch signal. Workers
+# also hold the Agent tool for their own sub-delegation, and this never fires on a call that
+# already carries subagent_type "worker".
 #
 # FOURTH behavior: a `lookup` or `investigator` Agent call is a read-only
 # DATA-COLLECTION child, never routed here even when the prompt is ticket-shaped. It
@@ -180,10 +181,11 @@ case "$transcript_path" in
 esac
 
 # --- ticket-route guard: ticket-shaped Agent work belongs to a worker --------
-# The one BLOCKING path in this file (see the header). Both worker lanes are
-# already exempt above: the autonomous lane exports GOVERN_RUN, the interactive
-# lane's transcript lives under .../subagents/, so a worker sub-delegating with
-# the Agent tool is never touched by this.
+# The one BLOCKING path in this file (see the header). A worker is already exempt above via the
+# .../subagents/ transcript-path check, which is what actually identifies one. GOVERN_RUN=1 marks
+# a governor-spawned headless session (today: the sync-porter, not a worker) and is exempted above
+# for that unrelated reason. Either way, a worker sub-delegating with the Agent tool is never
+# touched by this.
 if [ "$tool_name" = "Agent" ]; then
   [ "${GOVERN_TICKET_ROUTE_GUARD:-1}" = "0" ] && exit 0
   # Already the worker agent type, or a read-only data-collection child: nothing
