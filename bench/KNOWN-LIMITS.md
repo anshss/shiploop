@@ -192,3 +192,18 @@ design's own reader gets the model directly off the session's `result` event and
 messages instead of a sibling stamp file. `govern::stamp_run_version` / `govern::stamp_driver_model`
 carried no live caller (bench/arms.sh stopped calling them per this section) and have been removed
 from `templates/govern/lib/common.sh`.
+
+## A seed ticket's mined issue can stop reproducing at the exact repro it gives
+
+`bench/backlogs/cel-js-mini`'s `eq-overload` ticket is mined from a real, still-open upstream issue
+(cel-js #101) whose own body gives a literal reproduction script. That exact script was run by hand
+against the pinned commit before writing the ticket, and it no longer demonstrates a bug: the
+top-level `==` operator already consults a registered cross-type equality overload correctly at this
+commit. The same root cause (an early type-mismatch `false` return that never reaches the overload
+registry) is still live and still reachable, just through a different observable path: `in`-operator
+membership and list/map equality, which route through a separate internal equality helper that the
+top-level `==` operator does not use. The ticket's test file and body were both written against the
+reachable path, not the issue's literal repro. A future seed mined from a real issue should run the
+issue's own repro against the exact pinned commit before trusting it, the same way this one was
+checked, rather than assuming an issue's reproduction steps still hold at whatever commit gets
+pinned.
