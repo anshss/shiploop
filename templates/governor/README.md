@@ -10,19 +10,23 @@ own reasoning runs in an isolated subagent context that never touches the driver
 ## Run it
 There is no slash command. From your session, just say what you want worked: the session maps
 plain language straight onto the pipeline. Named dispatch is the only front door: you name the
-ticket(s), the pipeline works exactly those, one at a time, at the least spend, with every gate on.
-There is no backlog sweep and no grind-until-empty loop.
+ticket(s) and each one runs `pre-dispatch-check.sh` → worker → `resolve-ticket.sh`, at the least
+spend, with every gate on. There is no backlog sweep and no grind-until-empty loop.
 ```
 "work on 42"                             → pre-dispatch-check.sh 42 → dispatch a worker subagent → resolve-ticket.sh 42
-"work on 42 51 63"                       → the same three steps, once per ticket, in severity order
+"work on 42 51 63"                       → the same three steps per ticket, workers dispatched adjacently
 ```
 Or directly: `scripts/govern/pre-dispatch-check.sh <N>`, then `Agent(subagent_type: "worker")` for
 that ticket, then pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`.
-Naming several tickets works them one at a time through the same three steps by default, no
-automatic grouping. `pre-dispatch-check.sh` still nudges you when two OPEN tickets share a measured
-file; naming them as one group instead dispatches ONE worker that opens one branch and one PR and
-reports a per-ticket outcome array, which `resolve-ticket.sh` lands per ticket (see "Batching several
-tickets into one worker" below).
+Naming several tickets dispatches their workers adjacently by default: the next worker starts while
+the previous one is still running instead of waiting on its PR and resolution, since a worker
+spawned while another is running reads the shared prefix instead of writing it. Each still gets its
+own worktree, and a worker never runs `git checkout`, `stash`, `reset` or `clean` outside its own
+tree, so concurrency is never permission to share one. Resolution stays sequential and unaffected by
+spawn spacing. `pre-dispatch-check.sh` still gates every ticket individually before its worker
+starts, and a `skip`/`refuse` drops that ticket, not the group; naming tickets as one group instead
+dispatches ONE worker that opens one branch and one PR and reports a per-ticket outcome array, which
+`resolve-ticket.sh` lands per ticket (see "Batching several tickets into one worker" below).
 
 The trigger changed, and so did the substrate under it. Verdict files, resumable worktrees and
 reaping are still what survive a closed session (a later one can reap a worktree an earlier one
@@ -93,7 +97,8 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 `auto` (unchanged). Graduation is always one direction you choose: observe → pr-only → auto.
 
 ## Policy (enforced by the scripts)
-- Sequential: one ticket fully resolved before the next.
+- Resolution: sequential, `resolve-ticket.sh` lands one ticket fully before the next touches the
+  queue file. Worker dispatch for other named tickets is not gated on it; they run adjacently.
 - Auto-merge only `GOVERN_MERGE_REPOS` (workspace.sh) on **green-or-no-checks** CI, and only when
   `GOVERN_AUTONOMY=auto` (the trust ladder above); every other repo — and every rung below `auto` —
   is PR-only.

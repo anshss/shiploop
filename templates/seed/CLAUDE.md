@@ -33,6 +33,15 @@
    inherit only for judgment-heavy synthesis or final review. Never size a ticket when filing one —
    the scout measures that.
 
+   **Naming several tickets dispatches their workers adjacently:** start the next worker while the
+   previous one is still running, instead of waiting on its PR and resolution, because a worker
+   spawned while another is running reads the shared prefix instead of writing it. Each still gets
+   its own worktree; a worker never runs `git checkout`, `stash`, `reset` or `clean` outside its own
+   tree.
+   The per-ticket gate is unchanged (`pre-dispatch-check.sh` still gates each ticket before its
+   worker starts, and a skip/refuse drops that ticket, not the group) and resolution stays
+   sequential regardless of spawn spacing.
+
    **A worker ends at PR-open plus report.** Landing it is your last step: pipe that report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue file. A ticket's
    queue block is never deleted before merge.
