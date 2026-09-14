@@ -10,10 +10,10 @@
 #
 # The problem is that the obvious throttle — `wait` at the end of the bootstrap — is
 # per-worktree. It cannot see another worktree's installs, so it bounds nothing that
-# matters once the governor is running the backlog in parallel:
+# matters once more than one worktree bootstraps at the same time on the same machine:
 #
-#     GOVERN_PARALLEL_DEFAULT tickets in flight
-#       x N sub-repos installing concurrently inside each bootstrap
+#     one worker subagent's bootstrap per worktree
+#       x N sub-repos installing concurrently inside that bootstrap
 #       x ~1 GB peak per install
 #
 # A JS install peaks around 1 GB and holds it: the resolver builds the whole
