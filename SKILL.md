@@ -187,8 +187,7 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   `--setting-sources user` (drops the project's own hooks). `governor/preferences.md` defines the
   **hard-stops** (destructive git; prod data / destructive schema / secrets) that make a worker
   **park + escalate** instead of acting.
-- **Always ends:** `GOVERN_WORKER_TIMEOUT` (1h) and `GOVERN_WORKER_MAX_TOKENS` (0 = unlimited by
-  default; killed on cross as `budget-exceeded`) bound one worker. Across attempts,
+- **Always ends:** `GOVERN_WORKER_TIMEOUT` (1h) bounds one worker. Across attempts,
   `GOVERN_MAX_TICKET_FAILS` (default 2 consecutive failed/timed-out/budget-exceeded dispatches) makes
   `pre-dispatch-check.sh` file an escalation and skip re-spawning instead of retrying forever.
 - **Progress-preserving:** only a cleanly-landed worktree is torn down (by `resolve-ticket.sh`);

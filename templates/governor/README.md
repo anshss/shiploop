@@ -32,7 +32,7 @@ The trigger changed, and so did the substrate under it. Verdict files, resumable
 reaping are still what survive a closed session (a later one can reap a worktree an earlier one
 left behind), but a worker itself no longer survives past the session that spawned it: it is a
 subagent, not a detached process, so there is no more single-run lock, per-ticket claim lock, or
-run-level ceiling (`GOVERN_MAX_TICKETS` is retired along with it) either. Each dispatch is a fresh,
+run-level ceiling either. Each dispatch is a fresh,
 short-lived pass through gate → worker → land, and the operator naming tickets is the only ceiling
 on how many get worked in one sitting.
 
@@ -139,7 +139,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   signature files an entry under `## Open` in `escalations.md` (`Kind: respec`) asking the operator to
   re-specify, split, or close the item, carrying what the worker learned. The reasoning: an item that
   was scoped and still failed on capability at the floor is evidence the SPECIFICATION was
-  insufficient. `GOVERN_RESPEC_ON_CAPABILITY_FAIL=0` disables the filing.
+  insufficient.
 - Effort is the only knob a retry moves, and only on `judgment`. It is a different and much cheaper
   knob than tier: more reasoning per turn inside the same model, at the same per-token price, without
   moving the prompt-cache key. Every decision is logged as
@@ -165,54 +165,26 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   ran below its configured tier.
 - `GOVERN_MODEL_CEILING=0` (kill switch): disables the clamp entirely, restoring the previous
   behaviour in which the configured tier is dispatched verbatim.
-- `GOVERN_RETRY_CLASSIFY=0` — kill switch: pins every retry back to the old
-  always-escalate-to-`GOVERN_WORKER_MODEL` behavior.
 - `GOVERN_MEASURED_SIZING=0` — kill switch: restores the old precedence in which a ticket's
   `Model:`/`Effort:` field outranks the measured verdict.
 
-### Not every ticket earns a full worker
-Dispatch used to be unconditional: every ticket got a fresh headless worker that re-derived the
-codebase from scratch, however much the parent session already knew. The reason to spawn at all is
-that the work would flood the parent with output it will never reference again — so when the parent
-already holds the context, the spawn buys nothing and pays a cold start.
+### Delegate by token weight, not by task
+The reason to spawn at all is that the work would flood the parent with output it will never
+reference again: when the parent already holds the context, the spawn buys nothing and pays a cold
+start.
 
 The split is by **token weight, not by task**: the parent DECIDES (states the change it already
-knows), the worker EXECUTES (the edits, the test runs, the build errors, the retry loop, the PR —
-the verbose part, which stays in a throwaway context). "Let the parent do the work" would destroy
-the flat-parent property the governor exists for.
-
-    GOVERN_WARM="<ticket-number>|<what you read, and the change you believe is needed>" <run command>
-
-- The signal is **explicit and narrow, never inferred**: it names exactly ONE ticket, and it is
-  per-invocation, so it cannot rot in the queue the way a ticket field does. A malformed value is
-  ignored with a log line rather than guessed at.
-- With a stated change → an **execute-only worker**: it gets the change instead of exploring its way
-  to it, and runs at the cheapest existing tier (never a newly minted `(model, effort)` pair — that
-  would re-fragment the shared prompt-cache prefix). A retry escalates off that cheap tier as usual.
-- With an EMPTY change → **no worker at all**: the ticket is PARKED with the assertion recorded as an
-  escalation. Never auto-resolved — "the parent thinks nothing is needed" is a claim for a human to
-  confirm, and a silently dropped ticket is the one outcome this must not produce.
-- **The risk, stated plainly:** a warm parent can be stale or simply wrong, and an execute-only
-  worker will faithfully implement a wrong instruction where a cold worker would have re-derived the
-  truth. So the brief is falsifiable, not a command: it states what the parent *believes* and
-  instructs the worker to STOP and report rather than proceed if the code does not match.
-- `GOVERN_EXECUTE_ONLY=0` — kill switch: hard-disables the branch fleet-wide even when `GOVERN_WARM`
-  is set.
+knows), the worker EXECUTES the edits, the test runs, the build errors, the retry loop, and the PR,
+the verbose part that stays in a throwaway context. "Let the parent do the work" would destroy the
+flat-parent property the governor exists for.
 
 ## Hard bounds (a worker always ends; tune via env)
-There is no more run-level ceiling: `GOVERN_MAX_TICKETS`, `GOVERN_MAX_BAD_STREAK`, and
-`GOVERN_MAX_RUNTIME` were retired with the run-level driver. The operator naming tickets is the only
+There is no run-level ceiling. The operator naming tickets is the only
 bound on how many get worked in one sitting; per-ticket, `pre-dispatch-check.sh`'s failure-streak
 breaker (`GOVERN_MAX_TICKET_FAILS`, default 2 consecutive failed/timed-out/budget-exceeded attempts)
 files an escalation and stops re-spawning that ONE ticket rather than retrying it forever.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall. `0` = unbounded.
-- `GOVERN_WORKER_MAX_TOKENS` (`0` = unlimited, default) — per-worker cumulative token cap; a wandering
-  worker is killed once it crosses this, same as the wall-clock timeout. Polled every
-  `GOVERN_TOKEN_POLL_S` (20s default) against the live worker JSONL. Recorded as a DISTINCT
-  `budget-exceeded` outcome (not `timeout`) in `state.jsonl` / the cross-run history, so a worker that
-  ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
-  preserved and a re-run resumes it, exactly like a timeout.
 - No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
   (`npm run govern:audit -- <run-dir>`) that reads `<run-dir>/state.jsonl`; it costs zero model spend
   otherwise. Nothing in the session lane writes `state.jsonl` any more, that was the retired
