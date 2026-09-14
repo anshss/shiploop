@@ -49,6 +49,9 @@
 #                                 non-overlap is structural, not a runtime check.
 #   8. upstream-drift pregate    (govern::pregate_hub_ahead, lib/pregate.sh)
 #   9. overlap nudge             (govern::overlap_nudge) advisory only, stderr, never a verdict
+#  10. preserved-worktree note   a registered worktree named t<N> or t<N>-<slug> still on disk,
+#                                 stderr only, never a verdict; worktree/new.sh --adopt is what
+#                                 acts on it
 #
 # NOT ported here (deliberately out of scope): the per-ticket CLAIM lock and the "resume an existing
 # open PR" adoption, both loop-only machinery per the purge audit. A concurrent-dispatch race is now
@@ -213,6 +216,20 @@ fi
 # the operator can expect overlapping exploration if both get worked. It never changes the verdict
 # and never touches the queue. GOVERN_OVERLAP_NUDGE=0 silences it.
 govern::overlap_nudge "$N" "$TICKETS_FILE" || true
+
+# ── 10. preserved-worktree note (informational only, stderr; never a verdict) ────────────────
+# A prior attempt's worktree survives on disk when that attempt failed or timed out
+# (worker-prompt.md has a worker preserve it, and keep appending findings to .governor-notes.md
+# there as it works). Surface one for THIS ticket so the caller can hand it to
+# `worktree/new.sh --adopt` instead of a cold retry, advisory only, exactly like the overlap
+# nudge above: it never changes proceed/skip/refuse, and a lookup failure here is silent.
+_pwt_reg="$WS_ROOT/.worktrees/registry.json"
+if [[ -f "$_pwt_reg" ]] && command -v jq >/dev/null 2>&1; then
+  while IFS=$'\t' read -r _pwt_name _pwt_path; do
+    [[ -n "$_pwt_name" && -e "$_pwt_path" ]] || continue
+    echo "note: a preserved worktree for #$N exists at $_pwt_path ('$_pwt_name'), adopt it with: worktree:new -- $_pwt_name --adopt" >&2
+  done < <(jq -r --arg n "$N" '.slots[] | select(.name | test("^t" + $n + "(-.*)?$")) | "\(.name)\t\(.path)"' "$_pwt_reg" 2>/dev/null || true)
+fi
 
 echo "proceed"
 exit 0

@@ -83,13 +83,22 @@ test to be brief is a failed ticket.
 
 ## 3. Scratchpad + handoff — only DISK survives you
 On failure or timeout your worktree is PRESERVED on disk. `worktree:new` hard-errors on an existing
-path, so a retry allocates a fresh worktree and starts COLD there: files on disk survive, context
-does not.
+path by default, so a plain retry allocates a fresh worktree and starts COLD there: files on disk
+survive, context does not. `worktree:new -- <name> --adopt` is the other option: when whoever
+dispatches you passes it, and the preserved path is registered under YOUR worktree's own name and
+still on its own branch, you land back in that same tree instead of a fresh one, uncommitted edits
+included, exactly as the earlier attempt left them.
 
 Append terse bullets to `.governor-notes.md` at your worktree root (git-ignored) **as you go** — a
 timeout kills you before any final write: relevant files/symbols with `file:line`, ones you RULED
 OUT, the root cause, what failed and why, the exact repro/build/validate commands. Mark uncertainty
 AS uncertain.
+
+**If your worktree was adopted, it may already hold `.governor-notes.md` from an earlier attempt.**
+Those are that attempt's OWN claims, not verified fact: read them as a starting point, never as
+ground truth. Re-run anything load-bearing yourself (the repro, the failing command, the file:line
+it points at) before you build on it; an earlier attempt can be wrong or stale, and the earlier
+attempt writing something down is not the same as you having checked it.
 
 **Before you finish — for ANY outcome, INCLUDING success — append a handoff block** to that file:
 these six lines, markers and bold labels verbatim, under ~4000 bytes.
