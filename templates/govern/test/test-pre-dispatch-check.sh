@@ -12,7 +12,7 @@
 #   5. an unknown ticket number does not refuse work: fail-open to "proceed".
 #   6. the depends-on gate: an item whose **Depends on:** blocker is still in the queue skips, and
 #      the blocker itself still proceeds.
-#   7. the failure-streak breaker (ported from the deleted run-loop.sh): GOVERN_MAX_TICKET_FAILS
+#   7. the failure-streak breaker: GOVERN_MAX_TICKET_FAILS
 #      consecutive failed/timeout/budget-exceeded/early-abort outcomes in ticket-history.jsonl skip
 #      the dispatch and file ONE systemic-blocker escalation. A history whose trailing outcome is
 #      resolved (or that has no history at all) never trips it, and a resolved outcome RESETS the

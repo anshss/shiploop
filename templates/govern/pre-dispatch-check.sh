@@ -2,11 +2,10 @@
 # pre-dispatch-check.sh — ONE entry point for the pre-spawn gates a session should run BEFORE
 # dispatching a worker on ticket N (shiploop 1.19.2, the loop purge).
 #
-# Before this script, these gates only ran inside the autonomous loop's dispatch path
-# (run-loop.sh), so a plain interactive session dispatching a worker directly (or via
-# `Agent(subagent_type: "worker")`) skipped every one of them. Every gate below reuses the
-# existing implementation verbatim — never reimplemented — so the SAME gate that would have
-# skipped/refused a ticket under the loop skips/refuses it here too.
+# This script is the ONE place these gates run: a plain interactive session dispatching a worker
+# directly, or via `Agent(subagent_type: "worker")`, calls it first, so no dispatch path can skip
+# a gate another path enforces. Every gate below reuses the existing implementation verbatim,
+# never reimplemented.
 #
 # Usage:  pre-dispatch-check.sh <N>
 # Verdict on stdout, exactly one line, one of:
@@ -70,7 +69,7 @@ if [[ "${GOVERN_PRE_DISPATCH_CHECK:-1}" == "0" ]]; then
   exit 0
 fi
 
-# ── 0. disk pre-flight (ported from run-loop.sh) ─────────────────────────────────────────────
+# ── 0. disk pre-flight ────────────────────────────────────────────────────────────────────────
 # Never let a full disk cascade into phantom worker failures: below the worktree headroom, refuse
 # the dispatch with a distinct reason instead of spawning a worker that cannot check anything out.
 if [[ "${GOVERN_MODE:-live}" == "live" && -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
@@ -153,7 +152,7 @@ if [[ "${GOVERN_STALENESS_GATE:-0}" == "1" ]]; then
   fi
 fi
 
-# ── 6. failure-streak breaker (ported verbatim from run-loop.sh's consecutive_fails) ─────────
+# ── 6. failure-streak breaker ───────────────────────────────────────────────────────────────
 # Trailing CONSECUTIVE failed / timeout / budget-exceeded / early-abort outcomes for THIS ticket
 # across the cross-run history (a resolved or parked outcome resets the streak). Its data source,
 # governor/ticket-history.jsonl, is written on every resolve (resolve-ticket.sh's

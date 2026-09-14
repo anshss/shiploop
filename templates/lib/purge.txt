@@ -96,7 +96,9 @@ scripts/govern/test/test-bench-proof-table.sh
 # unaffected by this entry: that directory is hub-only and never installed, so it needs no entry
 # here (see tools/check-manifests.sh's purge-manifest-complete job).
 # measure-prefix.sh goes with it: it read the launcher's own dry-run and print-prompt seams to
-# reproduce a real spawn's request payload, and that payload has no in-session counterpart.
+# reproduce a real spawn's request payload, and that payload has no in-session counterpart. Its
+# own request-capture proxy and reporter (capture-proxy.mjs, capture-report.mjs) have no other
+# caller either, so they go with it too.
 # deterministic-apply.sh and record-escalation-answer.sh lose their only callers in the same cut:
 # deterministic-apply.sh's entry point (run-loop.sh's spawn_worker_tracked()) was removed with the
 # retired dispatch loop, and record-escalation-answer.sh's front door (commands/govern.md) no
@@ -106,6 +108,8 @@ scripts/govern/test/test-bench-proof-table.sh
 # whole folder on every writer run.
 scripts/govern/spawn-worker.sh
 scripts/govern/measure-prefix.sh
+scripts/govern/lib/capture-proxy.mjs
+scripts/govern/lib/capture-report.mjs
 scripts/govern/record-escalation-answer.sh
 scripts/govern/test/test-record-escalation-answer.sh
 
