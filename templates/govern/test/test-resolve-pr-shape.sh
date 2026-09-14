@@ -11,8 +11,12 @@
 #      never land with nothing merged.
 #   2. `.pr` present but malformed/unresolvable is a hard REFUSAL, before any bookkeeping,
 #      tickets.md left byte-identical.
-#   3. `.pr` absent (and `.prs[]` empty) still lands exactly as it does today — the legitimate
-#      no-PR case must not regress.
+#   3. `.pr` absent (and `.prs[]` empty) still lands when the report attaches something else that
+#      actually changed (a `lessonPatch`, a landed `rootScope` commit, an applied migration) — a
+#      lesson-only or migration-only resolve is legitimate and must not regress. But a report that
+#      is `"status":"resolved"` with NONE of those (no PR, no lesson, no root-scope commit, no
+#      migration) is refused BEFORE any bookkeeping instead: that used to land anyway, deleting the
+#      queue block over a resolution with nothing to show for it.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -215,7 +219,7 @@ if tickets_unchanged; then assert_eq ok ok "B3. malformed .pr: tickets.md left b
 else assert_eq changed unchanged "B3. malformed .pr: tickets.md left byte-identical"; fi
 assert_eq "$(cat "$MERGE_ORDER" 2>/dev/null)" "" "B3. malformed .pr: merge-pr.sh never even reached"
 
-# ── B4. .pr absent, .prs[] empty — the legitimate no-PR case still lands exactly as today ───────
+# ── B4. .pr absent, .prs[] empty, AND nothing else attached — an EMPTY resolve, refused ─────────
 : > "$LANDED"; : > "$MERGE_ORDER"
 cat > "$T3/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -223,8 +227,16 @@ echo '[]'
 STUB
 chmod +x "$T3/bin/gh"
 out="$(run_rt 50 '{"status":"resolved"}' "$T3/bin")"; rc=$?
-assert_eq "$rc" "0" "B4. no .pr at all: resolve-ticket exits 0 (unchanged legitimate case)"
-assert_eq "$(landed_count)" "1" "B4. no .pr at all: still lands exactly once (no regression)"
-assert_contains "$out" "no PR found on the report" "B4. no .pr at all: the (accurate) no-PR message still fires"
+assert_not_contains "$rc" "0" "B4. no .pr and nothing else: resolve-ticket exits non-zero"
+assert_eq "$(landed_count)" "0" "B4. no .pr and nothing else: does NOT land"
+if tickets_unchanged; then assert_eq ok ok "B4. no .pr and nothing else: tickets.md left byte-identical"
+else assert_eq changed unchanged "B4. no .pr and nothing else: tickets.md left byte-identical"; fi
+assert_contains "$out" "nothing actually changed" "B4. the empty-resolve refusal names itself"
+
+# ── B5. .pr absent, but a lessonPatch is attached — a lesson-only resolve still lands ───────────
+: > "$LANDED"; : > "$MERGE_ORDER"
+out="$(run_rt 50 '{"status":"resolved","lessonPatch":{"file":"CLAUDE.md","anchor":"## Misc","text":"x"}}' "$T3/bin")"; rc=$?
+assert_eq "$rc" "0" "B5. no .pr but a lessonPatch: resolve-ticket exits 0"
+assert_eq "$(landed_count)" "1" "B5. no .pr but a lessonPatch: still lands exactly once (no regression)"
 
 assert_done

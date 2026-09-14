@@ -67,11 +67,15 @@ Ignore only these two things in it, kept for historical shape but never populate
    steer budget is bounded too (`GOVERN_STEER_CAP`): if it tells you it is re-dispatching with a
    corrected proposal instead of answering, stop and report where you are.
 5. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
-   not stage a sub-repo's files.
+   not stage a sub-repo's files. A fix reaching into ROOT paths (`scripts/`, `governor/`) commits
+   on the meta worktree itself instead — no sub-repo, no `cd`, no PR for that half; name every sha
+   in your report's `rootScope.commits` (worker-prompt.md §5) so the driver can land it.
 6. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
-   redoing the work.
+   redoing the work. This still holds for root-scope work: you never write to the main checkout,
+   and `queue/tickets.md` there stays advisor-only — `rootScope.commits` is what hands the driver
+   something to land in place of a PR.
 7. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
 8. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest

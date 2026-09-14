@@ -24,7 +24,11 @@ If you cannot tell whether something is in scope, it is not.
    handed a bare number. Implement it. If you conclude a step in it is wrong, that is a finding for
    your report (`newTickets`/`escalation`), never a silent substitution: a worker quietly doing
    something other than what was proposed is the exact failure the proposal gate exists to prevent.
-3. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`.
+3. Implement in the correct sub-repo — you are in a worktree, so edit `<worktree>/<sub-repo>/`. A
+   fix reaching into ROOT paths (`scripts/`, `governor/`) commits directly on the meta worktree
+   itself instead — no sub-repo, no PR for that half. That commit stays on your worktree's detached
+   HEAD; name it in `rootScope` (§5) and the driver lands it onto `main` in the main checkout. You
+   still never write to that checkout yourself, and `queue/tickets.md` there stays advisor-only.
 4. Commit per sub-repo (`cd` in first), then `gh pr create` against `<org>/<sub-repo>` on the branch
    the worktree gave you. Do NOT merge; do NOT edit `queue/tickets.md`. A PUBLIC-REPO PR HYGIENE
    section below, if present, overrides branch/PR-body rules.
@@ -191,6 +195,7 @@ Also write it to `{{REPORT_PATH}}` if you can write files:
   "status": "resolved | parked | failed",
   "pr": {"repo":"<sub-repo>","number":123,"url":"https://..."},
   "prs": [{"repo":"<sub-repo-a>","number":281,"url":"https://..."}],
+  "rootScope": {"worktree":"<registry name>","commits":["<sha>","<sha>"]},
   "lessonPatch": {"file":"CLAUDE.md","anchor":"## <existing heading>","text":"the RULE only, <=3 lines / ~600 chars","alwaysOn":false,"frequency":"<how often it fires>","reversibility":"<cost when missed>","rung":"guard|lint|appendix|always-on","rungWhyNot":"<why a lower rung can't>","evicts":"<rule line displaced>"},
   "newTickets": [{"title":"short title","severity":"High|Medium|Low","body":"Where/Observed/Fix/Done when"}],
   "tickets": [{"ticket":41,"status":"resolved|parked|failed","note":"string"}],
@@ -217,6 +222,11 @@ Field rules:
   - Write **observations, not recommendations**, with what makes them checkable: date, source, n; a
     new measurement REWRITES the old entry instead of sitting beside it.
 - `prs`: **multi-repo tickets only** — every PR you opened is listed here, `pr` included.
+- `rootScope`: set when your fix touches a root path (`scripts/`, `governor/`) and you committed
+  directly on your meta worktree's detached HEAD instead of opening a PR for that half. `worktree`
+  is the registry name `worktree:new` printed for you; `commits` lists every sha you committed
+  there, oldest first — the driver cherry-picks them onto `main` in that order. `null` if your fix
+  never touched a root path.
 - `tickets`: **group dispatch only** (see "Ticket groups" in §1), one entry per named ticket, `null`
   for a single-ticket dispatch. A ticket absent from this array is never landed, no matter what
   top-level `status` says.
@@ -242,10 +252,12 @@ SILENTLY — a worker marks a destructive migration destructive:false and it aut
     `Env-required: prod` only stamps PASS on a prod run.
   - `flowIds` (array) — the `Flow:` ids you validated.
 <!-- GOVERN:END validation -->
-- `null` for `pr`/`prs`/`lessonPatch`/`escalation`/`migration`/`validation`/`tickets` when N/A; `[]`
-  for empty arrays. An EMPTY or absent `tickets` array is the single-ticket path, same as omitting it.
-- `status` MUST reflect reality: `resolved` ONLY if a PR is open; `parked` if you escalated;
-  `failed` if you could not complete and did not cleanly escalate. A validation ticket is
+- `null` for `pr`/`prs`/`rootScope`/`lessonPatch`/`escalation`/`migration`/`validation`/`tickets`
+  when N/A; `[]` for empty arrays. An EMPTY or absent `tickets` array is the single-ticket path,
+  same as omitting it.
+- `status` MUST reflect reality: `resolved` ONLY if a PR is open, OR (a root-scope-only fix)
+  `rootScope.commits` names commits that genuinely exist on your worktree; `parked` if you
+  escalated; `failed` if you could not complete and did not cleanly escalate. A validation ticket is
   `resolved` ONLY with `validation.ranLiveTest=true` + evidence — never on static analysis alone.
 
 ## The ticket

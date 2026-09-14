@@ -237,7 +237,7 @@ if [[ "$h_meta_root" != "<unresolved>" ]] && git -C "$h_meta_root" rev-parse --g
   h_root_remote="${h_root_remote% }"
 fi
 if [[ -z "$h_root_remote" ]]; then
-  warn_only+=("root has no git remote: governor CAS pushes + cross-driver ticket sync are DISABLED (gh repo create / git remote add origin <url>)")
+  warn_only+=("root has no git remote: governor CAS pushes + cross-driver ticket sync are DISABLED")
 fi
 
 # Optional feature-flag combinatorics: if EXTERNALIZE_LANE is 1 but REPO+SUBREPO are empty,
