@@ -112,17 +112,20 @@ assert_contains "$out" "is a TEST FIXTURE" "8. and says why, before spending any
 
 # ── 9. verify_cmd runs against the arm's tree with a plain eval, nothing else ───
 # The dry run's checkout is a bare repo with just a README, and the fixture's verify_cmd names a
-# test file nothing in this path ever creates any more, so every ticket fails deterministically
-# (rc 127, command not found). That is the honest behavior with no golden patch in the picture: the
-# ledger shape is what this locks down, not a clear result.
+# test file nothing in this path ever creates any more, so every ticket fails deterministically.
+# The exact nonzero code a missing-script `sh` invocation returns is a shell-implementation detail
+# (bash-as-/bin/sh vs dash give different numbers), so this asserts the portable invariant only:
+# verify_cmd genuinely ran against the tree and failed, not a specific errno. That is the honest
+# behavior with no golden patch in the picture: the ledger shape is what this locks down, not a
+# clear result.
 L="$T/results/schema-dry/verify/fixture-backlog-vanilla-1.jsonl"
 assert_eq "$(jq -sr 'length' "$L")" "6" "9. one verify ledger line per ticket"
 assert_eq "$(jq -sr '[ .[] | keys_unsorted ] | unique | length' "$L")" "1" \
   "9. every ledger line has the same key set"
 assert_eq "$(jq -sr '.[0] | keys_unsorted | sort | join(",")' "$L")" "cleared,ticket,verifyExit" \
   "9. the ledger carries ticket/verifyExit/cleared only, no patchApplied"
-assert_eq "$(jq -sr '[ .[] | select(.verifyExit == 127) ] | length' "$L")" "6" \
-  "9. verify_cmd ran directly against the arm's tree and failed the same deterministic way for every ticket"
+assert_eq "$(jq -sr '[ .[] | select(.verifyExit != 0) ] | length' "$L")" "6" \
+  "9. verify_cmd ran directly against the arm's tree and failed for every ticket"
 # The ledger must NOT sit beside the session streams: record_sessions globs *.jsonl there, so a
 # ledger written into that dir would be folded in as an extra zero-cost session.
 assert_eq "$(ls "$T/results/schema-dry/sessions/fixture-backlog-vanilla-1"/*.jsonl | wc -l | tr -d ' ')" "1" \
