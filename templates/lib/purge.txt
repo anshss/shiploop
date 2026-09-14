@@ -106,7 +106,5 @@ scripts/govern/test/test-bench-proof-table.sh
 # whole folder on every writer run.
 scripts/govern/spawn-worker.sh
 scripts/govern/measure-prefix.sh
-scripts/govern/deterministic-apply.sh
 scripts/govern/record-escalation-answer.sh
-scripts/govern/test/test-deterministic-apply.sh
 scripts/govern/test/test-record-escalation-answer.sh

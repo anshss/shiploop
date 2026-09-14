@@ -5,8 +5,9 @@ allowed-tools: Bash, Read, Edit, Write, Agent
 
 # /shiploop:compress
 
-> **The ONLY thing that compresses `CLAUDE.md`.** Nothing automatic ever edits that file. The run-end
-> pass detects and reports only (`trim: CLAUDE.md <size>/<budget> chars, <N> compression candidate(s)
+> **The ONLY thing that compresses `CLAUDE.md`.** Nothing automatic ever edits that file.
+> `scripts/govern/claudemd-trim.sh` (operator-invoked, as `govern:context-budgets` or `govern:trim`)
+> detects and reports only (`trim: CLAUDE.md <size>/<budget> chars, <N> compression candidate(s)
 > - run /shiploop:compress`), and `scripts/govern/claudemd-trim.sh --apply <hash>` moves one
 > pre-approved block. Everything else happens here, with an operator watching.
 
