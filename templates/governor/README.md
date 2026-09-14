@@ -139,7 +139,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   signature files an entry under `## Open` in `escalations.md` (`Kind: respec`) asking the operator to
   re-specify, split, or close the item, carrying what the worker learned. The reasoning: an item that
   was scoped and still failed on capability at the floor is evidence the SPECIFICATION was
-  insufficient. `GOVERN_RESPEC_ON_CAPABILITY_FAIL=0` disables the filing.
+  insufficient.
 - Effort is the only knob a retry moves, and only on `judgment`. It is a different and much cheaper
   knob than tier: more reasoning per turn inside the same model, at the same per-token price, without
   moving the prompt-cache key. Every decision is logged as
@@ -179,16 +179,14 @@ the verbose part that stays in a throwaway context. "Let the parent do the work"
 flat-parent property the governor exists for.
 
 ## Hard bounds (a worker always ends; tune via env)
-There is no more run-level ceiling: `GOVERN_MAX_TICKETS`, `GOVERN_MAX_BAD_STREAK`, and
-`GOVERN_MAX_RUNTIME` were retired with the run-level driver. The operator naming tickets is the only
+There is no run-level ceiling. The operator naming tickets is the only
 bound on how many get worked in one sitting; per-ticket, `pre-dispatch-check.sh`'s failure-streak
 breaker (`GOVERN_MAX_TICKET_FAILS`, default 2 consecutive failed/timed-out/budget-exceeded attempts)
 files an escalation and stops re-spawning that ONE ticket rather than retrying it forever.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall. `0` = unbounded.
 - `GOVERN_WORKER_MAX_TOKENS` (`0` = unlimited, default) — per-worker cumulative token cap; a wandering
-  worker is killed once it crosses this, same as the wall-clock timeout. Polled every
-  `GOVERN_TOKEN_POLL_S` (20s default) against the live worker JSONL. Recorded as a DISTINCT
+  worker is killed once it crosses this, same as the wall-clock timeout. Recorded as a DISTINCT
   `budget-exceeded` outcome (not `timeout`) in `state.jsonl` / the cross-run history, so a worker that
   ran out of budget while still exploring is never conflated with one that just ran long. Worktree is
   preserved and a re-run resumes it, exactly like a timeout.
