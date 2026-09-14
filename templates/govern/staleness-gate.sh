@@ -76,17 +76,8 @@ CANDIDATES="$(mktemp "${TMPDIR:-/tmp}/govern-staleness.XXXXXX")"
 SG_TEST_OUT="$(mktemp "${TMPDIR:-/tmp}/govern-staleness-test.XXXXXX")"
 trap 'rm -f "$CANDIDATES" "$CANDIDATES.tmp" "$SG_TEST_OUT" 2>/dev/null || true' EXIT INT TERM HUP
 
-# 1. The scout's MEASURED targetPaths, when a scout cache exists. This is the highest-quality source
-#    (it verified the paths against the real tree). `--paths` is cache-READ only — no model call —
-#    and returns rc 1 when it has nothing. Tolerate the script being absent or failing entirely.
-scout_paths=""
-if [[ -x "$DIR/scout-ticket.sh" ]]; then
-  scout_paths="$("$DIR/scout-ticket.sh" --paths "$N" 2>/dev/null || printf '')"
-fi
-[[ -n "$scout_paths" ]] && printf '%s\n' "$scout_paths" >> "$CANDIDATES"
-
-# 2. The ticket's own **Files:** / **Where:** lines (bold or plain, list-marker tolerant — the queue
-#    contains both `**Where:** …` and bare `Where: …`).
+# The ticket's own **Files:** / **Where:** lines (bold or plain, list-marker tolerant: the queue
+# contains both `**Where:** …` and bare `Where: …`).
 while IFS= read -r line; do
   case "$line" in
     *[Ff]iles:*|*[Ww]here:*) sg::paths_from_line "$line" >> "$CANDIDATES" ;;

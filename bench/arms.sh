@@ -41,11 +41,10 @@ BENCH_ARMS_HUB="$(cd "$BENCH_ARMS_DIR/.." && pwd)"
 # an honest one.
 #
 # Neither probe is reimplemented here. `govern::claude_supports_max_turns` and
-# `govern::claude_supports_max_budget_usd` live in templates/govern/lib/common.sh beside the
-# --exclude-dynamic-system-prompt-sections probe: cached, bounded `--help` greps, never a version
-# compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test seam. Both arms need the same
-# answer for their own `bench::spawn` invocation, so the probe lives beside the other shared
-# capability checks rather than as a bench-local reimplementation.
+# `govern::claude_supports_max_budget_usd` live in templates/govern/lib/common.sh: cached, bounded
+# `--help` greps, never a version compare, each with its own `_GOVERN_..._SUPPORTED` pre-seed test
+# seam. Both arms need the same answer for their own `bench::spawn` invocation, so the probe lives
+# beside the other shared capability checks rather than as a bench-local reimplementation.
 #
 # --max-turns is tried FIRST; --max-budget-usd is the fallback for a CLI release that dropped
 # --max-turns entirely (observed: claude 2.1.246 has no --max-turns, only --max-budget-usd). A
@@ -264,7 +263,7 @@ bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   if ! bench::stream_had_subagent_activity "$jsonl"; then
     bench::die "arm shiploop ($name): the advisor session's own result event shows no completed subagent (subagent_stats.spawned>0 && completed>0 required) — this cell measured nothing, not a real with-shiploop run. See $jsonl."
   fi
-  bench::report_attribution "$ws" "$jsonl" "$rundir" "$name"
+  bench::report_attribution "$jsonl" "$rundir" "$name"
   # Write-back: the dispatch above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace
   # made of $wd (arms.sh cp -R). run.sh's main loop verifies "$wd" (the ORIGINAL), never the copy —
   # so without this, verify always sees the pristine pre-run checkout and the shiploop arm can never

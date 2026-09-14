@@ -108,3 +108,9 @@ scripts/govern/spawn-worker.sh
 scripts/govern/measure-prefix.sh
 scripts/govern/record-escalation-answer.sh
 scripts/govern/test/test-record-escalation-answer.sh
+
+# v1.19.11: the scout's populate mode (the bare `<N>` form that makes the model call and writes
+# scout.json) had no caller: the only invokers were the cache-read modes `--paths`/`--findings`, so
+# the cache was never written and those reads always returned nothing. govern::ticket_paths and
+# staleness-gate.sh, its two callers, now resolve purely from the ticket's explicit `**Files:**` field.
+scripts/govern/scout-ticket.sh

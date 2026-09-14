@@ -27,20 +27,16 @@ export GOVERN_PROMPTS_DIR="${GOVERN_PROMPTS_DIR:-}" GOVERN_HOOKS_DIR="${GOVERN_H
 # that need to EXERCISE the guard (test-automerge-guard.sh) explicitly `unset` this after sourcing.
 export _GOVERN_ASSUME_MERGE_ALLOWED=1
 
-# Hermetic retry-classifier inputs: govern::retry_class reads these from the ENVIRONMENT, and the
-# suite is routinely run BY a governor worker whose own session exports them (a CI-fix worker runs
-# with GOVERN_FIX_CI=<repo>#<pr> set). Inheriting them makes every retry classify as `ci` and turns
-# the sizing tests red for reasons that have nothing to do with the code under test. Clear them here
-# so a run is identical inside and outside a governor session; the tests that EXERCISE a class set
-# it explicitly per case.
-unset GOVERN_FIX_CI GOVERN_RETRY_CLASS GOVERN_RETRY_CLASSIFY
+# Hermetic driver-context input: the suite is routinely run BY a governor worker whose own session
+# exports GOVERN_FIX_CI=<repo>#<pr> for a CI-fix re-dispatch. Inheriting it would leak that context
+# into tests that have nothing to do with it. Clear it here so a run is identical inside and outside
+# a governor session: the precedent the dispatch-path mechanisms below follow.
+unset GOVERN_FIX_CI
 
-# Hermetic sizing: the scout runs a REAL `claude -p` pass on the dispatch path, so leaving it on
+# Hermetic sizing: a scout pass would run a REAL `claude -p` on the dispatch path, so leaving this on
 # would (a) make every dispatch test issue an implicit model call and (b) burn one invocation of the
 # stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"
-# fixture by one and failing tests that have nothing to do with sizing. Off by default here; the
-# scout's own test (test-scout-survey.sh) exercises the sanitize/clamp guard directly and sets what
-# it needs explicitly.
+# fixture by one and failing tests that have nothing to do with sizing. Off by default here.
 export GOVERN_SCOUT=0
 
 # Hermetic model ceiling: govern::model_clamp derives its ceiling from the model of the session that
