@@ -75,7 +75,7 @@ export LANDED_LOG="$LANDED"
 cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
 
-## #41 — backend: tighten the retry ladder
+## #41 - backend: tighten the retry ladder
 
 **Severity:** Low
 
@@ -95,7 +95,7 @@ landed_count() { [[ -f "$LANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$LA
 rc="$(STUB_MERGE_RC=3 STUB_GH_CHECKS_OK=1 STUB_GH_LOG=$'boom: assertion failed\nexit 1' run_rt 41)"
 err1="$(cat "$T/err.log")"
 assert_eq "$(landed_count)" "0" "1. red-CI refusal with a fetchable log does not land"
-assert_contains "$err1" "refused — CI is red or still pending" "1. the refusal message still prints"
+assert_contains "$err1" "refused: CI is red or still pending" "1. the refusal message still prints"
 assert_contains "$err1" "Failing CI log" "1. ci-log.sh's excerpt header prints alongside the refusal"
 assert_contains "$err1" "boom: assertion failed" "1. the actual failing-step text is in the excerpt"
 RC1="$rc"
@@ -105,7 +105,7 @@ RC1="$rc"
 rc="$(STUB_MERGE_RC=3 STUB_GH_CHECKS_OK=0 run_rt 41)"
 err2="$(cat "$T/err.log")"
 assert_eq "$(landed_count)" "0" "2. red-CI refusal with a failed log fetch does not land"
-assert_contains "$err2" "refused — CI is red or still pending" "2. the refusal message still prints"
+assert_contains "$err2" "refused: CI is red or still pending" "2. the refusal message still prints"
 assert_not_contains "$err2" "Failing CI log" "2. no excerpt header when the log fetch fails"
 assert_eq "$rc" "$RC1" "2. a failed log fetch leaves the exit status identical to a fetched one"
 
