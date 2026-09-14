@@ -8,7 +8,7 @@
 #   router-posture-reminder.sh primes the delegate-heavy-work posture ONCE per
 #   session (UserPromptSubmit) and then stays quiet, so an *in-turn* violation
 #   isn't caught when it occurs. Per-turn cost is proportional to THIS session's
-#   context size, which is re-sent in full every turn — so a driver that reads a
+#   context size, which is re-sent in full every turn, so a driver that reads a
 #   1000+ line file inline or runs a verbose build bloats the window and re-pays
 #   for it on every later turn. This hook fires a pointed, low-noise warn at the
 #   exact tool call so the driver can redirect the work to a sub-agent.
@@ -141,7 +141,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
 
 # Parse the fields we need with one python3 pass (robust vs. nested tool_input).
 # Emits ONE FIELD PER LINE (newlines within values flattened to spaces) so empty
-# fields survive and we can read them portably (macOS system bash is 3.2 — no
+# fields survive and we can read them portably (macOS system bash is 3.2, no
 # `mapfile`; a tab-delimited `read` would also collapse the empty middle fields).
 {
   IFS= read -r tool_name
@@ -523,7 +523,7 @@ fi
 
 # --- rate-limit: cap warns per session --------------------------------------
 # sanitize session_id for use in a filename (it's a UUID in practice, but never
-# trust it — keep only filename-safe chars so it can't path-traverse).
+# trust it: keep only filename-safe chars so it can't path-traverse).
 session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9._-' '_')"
 [ -n "$session_id" ] || session_id="nosession"
 counter="${TMPDIR:-/tmp}/metarepo-router-posture-guard-${session_id}"
