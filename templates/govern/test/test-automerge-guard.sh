@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Three-factor auto-merge safety guard (govern::pr_automerge_allowed): the governor's auto-merge
+# Two-factor auto-merge safety guard (govern::pr_automerge_allowed): the governor's auto-merge
 # lane must NEVER land a PR it did not itself open, regardless of CI. This test exercises every
 # fail-closed path directly against merge-pr.sh via a fake `gh` on PATH — the CANONICAL adversary
 # for the "external contributor's green PR gets auto-merged" scenario the guard exists to prevent.
 #
-# Matrix (own gh login is "acme"; alpha is auto-mergeable; ticket branch = ticket-42):
-#   A. External author + own branch + own repo + green CI     → BLOCK exit 5, reason external-author
-#   B. Own author    + own branch + FORK repo (bob owns head) → BLOCK exit 5, reason fork-pr
-#   C. Own author    + BAD branch (feat/whatever)             → BLOCK exit 5, reason bad-branch
-#   D. gh api user   FAILS                                    → BLOCK exit 5, reason lookup-failed
-#   E. Own author    + own branch + own repo + green CI       → ALLOW  exit 0, guard silent
-#   F. Own author    + sync-auto-* branch (sync-port lane)    → ALLOW  exit 0
-#   G. Own author    + t<N> branch (interactive lane)         → ALLOW  exit 0
-#   H. Own author    + t<N>-<label> branch (interactive lane) → ALLOW  exit 0
+# Matrix (own gh login is "acme"; alpha is auto-mergeable):
+#   A. External author + own repo + green CI                  → BLOCK exit 5, reason external-author
+#   B. Own author    + FORK repo (bob owns head)               → BLOCK exit 5, reason fork-pr
+#   C. gh api user   FAILS                                     → BLOCK exit 5, reason lookup-failed
+#   D. Own author    + own repo + green CI, branch ticket-42   → ALLOW exit 0, guard silent
+#   E. Own author    + own repo + green CI, branch vf-lever-enforce (a real worktree:new slug,
+#      matching no governor branch pattern) → ALLOW exit 0: the guard no longer looks at branch
+#      name at all, so a worktree:new slug merges same as any other own-author, non-fork PR.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -69,70 +68,54 @@ run_merge() { # exit-code var  <extra-env=k=v ...>
   : > "$T/merge-invocations.log"
   set +e
   # Cache-buster: the workspace login is cached across calls via _GOVERN_OWN_LOGIN. Unset it per cell
-  # so each cell freshly re-derives from $T/gh-user (a cell-D lookup-failure test would false-pass if
+  # so each cell freshly re-derives from $T/gh-user (a cell-C lookup-failure test would false-pass if
   # a prior cell had cached "acme").
   out="$(unset _GOVERN_OWN_LOGIN; PATH="$T/bin:$PATH" GOVERN_WS_ROOT="$T" GOVERN_SKIP_CI=1 "$MERGE" alpha 42 2>&1)"
   rc=$?
   set -e
 }
 
-# ── A. External author + own branch + own repo + green CI → block(external-author) ──
+# ── A. External author + own repo + green CI → block(external-author) ──
 pr_json "outsider" "ticket-42" "acme" "acme"
 run_merge
 assert_eq "$rc" "5" "A: external author blocked with exit 5"
 assert_contains "$out" "external-pr-blocked (external-author)" "A: reason token is external-author"
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "A: gh pr merge was NEVER invoked"
 
-# ── B. Own author + own branch + FORK head (bob's fork) → block(fork-pr) ──
+# ── B. Own author + FORK head (bob's fork) → block(fork-pr) ──
 pr_json "acme" "ticket-42" "bob" "acme"
 run_merge
 assert_eq "$rc" "5" "B: fork PR blocked with exit 5"
 assert_contains "$out" "external-pr-blocked (fork-pr)" "B: reason token is fork-pr"
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "B: gh pr merge was NEVER invoked"
 
-# ── C. Own author + own repo + BAD branch (feat/whatever) → block(bad-branch) ──
-pr_json "acme" "feat/whatever" "acme" "acme"
-run_merge
-assert_eq "$rc" "5" "C: non-governor-branch blocked with exit 5"
-assert_contains "$out" "external-pr-blocked (bad-branch)" "C: reason token is bad-branch"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "C: gh pr merge was NEVER invoked"
-
-# ── D. gh api user FAILS → block(lookup-failed) — the "transient GitHub outage" adversary ──
+# ── C. gh api user FAILS → block(lookup-failed) — the "transient GitHub outage" adversary ──
 : > "$T/gh-user"   # empty ⇒ stub returns non-zero ⇒ own_login lookup fails
 pr_json "acme" "ticket-42" "acme" "acme"
 run_merge
-assert_eq "$rc" "5" "D: gh api user failure blocked with exit 5 (fail-closed)"
-assert_contains "$out" "external-pr-blocked (lookup-failed)" "D: reason token is lookup-failed"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "D: gh pr merge was NEVER invoked on lookup failure"
+assert_eq "$rc" "5" "C: gh api user failure blocked with exit 5 (fail-closed)"
+assert_contains "$out" "external-pr-blocked (lookup-failed)" "C: reason token is lookup-failed"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "C: gh pr merge was NEVER invoked on lookup failure"
 printf 'acme\n' > "$T/gh-user"   # restore for the allow cells
 
-# ── E. Own author + own branch + own repo + green CI → ALLOW (exit 0) ──
+# ── D. Own author + own repo + green CI, branch ticket-42 → ALLOW (exit 0) ──
 pr_json "acme" "ticket-42" "acme" "acme"
 run_merge
-assert_eq "$rc" "0" "E: legit governor PR is ALLOWED (guard is not a false-positive)"
+assert_eq "$rc" "0" "D: legit governor PR is ALLOWED (guard is not a false-positive)"
 if grep -qF "external-pr-blocked" <<<"$out"; then
-  assert_eq "blocked" "allowed" "E: legit PR must not print external-pr-blocked"
+  assert_eq "blocked" "allowed" "D: legit PR must not print external-pr-blocked"
 else
-  assert_eq "allowed" "allowed" "E: legit PR must not print external-pr-blocked"
+  assert_eq "allowed" "allowed" "D: legit PR must not print external-pr-blocked"
 fi
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "D: gh pr merge WAS invoked once"
+
+# ── E. Own author + own repo + green CI, branch vf-lever-enforce (a real worktree:new slug,
+#      not any governor-owned pattern) → ALLOW. The regression test for this ticket: the guard
+#      no longer has a branch-pattern leg, so a worktree:new slug merges like any other PR that
+#      passes the author and fork checks. ──
+pr_json "acme" "vf-lever-enforce" "acme" "acme"
+run_merge
+assert_eq "$rc" "0" "E: worktree:new slug branch is ALLOWED (no branch-pattern leg left to trip)"
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "E: gh pr merge WAS invoked once"
-
-# ── F. sync-auto-<sha> branch (sync-port lane) is also a governor-owned branch → ALLOW ──
-pr_json "acme" "sync-auto-abc1234" "acme" "acme"
-run_merge
-assert_eq "$rc" "0" "F: sync-port lane branch (sync-auto-*) is ALLOWED"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "F: gh pr merge WAS invoked once"
-
-# ── G. t<N> branch (interactive lane's own worktree:new convention, worker.md) → ALLOW ──
-pr_json "acme" "t127" "acme" "acme"
-run_merge
-assert_eq "$rc" "0" "G: interactive-lane t<N> branch is ALLOWED (recognized as first-party)"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "G: gh pr merge WAS invoked once"
-
-# ── H. t<N>-<label> branch (e.g. t57-log-guard, observed live) → ALLOW ──
-pr_json "acme" "t57-log-guard" "acme" "acme"
-run_merge
-assert_eq "$rc" "0" "H: interactive-lane t<N>-<label> branch is ALLOWED"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "H: gh pr merge WAS invoked once"
 
 assert_done
