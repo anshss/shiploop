@@ -224,7 +224,7 @@ if [ "$tool_name" = "Agent" ]; then
   }
   if [ "$subagent_type" = "worker" ]; then
     # ── SIXTH behavior: the proposed-solution gate, on THIS lane ──────────────
-    # pre-dispatch-check.sh already refuses a headless dispatch on a ticket with no
+    # pre-dispatch-check.sh already refuses a dispatch on a ticket with no
     # **Proposed solution:**, off the same GOVERN_PROPOSAL_GATE switch, ON by default. But
     # nothing RUNS that script for an advisor dispatching a worker in-session: it is a command
     # the advisor has to remember, and a gate that only fires when someone remembers it reads
@@ -263,7 +263,7 @@ Write the proposal into the ticket block first:
 
   **Proposed solution:** <what to change, where, and why that shape -- concrete enough that a sonnet worker implements it without re-deciding anything>
 
-Then dispatch again. If the answer genuinely is not knowable yet, that is investigation, not dispatch: send a \`lookup\` or \`investigator\` child to collect what you need, write the proposal from what it returns, and dispatch the worker after. Set GOVERN_PROPOSAL_GATE=0 to turn this gate off for the session (the same switch governs the headless lane's pre-dispatch-check.sh).
+Then dispatch again. If the answer genuinely is not knowable yet, that is investigation, not dispatch: send a \`lookup\` or \`investigator\` child to collect what you need, write the proposal from what it returns, and dispatch the worker after. Set GOVERN_PROPOSAL_GATE=0 to turn this gate off for the session (the same switch governs pre-dispatch-check.sh).
 EOF
 )"
             python3 -c '

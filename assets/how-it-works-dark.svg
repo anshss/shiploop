@@ -35,7 +35,7 @@
   <text class="sub" x="111" y="128" text-anchor="middle">severity-ordered</text>
 
   <rect class="box" x="246" y="68" width="214" height="72" rx="10"/>
-  <text class="title" x="353" y="96" text-anchor="middle">fresh headless worker</text>
+  <text class="title" x="353" y="96" text-anchor="middle">fresh worker subagent</text>
   <text class="sub" x="353" y="114" text-anchor="middle">own git worktree</text>
   <text class="sub" x="353" y="128" text-anchor="middle">sonnet floor · opus on retry</text>
 

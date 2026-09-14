@@ -23,6 +23,6 @@
     "autonomous-agent",
     "ticket-queue",
     "governor",
-    "headless-worker"
+    "worker-subagent"
   ]
 }

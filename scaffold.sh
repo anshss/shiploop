@@ -371,9 +371,9 @@ component_project_commands() {
 }
 
 # component_agents — shipped agent definitions: lookup and investigator (subagents), plus
-# worker (the interactive lane of the single-ticket session the governor also spawns
-# headlessly). These give the interactive driver lane pre-sized destinations for the
-# routing posture (router-posture hooks + CLAUDE.md) that already tells it to delegate:
+# worker (the only ticket lane: a subagent the driver dispatches in-session). These give
+# the interactive driver lane pre-sized destinations for the routing posture
+# (router-posture hooks + CLAUDE.md) that already tells it to delegate:
 # without them "delegate this" had no pre-sized, cheap-model destination, so haiku
 # delegation stayed near zero in practice, and ticket-shaped work had nowhere to go but a
 # generic subagent. Copies by glob, so a new definition needs no edit here. Mirrors
@@ -503,7 +503,7 @@ component_readme() {
 
 **$meta_name** ships on [Shiploop](https://github.com/anshss/shiploop) — a self-improving
 multi-agent harness that dispatches the tickets you name across every repo in this workspace
-($repos_list). A fresh headless agent takes each ticket at a cheap model floor, opens a PR, auto-merges
+($repos_list). A fresh worker subagent takes each ticket at a cheap model floor, opens a PR, auto-merges
 on green CI where you've allowed it, and writes a durable lesson back into \`CLAUDE.md\` so the
 next run is smarter and cheaper.
 
