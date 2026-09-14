@@ -50,8 +50,8 @@ nothing about a dispatch, only what a run's own log directory records, so it shi
 
 | Surface | What it is | How to get it |
 |---|---|---|
-| `npm run govern:status` | One-shot reader. Text, or `--json` for machines. Verifies every claimed-live worker with `kill -0` and reaps the phantoms a killed driver leaves behind. No model call, no lock, so it is safe from inside a session, from CI, or over SSH | Ships with the harness |
-| Statusline segment | `⚙ 4/6 · #94 opus 22m` in your Claude Code statusline. Silent when no fleet is running | `/shiploop:statusline`; explicit, opt-in, and it **chains**: your existing `statusLine.command` is recorded verbatim and wrapped, never replaced. `uninstall` restores it byte for byte |
+| `npm run govern:status` | One-shot reader. Text, or `--json` for machines. A worker is an in-session subagent with no pid of its own, so its liveness is the AGE of its spawn event (`GOVERN_WORKER_STALE_S`) rather than `kill -0`; it reaps the phantoms that leaves behind. No model call, no lock, so it is safe from inside a session, from CI, or over SSH | Ships with the harness |
+| Statusline segment | `⚙ 4/6 · agent_001 opus 22m` in your Claude Code statusline. Silent when no fleet is running | `/shiploop:statusline`; explicit, opt-in, and it **chains**: your existing `statusLine.command` is recorded verbatim and wrapped, never replaced. `uninstall` restores it byte for byte |
 | Plugin monitor | The in-session channel. Prints one line per state *transition* (never a raw tail), which Claude Code turns into a notification in your session | Automatic with the plugin; silent in any session with no event log. `GOVERN_MONITOR=0` to disable |
 
 The monitor is deliberately stingy: every line it prints costs context in the very session shiploop
@@ -94,6 +94,7 @@ environment variables if you need to change one.
 | Knob | Default | Turns on |
 |---|---|---|
 | `GOVERN_MONITOR` | `1` (on) | The in-session plugin monitor (`tools/fleet-monitor.sh`). `0` is the kill switch: a session that wants nothing from the fleet log idles out immediately instead of staying half-alive |
+| `GOVERN_WORKER_STALE_S` | `7200` (2h) | How long a `worker_spawned` row may sit with no matching `worker_done` before `status.sh`/the statusline segment treat it as dead rather than live. A worker is an in-session subagent with no pid of its own, so this age bound is the liveness test, not `kill -0`. `GOVERN_STATUSLINE_STALE_CHECK=0` disables the check on the statusline segment specifically |
 | `GOVERN_SKIP_CI` | `0` (off) | Skips the CI wait before merging a PR (`templates/govern/merge-pr.sh`). `1` merges without polling `await-ci.sh` at all |
 | `GOVERN_CI_LOG_MAX_LINES` | `120` | Tail bound on the failing-CI excerpt `templates/govern/ci-log.sh` prints (`gh run view --log-failed`, already filtered to failing steps only). `resolve-ticket.sh` prints this excerpt on stderr alongside a red-CI refusal; raising the bound defeats the point, which is bytes, not completeness |
 | `GOVERN_TICKET_ROUTE_GUARD` | `1` (on) | The blocking hook (`templates/hooks/router-posture-guard.sh`) that denies an `Agent` call for ticket-shaped work unless it targets `subagent_type: "worker"`. `0` turns the guard off |

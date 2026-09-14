@@ -7,8 +7,9 @@
 #
 # Contract:
 #   1. Segment is SILENT with no event log, with no run, and after a run finishes.
-#   2. Segment renders live/total, the oldest live worker's ticket + tier + elapsed.
-#   3. Segment verifies liveness with kill -0 — a dead pid is not counted.
+#   2. Segment renders live/total, the oldest live worker's agent id + tier + elapsed.
+#   3. Segment verifies liveness by AGE, GOVERN_WORKER_STALE_S: a worker has no pid of its own
+#      (it is an in-session subagent), so a spawn older than the bound with no done is not counted.
 #   4. Segment finds the log by walking UP from the stdin cwd (sessions live in sub-repos).
 #   5. Install records the ENTIRE previous statusLine object verbatim before writing.
 #   6. The wrapper runs the original command with the same stdin and its output comes FIRST.
@@ -39,31 +40,28 @@ seg() { # stdin JSON is built from the cwd we pass
 # ── 1a. no log at all ───────────────────────────────────────────────────────────────────────────
 assert_eq "$(seg "$DEEP")" "" "segment: silent when there is no event log anywhere above the cwd"
 
-sleep 60 & LIVE_PID=$!
-sleep 60 & LIVE_PID2=$!
-sleep 0.1 & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null
-
 ev() { printf '%s\n' "$1" >> "$EV"; }
 TS="$(date +%s)"
-ev "{\"ts\":$((TS-3000)),\"run_id\":\"r1\",\"type\":\"run_started\",\"mode\":\"live\",\"target\":\"backlog\",\"parallel\":4}"
-ev "{\"ts\":$((TS-2000)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":94,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":$LIVE_PID}"
-ev "{\"ts\":$((TS-1990)),\"run_id\":\"r1\",\"type\":\"worker_escalated\",\"ticket\":94,\"from\":\"sonnet\",\"to\":\"opus\",\"reason\":\"budget\"}"
-ev "{\"ts\":$((TS-600)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":97,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":$LIVE_PID2}"
-# A phantom: spawned, pid long dead, no done event. Must NOT be counted.
-ev "{\"ts\":$((TS-500)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":98,\"model\":\"haiku\",\"effort\":\"low\",\"pid\":$DEAD_PID}"
-# Two finished tickets.
-ev "{\"ts\":$((TS-400)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":95,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":$DEAD_PID}"
-ev "{\"ts\":$((TS-300)),\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":95,\"status\":\"resolved\",\"model\":\"sonnet\",\"elapsed\":100}"
-ev "{\"ts\":$((TS-290)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":96,\"model\":\"sonnet\",\"effort\":\"medium\",\"pid\":$DEAD_PID}"
-ev "{\"ts\":$((TS-280)),\"run_id\":\"r1\",\"type\":\"worker_done\",\"ticket\":96,\"status\":\"parked\",\"model\":\"sonnet\",\"elapsed\":10}"
+ev "{\"ts\":$((TS-9000)),\"run_id\":\"r1\",\"type\":\"run_started\",\"mode\":\"live\",\"target\":\"backlog\",\"parallel\":4}"
+ev "{\"ts\":$((TS-2000)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-94\",\"agent_type\":\"worker\"}"
+ev "{\"ts\":$((TS-1990)),\"run_id\":\"r1\",\"type\":\"worker_escalated\",\"agent_id\":\"aid-94\",\"from\":\"sonnet\",\"to\":\"opus\",\"reason\":\"budget\"}"
+ev "{\"ts\":$((TS-600)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-97\",\"agent_type\":\"lookup\"}"
+# A phantom: spawned well past the default staleness bound (GOVERN_WORKER_STALE_S, 7200s), no done
+# event. Must NOT be counted: a worker has no pid of its own, so age is the only signal.
+ev "{\"ts\":$((TS-8000)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-98\",\"agent_type\":\"lookup\"}"
+# Two finished workers.
+ev "{\"ts\":$((TS-400)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-95\",\"agent_type\":\"worker\"}"
+ev "{\"ts\":$((TS-300)),\"run_id\":\"r1\",\"type\":\"worker_done\",\"agent_id\":\"aid-95\",\"status\":\"stopped\",\"model\":\"sonnet\"}"
+ev "{\"ts\":$((TS-290)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"agent_id\":\"aid-96\",\"agent_type\":\"worker\"}"
+ev "{\"ts\":$((TS-280)),\"run_id\":\"r1\",\"type\":\"worker_done\",\"agent_id\":\"aid-96\",\"status\":\"stopped\",\"model\":\"sonnet\"}"
 
 # ── 2/3/4. renders from a deep cwd ──────────────────────────────────────────────────────────────
 out="$(seg "$DEEP")"
-assert_contains "$out" "2/4" "segment: 2 live workers of 4 tickets answered-or-running (the dead pid is excluded)"
-assert_contains "$out" "#94" "segment: names the OLDEST live worker"
+assert_contains "$out" "2/4" "segment: 2 live workers of 4 workers answered-or-running (the past-the-bound phantom is excluded)"
+assert_contains "$out" "aid-94" "segment: names the OLDEST live worker by agent id"
 assert_contains "$out" "opus" "segment: the escalated tier is what it reports"
 assert_contains "$out" "33m" "segment: elapsed for the oldest live worker (~2000s)"
-assert_not_contains "$out" "#98" "segment: the dead-pid phantom is not reported"
+assert_not_contains "$out" "aid-98" "segment: the past-the-bound phantom is not reported"
 
 # ── 4b. same result from the workspace root ─────────────────────────────────────────────────────
 assert_contains "$(seg "$WS")" "2/4" "segment: same output when the session cwd IS the workspace root"
@@ -71,15 +69,16 @@ assert_contains "$(seg "$WS")" "2/4" "segment: same output when the session cwd 
 # ── 1b. finished run ────────────────────────────────────────────────────────────────────────────
 cp "$EV" "$T/ev.bak"
 ev "{\"ts\":$TS,\"run_id\":\"r1\",\"type\":\"run_done\",\"resolved\":1,\"parked\":1,\"failed\":0,\"timeout\":0,\"processed\":2}"
-assert_eq "$(seg "$DEEP")" "" "segment: silent once the run has finished, even with live pids in the log"
+assert_eq "$(seg "$DEEP")" "" "segment: silent once the run has finished, even with live claims in the log"
 cp "$T/ev.bak" "$EV"
 
-# ── 1c. every worker dead ───────────────────────────────────────────────────────────────────────
-kill "$LIVE_PID" "$LIVE_PID2" 2>/dev/null; wait "$LIVE_PID" "$LIVE_PID2" 2>/dev/null
-assert_eq "$(seg "$DEEP")" "" "segment: silent when every claimed-live pid is gone (never a stale count)"
-# Put a live worker back for the chain tests below.
-sleep 60 & LIVE_PID=$!
-ev "{\"ts\":$((TS-2000)),\"run_id\":\"r1\",\"type\":\"worker_spawned\",\"ticket\":94,\"model\":\"opus\",\"effort\":\"high\",\"pid\":$LIVE_PID}"
+# ── 1c. every worker past the stale bound ───────────────────────────────────────────────────────
+# A tiny GOVERN_WORKER_STALE_S makes every existing claim (2000s/600s old) instantly stale, without
+# waiting real wall-clock time or touching a real process: there is no pid to kill any more.
+assert_eq "$(GOVERN_WORKER_STALE_S=1 seg "$DEEP")" "" \
+  "segment: silent when every claimed-live worker is past the stale bound (never a stale count)"
+# aid-94's own row from the fixtures above is still well within the DEFAULT bound (7200s > 2000s),
+# so nothing needs to be added back for the chain tests below.
 
 # ── 5/6/7/8/9. install mechanics ────────────────────────────────────────────────────────────────
 SETTINGS="$T/settings.json"
@@ -122,7 +121,7 @@ assert_eq "$(jq -r '.theme' "$SETTINGS")" "dark" "install: unrelated top-level s
 payload="$(printf '{"cwd":"%s","workspace":{"current_dir":"%s","project_dir":"%s"},"model":{"id":"opus-5"}}' "$DEEP" "$DEEP" "$WS")"
 chained="$(printf '%s' "$payload" | env -u GOVERN_EVENTS_FILE GOVERN_STATUSLINE_STATE="$STATE" bash "$CHAIN" 2>/dev/null)"
 assert_contains "$chained" "MYHUD[opus-5]" "chain: the original command ran, and got the SAME stdin payload"
-assert_contains "$chained" "#94" "chain: our fleet segment is appended"
+assert_contains "$chained" "aid-94" "chain: our fleet segment is appended"
 assert_eq "$(printf '%s' "$chained" | sed -n 's/^\(MYHUD\).*/\1/p')" "MYHUD" \
   "chain: the user's output comes FIRST — ours is appended, never a replacement"
 # `printf '%s\n'`, not `printf '%s'`: the command substitution above already stripped the trailing
@@ -171,5 +170,4 @@ assert_eq "$rc" "1" "install: refuses a settings.json that is not valid JSON"
 assert_eq "$(cat "$SETTINGS")" "$before" "install: a refused install leaves settings.json untouched"
 assert_eq "$([[ -f "$STATE" ]] && echo yes || echo no)" "no" "install: a refused install writes no recording"
 
-kill "$LIVE_PID" 2>/dev/null; wait 2>/dev/null
 assert_done

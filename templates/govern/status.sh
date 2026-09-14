@@ -2,11 +2,18 @@
 # govern:status — what is the fleet doing RIGHT NOW.
 #
 # One-shot reader over the append-only event log (governor/events.jsonl, written by
-# govern::event in scripts/govern/lib/common.sh when GOVERN_EVENTS=1). Folds the log into live
-# state, verifies every
-# claimed-live worker with `kill -0`, reaps the ones whose process is gone, and prints it. Text by
-# default, `--json` for machines. No model call, no network, no lock — safe to run from inside a
-# Claude session, from CI, or over SSH while a run is mid-flight.
+# govern::event in scripts/govern/lib/common.sh when GOVERN_EVENTS=1, and by
+# templates/hooks/worker-event-emit.sh for a worker's own spawn/done). Folds the log into live
+# state and prints it. Text by default, `--json` for machines. No model call, no network, no lock:
+# safe to run from inside a Claude session, from CI, or over SSH while a run is mid-flight.
+#
+# WORKER liveness is EVENT-DERIVED, not `kill -0`: a worker is an in-session subagent, a sidechain
+# inside the same running `claude` process, so there is no separate pid to signal. A worker is
+# active when its last event is `worker_spawned` with no later `worker_done` for the same
+# `agent_id` (the fold below is last-event-wins per key, so this falls out of the fold itself); a
+# spawned-with-no-done row past GOVERN_WORKER_STALE_S is reaped as stale the same way a dead pid
+# used to be. DRIVER liveness (the `D` rows below) is unchanged: a driver is a real forked `claude
+# -p` OS process, so `kill -0` stays the correct test there.
 #
 # Usage:
 #   scripts/govern/status.sh              # text
@@ -52,7 +59,7 @@ fi
 #
 # Output is TSV so bash can consume it without a second jq pass:
 #   RUN <run_id> <started_ts> <done:0|1> <mode> <target>
-#   W   <ticket> <pid> <model> <effort> <since_ts>          (last event was worker_spawned)
+#   W   <agent_id> <agent_type> <model> <effort> <since_ts>  (last event was worker_spawned)
 #   D   <label>  <pid> <since_ts>                            (driver still running)
 #   C   <counter> <n>                                        (resolved/parked/failed/… tallies)
 FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
@@ -69,21 +76,25 @@ FOLD_PROG="$( govern::event_awk_lib; cat <<'AWKMAIN'
     cnt[rid,"failed"]   = jget(line,"failed");   cnt[rid,"timeout"] = jget(line,"timeout")
   }
   else if (typ == "worker_spawned") {
-    t = jget(line,"ticket"); k = rid SUBSEP t
-    wstate[k] = "live"; wpid[k] = jget(line,"pid"); wmodel[k] = jget(line,"model")
+    aid = jget(line,"agent_id"); if (aid == "") next
+    k = rid SUBSEP aid
+    wstate[k] = "live"; waid[k] = aid; watype[k] = jget(line,"agent_type"); wmodel[k] = jget(line,"model")
     # modelSource/precision: WHY this tier was picked, carried on the same event
-    # as model/effort (both known before the CLI even runs). Read by the "by source" fold below.
+    # as model/effort (both known before the CLI even runs, on a row a DISPATCHER writes). A row
+    # this hook writes carries neither (a hook sees only agent_id/agent_type), so these read
+    # "(unrecorded)" downstream for a hook-authored spawn, same as any older row missing the field.
     wms[k] = jget(line,"modelSource"); wprec[k] = jget(line,"precision")
     weffort[k] = jget(line,"effort"); wsince[k] = ts
-    if (!(k in wseen)) { wseen[k] = 1; worder[++nw] = k; wrid[k] = rid; wtick[k] = t }
+    if (!(k in wseen)) { wseen[k] = 1; worder[++nw] = k; wrid[k] = rid }
   }
   else if (typ == "worker_escalated") {
-    t = jget(line,"ticket"); k = rid SUBSEP t
+    aid = jget(line,"agent_id"); k = rid SUBSEP aid
     if (k in wseen) { wmodel[k] = jget(line,"to"); wesc[k] = 1 }
     tally[rid,"escalated"]++
   }
   else if (typ == "worker_done") {
-    t = jget(line,"ticket"); k = rid SUBSEP t
+    aid = jget(line,"agent_id"); if (aid == "") next
+    k = rid SUBSEP aid
     wstate[k] = "done"; wstatus[k] = jget(line,"status")
     wcost[k] = jget(line,"costUsd")
     tally[rid, jget(line,"status")]++
@@ -101,12 +112,19 @@ END {
     r = order[i]
     printf "RUN\t%s\t%s\t%s\t%s\t%s\n", r, (rstart[r]==""?0:rstart[r]), (rdone[r]?1:0), rmode[r], rtarget[r]
   }
+  # `-` marks a field the fold had nothing for: bash `read -r ... <<<"$line"` with a tab-only IFS
+  # COLLAPSES a run of empty fields (POSIX classes tab as IFS whitespace, same as space/newline, so
+  # adjacent delimiters merge exactly like default word-splitting): a row a hook writes has no
+  # model/effort at all, so leaving either blank shifts every field after it. Every bash reader of
+  # this row un-sentinels with `nz()` (below) before display; awk's own `-F"\t"` (the BY_SRC
+  # pipeline further down) never collapses and needs no such guard.
   for (i = 1; i <= nw; i++) {
     k = worder[i]
     if (wstate[k] != "live") continue
-    printf "W\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], wtick[k], (wpid[k]==""?0:wpid[k]), wmodel[k], weffort[k], (wsince[k]==""?0:wsince[k])
+    printf "W\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], waid[k], (watype[k]==""?"-":watype[k]), \
+      (wmodel[k]==""?"-":wmodel[k]), (weffort[k]==""?"-":weffort[k]), (wsince[k]==""?0:wsince[k])
   }
-  # U = per-session tier attribution: one row per ticket EVER spawned in scope (live or
+  # U = per-session tier attribution: one row per agent_id EVER spawned in scope (live or
   # done — unlike the W rows above, which are live-only), carrying the model_source/precision the
   # dispatch was decided from and the cost once known. Old logs from before this field existed print
   # "" for modelSource/precision/cost; the bash-side fold below labels that "(unrecorded)"/"null"
@@ -114,7 +132,7 @@ END {
   for (i = 1; i <= nw; i++) {
     k = worder[i]
     st = wstatus[k]; if (st == "") { if (wstate[k] == "live") st = "live"; else continue }
-    printf "U\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], wtick[k], wmodel[k], wms[k], wprec[k], st, wcost[k]
+    printf "U\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wrid[k], waid[k], wmodel[k], wms[k], wprec[k], st, wcost[k]
   }
   for (i = 1; i <= nd; i++) {
     k = dorder[i]
@@ -175,22 +193,39 @@ run_filter() { # reads FOLD on stdin, keeps rows for the run(s) in scope
   if [[ "$ALL_RUNS" -eq 1 ]]; then cat; else awk -F'\t' -v r="$LATEST_RUN" '$2==r'; fi
 }
 
+# Minimal JSON string escaper for a value this script re-embeds into a NEW line it writes itself
+# (the reap below, the --json output further down): same escape set govern::_event_jesc covers,
+# reused here because this file must keep working when GOVERN_EVENTS=0 in ITS OWN environment (the
+# reap writes directly to the log rather than through govern::event; see the reap comment below).
+jesc() { printf '%s' "${1-}" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# nz: the bash-side counterpart of the `-` sentinel the W-row fold writes above. Un-sentinels back
+# to empty right before use rather than printing a bare "-" or feeding it into a "${var:+…}" test
+# that only fires on genuine emptiness.
+nz() { [[ "${1-}" == "-" ]] && printf '' || printf '%s' "${1-}"; }
+
 # ── liveness + stale reap ───────────────────────────────────────────────────────────────────────
-# The log says a worker was spawned and never finished. That is a CLAIM, not a fact: a killed
-# driver, a `pkill claude`, or an OOM leaves the spawn event with no done event forever. `kill -0`
-# is the arbiter. A claimed-live worker whose pid is gone is STALE — reported separately, and (by
-# default) a synthetic `worker_done status=stale` is appended so the next fold is clean and the
-# log self-heals instead of accumulating phantom workers.
+# A `worker_spawned` row with no later `worker_done` for the SAME agent_id is a CLAIM, not a fact:
+# the fold above is last-event-wins per (run_id, agent_id), so any row reaching the `W` line here
+# already has no matching done. What that claim CANNOT rule out is a worker that went quiet without
+# ever reaching SubagentStop (a killed session, an OOM, a hard interrupt): there is no pid to poll
+# for a subagent, so age is the arbiter instead. A spawn older than GOVERN_WORKER_STALE_S is STALE,
+# reported separately, and (by default) a synthetic `worker_done status=stale` is appended so the
+# next fold is clean and the log self-heals instead of accumulating phantom workers.
+STALE_WORKER_S="${GOVERN_WORKER_STALE_S:-7200}"
 ACTIVE=(); STALE=()
-while IFS=$'\t' read -r _k rid tick pid model effort since; do
+while IFS=$'\t' read -r _k rid aid atype model effort since; do
   [[ "$_k" == "W" ]] || continue
-  if [[ "$pid" -gt 0 ]] 2>/dev/null && kill -0 "$pid" 2>/dev/null; then
-    ACTIVE+=("$rid"$'\t'"$tick"$'\t'"$pid"$'\t'"$model"$'\t'"$effort"$'\t'"$since")
+  if [[ "$since" =~ ^[0-9]+$ ]] && [[ $(( NOW - since )) -lt "$STALE_WORKER_S" ]]; then
+    ACTIVE+=("$rid"$'\t'"$aid"$'\t'"$atype"$'\t'"$model"$'\t'"$effort"$'\t'"$since")
   else
-    STALE+=("$rid"$'\t'"$tick"$'\t'"$pid"$'\t'"$model"$'\t'"$effort"$'\t'"$since")
+    STALE+=("$rid"$'\t'"$aid"$'\t'"$atype"$'\t'"$model"$'\t'"$effort"$'\t'"$since")
   fi
 done < <(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="W"' | run_filter)
 
+# A driver is a real forked `claude -p` OS process (the governed-run launcher's own fan-out, not a
+# subagent), so it DOES have a pid, and `kill -0` stays the correct liveness test for it. This is a
+# different mechanism from the worker rows just above, not the same one left half-fixed.
 DRIVERS=()
 while IFS=$'\t' read -r _k rid lbl pid since; do
   [[ "$_k" == "D" ]] || continue
@@ -204,9 +239,9 @@ if [[ "$REAP" -eq 1 && "${#STALE[@]}" -gt 0 && -w "$LOG" ]]; then
   # 0 in the reader's own environment (the log's existence is the only permission needed, and the
   # write is what stops the phantom from being re-reported on every later read).
   for _s in "${STALE[@]}"; do
-    IFS=$'\t' read -r _r _t _p _m _e _si <<<"$_s"
-    printf '{"ts":%s,"run_id":"%s","type":"worker_done","ticket":%s,"status":"stale","pid":%s,"reapedBy":"status.sh"}\n' \
-      "$NOW" "$_r" "$_t" "${_p:-0}" >> "$LOG" 2>/dev/null || true
+    IFS=$'\t' read -r _r _aid _atype _m _e _si <<<"$_s"
+    printf '{"ts":%s,"run_id":"%s","type":"worker_done","agent_id":"%s","status":"stale","reapedBy":"status.sh"}\n' \
+      "$NOW" "$_r" "$(jesc "$_aid")" >> "$LOG" 2>/dev/null || true
   done
 fi
 
@@ -230,7 +265,7 @@ N_INTR="$(counter interrupted)"; N_ESC="$(counter escalated)"; N_STALEC="$(count
 #
 # Unknown statuses fall into "other" rather than being silently dropped from the per-source detail
 # string — the fixed order below is display convenience, never a filter.
-# U columns (see the FOLD_PROG emitter above): 1=U 2=rid 3=ticket 4=model 5=modelSource
+# U columns (see the FOLD_PROG emitter above): 1=U 2=rid 3=agentId 4=model 5=modelSource
 # 6=precision 7=status 8=costUsd.
 BY_SRC="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="U"' | run_filter | awk -F'\t' '
   BEGIN { forder = "resolved parked failed timeout budget-exceeded early-abort interrupted killed-by-signal usage-error infra stale live"
@@ -271,17 +306,17 @@ if [[ "$JSON" -eq 1 ]]; then
     printf ',"active":['
     _first=1
     for _a in ${ACTIVE[@]+"${ACTIVE[@]}"}; do
-      IFS=$'\t' read -r _r _t _p _m _e _si <<<"$_a"
+      IFS=$'\t' read -r _r _aid _atype _m _e _si <<<"$_a"
       [[ "$_first" -eq 1 ]] || printf ','; _first=0
-      printf '{"ticket":%s,"pid":%s,"model":"%s","effort":"%s","since":%s,"elapsed":%s}' \
-        "$_t" "$_p" "$_m" "$_e" "${_si:-0}" "$(( NOW - ${_si:-NOW} ))"
+      printf '{"agentId":"%s","agentType":"%s","model":"%s","effort":"%s","since":%s,"elapsed":%s}' \
+        "$(jesc "$_aid")" "$(jesc "$(nz "$_atype")")" "$(jesc "$(nz "$_m")")" "$(jesc "$(nz "$_e")")" "${_si:-0}" "$(( NOW - ${_si:-NOW} ))"
     done
     printf '],"stale":['
     _first=1
     for _a in ${STALE[@]+"${STALE[@]}"}; do
-      IFS=$'\t' read -r _r _t _p _m _e _si <<<"$_a"
+      IFS=$'\t' read -r _r _aid _atype _m _e _si <<<"$_a"
       [[ "$_first" -eq 1 ]] || printf ','; _first=0
-      printf '{"ticket":%s,"pid":%s}' "$_t" "$_p"
+      printf '{"agentId":"%s"}' "$(jesc "$_aid")"
     done
     printf '],"drivers":['
     _first=1
@@ -314,9 +349,10 @@ printf 'run:   %s (%s, mode=%s, up %s)\n' "${LATEST_RUN:-none}" "$_state" "${RUN
 
 if [[ "${#ACTIVE[@]}" -gt 0 ]]; then
   for _a in "${ACTIVE[@]}"; do
-    IFS=$'\t' read -r _r _t _p _m _e _si <<<"$_a"
-    printf '  #%-5s %-8s %-6s pid %-7s%s\n' "$_t" "${_m:-?}" "$(hms "$(( NOW - ${_si:-NOW} ))")" "$_p" \
-      "${_e:+effort=$_e}"
+    IFS=$'\t' read -r _r _aid _atype _m _e _si <<<"$_a"
+    _atype="$(nz "$_atype")"; _m="$(nz "$_m")"; _e="$(nz "$_e")"
+    printf '  %-24s %-14s %-8s %s%s\n' "$_aid" "${_atype:-?}" "${_m:-?}" "$(hms "$(( NOW - ${_si:-NOW} ))")" \
+      "${_e:+ effort=$_e}"
   done
 else
   printf '  (no live workers)\n'
@@ -332,11 +368,11 @@ if [[ "${#DRIVERS[@]}" -gt 0 ]]; then
 fi
 
 if [[ "${#STALE[@]}" -gt 0 ]]; then
-  printf 'stale: %s worker(s) claimed live with a dead pid%s —' "${#STALE[@]}" \
+  printf 'stale: %s worker(s) spawned with no completion event in over %s%s:' "${#STALE[@]}" "$(hms "$STALE_WORKER_S")" \
     "$([[ "$REAP" -eq 1 ]] && printf ', reaped' || printf '')"
   for _a in "${STALE[@]}"; do
-    IFS=$'\t' read -r _r _t _p _rest <<<"$_a"
-    printf ' #%s' "$_t"
+    IFS=$'\t' read -r _r _aid _rest <<<"$_a"
+    printf ' %s' "$_aid"
   done
   printf '\n'
 fi
