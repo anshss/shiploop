@@ -5,7 +5,7 @@
 #
 #   1. a red-CI refusal with a fetchable log prints the excerpt AND still refuses to land.
 #   2. a red-CI refusal whose log fetch fails prints the refusal alone, still refuses, with the
-#      SAME exit status as case 1 — the excerpt must never change the outcome.
+#      SAME exit status as case 1, because the excerpt must never change the outcome.
 #   3. the excerpt is bounded by GOVERN_CI_LOG_MAX_LINES.
 #   4. a green PR path never invokes the log fetch (no `gh ... checks` / `gh ... run view` call).
 set -uo pipefail
@@ -23,7 +23,7 @@ export GOVERN_QUEUE_DIR="$T/queue"
 mkdir -p "$T/bin/lib" "$T/queue"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )
 
-# Sandbox next to STUBS of every collaborator EXCEPT ci-log.sh, which is the REAL script — only
+# Sandbox next to STUBS of every collaborator EXCEPT ci-log.sh, which is the REAL script. Only
 # `gh` underneath it is stubbed, so this exercises ci-log.sh's actual fail-open behavior, not a
 # fake of it.
 cp "$RT" "$T/bin/resolve-ticket.sh"
@@ -100,7 +100,7 @@ assert_contains "$err1" "Failing CI log" "1. ci-log.sh's excerpt header prints a
 assert_contains "$err1" "boom: assertion failed" "1. the actual failing-step text is in the excerpt"
 RC1="$rc"
 
-# ── 2. red CI, log fetch fails (no failing check yet — e.g. still pending): refusal alone ──────
+# ── 2. red CI, log fetch fails (no failing check yet, for example still pending): refusal alone ──────
 : > "$LANDED"
 rc="$(STUB_MERGE_RC=3 STUB_GH_CHECKS_OK=0 run_rt 41)"
 err2="$(cat "$T/err.log")"

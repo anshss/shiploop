@@ -51,7 +51,7 @@
 #      exactly as the loop bookkept it. rc 3/4/5 (and anything unexpected) mean the PR is not
 #      known-good: do NOT land, print what happened and why, exit non-zero so the session can act.
 #      On rc 3, also print ci-log.sh's bounded excerpt of the failing run on stderr, alongside the
-#      refusal — the reader gets the actual failure instead of having to re-dispatch blind to find
+#      refusal, so the reader gets the actual failure instead of re-dispatching blind to find
 #      it. ci-log.sh is fail-open, so this never changes the refusal itself.
 #      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
@@ -210,12 +210,12 @@ if govern::is_validation_ticket "$tblock"; then
   esac
 fi
 
-# Print ci-log.sh's bounded excerpt for a refused PR on stderr, alongside the refusal above it —
+# Print ci-log.sh's bounded excerpt for a refused PR on stderr, alongside the refusal above it.
 # the advisor's cheapest next move without it is a full re-dispatch to rediscover what CI already
 # knows. ci-log.sh is fail-open by design: a missing `gh`, a network failure, a run still pending
 # with no failing check yet, or any other problem prints nothing and exits nonzero, so this call
 # can never change what caller prints or how it exits. `|| true` plus the explicit `return 0`
-# below keep it that way under `set -euo pipefail` — this function's exit status is never checked
+# below keep it that way under `set -euo pipefail`: this function's exit status is never checked
 # and must never propagate.
 rt_print_ci_excerpt() { # <repo> <pr>
   local excerpt

@@ -2,7 +2,7 @@
 # ci-log.sh <repo> <pr> — print a BOUNDED excerpt of the failing CI job's log for a PR.
 #
 # Workers verify on macOS; CI runs Linux. A PR that is correct locally fails on a portability
-# difference — a `sed -i` without a backup arg, a BSD-vs-GNU flag, a case-insensitive filesystem —
+# difference: a `sed -i` without a backup arg, a BSD-vs-GNU flag, a case-insensitive filesystem.
 # and the reader of a bare refusal has no evidence of which one it was.
 #
 # `resolve-ticket.sh` calls this script on a red-CI refusal and prints its output on stderr
