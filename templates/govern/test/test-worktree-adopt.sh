@@ -8,6 +8,12 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 set +e   # assert.sh sets -e; several calls below deliberately return non-zero
 
+# worker-prompt.md lives at a DIFFERENT path depending on where the suite runs from: the hub
+# (templates/governor) or a scaffolded workspace (<root>/governor). Resolve the first that
+# exists; if neither does, the suite is running from a layout that doesn't ship it, so skip
+# rather than fail on a path assumption.
+first_existing() { for p in "$@"; do [[ -f "$p" ]] && { printf '%s' "$p"; return 0; }; done; return 1; }
+
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
 # ── Sandbox: a real meta-repo root (git, branch main) plus one real sub-repo ("alpha", also
