@@ -32,6 +32,16 @@
 # verify-filter.sh): a passing run's output still lands in the transcript and
 # is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
 #
+# The same lever also BLOCKS, on its own switch: a matching unwrapped command is denied outright
+# (never just advised) when scripts/govern/verify-filter.sh is actually present at the resolved
+# workspace root -- same dual-layout resolve and permissionDecision "deny" shape the proposed-
+# solution gate below uses. A workspace without the wrapper installed falls through to the advisory
+# instead of denying, so a partially scaffolded or hand-built workspace can never be bricked by
+# this. Unlike every advisory in this file, the denial is NOT capped by MAX_WARNS_PER_SESSION: a
+# lever that silently stops firing after N occurrences reads as enforced while controlling nothing
+# for the rest of the session. Kill switch: GOVERN_VF_DENY=0, independent of GOVERN_VF_NUDGE so the
+# block can be turned off without losing the advice.
+#
 # THIRD behavior, and the only BLOCKING one in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
 # session. The session dispatches one as `Agent(subagent_type: "worker")` and
@@ -450,14 +460,60 @@ case "$tool_name" in
     ;;
 esac
 
-# --- separate advisory: unwrapped test/build runner should use verify-filter
-vf_reason=""
-if [ "$tool_name" = "Bash" ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
+# --- separate advisory/denial: unwrapped test/build runner should use verify-filter --------
+# Detection is unconditional (never gated on either switch below) so GOVERN_VF_NUDGE and
+# GOVERN_VF_DENY can each turn their own half off without disturbing the other's evidence.
+vf_command_hit=0
+if [ "$tool_name" = "Bash" ]; then
   if printf '%s' "$command" | grep -Eq \
       '(^|[[:space:];&|])(npm[[:space:]]+(run[[:space:]]+)?(test|build|check)([[:space:]]|$)|pytest([[:space:]]|$)|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|vitest([[:space:]]|$)|jest([[:space:]]|$)|tsc([[:space:]]|$))' \
     && ! printf '%s' "$command" | grep -Eq \
       '(verify-filter\.sh|npm[[:space:]]+run[[:space:]]+vf([[:space:]]|$))'; then
-    vf_reason="a test/build run not wrapped in verify-filter"
+    vf_command_hit=1
+  fi
+fi
+
+vf_reason=""
+if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
+  vf_reason="a test/build run not wrapped in verify-filter"
+fi
+
+# The denial itself (see header): fires only when the wrapper is provably installed at the
+# resolved workspace root, mirroring the proposed-solution gate's own dual-layout resolve
+# above -- a scaffolded workspace has it at <root>/scripts/govern/, the hub template tree has
+# it at templates/govern/ (one level up, not under scripts/). No match on either path means no
+# denial: falls through to the advisory below (if GOVERN_VF_NUDGE left it on) exactly as before
+# this change. Never rate limited -- this exits before the shared warn-cap counter is touched.
+if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_DENY:-1}" != "0" ]; then
+  VF_SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  vf_sh="$VF_SELF_ROOT/scripts/govern/verify-filter.sh"
+  [ -f "$vf_sh" ] || vf_sh="$VF_SELF_ROOT/govern/verify-filter.sh"
+  if [ -f "$vf_sh" ]; then
+    vf_deny="$(cat <<EOF
+[VERIFY-FILTER] Denied: this command matches a test/build runner and is not wrapped in
+verify-filter, which loses the context savings the wrapper exists for -- a passing run's output
+still lands in the transcript and is re-sent every later turn.
+
+Run the wrapped form instead:
+
+  npm run vf -- ${command}
+
+(or \`bash scripts/govern/verify-filter.sh -- ${command}\` directly). A passing run then emits
+nothing into context; a failing run still shows its bounded tail. Set GOVERN_VF_DENY=0 to turn
+this denial off for the session -- GOVERN_VF_NUDGE governs the advisory separately and stays on.
+EOF
+)"
+    python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
+  }
+}))
+' "$vf_deny" 2>/dev/null || true
+    exit 0
   fi
 fi
 
