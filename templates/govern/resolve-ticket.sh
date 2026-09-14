@@ -265,7 +265,7 @@ elif [[ -n "$pr_lines" ]]; then
         PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
         ;;
       3)
-        echo "resolve-ticket #$N: $_mrepo#$_mnum refused — CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2
+        echo "resolve-ticket #$N: $_mrepo#$_mnum refused: CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2
         rt_print_ci_excerpt "$_mrepo" "$_mnum"
         ALL_MERGED=0
         ;;
