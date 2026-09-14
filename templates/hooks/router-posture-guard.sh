@@ -13,11 +13,13 @@
 #   for it on every later turn. This hook fires a pointed, low-noise warn at the
 #   exact tool call so the driver can redirect the work to a sub-agent.
 #
-# Design constraints (from the ticket + the once-per-session reminder it extends):
-#   • The Read/Bash advisories NEVER block; they only advise via
-#     additionalContext. The ticket-route guard (below) is the one deliberate
-#     exception: it returns permissionDecision "deny" on Agent calls. Either
-#     way the script itself always exits 0.
+# Design constraints, shared with the once-per-session reminder this hook extends:
+#   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
+#     advises via additionalContext. Three deliberate exceptions elsewhere in
+#     this file return permissionDecision "deny": the verify-filter denial (a
+#     Bash call, its own switch), the ticket-route guard (an Agent call), and
+#     the proposed-solution gate (an Agent call, worker dispatches only).
+#     Either way the script itself always exits 0.
 #   • Low-noise / no per-turn token cost — a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
 #   • DRIVER only — skip when the call originates from a sub-agent (its
