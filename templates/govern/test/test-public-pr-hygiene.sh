@@ -8,7 +8,7 @@
 #   3. ticket_branch — neutral on public, ticket-<N> on private.
 #   4. find_pr — matches the neutral head.
 #   5. GUARD (pr_automerge_allowed via merge-pr.sh): a neutral branch is ALLOWED on a public repo,
-#      and on a private repo too — the guard has no branch-pattern leg, so branch shape never gates
+#      and on a private repo too: the guard has no branch-pattern leg, so branch shape never gates
 #      the merge; only the author and fork factors do.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -10,7 +10,7 @@
 #   C. gh api user   FAILS                                     → BLOCK exit 5, reason lookup-failed
 #   D. Own author    + own repo + green CI, branch ticket-42   → ALLOW exit 0, guard silent
 #   E. Own author    + own repo + green CI, branch vf-lever-enforce (a real worktree:new slug,
-#      matching no governor branch pattern) → ALLOW exit 0 — the guard no longer looks at branch
+#      matching no governor branch pattern) → ALLOW exit 0: the guard no longer looks at branch
 #      name at all, so a worktree:new slug merges same as any other own-author, non-fork PR.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
