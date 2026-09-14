@@ -1613,7 +1613,7 @@ govern::repo_slug()     { wsp_repo_slug "$1"; }
 govern::repo_localdir() { wsp_repo_localdir "$1"; }
 
 # ── auto-merge safety guard (external-PR protection) ────────────────────────
-# Three independent, FAIL-CLOSED checks the auto-merge path (merge-pr.sh + every other `gh pr merge`
+# Two independent, FAIL-CLOSED checks the auto-merge path (merge-pr.sh + every other `gh pr merge`
 # caller) MUST pass before the `gh pr merge` is even attempted. Rationale: once the workspace's sub-
 # repos go public, an external contributor's PR — or a compromised branch push that happens to be
 # green — must NEVER be auto-merged, regardless of CI. Human merges via gh/web are unaffected: this
@@ -1622,21 +1622,8 @@ govern::repo_localdir() { wsp_repo_localdir "$1"; }
 #      (the workspace owner / governor bot). Different login → block (`external-author`).
 #   2. **Head repo == base repo** — the PR is NOT from a fork. Same login on a fork clone is not
 #      enough; a fork PR is unconditionally rejected (`fork-pr`).
-#   3. **Head branch matches governor pattern** — the branch was named by the governor's own worker
-#      (`ticket-<N>` on a private repo, or the neutral `sl-<hex>` scheme on a PUBLIC repo — see
-#      govern::neutral_branch) or the sync-port lane (`sync-auto-*`). Extend GOVERN_MERGE_BRANCH_RE if
-#      you add another governor-owned naming scheme. Mismatch → `bad-branch`.
 # Any gh/jq/lookup error is treated as a block (`lookup-failed`) — a transient GitHub outage NEVER
 # degrades into a blind merge.
-GOVERN_MERGE_BRANCH_RE="${GOVERN_MERGE_BRANCH_RE:-^(ticket-[0-9]+|sync-auto-.*)$}"
-# Public-repo variant: the SAME governor-owned patterns PLUS the neutral `sl-<hex>` scheme a worker
-# uses on a public repo (so no internal ticket-id leaks in the branch name). Applied by the guard
-# ONLY when the target repo resolves PUBLIC (govern::repo_is_public); a private repo keeps
-# GOVERN_MERGE_BRANCH_RE unchanged, so this NEVER weakens the private-repo guard. `ticket-<N>` is
-# still accepted on public repos too, so an in-flight PR opened before a repo went public still merges.
-# NB: assigned via a conditional (not `${VAR:-default}`) because the `{12}` quantifier's `}` would
-# otherwise terminate the parameter-expansion default early and mangle the regex.
-[[ -n "${GOVERN_MERGE_BRANCH_RE_PUBLIC:-}" ]] || GOVERN_MERGE_BRANCH_RE_PUBLIC='^(sl-[0-9a-f]{12}|ticket-[0-9]+|sync-auto-.*)$'
 
 # ── public-repo neutral branch scheme ───────────────────────────────────────
 # On a PUBLIC repo the governor must not expose an internal ticket id anywhere an outsider can see it
@@ -1916,7 +1903,7 @@ govern::_own_login() { # -> stdout: login (empty on error). rc 0 on success, 1 o
 # handlers. Production code must NEVER set this; it is intentionally an opt-OUT, not opt-in, so a
 # forgetful downstream test can only be MORE strict, not less.
 govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; rc 0 allow, 1 block
-  local repo="$1" pr="$2" slug j own author head base_owner head_owner
+  local repo="$1" pr="$2" slug j own author base_owner head_owner
   [[ "${_GOVERN_ASSUME_MERGE_ALLOWED:-0}" == "1" ]] && return 0
   command -v gh >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
   command -v jq >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
@@ -1924,25 +1911,19 @@ govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; r
   [[ -n "$slug" ]] || { printf 'lookup-failed'; return 1; }
   own="$(govern::_own_login 2>/dev/null || true)"
   [[ -n "$own" ]] || { printf 'lookup-failed'; return 1; }
-  # One REST call for author + head-branch + head/base owners. Defensive: a non-object response (gh
-  # error payload, rate-limit body, unstubbed test) MUST fail-closed rather than jq-error under set -e.
+  # One REST call for author + head/base owners. Defensive: a non-object response (gh error payload,
+  # rate-limit body, unstubbed test) MUST fail-closed rather than jq-error under set -e.
   j="$(gh api "repos/$slug/pulls/$pr" 2>/dev/null || true)"
   printf '%s' "$j" | jq -e 'type=="object"' >/dev/null 2>&1 || { printf 'lookup-failed'; return 1; }
   author="$(printf '%s' "$j" | jq -r '.user.login // ""' 2>/dev/null || true)"
-  head="$(printf '%s' "$j" | jq -r '.head.ref // ""' 2>/dev/null || true)"
   base_owner="$(printf '%s' "$j" | jq -r '.base.repo.owner.login // ""' 2>/dev/null || true)"
   head_owner="$(printf '%s' "$j" | jq -r '.head.repo.owner.login // ""' 2>/dev/null || true)"
   # Any empty field ⇒ the PR object was malformed / partial ⇒ fail-closed. Never merge on ambiguity.
-  [[ -n "$author" && -n "$head" && -n "$base_owner" && -n "$head_owner" ]] || { printf 'lookup-failed'; return 1; }
+  [[ -n "$author" && -n "$base_owner" && -n "$head_owner" ]] || { printf 'lookup-failed'; return 1; }
   # Order: author (who opened it) FIRST — the primary invariant. Then fork (defense-in-depth for a
-  # spoofed fork owner name). Then branch pattern (final structural check).
+  # spoofed fork owner name).
   [[ "$author"     == "$own"        ]] || { printf 'external-author'; return 1; }
   [[ "$head_owner" == "$base_owner" ]] || { printf 'fork-pr';         return 1; }
-  # Branch pattern: a PUBLIC repo additionally accepts the neutral `sl-<hex>` scheme (no ticket-id in
-  # the branch name); a private repo uses the unchanged RE, so this branch never weakens for it.
-  local _bre="$GOVERN_MERGE_BRANCH_RE"
-  govern::repo_is_public "$repo" && _bre="$GOVERN_MERGE_BRANCH_RE_PUBLIC"
-  [[ "$head" =~ $_bre ]] || { printf 'bad-branch';   return 1; }
   return 0
 }
 

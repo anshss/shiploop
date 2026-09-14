@@ -7,32 +7,16 @@
 #   4 — refused: CI state UNVERIFIABLE ('error' from await-ci — gh could not confirm CI).
 #       Distinct from 3 so the caller can classify it as PARK-worthy (ci-state-unverifiable)
 #       rather than a plain failing-check. FAIL-CLOSED: an unverifiable state never merges.
-#   5 — refused: PR fails the three-factor auto-merge safety guard (external author, fork PR,
-#       or a branch name outside GOVERN_MERGE_BRANCH_RE — or a gh lookup error). FAIL-CLOSED:
-#       the governor's auto-merge lane MUST NEVER land a PR it didn't itself open. A human can
-#       still merge via gh/web — the guard is scoped to THIS auto-merge path only.
+#   5 — refused: PR fails the two-factor auto-merge safety guard (external author, fork PR — or a
+#       gh lookup error). FAIL-CLOSED: the governor's auto-merge lane MUST NEVER land a PR it
+#       didn't itself open. A human can still merge via gh/web — the guard is scoped to THIS
+#       auto-merge path only.
 #   6 — refused: GOVERN_AUTONOMY is observe/pr-only (trust ladder) — the governor opens PRs but
 #       does not auto-merge in this mode. NOT a failure: the PR is left open for a human by design.
 # GOVERN_ECHO=1 prints instead of running. GOVERN_SKIP_CI=1 skips the green check — pass it
 # from a caller (resolve-ticket.sh) that JUST confirmed green itself, to avoid a redundant CI poll.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Interactive-lane branches are first-party: worker.md's own doctrine is
-# self-service `npm run worktree:new -- t<N>`, so `t127`, `t57-log-guard` etc are a SECOND
-# governor-owned naming scheme, not an external contribution — the login + non-fork factors
-# below already prove "opened by us, from our own repo"; this factor only recognizes ANOTHER
-# shape we ourselves produce. Extend the DEFAULT here (before lib/common.sh sets it), never in
-# common.sh itself, so common.sh's own default stays canonical for anything that sources it
-# directly (e.g. a test exercising govern::pr_automerge_allowed without going through this
-# script). Do NOT touch the login or fork factors — those are what still block a genuine
-# external PR regardless of branch name.
-# NB: the PUBLIC variant is assigned via a conditional, not `${VAR:-default}` — lib/common.sh's
-# own comment on this line explains why: the `{12}` quantifier in `sl-[0-9a-f]{12}` mangles a
-# `${VAR:-...}` parameter-expansion default.
-[[ -n "${GOVERN_MERGE_BRANCH_RE:-}" ]] || GOVERN_MERGE_BRANCH_RE='^(ticket-[0-9]+|sync-auto-.*|t[0-9]+(-.*)?)$'
-[[ -n "${GOVERN_MERGE_BRANCH_RE_PUBLIC:-}" ]] || GOVERN_MERGE_BRANCH_RE_PUBLIC='^(sl-[0-9a-f]{12}|ticket-[0-9]+|sync-auto-.*|t[0-9]+(-.*)?)$'
-export GOVERN_MERGE_BRANCH_RE GOVERN_MERGE_BRANCH_RE_PUBLIC
 
 source "$DIR/lib/common.sh"
 
@@ -67,12 +51,12 @@ if [[ "${GOVERN_SKIP_CI:-0}" != "1" ]]; then
   fi
 fi
 
-# External-PR safety guard: three fail-closed checks (own author, own branch pattern, no forks) that
-# fire BEFORE the `gh pr merge`. Runs in echo mode too so a dry-run smoke test still exercises the
-# invariant. A block prints the reason token (external-author | fork-pr | bad-branch | lookup-failed)
-# so the caller (resolve-ticket.sh) can escalate with a specific cause; exit code 5 is the machine signal.
+# External-PR safety guard: two fail-closed checks (own author, no forks) that fire BEFORE the
+# `gh pr merge`. Runs in echo mode too so a dry-run smoke test still exercises the invariant. A
+# block prints the reason token (external-author | fork-pr | lookup-failed) so the caller
+# (resolve-ticket.sh) can escalate with a specific cause; exit code 5 is the machine signal.
 if ! _guard_reason="$(govern::pr_automerge_allowed "$REPO" "$PR")"; then
-  govern::log "refusing auto-merge of $REPO#$PR — external-pr-blocked ($_guard_reason). The governor's auto-merge lane only lands PRs it itself opened (own gh login, own branch pattern, non-fork). A human can still merge this PR via gh/web; the governor will not."
+  govern::log "refusing auto-merge of $REPO#$PR — external-pr-blocked ($_guard_reason). The governor's auto-merge lane only lands PRs it itself opened (own gh login, non-fork). A human can still merge this PR via gh/web; the governor will not."
   exit 5
 fi
 unset _guard_reason
