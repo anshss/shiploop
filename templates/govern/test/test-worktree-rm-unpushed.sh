@@ -60,6 +60,22 @@ assert_eq "$(git -C "$R" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || ech
   "detached HEAD has no upstream (exercises the origin/main fallback)"
 assert_eq "$(unpushed_count "$R")" "1" "detached HEAD ahead of origin/main is counted (fallback path)"
 
+# local-main fallback: a remote-less root (NO origin at all — git remote -v empty, the operator's
+# binding "detect an upstream, never impose one" state) still catches an unreported commit, via
+# local `main` instead of `origin/main`. The missing remote changes WHICH ref we compare against,
+# never whether we check — a root-scope worktree with no remote must not report 0 unpushed just
+# because there's no remote to compare against at all.
+RL="$T/remoteless"; mkdir -p "$RL"
+( cd "$RL" && git init -q && git config user.email t@t && git config user.name t \
+    && git checkout -q -b main && echo one > a.txt && git add a.txt && git commit -qm one )
+assert_eq "$(git -C "$RL" remote 2>/dev/null)" "" "remote-less fixture genuinely has no origin"
+git -C "$RL" checkout -q --detach
+echo two > "$RL/b.txt"; git -C "$RL" add b.txt; git -C "$RL" commit -qm two
+assert_eq "$(unpushed_count "$RL")" "1" "remote-less root: detached HEAD ahead of local main is counted (no remote needed)"
+had_problem=0; check_worktree_dir "$RL" remoteless 2>"$T/err2.txt"
+assert_eq "$had_problem" "1" "remote-less root with an uncounted commit trips the guard [rootScope teardown safety net]"
+assert_contains "$(cat "$T/err2.txt")" "not pushed to its remote" "remote-less refusal message is the same as the remote-backed one"
+
 # a non-git dir is skipped, never a spurious refusal.
 mkdir -p "$T/plain"
 had_problem=0; check_worktree_dir "$T/plain" plain >/dev/null 2>&1

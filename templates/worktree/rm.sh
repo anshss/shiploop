@@ -48,14 +48,19 @@ WORKTREE_PATH=$(wt_registry_path_for "$NAME") || exit 1
 
 # Commits on HEAD not reachable from the repo's remote. Prefer the branch's configured upstream;
 # fall back to origin/main (the meta worktree is a DETACHED origin/main checkout with no upstream);
-# if neither resolves (no remote-tracking ref at all) we can't compare, so report 0 — never block
-# on a case we can't measure.
+# then local main (a remote-less root has no origin/main to fall back to at all — a missing remote
+# changes WHICH ref we compare against, never whether we check: the root is detect-never-impose, so
+# it must still be checked, just against local main instead); if none of those resolve (no
+# remote-tracking ref and no local main) we can't compare, so report 0 — never block on a case we
+# can't measure.
 unpushed_count() { # <dir>
   local dir="$1"
   if git -C "$dir" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
     git -C "$dir" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo 0
   elif git -C "$dir" rev-parse --verify origin/main >/dev/null 2>&1; then
     git -C "$dir" rev-list --count 'origin/main..HEAD' 2>/dev/null || echo 0
+  elif git -C "$dir" rev-parse --verify main >/dev/null 2>&1; then
+    git -C "$dir" rev-list --count 'main..HEAD' 2>/dev/null || echo 0
   else
     echo 0
   fi
