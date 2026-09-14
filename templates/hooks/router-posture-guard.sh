@@ -8,19 +8,21 @@
 #   router-posture-reminder.sh primes the delegate-heavy-work posture ONCE per
 #   session (UserPromptSubmit) and then stays quiet, so an *in-turn* violation
 #   isn't caught when it occurs. Per-turn cost is proportional to THIS session's
-#   context size, which is re-sent in full every turn — so a driver that reads a
+#   context size, which is re-sent in full every turn, so a driver that reads a
 #   1000+ line file inline or runs a verbose build bloats the window and re-pays
 #   for it on every later turn. This hook fires a pointed, low-noise warn at the
 #   exact tool call so the driver can redirect the work to a sub-agent.
 #
-# Design constraints (from the ticket + the once-per-session reminder it extends):
-#   • The Read/Bash advisories NEVER block; they only advise via
-#     additionalContext. The ticket-route guard (below) is the one deliberate
-#     exception: it returns permissionDecision "deny" on Agent calls. Either
-#     way the script itself always exits 0.
-#   • Low-noise / no per-turn token cost — a small per-session warn CAP (not a
+# Design constraints, shared with the once-per-session reminder this hook extends:
+#   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
+#     advises via additionalContext. Three deliberate exceptions elsewhere in
+#     this file return permissionDecision "deny": the verify-filter denial (a
+#     Bash call, its own switch), the ticket-route guard (an Agent call), and
+#     the proposed-solution gate (an Agent call, worker dispatches only).
+#     Either way the script itself always exits 0.
+#   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
-#   • DRIVER only — skip when the call originates from a sub-agent (its
+#   • DRIVER only: skip when the call originates from a sub-agent (its
 #     transcript_path lives under a .../subagents/ dir) or a governor worker
 #     (GOVERN_RUN set): those throwaway sub-sessions are the delegation *target*,
 #     so nudging them to "delegate" is noise.
@@ -32,7 +34,17 @@
 # verify-filter.sh): a passing run's output still lands in the transcript and
 # is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
 #
-# THIRD behavior, and the only BLOCKING one in this file: the ticket-route guard.
+# The same lever also BLOCKS, on its own switch: a matching unwrapped command is denied outright
+# (never just advised) when scripts/govern/verify-filter.sh is actually present at the resolved
+# workspace root -- same dual-layout resolve and permissionDecision "deny" shape the proposed-
+# solution gate below uses. A workspace without the wrapper installed falls through to the advisory
+# instead of denying, so a partially scaffolded or hand-built workspace can never be bricked by
+# this. Unlike every advisory in this file, the denial is NOT capped by MAX_WARNS_PER_SESSION: a
+# lever that silently stops firing after N occurrences reads as enforced while controlling nothing
+# for the rest of the session. Kill switch: GOVERN_VF_DENY=0, independent of GOVERN_VF_NUDGE so the
+# block can be turned off without losing the advice.
+#
+# THIRD behavior, one of three BLOCKING behaviors in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
 # session. The session dispatches one as `Agent(subagent_type: "worker")` and
 # steers it. Any Agent-tool child that is NOT subagent_type "worker" is a
@@ -99,8 +111,8 @@
 # its OWN file and its OWN kill switch -- a worker dispatch is a materially
 # different event from an inline-Read/verbose-build advisory and the two must not
 # share a budget or a cap. Advisory only, exactly like those: it never blocks a
-# dispatch, only flags one past MAX_WORKERS_PER_SESSION for the driver to notice.
-# The deny path above stays the only blocking mechanism in this file. Kill switch:
+# dispatch, only flags one past MAX_WORKERS_PER_SESSION for the driver to notice,
+# unlike the deny paths elsewhere in this file. Kill switch:
 # GOVERN_WORKER_FANOUT_NUDGE=0.
 #
 # Output contract: a PreToolUse hook that prints
@@ -129,7 +141,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
 
 # Parse the fields we need with one python3 pass (robust vs. nested tool_input).
 # Emits ONE FIELD PER LINE (newlines within values flattened to spaces) so empty
-# fields survive and we can read them portably (macOS system bash is 3.2 — no
+# fields survive and we can read them portably (macOS system bash is 3.2, no
 # `mapfile`; a tab-delimited `read` would also collapse the empty middle fields).
 {
   IFS= read -r tool_name
@@ -181,7 +193,7 @@ case "$transcript_path" in
 esac
 
 # --- ticket-route guard: ticket-shaped Agent work belongs to a worker --------
-# The one BLOCKING path in this file (see the header). A worker is already exempt above via the
+# One of three BLOCKING paths in this file (see the header). A worker is already exempt above via the
 # .../subagents/ transcript-path check, which is what actually identifies one. GOVERN_RUN=1 marks
 # a governor-spawned headless session (today: the sync-porter, not a worker) and is exempted above
 # for that unrelated reason. Either way, a worker sub-delegating with the Agent tool is never
@@ -450,14 +462,60 @@ case "$tool_name" in
     ;;
 esac
 
-# --- separate advisory: unwrapped test/build runner should use verify-filter
-vf_reason=""
-if [ "$tool_name" = "Bash" ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
+# --- separate advisory/denial: unwrapped test/build runner should use verify-filter --------
+# Detection is unconditional (never gated on either switch below) so GOVERN_VF_NUDGE and
+# GOVERN_VF_DENY can each turn their own half off without disturbing the other's evidence.
+vf_command_hit=0
+if [ "$tool_name" = "Bash" ]; then
   if printf '%s' "$command" | grep -Eq \
       '(^|[[:space:];&|])(npm[[:space:]]+(run[[:space:]]+)?(test|build|check)([[:space:]]|$)|pytest([[:space:]]|$)|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|vitest([[:space:]]|$)|jest([[:space:]]|$)|tsc([[:space:]]|$))' \
     && ! printf '%s' "$command" | grep -Eq \
       '(verify-filter\.sh|npm[[:space:]]+run[[:space:]]+vf([[:space:]]|$))'; then
-    vf_reason="a test/build run not wrapped in verify-filter"
+    vf_command_hit=1
+  fi
+fi
+
+vf_reason=""
+if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
+  vf_reason="a test/build run not wrapped in verify-filter"
+fi
+
+# The denial itself (see header): fires only when the wrapper is provably installed at the
+# resolved workspace root, mirroring the proposed-solution gate's own dual-layout resolve
+# above -- a scaffolded workspace has it at <root>/scripts/govern/, the hub template tree has
+# it at templates/govern/ (one level up, not under scripts/). No match on either path means no
+# denial: falls through to the advisory below (if GOVERN_VF_NUDGE left it on) exactly as before
+# this change. Never rate limited -- this exits before the shared warn-cap counter is touched.
+if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_DENY:-1}" != "0" ]; then
+  VF_SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  vf_sh="$VF_SELF_ROOT/scripts/govern/verify-filter.sh"
+  [ -f "$vf_sh" ] || vf_sh="$VF_SELF_ROOT/govern/verify-filter.sh"
+  if [ -f "$vf_sh" ]; then
+    vf_deny="$(cat <<EOF
+[VERIFY-FILTER] Denied: this command matches a test/build runner and is not wrapped in
+verify-filter, which loses the context savings the wrapper exists for -- a passing run's output
+still lands in the transcript and is re-sent every later turn.
+
+Run the wrapped form instead:
+
+  npm run vf -- ${command}
+
+(or \`bash scripts/govern/verify-filter.sh -- ${command}\` directly). A passing run then emits
+nothing into context; a failing run still shows its bounded tail. Set GOVERN_VF_DENY=0 to turn
+this denial off for the session -- GOVERN_VF_NUDGE governs the advisory separately and stays on.
+EOF
+)"
+    python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
+  }
+}))
+' "$vf_deny" 2>/dev/null || true
+    exit 0
   fi
 fi
 
@@ -465,7 +523,7 @@ fi
 
 # --- rate-limit: cap warns per session --------------------------------------
 # sanitize session_id for use in a filename (it's a UUID in practice, but never
-# trust it — keep only filename-safe chars so it can't path-traverse).
+# trust it: keep only filename-safe chars so it can't path-traverse).
 session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9._-' '_')"
 [ -n "$session_id" ] || session_id="nosession"
 counter="${TMPDIR:-/tmp}/metarepo-router-posture-guard-${session_id}"
