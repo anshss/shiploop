@@ -113,8 +113,8 @@ set -uo pipefail
 READ_LINE_THRESHOLD=1000   # a Read spanning >= this many lines counts as "large"
 MAX_WARNS_PER_SESSION=3    # after this many warns in a session, stay quiet
 # The fan-out cap: a starting point, not a derived constant. Chosen high enough that a
-# legitimate multi-ticket sweep ("several tickets, one at a time" per the operator
-# doctrine) doesn't nag on every dispatch, low enough that the measured "way too many
+# legitimate multi-ticket dispatch (several tickets, dispatched adjacently, per the
+# operator doctrine) doesn't nag on every dispatch, low enough that the measured "way too many
 # workers" symptom (every ticket-shaped signal steered independently, with zero
 # session-wide count) gets flagged before it compounds.
 MAX_WORKERS_PER_SESSION=5
@@ -305,7 +305,7 @@ print(json.dumps({
     "additionalContext": sys.argv[1],
   }
 }))
-' "[ROUTER POSTURE] This session has now dispatched ${fanout_count} workers. Each is a separate PR needing its own review and merge -- if this is one investigation spawning parallel units rather than ${fanout_count} genuinely independent tickets, prefer an investigator/sweep instead, or dispatch the remaining tickets one at a time as each prior one lands. Set GOVERN_WORKER_FANOUT_NUDGE=0 to silence this for the session." 2>/dev/null || true
+' "[ROUTER POSTURE] This session has now dispatched ${fanout_count} workers. Each is a separate PR needing its own review and merge -- if this is one investigation spawning parallel units rather than ${fanout_count} genuinely independent tickets, prefer an investigator/sweep instead; independent tickets can keep dispatching adjacently, own worktree each. Set GOVERN_WORKER_FANOUT_NUDGE=0 to silence this for the session." 2>/dev/null || true
       fi
     fi
     exit 0
