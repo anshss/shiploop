@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # resolve-ticket.sh — the SESSION-SIDE resolve path for ticket N (shiploop 1.19.2, the loop purge).
 #
-# Before this script, the ONLY thing that landed a resolution was the autonomous loop
-# (run-loop.sh): it awaited CI, merged the PR, then piped the worker's report into the bookkeep
-# script. A worker in the interactive model stops at PR-open plus a report, so nothing finished
-# the job for a plain Claude Code session. This script is that missing step: hand it the exact
-# report a worker (headless or interactive) produced, and it awaits CI, merges, applies the prod
-# migration if one is needed, and lands the ticket exactly the way the loop used to.
+# A worker stops at PR-open plus a report; nothing else finishes the job for a plain Claude Code
+# session. This script is that missing step: hand it the exact report a worker (headless or
+# interactive) produced, and it awaits CI, merges, applies the prod migration if one is needed,
+# and lands the ticket.
 #
 # Usage:  printf '%s' "$report" | resolve-ticket.sh <N> [--no-merge]
 #   <N>          the ticket number.
@@ -36,9 +34,8 @@
 #      "no PR" path — that silent fall-through once deleted a queue block while the PR sat open,
 #      unmerged. This runs BEFORE any bookkeeping, so a refusal here leaves tickets.md untouched.
 #   3. PR-hygiene backstop: strip a leaked internal #N reference from the PR's title/body, and warn
-#      if a Claude spec/plan artifact leaked into the diff. Ported from run-loop.sh's per-ticket
-#      PR-hygiene block; scoped, like the original, to the single reported .pr (not every PR a
-#      multi-repo ticket opened).
+#      if a Claude spec/plan artifact leaked into the diff. Scoped to the single reported .pr (not
+#      every PR a multi-repo ticket opened).
 #   4. The validation-evidence gate (no live-test evidence / gate measured a negative):
 #      refuse to land, explain which of the two rules tripped, exit non-zero. A refusal here is a
 #      product-judgment call the worker must never make for itself.
@@ -56,15 +53,14 @@
 #      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
 #      or with --no-merge once they handled it by hand).
-#   6. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD the way run-loop.sh
-#      did (same destructive-migration refusal, same local-first neutralization, same
-#      apply-then-verify-then-classify-the-failure shape).
+#   6. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD: refuse a destructive
+#      migration, neutralize it locally first, then apply, verify, and classify any failure.
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
 #      the codebase index (GOVERN_INDEX) and tear down the ticket's worktree.
-#   9. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), preserving the
-#      exact JSON shape run-loop.sh's record()/history_enrich() wrote.
+#   9. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), in the
+#      {ticket,run,status,ts} shape every reader expects.
 #
 # Kill switch: GOVERN_RESOLVE_TICKET=0 refuses to run at all (exit 1) — there is no sensible
 # "quiet no-op" for the one script that lands a resolution; a silent skip here would look like a
@@ -113,34 +109,14 @@ _norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report"
 }
 
 # ── ticket-history.jsonl writer ─────────────────────────────────────────────────────────────────
-# Mirrors run-loop.sh's record()/history_enrich() exactly (same JSON shape: {ticket,run,status,ts}
-# plus tokens/costUsd/model/effort/attempt/usageSource/churn/repos) so govern-health.sh — which
-# reads ONLY this file — keeps an input now that the loop no longer writes it. "run" falls back to
-# "manual" exactly like land-resolution.sh's own --source string does when GOVERN_RUN_DIR is unset.
+# Writes govern-health.sh's only input, in the {ticket,run,status,ts} shape plus
+# tokens/costUsd/model/effort/attempt/usageSource/churn/repos. "run" falls back to "manual" exactly
+# like land-resolution.sh's own --source string does when GOVERN_RUN_DIR is unset.
 rt_history_enrich() { # -> json extra fields (tokens/costUsd/model/effort/attempt/usageSource/churn/repos)
-  local logdir jsonl attempts_file extra
+  local logdir jsonl extra
   logdir="$(govern::worker_logdir "$N")"
   jsonl="$logdir/worker.jsonl"
-  attempts_file="$logdir/attempts.jsonl"
-  extra='{}'
-  if [[ -s "$attempts_file" ]]; then
-    extra="$(jq -sc '
-      ([ .[] | select(.tokens != null) ]) as $wt
-      | { tokens: (if ($wt|length) == 0 then null else
-            ($wt | reduce .[] as $r ({input:0,output:0,cacheRead:0,cacheCreation:0,total:0};
-              {input:        (.input        + ($r.tokens.input        // 0)),
-               output:       (.output       + ($r.tokens.output       // 0)),
-               cacheRead:    (.cacheRead    + ($r.tokens.cacheRead    // 0)),
-               cacheCreation:(.cacheCreation+ ($r.tokens.cacheCreation// 0)),
-               total:        (.total        + ($r.tokens.total        // 0))})) end),
-          costUsd: ([ .[].costUsd | select(. != null) ] | if length == 0 then null else add end),
-          model:       (.[-1].model       // null),
-          effort:      (.[-1].effort      // null),
-          attempt:     (.[-1].attempt     // length),
-          usageSource: (.[-1].usageSource // null) }' "$attempts_file" 2>/dev/null || echo '{}')"
-  else
-    extra="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{}')"
-  fi
+  extra="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{}')"
   [[ -n "$extra" ]] || extra='{}'
   local repos nrepos nself _r churn
   repos="$(printf '%s' "$report" | jq -c '[ (.pr // empty), (.prs // [])[] ]
@@ -173,9 +149,9 @@ rt_record_history() { # status note
   return 0
 }
 
-# ── 1. PR-hygiene backstop (ported from run-loop.sh:1427-1453) ─────────────────────────────────
-# Scoped to the single reported .pr, exactly like the original — a multi-repo ticket's OTHER PRs
-# are handled by the merge loop below, not by this scrub.
+# ── 1. PR-hygiene backstop ──────────────────────────────────────────────────────────────────────
+# Scoped to the single reported .pr: a multi-repo ticket's OTHER PRs are handled by the merge
+# loop below, not by this scrub.
 _pr_num="$(jq -r '.pr.number // ""' <<<"$report" 2>/dev/null || true)"
 _pr_url="$(jq -r '.pr.url // ""' <<<"$report" 2>/dev/null || true)"
 _pr_repo="$(jq -r '.pr.repo // ""' <<<"$report" 2>/dev/null || true)"
@@ -193,7 +169,7 @@ if [[ -n "$_pr_num" ]]; then
   fi
 fi
 
-# ── 2. The validation-evidence gate (ported from run-loop.sh:1455-1500) ────────────────────────
+# ── 2. The validation-evidence gate ─────────────────────────────────────────────────────────────
 tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
 if govern::is_validation_ticket "$tblock"; then
   case "$(govern::validation_gate_action "$report")" in
@@ -224,8 +200,8 @@ rt_print_ci_excerpt() { # <repo> <pr>
   return 0
 }
 
-# ── 3. Await CI + merge every PR the report names (ported from run-loop.sh's per-PR merge walk).
-#    merge-pr.sh calls await-ci.sh internally (never reimplemented here). ─────────────────────
+# ── 3. Await CI + merge every PR the report names. merge-pr.sh calls await-ci.sh internally
+#    (never reimplemented here). ────────────────────────────────────────────────────────────────
 pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
 MERGE_REPO_MERGED=0
 if [[ "$NO_MERGE" -eq 1 ]]; then
@@ -282,8 +258,8 @@ else
   echo "resolve-ticket #$N: no PR found on the report (.pr/.prs[] empty, none discovered) — nothing to merge; landing the resolution as-is." >&2
 fi
 
-# ── 4. Prod migration (ported from run-loop.sh:1630-1679, same destructive refusal + local-first
-#    neutralization + apply-then-verify-then-classify shape) ───────────────────────────────────
+# ── 4. Prod migration: destructive refusal + local-first neutralization + apply-then-verify-
+#    then-classify shape ───────────────────────────────────────────────────────────────────────
 mneeded="$(jq -r '.migration.needed // false' <<<"$report" 2>/dev/null || echo false)"
 mdestr="$(jq -r '.migration.destructive // false' <<<"$report" 2>/dev/null || echo false)"
 
@@ -388,8 +364,8 @@ else
   fi
 fi
 
-# ── 6. Worker-boundary cleanup that belongs wherever a resolution lands (ported from
-#    run-loop.sh:1707-1720): codebase-index refresh + worktree teardown. ───────────────────────
+# ── 6. Worker-boundary cleanup that belongs wherever a resolution lands: codebase-index refresh
+#    + worktree teardown. ─────────────────────────────────────────────────────────────────────
 if [[ "${GOVERN_INDEX:-1}" != "0" ]]; then
   "$DIR/codebase-index.sh" build >/dev/null 2>&1 || true
 fi

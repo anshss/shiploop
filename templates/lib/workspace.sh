@@ -103,12 +103,10 @@ export GOVERN_INDEX="${GOVERN_INDEX:-1}"                                   # 0 =
 export GOVERN_VERIFY_FILTER="${GOVERN_VERIFY_FILTER:-1}"                   # 0 = stop collapsing a passing build/test run to one line
 export GOVERN_RUN_MAX_TOKENS="${GOVERN_RUN_MAX_TOKENS:-0}"                 # >0 = stop the run cleanly once this many tokens are spent (0 = no run-level brake)
 
-# ── GOVERN_PARALLEL_DEFAULT (retired) ─────────────────────────────────────────
-# Used to size the autonomous dispatch loop's (run-loop.sh) locality-group fan-out: how many full
-# driver children ran concurrently, one per group, each contending on the per-ticket claim lock.
-# The loop is retired: the session lane (pre-dispatch-check.sh → a worker → resolve-ticket.sh)
-# handles one ticket at a time, so no surviving script reads this knob any more. Left exported so
-# an existing override does not error on startup; safe to delete from your own workspace.sh.
+# ── GOVERN_PARALLEL_DEFAULT ───────────────────────────────────────────────────
+# No script reads this knob: the session lane (pre-dispatch-check.sh → a worker →
+# resolve-ticket.sh) handles one ticket at a time. Left exported so an existing override does not
+# error on startup; safe to delete from your own workspace.sh.
 export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 
 # ── Trust ladder (GOVERN_AUTONOMY) ───────────────────────────────────────────

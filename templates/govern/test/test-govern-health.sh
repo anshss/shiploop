@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Governor self-ROI telemetry: govern-health.sh computes park rate + self-referential churn
 # classification + tokens-per-ticket from ticket-history.jsonl, and resolve-ticket.sh's
-# rt_history_enrich() (the loop purge moved run-loop's record()/history_enrich() here) ENRICHES each
+# rt_history_enrich() ENRICHES each
 # history entry with token spend (from the worker's log stream) + a churn flag (from the report's PR
 # repos). Two parts: (A) the health computation over a synthetic history, UNCHANGED; (B) a proof
 # that a real resolve-ticket.sh pass writes an enriched history row (tokens/costUsd/churn). Hermetic
