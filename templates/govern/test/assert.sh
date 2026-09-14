@@ -30,7 +30,7 @@ export _GOVERN_ASSUME_MERGE_ALLOWED=1
 # Hermetic driver-context input: the suite is routinely run BY a governor worker whose own session
 # exports GOVERN_FIX_CI=<repo>#<pr> for a CI-fix re-dispatch. Inheriting it would leak that context
 # into tests that have nothing to do with it. Clear it here so a run is identical inside and outside
-# a governor session — the precedent the dispatch-path mechanisms below follow.
+# a governor session: the precedent the dispatch-path mechanisms below follow.
 unset GOVERN_FIX_CI
 
 # Hermetic sizing: a scout pass would run a REAL `claude -p` on the dispatch path, so leaving this on

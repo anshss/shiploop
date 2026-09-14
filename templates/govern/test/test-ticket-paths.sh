@@ -2,7 +2,7 @@
 # govern::ticket_paths: the measured file scope a ticket carries. Proves:
 #   (A) it returns MEASURED file paths only (an explicit `**Files:**` field), ignores shell-variable
 #       interpolations and globs, and returns "" for a ticket whose only scope signal is `Where:`
-#       PROSE — prose is not a measurement, and keying on it forced a leaf-directory approximation
+#       PROSE: prose is not a measurement, and keying on it forced a leaf-directory approximation
 #       that collapsed the backlog into a couple of buckets.
 # This is the same measured signal the deterministic-apply.sh path allowlist and the dispatch-time
 # overlap nudge both key off.
@@ -30,17 +30,17 @@ cat > "$TF" <<'EOF'
 
 Body prose mentioning some/other/path.ts that must not enter the measured set.
 ---
-## #3 — spawn-worker retry
+## #3, spawn-worker retry
 **Severity:** Medium
 
 **Files:** templates/govern/resolve-ticket.sh templates/govern/spawn-worker.sh $WORKTREE_BASE/ticket-N
 ---
-## #5 — no paths at all
+## #5, no paths at all
 **Severity:** Medium
 
 Where: the operator's judgment about how aggressive the default should be
 ---
-## #6 — prose is not a measurement
+## #6, prose is not a measurement
 **Severity:** Low
 
 Where: templates/govern/spawn-worker.sh and templates/govern/lib/common.sh
@@ -56,7 +56,7 @@ assert_eq "$(govern::ticket_paths 3 "$TF" | tr '\n' ' ')" \
   "A2: \$VAR interpolation is dropped, not treated as a measured path"
 assert_eq "$(govern::ticket_paths 5 "$TF")" "" "A3: a ticket declaring no path is unmeasured"
 assert_eq "$(govern::ticket_paths 6 "$TF")" "" \
-  "A4: prose Where: is NOT a measurement — no key, so no batch"
+  "A4: prose Where: is NOT a measurement (no key, so no batch)"
 # Body prose must never leak into the measured set.
 assert_absent "$(govern::ticket_paths 1 "$TF")" "some/other/path.ts" \
   "A5: body prose paths are not measured scope"

@@ -76,7 +76,7 @@ CANDIDATES="$(mktemp "${TMPDIR:-/tmp}/govern-staleness.XXXXXX")"
 SG_TEST_OUT="$(mktemp "${TMPDIR:-/tmp}/govern-staleness-test.XXXXXX")"
 trap 'rm -f "$CANDIDATES" "$CANDIDATES.tmp" "$SG_TEST_OUT" 2>/dev/null || true' EXIT INT TERM HUP
 
-# The ticket's own **Files:** / **Where:** lines (bold or plain, list-marker tolerant — the queue
+# The ticket's own **Files:** / **Where:** lines (bold or plain, list-marker tolerant: the queue
 # contains both `**Where:** …` and bare `Where: …`).
 while IFS= read -r line; do
   case "$line" in

@@ -2372,7 +2372,7 @@ govern::ticket_paths() { # N [tickets-file] -> measured repo-relative paths, one
   local out="" block line
   # The measured file scope comes from ONE source: an explicit `**Files:**` list on the ticket.
   # Matched the way govern::ticket_deps matches `**Depends on:**`: anchored to the START of a line,
-  # bold-wrapping optional, COLON REQUIRED. `**Where:**` is deliberately NOT a source — it is PROSE,
+  # bold-wrapping optional, COLON REQUIRED. `**Where:**` is deliberately NOT a source: it is PROSE,
   # written before anything was measured, and keying on it forced a leaf-DIRECTORY-NAME approximation
   # that collapsed a whole backlog into a couple of buckets ("govern", "src", "lib").
   if [[ -f "$f" ]]; then

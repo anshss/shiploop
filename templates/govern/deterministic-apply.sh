@@ -179,7 +179,7 @@ fi
 # none yields "" here, so this guard fires rather than guessing at what the advisor meant to bound
 # the patch against.
 TARGETS="$(govern::ticket_paths "$N" 2>/dev/null || true)"
-[[ -n "$TARGETS" ]] || det::skip "the ticket has no measured paths (no \`**Files:**\` field) — nothing to bound the patch against"
+[[ -n "$TARGETS" ]] || det::skip "the ticket has no measured paths (no \`**Files:**\` field): nothing to bound the patch against"
 for p in "${DIFF_PATHS[@]}"; do
   det::path_allowed "$p" "$TARGETS" || det::skip "patched path '$p' is outside the ticket's measured paths"
 done

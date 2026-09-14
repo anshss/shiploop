@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Per-ticket outcome lookup for a BATCHED worker report: a group that partially fails must report
-# per-ticket outcomes, never collapse to one verdict — otherwise bookkeeping marks unfixed tickets
+# per-ticket outcomes, never collapse to one verdict: otherwise bookkeeping marks unfixed tickets
 # resolved and DELETES them. Proves govern::batch_ticket_status/govern::batch_ticket_note read the
 # report's `tickets` array (one `{ticket,status,note}` per ticket in the group) and are FAIL-CLOSED:
 # only an explicit `resolved` entry maps to resolved; a different status, a missing entry, an empty
@@ -26,7 +26,7 @@ assert_eq "$(govern::batch_ticket_note   "$report" 2)" "needs an operator call" 
 # The dangerous shapes: a group-level "resolved" must never leak onto a batched ticket.
 assert_eq "$(govern::batch_ticket_status '{"status":"resolved","tickets":[]}' 9)" "" "F6: empty tickets array ⇒ '' despite a resolved GROUP status"
 assert_eq "$(govern::batch_ticket_status '{"status":"resolved"}' 9)"             "" "F7: no tickets array at all ⇒ '' (legacy single-ticket report)"
-assert_eq "$(govern::batch_ticket_status 'not json at all' 9)"                   "" "F8: unparseable report ⇒ '' — fail closed, never resolved"
+assert_eq "$(govern::batch_ticket_status 'not json at all' 9)"                   "" "F8: unparseable report ⇒ '' (fail closed, never resolved)"
 assert_eq "$(govern::batch_ticket_status '{"tickets":[{"ticket":9}]}' 9)"        "" "F9: entry present but status missing ⇒ ''"
 
 assert_done
