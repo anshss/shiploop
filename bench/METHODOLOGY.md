@@ -104,11 +104,10 @@ question to ask.
 ## Quality is checked by a mechanical oracle, pass/fail only
 
 Unlike a purely transcript-derived model, this design can and does check whether a ticket was
-actually resolved: `verify_cmd` (the test the merged upstream PR made pass) is run against the
-arm's own tree, after the golden `test_patch` (test-file changes only) is applied. See "Verification"
-in `README.md`. This is PASS/FAIL against one mechanical oracle, never a quality score, and a
-backlog either arm fails to fully clear is dropped from the published set rather than counted as a
-partial success.
+actually resolved: `verify_cmd` is run against the arm's own tree once the arm finishes, nothing
+patched in first. See "Verification" in `README.md`. This is PASS/FAIL against one mechanical
+oracle, never a quality score, and a backlog either arm fails to fully clear is dropped from the
+published set rather than counted as a partial success.
 
 ## The ceiling
 
@@ -125,7 +124,7 @@ next to a headline for exactly that reason.
 The effect a comparison can show grows with how much work a backlog actually contains: a
 single-ticket backlog gives shiploop's context-carrying and routing levers almost nothing to act on,
 and the variance on a short run is largest exactly where the effect is smallest. This is an argument
-for a longer, curated backlog (see "There is no published (6+ ticket) live backlog yet" in
+for a longer, curated backlog (see "There is no published live backlog yet" in
 `bench/KNOWN-LIMITS.md`), not for reverting to a modeled counterfactual.
 
 ## The live harness's per-session ceiling
@@ -196,6 +195,6 @@ bash bench/run.sh --reps 2           # the real run over the published backlog s
 node bench/rollup.mjs                # the three metric cuts, selection, headline sentence
 ```
 
-There is no published headline to recompute right now: no curated 6+ ticket backlog exists yet
+There is no published headline to recompute right now: no curated backlog exists yet
 (`bench/KNOWN-LIMITS.md`), so there is nothing behind a committed `results.jsonl` for this to
 reproduce.

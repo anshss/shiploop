@@ -55,7 +55,6 @@ bench/
   backlogs/<name>/backlog.jsonl   the published backlog set (schema: backlogs/SCHEMA.md)
   pilot-backlogs/                 candidate pool, gitignored, never pushed
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
-  validate-backlog.sh             offline fail-to-pass gate; decides which backlogs are eligible
   arms.sh                         the two arm shapes (plus the private vanilla-fresh variant)
   record.sh                       result events -> results.jsonl rows, plus attribution reading
   rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
@@ -72,8 +71,8 @@ bench/
 | `shiploop` (with shiploop) | One `claude -p` session for the whole backlog, opened inside a workspace `scaffold.sh` actually built, same prompt as vanilla. It follows the installed doctrine — acts as advisor, spawns worker subagents through the native Agent tool — and bench scripts none of that sequence on its behalf. |
 | `vanilla-fresh` | A fresh session per ticket, sequential. Private record only, opt-in via `--arm vanilla-fresh`, never published. |
 
-Ticket text is byte-identical across arms; neither arm sees `verify_cmd`, `test_patch`, `merge_sha`,
-or `upstream_pr`. Neither arm is handed a curated tool list.
+Ticket text is byte-identical across arms; neither arm sees `verify_cmd`. Neither arm is handed a
+curated tool list.
 
 ## Attribution inside the treatment arm
 
@@ -146,39 +145,25 @@ name written onto each row and into the headline sentence).
 `fixture://` repo, so a non-dry run refuses it up front rather than failing halfway through a
 clone, and it can never be counted toward a published backlog total.
 
-## Verification: the golden test patch
+## Verification: a mechanical oracle, nothing mined
 
-`verify_cmd` is the test the merged upstream PR made pass, so **at the pinned `ref` it does not
-exist yet**. The oracle is therefore SWE-bench shaped, and the ordering is the contract:
+A backlog is purpose-built: its own tests already ship in the tree at the pinned `ref`, already
+failing. Nothing is mined from an upstream PR and nothing is patched onto the arm's tree at verify
+time. The ordering is the contract:
 
 1. Worktree at `ref`. The arm receives `title` and `body` verbatim and nothing else. It never sees
-   `test_patch`, `merge_sha`, `upstream_pr`, or `verify_cmd`.
+   `verify_cmd`.
 2. The arm finishes and commits.
-3. `git apply` the ticket's `test_patch` onto the arm's tree, then run `verify_cmd`.
-4. If the apply fails, record the sentinel `90` and treat the ticket as unresolved. No 3-way merge,
-   no fuzzy apply, no `--reject`.
+3. `verify_cmd` runs against the arm's own tree, exactly as it stands.
 
 Same path for both arms. Per-ticket outcomes land in `results/<run-id>/verify/<cell>.jsonl`, which
 is the private record; only the cell-level counts reach `results.jsonl`. Nothing is judged by a
 model. A backlog either arm fails to fully clear is dropped from the published set.
 
-### Backlog validation
-
-Before a backlog can enter the pilot it has to prove the fail-to-pass property offline:
-
-```bash
-bash bench/validate-backlog.sh --backlogs bench/pilot-backlogs --json
-```
-
-Per ticket, against a real clone, no model calls: `test_patch` must apply at `ref`, `verify_cmd`
-must FAIL there, and at `merge_sha` the test content must be present and `verify_cmd` must PASS.
-A backlog under `--min-tickets` (default 6) is marked unusable, and the gate exits non-zero when
-nothing is usable so a pilot script cannot proceed on an empty eligible set.
-
-**No published backlog meeting this bar exists yet.** `bench/backlogs/` carries only its schema and
-the test fixture; the only candidate pool is `bench/pilot-backlogs/`, gitignored and never pushed.
-Curating a real fail-to-pass backlog of at least six mined tickets is the gate on every figure this
-directory could ever publish, and it is out of scope for the mechanism itself.
+**No published backlog exists yet.** `bench/backlogs/` carries only its schema and the test
+fixture; the only candidate pool is `bench/pilot-backlogs/`, gitignored and never pushed. Curating
+and publishing a real backlog is the gate on every figure this directory could ever publish, and it
+is out of scope for the mechanism itself.
 
 ## Cost figures and account type
 
@@ -206,7 +191,7 @@ list ever tried to close: see `bench/KNOWN-LIMITS.md`.
 
 ## Tests
 
-`templates/govern/test/test-bench-{schema,cap,arms,rollup,selection,validate}.sh`, fixture-driven,
+`templates/govern/test/test-bench-{schema,cap,arms,rollup,selection}.sh`, fixture-driven,
 zero spawns except through canned streams. They resolve the hub as `$DIR/../../..` and skip (exit
 77) anywhere else, so they are listed in `tools/hub-context-tests.txt` and run by the
 `hub-context-tests` CI job from the checkout, where a skip is a hard failure.

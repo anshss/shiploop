@@ -38,10 +38,9 @@ Options:
 ## Phase 1 — The published result
 
 **There is currently no published result.** `bench/backlogs/` holds only the test fixture; no
-backlog meeting the design's own 6-ticket usability bar (`bench/validate-backlog.sh --min-tickets`,
-default 6) has been curated yet. Say this plainly, and point at `bench/KNOWN-LIMITS.md` ("There is
-no published (6+ ticket) live backlog yet") for the full reason — do not soften it into "results
-coming soon" or invent a placeholder figure.
+real backlog has been curated yet. Say this plainly, and point at `bench/KNOWN-LIMITS.md` ("There
+is no published live backlog yet") for the full reason: do not soften it into "results coming
+soon" or invent a placeholder figure.
 
 If this ever changes, the published result will be a committed `bench/results/<run-id>/results.jsonl`
 (or an explicit path an operator names) this phase reads with:
