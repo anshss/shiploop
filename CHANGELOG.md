@@ -1,5 +1,91 @@
 # Changelog
 
+## 1.19.11 - 2026-09-15
+
+### Added
+
+**`deterministic-apply.sh` applies an advisor-authored patch with no model call at all.** A ticket the
+advisor has already judged mechanical (a config bump, a stale line deleted, a known rename) takes
+`--patch <file>|-`, applies it, verifies it and opens the PR without ever invoking `claude`, so a
+purely mechanical change no longer costs a full worker spawn.
+
+Every guard resolves doubt to a fall-through rather than trying to recover: it rejects rename and
+binary patches, caps the file count, requires every patched path inside the ticket's measured
+**Files:** paths, resolves to exactly one owning sub-repo (refusing a patch spanning two or touching a
+root-level path), requires a clean tree on the default branch, refuses a live worktree collision, runs
+`git apply --check` before applying, and reverts on a failed operator-supplied verify command run
+through `verify-filter.sh`. `GOVERN_DETERMINISTIC=0` is the emergency disable; the path defaults on,
+since the advisor only reaches for it once it has already decided the ticket is mechanical.
+
+**A worker can land a named group of tickets from one PR.** Tickets sharing measured file paths can be
+dispatched as one group: one worker, one worktree, one branch, one PR, one report. `worker-prompt.md`'s
+new "Ticket groups" section states the hard rule first, that the branch only carries work for tickets
+the report marks resolved, and a ticket the worker cannot finish never lands on it.
+
+`resolve-ticket.sh`'s landing step reads a report's `tickets` array when present: it lands each
+resolved entry through `land-resolution.sh`, records parked or failed entries in ticket history, and
+leaves anything the array does not name untouched in the queue. A single-ticket report with no array
+lands exactly as before. Whether to group tickets is the dispatching session's call per name, not
+configuration: a `GOVERN_BATCH_MAX` knob was dropped in the same change, since a default-off knob on a
+token-savings mechanism never actually saves anything.
+
+**A retry can adopt a worktree a prior attempt left behind instead of erroring.** `worktree/new.sh`
+gains `--adopt`: by default an existing path at that name still errors, but with the flag, a registry
+match on the exact name and branch, and no live holder, it hands the tree back with its dirty state
+reported rather than checking out fresh or stashing. `pre-dispatch-check.sh` notes on stderr when a
+preserved worktree exists for a ticket, and `worker-prompt.md` and `worker.md` tell a worker to treat a
+prior attempt's own notes in an adopted tree as a starting point, never as fact.
+
+### Changed
+
+**Named-ticket dispatch runs workers adjacently instead of one at a time.** A worker spawned while
+another is still running reads the shared cache prefix instead of paying a full write for it, so naming
+several tickets now starts the next worker while the previous one's PR and resolution are still in
+flight, rather than walking each fully through gate, worker, resolve before starting the next. The
+per-ticket gate still runs individually before each worker starts, and a skip or refuse drops only that
+ticket, not the group; resolution stays sequential, and worktree isolation is stated alongside the
+doctrine so concurrency is never permission to share a tree. `templates/governor/README.md`, the seed
+`CLAUDE.md`, and both router-posture hooks describe adjacency in place of "one at a time".
+
+### Fixed
+
+**Worker lifecycle now shows up in status and the fleet monitor.** A worker subagent has no pid of its
+own, so nothing wrote `worker_spawned` or `worker_done`, and `status.sh`, the statusline segment and
+`fleet-monitor.sh` could never show a worker that was actually running. `worker-event-emit.sh` binds
+`SubagentStart` (with a `PreToolUse` fallback, made idempotent via a per-agent spawn marker) to emit
+`worker_spawned`, and `SubagentStop` to emit `worker_done`. Every row carries `agent_id` and
+`agent_type` where a pid used to sit; `status.sh` and the statusline fold and reap by that identity and
+by spawn-event age (`GOVERN_WORKER_STALE_S`) rather than `kill -0`. Driver liveness, a real forked
+`claude -p` process, still polls by pid since it has one.
+
+**`resolve-ticket.sh`'s red-CI refusal shows the failing excerpt instead of just saying no.** The rc=3
+branch (CI red or pending) was silent about which job failed or what it printed, leaving the reader
+holding a red PR with no evidence. `ci-log.sh` already produced a bounded, `gh`-only excerpt of the
+failing steps; it is now wired into that branch and printed on stderr alongside the refusal. The call is
+fail-open and guarded so it can never abort the script under `set -euo pipefail`, and
+`GOVERN_CI_LOG_MAX_LINES` is documented in CONFIGURATION.md.
+
+### Removed
+
+**The headless dispatch launcher, run-loop and scout machinery are deleted outright, not just
+disabled.** Earlier releases stopped calling `spawn-worker.sh`, `run-loop.sh` and `scout-ticket.sh`;
+this one removes the files along with everything that only existed to feed them: the `attempts.jsonl`
+ledger and its readers (`resolve-ticket.sh`'s `rt_history_enrich()` now reads `worker.jsonl` only),
+`measure-prefix.sh` and its request-capture proxy (`capture-proxy.mjs`, `capture-report.mjs`), and eight
+environment knobs with zero code readers (`GOVERN_WARM`, `GOVERN_EXECUTE_ONLY`, `GOVERN_RETRY_CLASSIFY`,
+`GOVERN_MAX_BAD_STREAK`, `GOVERN_MAX_RUNTIME`, `GOVERN_RESPEC_ON_CAPABILITY_FAIL`,
+`GOVERN_TOKEN_POLL_S`, `GOVERN_WORKER_MAX_TOKENS`) that README.md, SECURITY.md and SKILL.md documented
+as live despite no code backing them. `lib/common.sh` alone sheds 23 dead functions. Every comment and
+doc still describing the launcher as a live second lane, across code comments, `worker-prompt.md`,
+README.md, the seed `CLAUDE.md`, command docs and the plugin's asset diagrams, is rewritten
+present-tense to name the single in-session worker-subagent lane that runs today.
+
+**bench no longer carries the SWE-bench mining pipeline.** Nothing is mined for a backlog now: a bench
+seed ships purpose-built, with tests already in the tree and already failing, and an arm's only job is
+to make `verify_cmd` pass. `bench/validate-backlog.sh` and its test are deleted, `test_patch`,
+`merge_sha` and `upstream_pr` are stripped from the run.sh gate, the verify path and the fixture
+backlog, and every doc describing the old mining and patch flow is rewritten to match.
+
 ## 1.19.10 - 2026-09-13
 
 ### Added
