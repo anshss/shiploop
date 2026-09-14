@@ -210,8 +210,8 @@ fi
 
 # ── 9. dispatch-time overlap nudge (zero model calls, stderr only) ───────────────────────────
 # A non-blocking hint that some OTHER queued-but-unnamed ticket touches the files this one does, so
-# the operator can batch them into one worker. It never changes the verdict and never touches the
-# queue. GOVERN_OVERLAP_NUDGE=0 silences it.
+# the operator can expect overlapping exploration if both get worked. It never changes the verdict
+# and never touches the queue. GOVERN_OVERLAP_NUDGE=0 silences it.
 govern::overlap_nudge "$N" "$TICKETS_FILE" || true
 
 echo "proceed"
