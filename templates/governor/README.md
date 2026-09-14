@@ -109,7 +109,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   ask for. The scout used to score its survey into a `(model, effort)` verdict; that was measured as
   a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
   `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
-  `--verdict`/`--score` modes are deleted. `haiku` still runs the scout survey by default
+  `--verdict`/`--score` modes are deleted. `haiku` runs the scout survey by default
   (`GOVERN_SCOUT_MODEL`); the supervisor audit defaults to `sonnet` (`GOVERN_SUPERVISOR_MODEL`).
   Neither is a ticket-work tier.
 - Tickets do **not** carry effective `Model:` / `Effort:` fields. An entry still holding them is

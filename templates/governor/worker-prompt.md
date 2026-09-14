@@ -69,9 +69,9 @@ test to be brief is a failed ticket.
   the full suite, filtered.
 
 ## 3. Scratchpad + handoff — only DISK survives you
-On failure or timeout your worktree is PRESERVED, but a retry does not re-enter it: `worktree:new`
-hard-errors on an existing path, so a retry allocates a fresh worktree and starts COLD there, with
-no memory of this run. Files on disk survive; context does not.
+On failure or timeout your worktree is PRESERVED on disk. `worktree:new` hard-errors on an existing
+path, so a retry allocates a fresh worktree and starts COLD there: files on disk survive, context
+does not.
 
 Append terse bullets to `.governor-notes.md` at your worktree root (git-ignored) **as you go** — a
 timeout kills you before any final write: relevant files/symbols with `file:line`, ones you RULED

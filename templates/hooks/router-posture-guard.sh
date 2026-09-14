@@ -404,7 +404,7 @@ Paste this instead, one ticket at a time:
     prompt: "<the ticket text plus anything the worker needs to start>"
   )
 
-A worker STOPS at PR-open plus the report. Landing it is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. If the worker fails once, retry it once with \`model: opus\`, then stop and report.
+A worker STOPS at PR-open plus the report. Landing it is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. A worker that fails reports it, honest \`status\` plus \`escalation\`, rather than retrying; you own the one retry.
 
 Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer, or drafting/authoring prose about a ticket rather than resolving one)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") or an authoring framing ("draft"/"author" plus what you're producing: "prose", "write-up", "entries") with no SURVIVING write marker is already exempt; a write verb inside a prohibition ("do not open a PR", "never commit") does not count against you. Otherwise drop the dispatch verb, the ticket reference, and any item-shaped name/description (t<N>, ticket-<N>, w<N>), and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
