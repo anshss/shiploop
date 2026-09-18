@@ -11,6 +11,7 @@
 #   5. Silent for a sub-agent transcript path (.../subagents/...).
 #   6. The per-session warn cap is shared and respected: after
 #      MAX_WARNS_PER_SESSION warns in a session, the hook goes quiet.
+#   7. An unwrapped `node --test` (the stdlib runner form) fires the same way as npm test.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -83,6 +84,12 @@ done
 # must not exceed that many non-empty advisories.
 [ "$fires" -le 3 ] && printf 'ok   - 6. warn cap respected (%d fires over 5 calls, cap=3)\n' "$fires" || \
   { printf 'FAIL - 6. warn cap exceeded (%d fires over 5 calls, cap=3)\n' "$fires"; ASSERT_FAILS=$((ASSERT_FAILS+1)); }
+clear_counter "$sid"
+
+# ── 7. unwrapped node --test fires the vf nudge ──────────────────────────────
+sid="vfnudge-node-unwrapped"; clear_counter "$sid"
+out="$(payload Bash "node --test test/x.test.js" "$sid" "/tmp/fake-transcript.jsonl" | env -u GOVERN_RUN "$GUARD" 2>&1)"
+assert_contains "$out" "verify-filter" "7. unwrapped 'node --test' gets the vf nudge"
 clear_counter "$sid"
 
 assert_done

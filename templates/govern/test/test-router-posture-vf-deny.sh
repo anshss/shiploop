@@ -14,6 +14,7 @@
 #   3. no denial when the command is already wrapped, wrapper present or not.
 #   4. no denial when GOVERN_VF_DENY=0, even with the wrapper present.
 #   5. the denial is not rate limited: it fires on every one of several calls in one session.
+#   6. the same three checks (1, 3, 4) hold for `node --test`, the stdlib runner form.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -97,6 +98,24 @@ for i in 1 2 3 4 5; do
   case "$out" in *'"permissionDecision": "deny"'*) denies=$((denies + 1)) ;; esac
 done
 assert_eq "$denies" "5" "5. all 5 calls in one session are denied (the shared warn cap never gates this)"
+clear_counter "$sid"
+
+# ── 6. `node --test` (the stdlib runner form) → same three checks as npm test ──────────────
+vf_present
+sid="vfdeny-node-fires"; clear_counter "$sid"
+out="$(payload "node --test test/x.test.js" "$sid" "/tmp/fake-transcript.jsonl" | env -u GOVERN_RUN GOVERN_VF_DENY=1 "$GUARD" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "6a. wrapper present + unwrapped 'node --test' is DENIED"
+assert_contains "$out" "npm run vf -- node --test test/x.test.js" "6b. deny reason names the rewrapped command"
+clear_counter "$sid"
+
+sid="vfdeny-node-wrapped"; clear_counter "$sid"
+out="$(payload "npm run vf -- node --test test/x.test.js" "$sid" "/tmp/fake-transcript.jsonl" | env -u GOVERN_RUN GOVERN_VF_DENY=1 "$GUARD" 2>&1)"
+assert_not_contains "$out" '"permissionDecision": "deny"' "6c. already wrapped 'node --test': no denial, wrapper present"
+clear_counter "$sid"
+
+sid="vfdeny-node-killswitch"; clear_counter "$sid"
+out="$(payload "node --test test/x.test.js" "$sid" "/tmp/fake-transcript.jsonl" | env -u GOVERN_RUN GOVERN_VF_DENY=0 "$GUARD" 2>&1)"
+assert_not_contains "$out" '"permissionDecision": "deny"' "6d. GOVERN_VF_DENY=0 silences the denial for 'node --test' too"
 clear_counter "$sid"
 
 assert_done
