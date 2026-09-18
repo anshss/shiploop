@@ -2763,6 +2763,19 @@ govern::stream_grep() { # worker-jsonl [grep-flags...] pattern -> matching lines
 
 # Extract ONE worker attempt's token usage + cost from its stream. Two sources, in priority order:
 #   result            — the final `"type":"result"` event: authoritative tokens AND total_cost_usd.
+#                       Tokens are the sum of `.modelUsage` across every model entry when that map
+#                       is present and non-empty, never the bare `.usage` field: `.usage` counts
+#                       only the session's own turns, so a session that spawns subagents through the
+#                       Agent tool (billed on the SAME session, no separate stream of their own)
+#                       reports a total that omits every subagent's tokens while `total_cost_usd`
+#                       still includes their cost. `.modelUsage` is keyed by model and aggregates
+#                       every model touched, subagents included, and its own per-model `costUSD`
+#                       entries sum to `total_cost_usd` exactly, which is the corroborating check:
+#                       cost is a field this parser never has to fabricate, so a token figure that
+#                       must agree with it has an independent invariant to fail against. A stream
+#                       whose result event carries no `.modelUsage` at all (an older CLI, or a
+#                       session that made no model call under a per-model breakdown) falls back to
+#                       `.usage` directly, unchanged from before.
 #   assistant-partial — there is no result event because the worker was HARD-KILLED before it could
 #                       emit one (wall-clock timeout, token budget, a stop signal). Sum the per-turn
 #                       `.message.usage` carried on every `"type":"assistant"` event instead. This
@@ -2801,9 +2814,23 @@ govern::stream_usage() { # worker-jsonl -> usage JSON
   if [[ -n "$jsonl" && -s "$jsonl" ]]; then
     res="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 || true)"
     if [[ -n "$res" ]]; then
-      toks="$(printf '%s' "$res" | jq -c '(.usage // {}) as $u
-        | {input:($u.input_tokens//0), output:($u.output_tokens//0),
-           cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
+      # Prefer the sum across every `.modelUsage` entry: it is the complete figure, subagents
+      # included. Fall back to `.usage` only when `.modelUsage` is missing or empty, which keeps
+      # a stream from an older CLI (or any single-model session that never populated the map)
+      # reading exactly as it did before this sum existed.
+      toks="$(printf '%s' "$res" | jq -c '
+        (.modelUsage // {}) as $mu
+        | (.usage // {}) as $u
+        | if ($mu | type) == "object" and ($mu | length) > 0 then
+            ($mu | [.[].inputTokens // 0] | add) as $i
+            | ($mu | [.[].outputTokens // 0] | add) as $o
+            | ($mu | [.[].cacheReadInputTokens // 0] | add) as $r
+            | ($mu | [.[].cacheCreationInputTokens // 0] | add) as $c
+            | {input:$i, output:$o, cacheRead:$r, cacheCreation:$c}
+          else
+            {input:($u.input_tokens//0), output:($u.output_tokens//0),
+             cacheRead:($u.cache_read_input_tokens//0), cacheCreation:($u.cache_creation_input_tokens//0)}
+          end
         | .total = (.input + .output + .cacheRead + .cacheCreation)' 2>/dev/null || echo null)"
       cost="$(printf '%s' "$res" | jq -c '.total_cost_usd // null' 2>/dev/null || echo null)"
       # A result event that carries NO usage at all (total 0) is not data — fall through to the

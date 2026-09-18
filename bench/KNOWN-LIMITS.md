@@ -182,6 +182,19 @@ the operator's own tier and let the treatment route freely, and always name whic
 ran on in the report, so a reader can see this confound rather than have it hidden by forced
 equality.
 
+## The one published-shaped token figure predating this fix was an artifact
+
+Before `govern::stream_usage` summed `modelUsage` for the token total, the with-shiploop arm's
+result event's own `usage` field counted only the advisor session's own turns, silently excluding
+every subagent it spawned. Run `20260914T210013Z` (`cel-js-mini`, 1 rep, both arms cleared 2/2)
+printed the with-shiploop arm using 1222626 tokens against the vanilla arm's 5750229, an apparent
+78.7 percent reduction. The same run's own summed `modelUsage` (subagents included) tells a
+different story: 8417212 for shiploop against 5751498 for vanilla, which is 46 percent MORE, with
+cost flat at about 1.5 percent lower (`total_cost_usd` was never affected by this defect: it already
+priced every subagent, which is how the divergence was caught). **No token count or token-reduction
+percentage this harness produced before this fix should be quoted; the 78.7 percent figure in
+particular is retracted.**
+
 ## Run scope: `GOVERN_RUN_DIR` is set by the arm, nothing is stamped for a modeling tool any more
 
 `bench::arm_shiploop` still mints its own per-arm run directory and exports `GOVERN_RUN_DIR` before
