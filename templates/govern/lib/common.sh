@@ -1766,6 +1766,36 @@ govern::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 n
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
 }
 
+# Capability probe: does $claude_bin support `--settings`? Same reasoning and cache pattern as the
+# probes above. Added so a spawn path can hand a session a `permissions.allow` grant through a
+# settings payload instead of a CLI tool-list flag: `--tools`/`--allowedTools` both name the tools
+# a session gets, so reaching for either to grant one capability would also decide the tool
+# schema question at the same time, which is not what a permission grant is for. `--settings` sets
+# permission rules without touching the tool list at all.
+# Test seam: pre-seed _GOVERN_SETTINGSFLAG_SUPPORTED=1|0 to skip the probe entirely.
+_GOVERN_SETTINGSFLAG_PROBE_CACHE="${GOVERN_SETTINGSFLAG_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-settings-flag-support}"
+govern::claude_supports_settings_flag() { # <claude_bin> -> rc 0 supported, 1 not
+  local bin="$1"
+  local cached=""
+  if [[ -n "${_GOVERN_SETTINGSFLAG_SUPPORTED:-}" ]]; then
+    if [[ "$_GOVERN_SETTINGSFLAG_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
+  fi
+  [[ -f "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" 2>/dev/null || true)"
+  if [[ -z "$cached" ]]; then
+    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--settings '; then
+      cached="1"
+    else
+      cached="0"
+    fi
+    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
+      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --settings"
+    fi
+    mkdir -p "$(dirname "$_GOVERN_SETTINGSFLAG_PROBE_CACHE")" 2>/dev/null || true
+    printf '%s' "$cached" > "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" 2>/dev/null || true
+  fi
+  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
+}
+
 # Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
 # Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
 # macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled

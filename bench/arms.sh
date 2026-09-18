@@ -154,6 +154,55 @@ bench::resolve_forward_subagent_flag() { # <claude_bin>
   bench::die "claude CLI ($bin) does not support --forward-subagent-text, so the treatment arm's advisor/worker attribution cannot be measured. Upgrade the claude CLI, or set BENCH_FORWARD_SUBAGENT_TEXT=0 to run without attribution deliberately (the headline cost/token numbers are unaffected either way — attribution is never the headline)."
 }
 
+# ── Bash permission grant, identical on both arms ───────────────────────────
+# A subagent inherits the PARENT session's permission mode whenever the parent runs
+# bypassPermissions, acceptEdits, or auto: its own declared `permissionMode` (the scaffolded
+# worker.md sets `bypassPermissions`) is ignored in that case (code.claude.com/docs/en/sub-agents).
+# Every arm here spawns with `--permission-mode acceptEdits`, and acceptEdits auto-approves file
+# edits plus a narrow filesystem set (mkdir, touch, rm, rmdir, mv, cp, sed) but not general Bash
+# (code.claude.com/docs/en/permission-modes). Under `-p` there is no prompt to fall back to, so an
+# unapproved Bash call is refused outright. This bites the shiploop arm's own worker subagents,
+# never the vanilla arm, which spawns none.
+#
+# The fix is a `permissions.allow` rule, not a tool-list flag: `--tools`/`--allowedTools` both name
+# which tools a session gets, so reaching for either to grant Bash would also decide the tool-schema
+# question the file header already rules out of bounds for both arms. A `permissions.allow` rule
+# carries no such side effect and, unlike a mode, is not something a subagent's own declaration can
+# override or lose: it is session-wide permission configuration, so it reaches every subagent too.
+#
+# Verified empirically on claude 2.1.246 (the version the fairness gap was observed on): a
+# subagent with `permissionMode: bypassPermissions` in its frontmatter, dispatched from a parent
+# running `--permission-mode acceptEdits --settings '{"permissions":{"allow":["Bash"]}}'`, ran a
+# Bash command with zero `asyncAgent` / `permission_denied` refusals.
+#
+# Gated on a cached `--help` probe per CLAUDE.md anti-pattern 12, never a version compare, with its
+# own pre-seed seam (`_GOVERN_SETTINGSFLAG_SUPPORTED`) and env kill switch (`BENCH_BASH_GRANT=0`).
+# An unsupported CLI is a HARD STOP, the same shape as --forward-subagent-text above: there is no
+# substitute that grants Bash without also touching the tool list, so degrading silently would put
+# the two arms back in different permission regimes with nothing in the run to show it.
+#
+# Lives in bench::spawn, the one place every arm's session is launched, so there is no per-arm call
+# site that could apply the grant to one arm and not the other.
+bench::claude_supports_settings_flag() { # <claude_bin> -> rc 0 supported, 1 not
+  govern::claude_supports_settings_flag "$1"
+}
+
+# Sets the global `bench_bash_grant_flag` (empty or `--settings <json>`). Hard-stops the whole run
+# when unsupported and no override is set, same reasoning as bench::resolve_forward_subagent_flag.
+bench::resolve_bash_grant_flag() { # <claude_bin>
+  local bin="$1"
+  bench_bash_grant_flag=""
+  if [[ "${BENCH_BASH_GRANT:-1}" == "0" ]]; then
+    bench::log "BENCH_BASH_GRANT=0, omitting the Bash permission grant (disabled by operator); both arms keep whatever the acceptEdits/subagent-inheritance combination leaves them, which may refuse a subagent's Bash calls"
+    return 0
+  fi
+  if bench::claude_supports_settings_flag "$bin"; then
+    bench_bash_grant_flag='--settings {"permissions":{"allow":["Bash"]}}'
+    return 0
+  fi
+  bench::die "claude CLI ($bin) does not support --settings, so neither arm can be given the Bash permission grant that keeps them on one permission regime. Upgrade the claude CLI, or set BENCH_BASH_GRANT=0 to run without the grant deliberately (both arms will then face whatever acceptEdits leaves them, identically, but a subagent's Bash calls may be refused)."
+}
+
 # ── prompts ─────────────────────────────────────────────────────────────────
 # Byte-identical ticket text across arms: both of these render from the same backlog.jsonl fields
 # through the same jq program, so there is one place where the wording lives.
@@ -372,9 +421,15 @@ bench::scaffold_workspace() { # <repo-workdir> <name> <repo-slug> -> workspace p
 # identical across arms. Extra args (the resolved --max-turns / --forward-subagent-text) are
 # appended verbatim. No --tools flag: the CLI's own default toolset, MCP included, is what BOTH
 # arms get now — see the file header for why.
+#
+# The Bash permission grant (bench::resolve_bash_grant_flag, above) is resolved and appended HERE
+# rather than by each arm function, so there is exactly one call site for it: an arm cannot spawn a
+# session through this file without going through it, so there is no way for one arm to end up
+# with the grant and the other without it.
 bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
   local wd="$1" prompt="$2" jsonl="$3"; shift 3
   mkdir -p "$(dirname "$jsonl")"
+  bench::resolve_bash_grant_flag "$BENCH_CLAUDE_BIN"
   # -u GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/GH_REPO: offline guard, part 2 (run.sh's
   # bench::assert_offline covers git remotes; this covers the OTHER way a gh credential reaches a
   # real repo — an ambient token in the operator's own shell, which a bare `gh` call honors with no
@@ -391,6 +446,7 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
       --output-format stream-json --verbose \
       --setting-sources project,local \
       --permission-mode acceptEdits \
+      ${bench_bash_grant_flag:-} \
       "$@" ) </dev/null >"$jsonl" 2>&1 || true
   return 0
 }

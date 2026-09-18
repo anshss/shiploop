@@ -32,7 +32,8 @@ Both arms are real, measured sessions. **Nothing is modeled.** The only differen
 which directory the session opens in: same checkout, same pinned ref, same backlog text word for
 word, same turn ceiling, same tool list (neither arm gets a curated `--tools` flag — a trimmed tool
 schema is itself one of the levers under test, so handing it to one arm or withholding it from the
-other would lend that arm part of the product's own credit).
+other would lend that arm part of the product's own credit), same permission regime (see "Permission
+grant, identical on both arms" below).
 
 ## Two numbers, never blended
 
@@ -73,6 +74,35 @@ bench/
 
 Ticket text is byte-identical across arms; neither arm sees `verify_cmd`. Neither arm is handed a
 curated tool list.
+
+## Permission grant, identical on both arms
+
+Every arm spawns with `--permission-mode acceptEdits`. A subagent inherits the PARENT session's
+permission mode whenever the parent runs `bypassPermissions`, `acceptEdits`, or `auto`: its own
+declared `permissionMode` (the scaffolded `worker.md` sets `bypassPermissions`) is ignored in that
+case (`code.claude.com/docs/en/sub-agents`). `acceptEdits` itself auto-approves file edits plus a
+narrow filesystem set (`mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp`, `sed`) but not general Bash
+(`code.claude.com/docs/en/permission-modes`), and under `-p` there is no prompt to fall back to, so
+an unapproved Bash call is refused outright. Left alone, this bites only the shiploop arm's own
+worker subagents, since the vanilla arm spawns none and never reaches the path.
+
+`bench::spawn` (`arms.sh`) closes this with a `--settings '{"permissions":{"allow":["Bash"]}}'`
+grant on every session, both arms, through the one function every arm's session launches from. A
+`permissions.allow` rule is session-wide permission configuration, not a mode a subagent's own
+declaration can override or lose, so it reaches every subagent too. It is not a tool-list flag:
+`--tools`/`--allowedTools` both name which tools a session gets, so reaching for either to grant
+Bash would also decide the tool-schema question this file already keeps out of bounds for both
+arms (see "The design" above); `--settings` sets a permission rule without touching the tool list.
+
+Gated behind a cached `claude --help` probe (never a version compare), an env kill switch
+(`BENCH_BASH_GRANT=0`), and a HARD STOP when the running CLI does not support `--settings`: there
+is no substitute that grants Bash without also touching the tool list, so degrading silently would
+put the two arms back in different permission regimes with nothing in the run to show it.
+
+Verified empirically on claude 2.1.246: a subagent with `permissionMode: bypassPermissions` in its
+frontmatter, dispatched from a parent running `--permission-mode acceptEdits --settings
+'{"permissions":{"allow":["Bash"]}}'`, ran a Bash command with zero `asyncAgent` /
+`permission_denied` refusals.
 
 ## Attribution inside the treatment arm
 
