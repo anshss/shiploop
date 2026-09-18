@@ -27,6 +27,10 @@
 #      switch) but with NO degraded fallback: an unsupported CLI is a hard stop for the shiploop arm
 #  10. subagent_stats.spawned>0 && completed>0 is asserted directly off the arm's own result event,
 #      never the exit code — a subagent refused for zero tools still exits 0
+#  11. bench::spawn grants Bash via `--settings '{"permissions":{"allow":["Bash"]}}'` on every
+#      session it launches, both arms, gated exactly like --forward-subagent-text (cached probe,
+#      pre-seed seam, kill switch, HARD STOP with no degraded fallback), never a tool-list flag,
+#      which would also decide which tools are visible to the session
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -247,5 +251,34 @@ assert_contains "$got" "rc=1" \
   "10. a stream with no subagent_stats at all (the vanilla fixture) reports NO activity, never a false pass"
 assert_contains "$shiploop_body" "bench::stream_had_subagent_activity" \
   "10. the arm asserts subagent activity directly, never trusting the spawn's exit code"
+
+# ── 11. Bash permission grant: same probe shape as --forward-subagent-text ─
+got="$(armsh '_GOVERN_SETTINGSFLAG_SUPPORTED=1 bench::resolve_bash_grant_flag /bin/true; printf "%s" "$bench_bash_grant_flag"')"
+assert_eq "$got" '--settings {"permissions":{"allow":["Bash"]}}' \
+  "11. probe seam 1 puts the grant on the command line"
+# bench::die exits the whole subshell immediately (never a `return`), so nothing after the call
+# runs. The message itself, captured on stderr, is the only evidence of the hard stop.
+got="$(armsh '_GOVERN_SETTINGSFLAG_SUPPORTED=0 bench::resolve_bash_grant_flag /bin/true; echo "UNREACHABLE"')"
+assert_contains "$got" "does not support --settings" "11. an unsupported CLI says so"
+assert_not_contains "$got" "UNREACHABLE" "11. and HARD STOPS, there is no degraded-arm fallback for the grant"
+got="$(armsh 'BENCH_BASH_GRANT=0 _GOVERN_SETTINGSFLAG_SUPPORTED=0 bench::resolve_bash_grant_flag /bin/true; echo "rc=$?"')"
+assert_contains "$got" "rc=0" "11. the kill switch is the only way past an unsupported CLI"
+assert_contains "$got" "BENCH_BASH_GRANT=0" "11. and it is logged when used"
+settings_probe="$(sed -n '/^govern::claude_supports_settings_flag/,/^}/p' "$HUB/templates/govern/lib/common.sh")"
+assert_contains "$settings_probe" "_bounded_help_grep" "11. the --settings probe is also a bounded --help grep"
+assert_contains "$settings_probe" "_GOVERN_SETTINGSFLAG_SUPPORTED" "11. with its own pre-seed test seam"
+assert_eq "$(printf '%s' "$settings_probe" | grep -c -e '--version')" "0" \
+  "11. and it never shells out to --version either"
+# The grant lives in bench::spawn, the one function every arm's session launches through, never
+# duplicated into an arm function: that is what makes "both arms, identically" true by
+# construction rather than by two call sites happening to agree.
+assert_contains "$spawn_body" "bench::resolve_bash_grant_flag" \
+  "11. bench::spawn resolves the grant itself rather than trusting each arm to pass it in"
+assert_contains "$spawn_body" '${bench_bash_grant_flag:-}' \
+  "11. and appends it to every session's command line"
+assert_eq "$(grep -c 'bench::resolve_bash_grant_flag "\$BENCH_CLAUDE_BIN"' "$HUB/bench/arms.sh")" "1" \
+  "11. there is exactly one call site for the grant in the whole file"
+assert_not_contains "$shiploop_body" "bench::resolve_bash_grant_flag" \
+  "11. the shiploop arm does not resolve the grant itself, bench::spawn already does, for every arm"
 
 assert_done
