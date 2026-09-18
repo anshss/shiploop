@@ -21,9 +21,12 @@ transcript to model from. Running both arms for real is the only way to see the 
 
 ## What is measured, and where it comes from
 
-Per arm, off that session's own `"type":"result"` event: `usage` (the four-way token breakdown),
+Per arm, off that session's own `"type":"result"` event: the four-way token breakdown,
 `total_cost_usd`, and (in the with-shiploop arm) `subagent_stats` and, when
-`--forward-subagent-text` is supported, per-subagent `message.usage` / `message.model`. Nothing is
+`--forward-subagent-text` is supported, per-subagent `message.usage` / `message.model`. The token
+breakdown is summed across every entry in that event's `modelUsage` map when the map is present and
+non-empty, falling back to the plain `usage` field only when it is not (see "`.usage` counts the
+session's own turns only" below for why `usage` alone is not the complete figure). Nothing is
 re-priced from a hand-maintained rate table: both arms report their own real `total_cost_usd`
 directly from the CLI, so there is no modeling step where a table could go stale.
 
@@ -44,6 +47,20 @@ is not, because it is exactly the truncated-snapshot sum described above. `costU
 fabricated in this case: it stays `null`, never a confident zero. `templates/govern/test/test-bench-schema.sh`
 case 7 asserts this against a real killed-session fixture, by number, not by intent.
 
+### `.usage` counts the session's own turns only, `modelUsage` counts everything
+
+A session's `usage` field on its own `"type":"result"` event is scoped to that session's own
+turns. It does not include a subagent spawned through the Agent tool, because a subagent's turns
+are billed on the SAME session (there is no separate stream for it to appear in) but the session's
+own running `usage` counter never adds them in. `modelUsage`, a separate map on the same event keyed
+by model, does: it aggregates every model call the billing period touched, subagent turns included,
+and its own per-model `costUSD` entries sum to `total_cost_usd` exactly, which is the check that
+catches a divergence: a vanilla arm with no subagents shows `usage` and summed `modelUsage`
+agreeing to a haiku sliver of incidental side traffic, while a with-shiploop arm that spawns several
+subagents shows `usage` far short of the summed figure while `total_cost_usd` still tracks it.
+`govern::stream_usage` sums `modelUsage` for the token total whenever the map is present and
+non-empty, and reads `usage` directly only as a fallback for a stream that never populated it.
+
 ### Two token cuts, never blended
 
 `bench/rollup.mjs` reports two readings of the same token counts, and states which one it used:
@@ -62,11 +79,14 @@ cut shows fewer. `bench/rollup.mjs` prints a negative cut as "X% MORE", never dr
 
 Both derived from live probes against a real corpus, not assumed:
 
-- **Do not split the headline by model tier.** A session's `modelUsage` map is keyed by model and
+- **Do not split the headline BY model tier.** A session's `modelUsage` map is keyed by model and
   absorbs incidental side calls — a haiku entry has been observed with real input tokens in a
-  session whose worker ran on opus. `modelUsage` is read for attribution (the advisor/worker split
-  inside the treatment arm), never for the headline cost or token number, which always come off the
-  session's own aggregate `usage` / `total_cost_usd`.
+  session whose worker ran on opus, so a per-tier breakdown ("the opus share was X") would silently
+  fold that side call into the wrong tier. This forbids the SPLIT only. The SUM across every tier
+  is a different operation, corroborated by `total_cost_usd` (a session's summed per-model `costUSD`
+  equals its `total_cost_usd` exactly), and it is what the headline token number reads, see
+  "`.usage` counts the session's own turns only" above. `modelUsage`'s per-tier breakdown remains
+  attribution-only (the advisor/worker split inside the treatment arm), never a headline by itself.
 - **Do not sum per-turn usage as a session total.** Per-turn output rows have been observed to sum
   to roughly a tenth of a session's own `result`-event total. The result event is authoritative;
   a sum over the stream is not a fallback, it is a different, wrong number.
@@ -95,11 +115,14 @@ regardless of whether any of this succeeds.
 
 An earlier version of this design read worker transcripts only, so the session that turned a
 conversation into tickets, decided scope, and reviewed PRs was invisible to it — a bias that grew
-as the harness got better at delegating instead of doing the work itself. The rebuilt design does
-not have this gap: the with-shiploop arm's measured `result` event IS the advisor session's own
-event, so its specification, dispatch, and review tokens are counted by construction, in the same
-number as every worker subagent it spawned. There is no longer a separate "was the driver counted"
-question to ask.
+as the harness got better at delegating instead of doing the work itself. The rebuilt design closes
+that gap for COST: the with-shiploop arm's measured `result` event IS the advisor session's own
+event, so `total_cost_usd` already prices every worker subagent it spawned, in the same session,
+with no separate accounting step. TOKENS need a second read to reach the same completeness: the
+event's plain `usage` field counts the advisor session's own turns only and says nothing about a
+subagent's, so the token total comes off `modelUsage` (summed across every model entry) instead,
+which is complete in the same way `total_cost_usd` already was. There is no longer a separate "was
+the driver counted" question to ask, for cost or for tokens.
 
 ## Quality is checked by a mechanical oracle, pass/fail only
 
