@@ -24,15 +24,20 @@ transcript to model from. Running both arms for real is the only way to see the 
 `bench/rollup.mjs` analyses EVERY backlog — there is no ranking, no floor, no "keep the best N"
 selection any more. The pairing unit is **(backlog, rep)**: a pair exists when both arms have a
 completed cell for the same backlog and rep. Exclusion is symmetric (drop the whole pair, never one
-arm) and listed with its reason (`capped`, `void-no-activation`, or `error`). For every included
-pair and every metric, the rollup computes the relative delta `(shiploop - vanilla) / vanilla` and
-reports the median across pairs, a 95% bootstrap confidence interval of that median (fixed seed,
+arm) and listed with its reason (`capped`, `void-no-activation`, or `error`).
+
+The **statistical unit is the backlog**, not the pair: a backlog's included reps fold into one mean
+per arm before the relative delta is taken, `(mean_shiploop - mean_vanilla) / mean_vanilla`, so a
+backlog run many times cannot out-vote one run only once. For every metric, the rollup reports the
+median across backlog-level deltas, a 95% bootstrap confidence interval of that median (fixed seed,
 10000 resamples — the same input file always reproduces the same interval), and a two-sided
-Wilcoxon signed-rank p-value (exact for n <= 25 pairs, normal approximation with tie correction
-above). A losing backlog stays in the cost/token comparison; only quality is gated on whether a
-ticket actually cleared. This is the JetBrains-SkillsBench-style shape (paired tasks, a median over
-per-pair deltas, a significance test, a smoke-then-full ladder) rather than a self-selected
-scoreboard.
+Wilcoxon signed-rank p-value (exact for n <= 25 backlogs, normal approximation with tie correction
+above); n is the count of backlogs with at least one usable rep, never the count of pairs. A losing
+backlog stays in the cost/token comparison; only quality is gated on whether a ticket actually
+cleared, and there too the unit is the backlog: a ticket counts as cleared by an arm only if a
+strict majority of that backlog's own reps cleared it. This is the JetBrains-SkillsBench-style
+shape (paired tasks, a median over backlog-level deltas, a significance test, a smoke-then-full
+ladder) rather than a self-selected scoreboard.
 
 ## What is measured, and where it comes from
 

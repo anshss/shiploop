@@ -73,22 +73,42 @@ SHIM
 # tokens/costUsd/usageSource come from govern::stream_usage; turns from the result event's
 # num_turns. A stream with no result event yields costUsd null (never a fabricated 0) and, where
 # the assistant events survived, recovered tokens with usageSource "assistant-partial".
+#
+# `models` is the real model name(s) this session actually ran on, read off the last result
+# event's `.modelUsage` map: its keys carry a `canonicalModel` field when present (preferred), else
+# the key itself with any trailing `[...]` context-window annotation (e.g. `[1m]`) stripped. This
+# is the arm's true routing, independent of whatever label the caller passed in as `model` — a run
+# labeled "default" or "dry-run" still records the model it actually spent tokens on. `modelUsage`
+# missing or empty (an older CLI, or a hard-killed session) falls back to `[$model]` so the field
+# is never empty.
 bench::session_row() {
   local jsonl="$1" run="$2" backlog="$3" task="$4" arm="$5" rep="$6" model="$7" cli="$8"
   local status="$9" resolved="${10}" wallms="${11}" verifyexit="${12}" startedat="${13}"
-  local usage turns
+  local usage turns models_json
   usage="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{"tokens":null,"costUsd":null,"usageSource":"none"}')"
   [[ -n "$usage" ]] || usage='{"tokens":null,"costUsd":null,"usageSource":"none"}'
   turns="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
     | jq -r '.num_turns // empty' 2>/dev/null || true)"
   [[ -n "$turns" ]] || turns=null
+  models_json="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1 \
+    | jq -c --arg fallback "$model" '
+        (.modelUsage // {}) as $mu
+        | if ($mu | length) > 0 then
+            [$mu | to_entries[] | (.value.canonicalModel // (.key | sub("\\[[^]]*\\]$"; "")))]
+            | unique | sort
+          else
+            [$fallback]
+          end
+      ' 2>/dev/null || true)"
+  [[ -n "$models_json" ]] || models_json="$(jq -nc --arg m "$model" '[$m]')"
   jq -nc \
     --arg run "$run" --arg backlog "$backlog" --arg task "$task" --arg arm "$arm" \
     --argjson rep "$rep" --arg model "$model" --arg cli "$cli" --arg status "$status" \
     --argjson resolved "$resolved" --argjson turns "$turns" --argjson usage "$usage" \
     --argjson wallms "$wallms" --argjson verifyexit "$verifyexit" --argjson startedat "$startedat" \
+    --argjson models "$models_json" \
     '{kind:"session", run:$run, backlog:$backlog, task:$task, arm:$arm, rep:$rep,
-      model:$model, cli_version:$cli, status:$status, resolved:$resolved, turns:$turns,
+      model:$model, models:$models, cli_version:$cli, status:$status, resolved:$resolved, turns:$turns,
       tokens:$usage.tokens, costUsd:$usage.costUsd, usageSource:$usage.usageSource,
       wallMs:$wallms, verifyExit:$verifyexit, startedAt:$startedat}'
   return 0
@@ -137,10 +157,12 @@ bench::record_sessions() {
 # `costUsdSessions` records how many rows actually carried a cost so a partial fold is visible
 # instead of silently understated.
 #
-# `models` is every distinct model seen across this cell's own sessions (subagents included, since
-# a shiploop cell folds an advisor and worker sessions that can run different tiers) — `model`
-# stays the last non-empty one for back-compat, `models` is the array a paired report needs to
-# print "shiploop models X+Y" rather than lose the routing asymmetry to a single name.
+# `models` is every distinct REAL model seen across this cell's own sessions (subagents included,
+# since a shiploop cell folds an advisor and worker sessions that can run different tiers): the
+# union of each session row's own `models` array (bench::session_row, read off `modelUsage`), never
+# the caller-supplied label. `model` stays the last non-empty session-row `.model` LABEL for
+# back-compat (a session row missing `.models` — an older fixture — falls back to `[.model]` here
+# too, so nothing downstream ever sees an empty array).
 # `perTicket` embeds the cell's own verify ledger (one {id, cleared} per ticket) directly into the
 # row, so a paired report can compare per-ticket outcomes across arms without re-reading the
 # ledger file, which is private and gitignored. `workerSpawns` and `hubSha` are recorded verbatim
@@ -163,7 +185,7 @@ bench::record_rollup() {
                     and .arm==$arm and .rep==$rep) ] as $s
      | { kind:"rollup", run:$run, backlog:$backlog, task:$backlog, arm:$arm, rep:$rep,
          model:  ($s | map(.model)       | map(select(. != null and . != "")) | last // null),
-         models: ($s | map(.model)       | map(select(. != null and . != "")) | unique | sort),
+         models: ($s | map(.models // (if .model then [.model] else [] end)) | add // [] | unique | sort),
          cli_version: ($s | map(.cli_version) | map(select(. != null and . != "")) | last // null),
          status:$status,
          resolved: ($cleared > 0 and $cleared == $total),

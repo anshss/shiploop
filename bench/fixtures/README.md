@@ -9,7 +9,7 @@ Canned `claude -p --output-format stream-json` streams for `bench/run.sh --dry-r
 
 | File | Stands in for |
 |---|---|
-| `vanilla-session.jsonl` | the one long session the `vanilla` (without shiploop) arm runs over a whole backlog |
+| `vanilla-session.jsonl` | the one long session the `vanilla` (without shiploop) arm runs over a whole backlog; its `result` event carries a `modelUsage` map mirroring its `usage` field exactly, so the models-extraction path has a real map to read even though the fixture is never spawned |
 | `vanilla-fresh-session.jsonl` | one fresh-context, per-ticket session for the private `vanilla-fresh` arm |
 | `shiploop-session.jsonl` | the one advisor session the `shiploop` (with shiploop) arm runs over the same backlog: two `Task` tool_use invocations (the activation check reads these directly, never `subagent_stats` alone), forwarding two worker subagents' turns, and carrying a `subagent_stats` block on its `result` event |
 | `partial-no-result.jsonl` | a session hard-killed before it emitted a `result` event |
@@ -22,9 +22,10 @@ runs and nothing published may be computed from them.
 | File | What it is |
 |---|---|
 | `golden-results.jsonl` | a `results.jsonl` for one backlog (one pair, n=1), four shiploop sessions and one vanilla session, locking the arithmetic `bench/rollup.mjs`'s per-metric deltas assert against, and the n=1 edges (no bootstrap CI, a tied metric has no Wilcoxon p) |
-| `pairing-results.jsonl` | two backlogs x two reps, exercising the pairing unit itself: one clean pair per backlog (one cheaper, one more expensive — a losing backlog is included, never dropped), one pair excluded `void-no-activation`, one pair excluded `capped` |
+| `pairing-results.jsonl` | two backlogs x two reps, exercising the PAIRING unit itself: one clean pair per backlog (one cheaper, one more expensive — a losing backlog is included, never dropped), one pair excluded `void-no-activation`, one pair excluded `capped`. Each backlog here has exactly one usable rep, so it does not exercise mean-of-reps arithmetic |
+| `backlog-level-results.jsonl` | three backlogs x two GOOD reps each, no exclusions, exercising the STATISTICAL unit: n=3 (backlogs), never n=6 (pairs), and every per-backlog delta is a mean over that backlog's own two reps, not either rep's value alone |
 
-Both are static, hand-derived `kind:"rollup"` rows (the same shape `bench::record_rollup` writes),
+All three are static, hand-derived `kind:"rollup"` rows (the same shape `bench::record_rollup` writes),
 not the output of a run. Every dollar figure in `golden-results.jsonl` is priced from the row's own
 token counts at published rates (`test-bench-rollup.sh` asserts this), so no number was chosen
 independently of its tokens. The `vanilla` rows stand in for a real without-shiploop session, not a
@@ -77,3 +78,32 @@ The two included pairs' median cost delta is exactly `(-40% + 20%) / 2 = -10%`; 
 `(6 + 9.6) / (10 + 8) = 0.867x`. `perTicket` on each row carries a small, hand-chosen set of
 cleared/not-cleared tickets so the quality section's better/worse/same counts and its sign test
 have a known answer (`test-bench-pairing.sh` derives and asserts every one of these by hand).
+
+### backlog-level-results.jsonl derivation
+
+Three backlogs, two reps each, nothing excluded — chosen so every backlog contributes exactly two
+usable reps, the one shape `pairing-results.jsonl` never exercises (its own two backlogs each end
+up with only one usable rep after exclusion):
+
+| Backlog | Rep | vanilla | shiploop |
+|---|---|---|---|
+| `bl-a` | 1 | $10 | $6 |
+| `bl-a` | 2 | $12 | $8 |
+| `bl-b` | 1 | $8 | $9 |
+| `bl-b` | 2 | $10 | $11 |
+| `bl-c` | 1 | $20 | $15 |
+| `bl-c` | 2 | $22 | $17 |
+
+Each backlog's delta is `(mean_shiploop - mean_vanilla) / mean_vanilla`, over its OWN two reps —
+never either rep's value read as its own independent observation:
+
+- `bl-a`: mean vanilla `(10+12)/2=11`, mean shiploop `(6+8)/2=7` -> `(7-11)/11 = -36.3636...%`
+- `bl-b`: mean vanilla `(8+10)/2=9`, mean shiploop `(9+11)/2=10` -> `(10-9)/9 = +11.1111...%`
+- `bl-c`: mean vanilla `(20+22)/2=21`, mean shiploop `(15+17)/2=16` -> `(16-21)/21 = -23.8095...%`
+
+`n=3` (backlogs), never `n=6` (pairs) — the property this fixture exists to lock. The median of the
+three backlog deltas is `bl-c`'s own value, `-23.8095...%`, the middle when sorted. `workerSpawns`
+per rep (`bl-a`: 2, 4; `bl-b`: 1, 1; `bl-c`: 5, 5) is chosen so the dose-response table's three
+mean-spawn buckets (3, 1, 5) each hold exactly one backlog. `perTicket` on each row is chosen so one
+ticket (`a2`) clears in exactly 1 of `bl-a`'s 2 shiploop reps — a tie, NOT a strict majority — to
+lock that a 1-of-2 split counts as not-cleared on both sides, never as a spurious "better".

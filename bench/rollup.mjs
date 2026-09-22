@@ -14,6 +14,12 @@
 // activated a worker (void-no-activation). Exclusion is symmetric — the whole pair drops, never one
 // arm — and every excluded pair is listed with its reason.
 //
+// The STATISTICAL unit is the backlog, not the pair: each backlog folds its own included reps into
+// one mean per arm before the relative delta is taken, so a backlog run many times cannot out-vote
+// one run only once. Median, CI, Wilcoxon and the dose-response tables all run over these per-backlog
+// deltas; n is the count of backlogs that produced one. The pooled-ratio line stays pair-level (a
+// straight sum over every included pair), reported as a secondary total, never the headline.
+//
 // Every number here is computed from total_cost_usd and the token counts in the file. Nothing is
 // modeled, extrapolated, or filled in. A metric that cannot be computed prints "n/a" and says why.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
@@ -87,6 +93,10 @@ function median(xs) {
   if (n === 0) return null;
   const mid = n >> 1;
   return n % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function mean(xs) {
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
 // 95% bootstrap CI of the median, fixed seed, BOOTSTRAP_RESAMPLES resamples, deterministic output.
@@ -268,6 +278,24 @@ for (const backlog of backlogNames) {
   }
 }
 
+// ---- backlog grouping: the statistical unit is the backlog, not the (backlog, rep) pair --------
+// Each backlog contributes ONE observation per metric: the mean of that metric's values over the
+// backlog's own included reps. A backlog with a single included rep still counts (its mean is that
+// one value, unchanged from a per-pair reading); a backlog with more reps is not allowed to out-vote
+// one run only once just because it ran more times.
+const backlogGroups = new Map(); // backlog -> its included pairs
+for (const p of pairs) {
+  if (!backlogGroups.has(p.backlog)) backlogGroups.set(p.backlog, []);
+  backlogGroups.get(p.backlog).push(p);
+}
+
+function repsPerBacklogLabel() {
+  const counts = [...backlogGroups.values()].map((ps) => ps.length);
+  if (!counts.length) return "0";
+  const lo = Math.min(...counts), hi = Math.max(...counts);
+  return lo === hi ? String(lo) : `${lo}-${hi}`;
+}
+
 // ---- metrics ------------------------------------------------------------------
 const METRICS = [
   { key: "cost", label: "cost (USD)", primary: true, unit: "$", get: (c) => c.costUsd },
@@ -279,21 +307,27 @@ const METRICS = [
   { key: "turns", label: "turns", get: (c) => c.turns },
 ];
 
-// Per-pair relative delta is (shiploop - vanilla) / vanilla. A positive delta means shiploop cost
-// MORE, printed as such — never dressed up as a saving. A pair whose vanilla value is exactly zero
-// cannot form a ratio and is skipped for THAT metric only (the pair itself stays included for
-// every other metric).
+// Per-backlog relative delta is (mean_shiploop - mean_vanilla) / mean_vanilla, the mean taken over
+// that backlog's own included reps. A positive delta means shiploop cost MORE, printed as such —
+// never dressed up as a saving. A backlog whose mean vanilla value is exactly zero cannot form a
+// ratio and is skipped for THAT metric only. n is the count of backlogs that produced a delta;
+// median/CI/Wilcoxon run over these BACKLOG-level deltas. The pooled ratio and totals stay a
+// secondary line computed over every included PAIR (not backlog-averaged), same as before.
 function metricStats(metric) {
   const deltas = [];
-  const backlogSet = new Set();
   let vTotal = 0, sTotal = 0, totalsN = 0;
-  for (const p of pairs) {
-    const v = metric.get(p.vanilla), s = metric.get(p.shiploop);
-    if (typeof v !== "number" || typeof s !== "number") continue;
-    vTotal += v; sTotal += s; totalsN++;
-    if (v === 0) continue;
-    deltas.push((s - v) / v);
-    backlogSet.add(p.backlog);
+  for (const [, ps] of backlogGroups) {
+    const vVals = [], sVals = [];
+    for (const p of ps) {
+      const v = metric.get(p.vanilla), s = metric.get(p.shiploop);
+      if (typeof v !== "number" || typeof s !== "number") continue;
+      vVals.push(v); sVals.push(s);
+      vTotal += v; sTotal += s; totalsN++;
+    }
+    if (vVals.length === 0) continue;
+    const meanV = mean(vVals), meanS = mean(sVals);
+    if (meanV === 0) continue;
+    deltas.push((meanS - meanV) / meanV);
   }
   const n = deltas.length;
   const med = n ? median(deltas) : null;
@@ -302,7 +336,6 @@ function metricStats(metric) {
   return {
     metric: metric.key,
     n,
-    backlogs: backlogSet.size,
     medianDeltaPct: med === null ? null : med * 100,
     ci95Pct: ci === null ? null : [ci[0] * 100, ci[1] * 100],
     wilcoxonP: wil ? wil.p : null,
@@ -317,16 +350,30 @@ function metricStats(metric) {
 const metricResults = METRICS.map((m) => ({ ...m, stats: metricStats(m) }));
 const costResult = metricResults.find((m) => m.key === "cost");
 
-// ---- quality: per-ticket cleared comparison, within included pairs only ------
+// ---- quality: per-ticket cleared comparison, majority vote within each backlog's reps ----------
+// Per ticket, PER BACKLOG: an arm cleared it only if it cleared in a STRICT majority of that
+// backlog's included reps (cleared count > half the reps) — a tie (e.g. 1 of 2) is NOT cleared.
+// This collapses each (backlog, ticket) to one verdict per arm before comparing, so a backlog run
+// many times cannot out-vote one run only once.
 function qualityStats() {
   let better = 0, worse = 0, same = 0, ticketsCompared = 0, vCleared = 0, sCleared = 0;
-  for (const p of pairs) {
-    const vBy = new Map(p.vanilla.perTicket.map((t) => [t.id ?? t.ticket, !!t.cleared]));
-    const sBy = new Map(p.shiploop.perTicket.map((t) => [t.id ?? t.ticket, !!t.cleared]));
-    const ids = new Set([...vBy.keys(), ...sBy.keys()]);
+  const bump = (map, id, cleared) => {
+    const c = map.get(id) || { cleared: 0, total: 0 };
+    c.total++;
+    if (cleared) c.cleared++;
+    map.set(id, c);
+  };
+  for (const [, ps] of backlogGroups) {
+    const vCounts = new Map(), sCounts = new Map();
+    for (const p of ps) {
+      for (const t of p.vanilla.perTicket) bump(vCounts, t.id ?? t.ticket, !!t.cleared);
+      for (const t of p.shiploop.perTicket) bump(sCounts, t.id ?? t.ticket, !!t.cleared);
+    }
+    const ids = new Set([...vCounts.keys(), ...sCounts.keys()]);
     for (const id of ids) {
-      if (!vBy.has(id) || !sBy.has(id)) continue; // can't compare a ticket missing from either ledger
-      const vC = vBy.get(id), sC = sBy.get(id);
+      if (!vCounts.has(id) || !sCounts.has(id)) continue; // can't compare a ticket missing from either ledger
+      const v = vCounts.get(id), s = sCounts.get(id);
+      const vC = v.cleared > v.total / 2, sC = s.cleared > s.total / 2;
       ticketsCompared++;
       if (vC) vCleared++;
       if (sC) sCleared++;
@@ -346,21 +393,28 @@ function qualityStats() {
 const quality = qualityStats();
 
 // ---- dose response: cost delta bucketed by spawn count / ticket count, descriptive only -----
+// One observation per BACKLOG (its own cost delta, mean-of-included-reps, same as metricStats),
+// bucketed by round(mean shiploop worker-spawn count over that backlog's reps) or by the backlog's
+// own ticket count.
 function doseTable(keyFn) {
   const buckets = new Map();
-  for (const p of pairs) {
-    const v = p.vanilla.costUsd, s = p.shiploop.costUsd;
-    if (v === 0) continue;
-    const k = keyFn(p);
+  for (const [, ps] of backlogGroups) {
+    const vVals = ps.map((p) => p.vanilla.costUsd).filter((v) => typeof v === "number");
+    const sVals = ps.map((p) => p.shiploop.costUsd).filter((v) => typeof v === "number");
+    if (vVals.length === 0 || sVals.length === 0) continue;
+    const meanV = mean(vVals), meanS = mean(sVals);
+    if (meanV === 0) continue;
+    const spawnsMean = mean(ps.map((p) => p.shiploop.workerSpawns));
+    const k = keyFn({ spawnsMean, tickets: ps[0].tickets });
     if (!buckets.has(k)) buckets.set(k, []);
-    buckets.get(k).push((s - v) / v);
+    buckets.get(k).push((meanS - meanV) / meanV);
   }
   return [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([bucket, deltas]) => ({ bucket, n: deltas.length, medianDeltaPct: median(deltas) * 100 }));
 }
-const doseBySpawns = doseTable((p) => p.shiploop.workerSpawns);
-const doseByTickets = doseTable((p) => p.tickets);
+const doseBySpawns = doseTable(({ spawnsMean }) => Math.round(spawnsMean));
+const doseByTickets = doseTable(({ tickets }) => tickets);
 
 // ---- headline: exactly one sentence, always cost, direction-neutral ----------
 function modelsFor(arm) {
@@ -379,8 +433,8 @@ function headline() {
   const shiploopModels = modelsFor("shiploop").join("+") || "unknown";
   return (
     `Median paired cost change: ${f1(c.medianDeltaPct)}% (95% CI ${ciStr}, Wilcoxon p=${pStr}, ` +
-    `n=${c.n} pairs over ${c.backlogs} backlogs x ${repNumbers.length} reps; ` +
-    `vanilla model ${vanillaModels}, shiploop models ${shiploopModels}).`
+    `n=${c.n} backlogs, reps per backlog ${repsPerBacklogLabel()}; ` +
+    `vanilla models ${vanillaModels}, shiploop models ${shiploopModels}).`
   );
 }
 const head = headline();
@@ -402,6 +456,9 @@ if (opts.json) {
 
 const f1 = (n) => (typeof n === "number" && Number.isFinite(n) ? (n >= 0 ? "+" : "") + n.toFixed(1) : "n/a");
 const f2 = (n) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "n/a");
+// Plain: no leading "+" — for rates, never for a delta. A delta keeps its sign (f1); a rate is
+// never "negative", so a "+" in front of it would read as a delta it is not.
+const fPlain = (n) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(1) : "n/a");
 const out = (s) => process.stdout.write(s + "\n");
 
 out(`bench rollup: ${file}`);
@@ -422,7 +479,7 @@ for (const m of metricResults) {
     out("");
     continue;
   }
-  out(`    n=${s.n} pairs over ${s.backlogs} backlog(s)`);
+  out(`    n=${s.n} backlogs`);
   out(`    median delta   ${f1(s.medianDeltaPct)}%`);
   out(`    95% CI         ${s.ci95Pct ? `${f1(s.ci95Pct[0])}% .. ${f1(s.ci95Pct[1])}%` : "n/a (n<2)"}`);
   const wilcoxonPStr = s.wilcoxonP === null ? "n/a (every pair tied at zero delta)" : s.wilcoxonP < 0.001 ? "<0.001" : s.wilcoxonP.toFixed(3);
@@ -436,8 +493,8 @@ if (quality.ticketsCompared === 0) {
   out("  n/a: no ticket was comparable across both arms' ledgers");
 } else {
   out(`  tickets compared   ${quality.ticketsCompared}`);
-  out(`  vanilla clear rate  ${f1(quality.vanillaClearRatePct)}%`);
-  out(`  shiploop clear rate ${f1(quality.shiploopClearRatePct)}%`);
+  out(`  vanilla clear rate  ${fPlain(quality.vanillaClearRatePct)}%`);
+  out(`  shiploop clear rate ${fPlain(quality.shiploopClearRatePct)}%`);
   out(`  better ${quality.better}  worse ${quality.worse}  same ${quality.same}`);
   out(`  sign test p        ${quality.signTestP === null ? "n/a" : quality.signTestP < 0.001 ? "<0.001" : quality.signTestP.toFixed(3)}`);
 }

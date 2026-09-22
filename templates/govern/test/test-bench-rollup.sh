@@ -76,7 +76,7 @@ assert_contains "$report" "n/a (every pair tied at zero delta)" "and the report 
 
 # ── the headline sentence, in the new paired shape ──────────────────────────
 assert_eq "$(printf '%s' "$j" | jq -r '.headline')" \
-  "Median paired cost change: -30.1% (95% CI n/a (n<2), Wilcoxon p=1.000, n=1 pairs over 1 backlogs x 1 reps; vanilla model modeled, shiploop models mixed)." \
+  "Median paired cost change: -30.1% (95% CI n/a (n<2), Wilcoxon p=1.000, n=1 backlogs, reps per backlog 1; vanilla models modeled, shiploop models mixed)." \
   "headline is one sentence, cost only, in the paired shape"
 assert_not_contains "$report" "Up to" "no more up-to phrasing"
 assert_not_contains "$report" "Selection" "no more selection section"

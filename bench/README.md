@@ -159,20 +159,24 @@ listed with its reason:
 | `void-no-activation` | the shiploop cell shows zero Agent/Task tool_use invocations — it measured nothing, not a real with-shiploop run |
 | `error` | a cell is missing for one arm, its cost could not be read, or the backlog had zero tickets |
 
-For every included pair, per metric — cost (USD, the PRIMARY metric), all-in tokens, billable
-tokens, output tokens, cache-read tokens, fresh input (input + cache creation), and turns — the
-rollup computes the per-pair relative delta `(shiploop - vanilla) / vanilla` and reports n, the
-median delta, a 95% bootstrap CI of the median (fixed seed, 10000 resamples, deterministic), a
-two-sided Wilcoxon signed-rank p (exact for n <= 25, normal approximation with tie correction
-above), and the pooled totals ratio as a secondary line. The **headline is exactly one sentence,
-always cost, direction-neutral** — a positive delta prints as MORE expensive, never dressed as a
-saving, and tokens never headline.
+The **statistical unit is the backlog, not the pair.** Each backlog folds its own included reps
+into one mean per arm before the relative delta is taken — `(mean_shiploop - mean_vanilla) /
+mean_vanilla` — so a backlog run many times cannot out-vote one run only once. Per metric — cost
+(USD, the PRIMARY metric), all-in tokens, billable tokens, output tokens, cache-read tokens, fresh
+input (input + cache creation), and turns — the rollup reports n (the count of backlogs that
+produced a delta), the median delta, a 95% bootstrap CI of the median (fixed seed, 10000 resamples,
+deterministic), a two-sided Wilcoxon signed-rank p (exact for n <= 25, normal approximation with
+tie correction above), and the pooled totals ratio (summed over every included PAIR, not
+backlog-averaged) as a secondary line. The **headline is exactly one sentence, always cost,
+direction-neutral** — a positive delta prints as MORE expensive, never dressed as a saving, and
+tokens never headline.
 
-Alongside the metrics: a **quality** section (per-ticket cleared-by-vanilla vs cleared-by-shiploop,
-clear rates, better/worse/same counts, and an exact sign test p over the discordant tickets), an
-**activation** section naming every pair excluded for `void-no-activation`, and a **dose-response**
-table (median cost delta bucketed by shiploop worker-spawn count and by backlog ticket count,
-descriptive only, no test).
+Alongside the metrics: a **quality** section (per ticket, per backlog: an arm cleared it only if it
+cleared in a STRICT MAJORITY of that backlog's included reps — a 1-of-2 tie is not cleared — then
+better/worse/same counts and an exact sign test p over the discordant tickets), an **activation**
+section naming every pair excluded for `void-no-activation`, and a **dose-response** table (median
+cost delta bucketed, at backlog level, by rounded mean shiploop worker-spawn count and by backlog
+ticket count, descriptive only, no test).
 
 ## Rails
 

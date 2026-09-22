@@ -455,7 +455,7 @@ for name in "${backlogs[@]}"; do
         "$MODEL_NAME" "$CLI_VERSION" "$status" "$worst" "$wall_ms" "$started" "$cleared" "$total")"
       bench::record_rollup "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" "$status" \
         "$cleared" "$total" "$wall_ms" "$started" "$worker_spawns" "$RUN_DIR/verify/$cell.jsonl" "$HUB_SHA"
-      bench::log "cell $cell: $status, $cleared/$total cleared, $sessions session(s), spent \$$(bench::spent_usd "$RESULTS")"
+      bench::log "cell $cell: $status, $cleared/$total cleared, $sessions session(s), cumulative spent \$$(bench::spent_usd "$RESULTS")"
     done
   done
 done

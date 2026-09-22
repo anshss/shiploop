@@ -49,8 +49,8 @@ If this ever changes, the published result will be a committed `bench/results/<r
 node "$HUB/bench/rollup.mjs" <path-to-results.jsonl>
 ```
 
-and relays verbatim: the headline sentence (always the cost metric — n pairs, backlogs, reps, the
-95% CI, the Wilcoxon p, and the model/tier each arm ran on are all named IN the sentence itself),
+and relays verbatim: the headline sentence (always the cost metric — n backlogs, reps per backlog,
+the 95% CI, the Wilcoxon p, and the model/tier each arm ran on are all named IN the sentence itself),
 plus the quality section's clear rates and sign-test p, and every pair the rollup excluded (and
 why) from the Pairs section. Never restate a percentage without the CI and p it came with.
 

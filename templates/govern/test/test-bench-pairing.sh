@@ -118,7 +118,7 @@ assert_eq "$(printf '%s' "$report" | grep -A2 'by shiploop worker-spawn count' |
 
 # ── 9. the headline: exactly one sentence, always cost, direction-neutral ──────
 assert_eq "$(printf '%s' "$j" | jq -r '.headline')" \
-  "Median paired cost change: -10.0% (95% CI -40.0%..+20.0%, Wilcoxon p=1.000, n=2 pairs over 2 backlogs x 2 reps; vanilla model claude-opus-4-8, shiploop models claude-opus-4-8+claude-sonnet-5)." \
+  "Median paired cost change: -10.0% (95% CI -40.0%..+20.0%, Wilcoxon p=1.000, n=2 backlogs, reps per backlog 1; vanilla models claude-opus-4-8, shiploop models claude-opus-4-8+claude-sonnet-5)." \
   "9. the headline sentence is in the spec's exact shape"
 assert_not_contains "$report" "Up to" "9. no more up-to phrasing"
 assert_not_contains "$(cat "$HUB/bench/rollup.mjs")" '"Up to "' "9. and the string is gone from the source"
@@ -131,7 +131,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 jq -c 'select(.backlog=="bl-y" and .rep==1)' "$P" > "$T/one-pair.jsonl"
 onej="$(node "$HUB/bench/rollup.mjs" "$T/one-pair.jsonl" --json 2>&1)"
 assert_eq "$(printf '%s' "$onej" | jq -r '.headline')" \
-  "Median paired cost change: +20.0% (95% CI n/a (n<2), Wilcoxon p=1.000, n=1 pairs over 1 backlogs x 1 reps; vanilla model claude-opus-4-8, shiploop models claude-opus-4-8)." \
+  "Median paired cost change: +20.0% (95% CI n/a (n<2), Wilcoxon p=1.000, n=1 backlogs, reps per backlog 1; vanilla models claude-opus-4-8, shiploop models claude-opus-4-8)." \
   "10. a positive median prints with a leading +, and n=1 correctly reports no CI (one point can't support one)"
 assert_eq "$(printf '%s' "$onej" | jq -r '.metrics[0].ci95Pct')" "null" \
   "10. --json carries a genuine null for the CI, never a fabricated single-point interval"
