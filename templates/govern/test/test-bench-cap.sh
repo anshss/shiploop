@@ -46,11 +46,11 @@ assert_eq "$(jq -sr '[ .[] | select(.kind=="rollup") ] | length' "$R")" "2" \
 
 # 4. The rollup must not turn a truncated run into a 100% saving.
 report="$(node "$HUB/bench/rollup.mjs" "$R" 2>&1)"
-assert_contains "$report" "dropped fixture-backlog: run hit BENCH_MAX_USD" \
-  "4. rollup drops a capped backlog and says why"
-assert_contains "$report" "n/a: no backlog had both arms clear with a readable cost" \
+assert_contains "$report" "excluded fixture-backlog rep 1: capped" \
+  "4. rollup excludes the capped pair and says why"
+assert_contains "$report" "n/a: no pair had both arms' values readable for this metric" \
   "4. with nothing eligible there is no cost cut to report"
-assert_contains "$report" "n/a: nothing eligible to compute a headline from" \
+assert_contains "$report" "n/a: no cost pair to compute a headline from" \
   "4. and no headline is emitted"
 assert_not_contains "$report" "Up to 100%" "4. a capped run never produces a 100% claim"
 

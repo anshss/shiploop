@@ -49,9 +49,10 @@ If this ever changes, the published result will be a committed `bench/results/<r
 node "$HUB/bench/rollup.mjs" <path-to-results.jsonl>
 ```
 
-and relays verbatim: the headline sentence, which metric produced it, the backlog(s) and ticket
-count behind it, and the model/tier each arm ran on. Never restate a percentage without the arm and
-backlog it belongs to.
+and relays verbatim: the headline sentence (always the cost metric — n pairs, backlogs, reps, the
+95% CI, the Wilcoxon p, and the model/tier each arm ran on are all named IN the sentence itself),
+plus the quality section's clear rates and sign-test p, and every pair the rollup excluded (and
+why) from the Pairs section. Never restate a percentage without the CI and p it came with.
 
 ## Phase 2 — Run your own A/B
 
@@ -60,9 +61,14 @@ spends real quota — that has to be the user's own explicit next command, never
 command does on their behalf.
 
 ```bash
-bash "$HUB/bench/run.sh" --reps 2
+bash "$HUB/bench/run.sh" --backlog <one-name> --run-id smoke   # 1 backlog, 1 rep: no gate needed
+BENCH_SMOKE_RUN=smoke bash "$HUB/bench/run.sh" --reps 2        # the real run, gated on the smoke
 node "$HUB/bench/rollup.mjs"
 ```
+
+A live run bigger than one (backlog x rep) cell REFUSES to start without that first line's smoke
+run (or `BENCH_SKIP_SMOKE_GATE=1`, the deliberate override) — say this plainly, it is not optional
+plumbing the user can skip by going straight to `--reps 2`.
 
 **Estimated cost**, stated as an estimate and never as a bill: each real arm is one whole-backlog
 session capped at `BENCH_SESSION_USD` (default equal to `BENCH_MAX_USD`, itself default $60 for the

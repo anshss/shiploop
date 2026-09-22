@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
-# bench: the golden rollup.
+# bench: the golden rollup, single-pair edge cases (n=1: no CI, and a zero-delta metric).
 #
-# Locks the arithmetic of all three metric cuts (spec section 4) and the exact shape of the one
-# published sentence against a checked-in golden results.jsonl.
-#
-# The golden file is a static, hand-derived results.jsonl (see bench/fixtures/README.md for the
-# per-ticket token/cost derivation). Its shiploop rows are four fixed sessions. Its vanilla row is
-# a fixed synthetic input standing in for a without-shiploop session, not a measurement of one, and
-# the row carries provenance:"modeled" so nothing downstream can mistake it for a run that
-# happened. No assertion in this suite pins a fabricated headline.
+# Locks the arithmetic against the checked-in golden results.jsonl (see bench/fixtures/README.md
+# for the per-ticket token/cost derivation). One backlog, one rep, so this exercises the n=1 edge
+# of the paired stats: a single pair still yields a median (itself) and a Wilcoxon p (always 1.0 at
+# n=1, hand-verified in test-bench-pairing.sh's own header), but never a bootstrap CI — one point
+# cannot support one. test-bench-pairing.sh covers the n>=2 machinery (real CI, exclusion, quality,
+# dose response, the headline shape); this file's job is the golden numbers and the n=1 edges.
 #
 #   vanilla (modeled)  1 session, $8.5006, tokens 40000 in + 115000 out + 11522000 cache read
-#                      + 102000 cache creation = 11779000
+#                      + 102000 cache creation = 11779000, turns 22
 #   shiploop (measured) 4 sessions, $2.3915 + $1.6715 + $1.2240 + $0.6516 = $5.9386,
-#                      tokens 1840000 + 1080000 + 770000 + 1525000 = 5215000
+#                      tokens 1840000 + 1080000 + 770000 + 1525000 = 5215000, turns 22
 #
-#   cut 1 cost      (8.5006 - 5.9386) / 8.5006        = 30.139...%
-#   cut 2 billable  (257000 - 293000) / 257000        = -14.007...%, a real negative: fresh
-#                   sessions re-prime, so they WRITE more cache than one long session
-#         all-in    (11779000 - 5215000) / 11779000   = 55.726...%
-#   cut 3 per ticket $2.12515 vs $1.48465, ratio 1.431...x
-#   headline        floor(55.72) = 55, on the LARGEST cut, which here is all-in tokens
+#   cost      delta (5.9386 - 8.5006) / 8.5006       = -30.139...%
+#   all-in    delta (5215000 - 11779000) / 11779000  = -55.726...%
+#   billable  delta (293000 - 257000) / 257000       = +14.007...%, a real POSITIVE: fresh
+#             sessions re-prime, so they WRITE more cache than one long session
+#   output    delta (115000 - 115000) / 115000       = 0.0% exactly — a tied pair
+#   turns     delta (22 - 22) / 22                   = 0.0% exactly — also tied
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -35,59 +33,59 @@ G="$HUB/bench/fixtures/golden-results.jsonl"
 report="$(node "$HUB/bench/rollup.mjs" "$G" 2>&1)"
 rc=$?
 assert_eq "$rc" "0" "rollup.mjs exits 0 on the golden file"
+j="$(node "$HUB/bench/rollup.mjs" "$G" --json 2>&1)"
 
-# ── the three cuts are all present and named ────────────────────────────────
-assert_contains "$report" "Cut 1: cost to clear the same backlog" "cut 1 is reported"
-assert_contains "$report" "Cut 2: tokens to clear the same backlog" "cut 2 is reported"
-assert_contains "$report" "Cut 3: tickets shipped per 5-hour window" "cut 3 is reported"
+# ── every metric in the spec's list is reported ─────────────────────────────
+for m in "cost (USD)" "all-in tokens" "billable tokens" "output tokens" "cache-read tokens" \
+         "fresh input (input + cache creation)" "turns"; do
+  assert_contains "$report" "$m" "metric reported: $m"
+done
 
-# ── cut 1 ───────────────────────────────────────────────────────────────────
-assert_contains "$report" "vanilla   \$8.50" "cut 1: vanilla cost (modeled)"
-assert_contains "$report" "shiploop  \$5.94" "cut 1: shiploop cost (measured)"
-assert_contains "$report" "lower by  30.1%" "cut 1: cost delta"
+# ── the golden arithmetic, cost cut ─────────────────────────────────────────
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[0].n')" "1" "one pair (one backlog, one rep)"
+assert_eq "$(printf '%s' "$j" | jq -r '(.metrics[0].medianDeltaPct * 10 | round)')" "-301" \
+  "cost delta is -30.1%, exactly (5.9386 - 8.5006) / 8.5006"
+assert_contains "$report" "median delta   -30.1%" "and the report prints it"
+assert_contains "$report" "pooled totals  \$8.50 -> \$5.94, ratio 0.699x" "pooled totals line"
 
-# ── cut 2, both readings, neither hidden ────────────────────────────────────
-assert_contains "$report" "14.0% MORE" \
-  "cut 2: billable tokens go the OTHER way, and the report says MORE rather than dressing a negative as fewer"
-assert_contains "$report" "55.7% fewer" "cut 2: all-in tokens"
+# ── token cuts, both readings, neither hidden ───────────────────────────────
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[] | select(.key=="tokensAllIn") | (.medianDeltaPct * 10 | round)')" \
+  "-557" "all-in tokens: -55.7%"
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[] | select(.key=="tokensBillable") | (.medianDeltaPct * 10 | round)')" \
+  "140" "billable tokens go the OTHER way: +14.0%, a real positive, never dressed as a saving"
+assert_contains "$report" "median delta   +14.0%" "and the report prints the + sign, not a bare number"
 
-# ── cut 3, and the reason the ratio is the honest form ──────────────────────
-assert_contains "$report" "vanilla   \$2.13 per ticket" "cut 3: vanilla cost per ticket"
-assert_contains "$report" "shiploop  \$1.48 per ticket" "cut 3: shiploop cost per ticket"
-assert_contains "$report" "1.43x more tickets per window" "cut 3: the window-independent ratio"
-assert_contains "$report" "absolute per-window counts: n/a, pass --window-usd" \
-  "cut 3: absolute counts need a MEASURED window budget and are never guessed"
+# ── n=1 edges: no CI (one point can't support one), Wilcoxon still computes ─
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[0].ci95Pct')" "null" \
+  "a single pair yields no CI in --json, never a fabricated single-point interval"
+assert_contains "$report" "95% CI         n/a (n<2)" "and the report says exactly why"
+# n=1, one nonzero difference: the exact test's only two subset sums are {0, rank1}, and the
+# observed sum is always the larger one, so p = 2 * min(1, 0.5) = 1.0 — hand-verified in
+# test-bench-pairing.sh's own case 4 comment, same reasoning at n=1 instead of n=2.
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[0].wilcoxonP')" "1" "Wilcoxon p is exactly 1.0 at n=1"
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[0].wilcoxonMethod')" "exact" "n<=25 uses the exact method"
 
-# With a measured budget the absolute counts appear. $100 / $2.12515 = 47.1, $100 / $1.48465 = 67.4.
-withwin="$(node "$HUB/bench/rollup.mjs" "$G" --window-usd 100 2>&1)"
-assert_contains "$withwin" "vanilla 47.1 tickets, shiploop 67.4 tickets" \
-  "cut 3: a supplied window budget yields absolute counts"
+# A metric whose single pair is EXACTLY tied (output tokens, turns: vanilla and shiploop agree to
+# the token/turn) drops to zero real differences, so Wilcoxon has nothing to rank and reports null
+# rather than a fabricated p — never silently printed as 1.0 or 0, which both look like real answers.
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[] | select(.key=="tokensOutput") | .wilcoxonP')" "null" \
+  "a tied pair (output tokens, 115000 == 115000) has no p-value at all"
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[] | select(.key=="tokensOutput") | .medianDeltaPct')" "0" \
+  "but the median delta is still a real, computable zero"
+assert_contains "$report" "n/a (every pair tied at zero delta)" "and the report says why there is no p"
 
-# ── the headline sentence, in the exact published shape ─────────────────────
-assert_contains "$report" "metric: fewer tokens (all-in)" \
-  "headline names which cut produced its number, so a token cut is never shipped as a cost claim"
-assert_contains "$report" \
-  "Up to 55% fewer tokens to ship the same backlog vs a stock Claude Code session (1 real upstream backlogs, 4 tickets, model modeled, CLI fixture)." \
-  "headline is one sentence in the spec's exact shape"
-
-# The percentage is floored, never rounded up: 55.72 must publish as 55.
-assert_not_contains "$report" "Up to 56%" "headline floors the percentage rather than rounding up"
+# ── the headline sentence, in the new paired shape ──────────────────────────
+assert_eq "$(printf '%s' "$j" | jq -r '.headline')" \
+  "Median paired cost change: -30.1% (95% CI n/a (n<2), Wilcoxon p=1.000, n=1 pairs over 1 backlogs x 1 reps; vanilla model modeled, shiploop models mixed)." \
+  "headline is one sentence, cost only, in the paired shape"
+assert_not_contains "$report" "Up to" "no more up-to phrasing"
+assert_not_contains "$report" "Selection" "no more selection section"
 
 # ── --json is the same numbers, machine-readable ────────────────────────────
-j="$(node "$HUB/bench/rollup.mjs" "$G" --json 2>&1)"
-assert_eq "$(printf '%s' "$j" | jq -r '.headline.pct')" "55" "--json carries the same headline pct"
-assert_eq "$(printf '%s' "$j" | jq -r '.aggregateKept.vanillaCostUsd')" "8.5006" "--json cut 1 vanilla"
-# Summed IEEE doubles land at 5.938600000000001. The report formats to two decimals; --json
-# deliberately hands back the raw sum rather than a pre-rounded one, so compare in cents.
-assert_eq "$(printf '%s' "$j" | jq -r '(.aggregateKept.shiploopCostUsd * 100 | round)')" "594" \
-  "--json cut 1 shiploop (in cents, the raw sum is not pre-rounded)"
-assert_eq "$(printf '%s' "$j" | jq -r '.aggregateKept.tickets')" "4" "--json ticket count"
-
-# The vanilla row is labelled for what it is, in the fixture itself.
-assert_eq "$(jq -rs '[.[] | select(.arm=="vanilla") | .provenance] | unique | join(",")' "$G")" "modeled" \
-  "every vanilla row in the golden file carries provenance: modeled"
-assert_eq "$(jq -rs '[.[] | select(.arm=="shiploop") | .provenance] | unique | join(",")' "$G")" "measured" \
-  "every shiploop row carries provenance: measured"
+assert_eq "$(printf '%s' "$j" | jq -r '.metrics[0].vanillaTotal')" "8.5006" "--json cost vanilla total"
+# Summed IEEE doubles land at 5.938600000000001; compare in cents.
+assert_eq "$(printf '%s' "$j" | jq -r '(.metrics[0].shiploopTotal * 100 | round)')" "594" \
+  "--json cost shiploop total (in cents, the raw sum is not pre-rounded)"
 
 # ── a file with no rollup rows is an error, not an empty success ────────────
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

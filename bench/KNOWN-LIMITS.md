@@ -17,6 +17,19 @@ dollar. It is reported as a small pilot, not the full benchmark. A wider backlog
 ideally against an external repo so shiploop is never grading its own commit messages) is the next
 real piece of work here, not a nice-to-have.
 
+## The no-install constraint
+
+`bench::assert_offline` (bench/run.sh) strips git remotes and refuses to spawn either arm while one
+survives, but a `verify_cmd` that shells out to a package manager would still reach the network from
+INSIDE that guard — the guard closes git and `gh`, not every path off the box. So a backlog's own
+test suite must run from a bare checkout with nothing fetched: no step anywhere in `verify_cmd`
+installs a dependency, and a backlog's tests must be stdlib-only, vendored, or already committed to
+the repo at the pinned `ref`. This is enforced by curation, not by code — nothing in `bench/run.sh`
+detects a `pip install` or `npm install` inside a `verify_cmd` and refuses it — so a backlog author
+is the one line of defense here. Do not add an install step to close this gap; there is no offline
+way to run one, and a network call from inside `verify_cmd` would silently give an arm's tree
+whatever that install pulls down.
+
 ## The offline guard closes git remotes, not the network
 
 `bench::assert_offline` (bench/run.sh) strips every git remote from every clone and asserts none

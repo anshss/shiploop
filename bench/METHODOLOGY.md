@@ -19,6 +19,21 @@ own transcripts. That path is retired. Several of shiploop's own levers work by 
 passing output, a trim that never sends a schema at all), and an absence leaves no trace in a
 transcript to model from. Running both arms for real is the only way to see the combination.
 
+## The pairing method, in one paragraph
+
+`bench/rollup.mjs` analyses EVERY backlog — there is no ranking, no floor, no "keep the best N"
+selection any more. The pairing unit is **(backlog, rep)**: a pair exists when both arms have a
+completed cell for the same backlog and rep. Exclusion is symmetric (drop the whole pair, never one
+arm) and listed with its reason (`capped`, `void-no-activation`, or `error`). For every included
+pair and every metric, the rollup computes the relative delta `(shiploop - vanilla) / vanilla` and
+reports the median across pairs, a 95% bootstrap confidence interval of that median (fixed seed,
+10000 resamples — the same input file always reproduces the same interval), and a two-sided
+Wilcoxon signed-rank p-value (exact for n <= 25 pairs, normal approximation with tie correction
+above). A losing backlog stays in the cost/token comparison; only quality is gated on whether a
+ticket actually cleared. This is the JetBrains-SkillsBench-style shape (paired tasks, a median over
+per-pair deltas, a significance test, a smoke-then-full ladder) rather than a self-selected
+scoreboard.
+
 ## What is measured, and where it comes from
 
 Per arm, off that session's own `"type":"result"` event: the four-way token breakdown,
@@ -97,10 +112,16 @@ Never the headline — the cost and token numbers above come from the arm's own 
 regardless of whether any of this succeeds.
 
 - **`subagent_stats`** (`spawned`/`completed`/`failed`/`killed`/`refused{depth_limit,concurrency_limit,budget}`/`by_type`)
-  is asserted directly: `spawned > 0 && completed > 0`, or the cell is rejected outright
+  is read for attribution and logged when it disagrees with the activation check below
   (`bench::stream_had_subagent_activity`, `bench/record.sh`). A subagent refused for zero tools, or
-  a treatment arm that never spawned one at all, still exits 0 with `is_error:false` — only this
-  field can tell "measured something" from "measured nothing."
+  a treatment arm that never spawned one at all, still exits 0 with `is_error:false` — the exit code
+  alone cannot tell "measured something" from "measured nothing."
+- **The activation check** is the stronger, enforced signal: `bench::stream_worker_spawn_count`
+  (`bench/record.sh`) counts Agent/Task `tool_use` invocations directly in the advisor's own
+  stream, never `subagent_stats`'s self-report alone. `run.sh`'s main loop forces a shiploop cell
+  with zero to `status: "void-no-activation"` — excluded from every metric and named in the paired
+  report's own Activation section, the same way a capped cell is excluded and named, rather than
+  aborting the whole run the way an earlier design's hard stop did.
 - **Forwarded subagent turns** (`--forward-subagent-text`, tagged `parent_tool_use_id`, each with
   its own `message.usage` / `message.model`) give the advisor/worker split. Gated behind a cached
   `claude --help` probe, an env kill switch, and a HARD STOP (not a degraded arm) when unsupported —
@@ -124,13 +145,27 @@ subagent's, so the token total comes off `modelUsage` (summed across every model
 which is complete in the same way `total_cost_usd` already was. There is no longer a separate "was
 the driver counted" question to ask, for cost or for tokens.
 
-## Quality is checked by a mechanical oracle, pass/fail only
+## Quality is checked by a mechanical oracle, pass/fail only, and reported separately from cost
 
 Unlike a purely transcript-derived model, this design can and does check whether a ticket was
 actually resolved: `verify_cmd` is run against the arm's own tree once the arm finishes, nothing
 patched in first. See "Verification" in `README.md`. This is PASS/FAIL against one mechanical
-oracle, never a quality score, and a backlog either arm fails to fully clear is dropped from the
-published set rather than counted as a partial success.
+oracle, never a quality score, and it is reported as its OWN section, never blended into the cost
+cut: a losing backlog (either arm fails to fully clear it) still contributes its cost and token
+deltas to the paired report — dropping it would let a benchmark quietly average over only the
+comparisons that happened to go well. `bench/rollup.mjs`'s quality section instead compares,
+per-ticket, cleared-by-vanilla against cleared-by-shiploop across every included pair, reports each
+arm's clear rate and the better/worse/same counts, and runs an exact two-sided sign test over the
+discordant tickets — the one place in this report a quality claim gets its own significance test,
+separate from the cost/token deltas' Wilcoxon test.
+
+## Dose response is descriptive, not a claim
+
+`bench/rollup.mjs` also buckets the median cost delta by the shiploop arm's own worker-spawn count
+and by the backlog's ticket count, printed as a small table with no significance test attached. This
+is a hint for where to look next (does delegating more move the number, does a longer backlog),
+never a finding — the n in any one bucket is typically small enough that a bucket-level test would
+overclaim.
 
 ## The ceiling
 
@@ -187,6 +222,17 @@ measured nothing can never be read as a successful run. `bench::validate_backlog
 warning up front when it discovers a zero-ticket backlog, once per backlog rather than once per
 cell.
 
+## The smoke gate: a live run bigger than one cell must already be proven at this hub sha
+
+A LIVE (non-dry) run with more than one (backlog x rep) cell refuses to start unless
+`BENCH_SMOKE_RUN=<run-id>` names a prior results dir, recorded at THIS SAME hub git sha (`git
+rev-parse HEAD`, stamped as `hubSha` on every rollup row), whose every cell completed
+(`resolved`/`failed`, never `capped`) and whose shiploop cell(s) actually activated
+(`workerSpawns > 0`). A run of exactly one backlog and one rep IS a smoke run itself and needs no
+gate — there is nothing bigger it could be proving the pipeline for. `BENCH_SKIP_SMOKE_GATE=1` is
+the deliberate override, recorded into the run's own `kind:"meta"` row so a run without proof is
+never silently indistinguishable from one with it.
+
 ## Rows integrity
 
 Every `kind:"rollup"` row `bench::record_rollup` writes carries a `checksum`: a hash over just that
@@ -213,9 +259,10 @@ is identical in both worlds, but the absolute dollars are not anyone's literal b
 ## Reproducing a run
 
 ```bash
-bash bench/run.sh --dry-run          # zero spend, canned fixtures for both arm shapes
-bash bench/run.sh --reps 2           # the real run over the published backlog set
-node bench/rollup.mjs                # the three metric cuts, selection, headline sentence
+bash bench/run.sh --dry-run                        # zero spend, canned fixtures for both arm shapes
+bash bench/run.sh --backlog <one-name> --run-id smoke   # 1-backlog, 1-rep smoke — no gate needed
+BENCH_SMOKE_RUN=smoke bash bench/run.sh --reps 2   # the real run, gated on that smoke run
+node bench/rollup.mjs                              # paired median/CI/p per metric, plus the headline
 ```
 
 There is no published headline to recompute right now: no curated backlog exists yet

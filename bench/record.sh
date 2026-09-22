@@ -129,24 +129,41 @@ bench::record_sessions() {
 # Fold this cell's session rows into ONE kind:"rollup" row and append it.
 #
 #   bench::record_rollup <results.jsonl> <run> <backlog> <arm> <rep> <status> \
-#                        <ticketsCleared> <ticketCount> <wallMs> <startedAt>
+#                        <ticketsCleared> <ticketCount> <wallMs> <startedAt> \
+#                        <workerSpawns> <verify-ledger.jsonl> <hubSha>
 #
 # Sums only over rows of THIS (run, backlog, arm, rep). costUsdTotal is null-safe: a session whose
 # cost could not be read contributes nothing rather than poisoning the sum with a zero, and
 # `costUsdSessions` records how many rows actually carried a cost so a partial fold is visible
 # instead of silently understated.
+#
+# `models` is every distinct model seen across this cell's own sessions (subagents included, since
+# a shiploop cell folds an advisor and worker sessions that can run different tiers) — `model`
+# stays the last non-empty one for back-compat, `models` is the array a paired report needs to
+# print "shiploop models X+Y" rather than lose the routing asymmetry to a single name.
+# `perTicket` embeds the cell's own verify ledger (one {id, cleared} per ticket) directly into the
+# row, so a paired report can compare per-ticket outcomes across arms without re-reading the
+# ledger file, which is private and gitignored. `workerSpawns` and `hubSha` are recorded verbatim
+# from the caller, which is the one place that can compute either.
 bench::record_rollup() {
   local out="$1" run="$2" backlog="$3" arm="$4" rep="$5" status="$6"
   local cleared="$7" total="$8" wallms="$9" startedat="${10}"
-  local row
+  local workerspawns="${11}" ledger="${12}" hubsha="${13}"
+  local ledger_json="" row
+  if [[ -n "$ledger" && -s "$ledger" ]]; then
+    ledger_json="$(jq -sc '[ .[] | {id: .ticket, cleared: .cleared} ]' "$ledger" 2>/dev/null)"
+  fi
+  [[ -n "$ledger_json" ]] || ledger_json="[]"
   row="$(jq -sc \
     --arg run "$run" --arg backlog "$backlog" --arg arm "$arm" --argjson rep "$rep" \
     --arg status "$status" --argjson cleared "$cleared" --argjson total "$total" \
     --argjson wallms "$wallms" --argjson startedat "$startedat" \
+    --argjson workerspawns "$workerspawns" --argjson perticket "$ledger_json" --arg hubsha "$hubsha" \
     '[ .[] | select(.kind=="session" and .run==$run and .backlog==$backlog
                     and .arm==$arm and .rep==$rep) ] as $s
      | { kind:"rollup", run:$run, backlog:$backlog, task:$backlog, arm:$arm, rep:$rep,
          model:  ($s | map(.model)       | map(select(. != null and . != "")) | last // null),
+         models: ($s | map(.model)       | map(select(. != null and . != "")) | unique | sort),
          cli_version: ($s | map(.cli_version) | map(select(. != null and . != "")) | last // null),
          status:$status,
          resolved: ($cleared > 0 and $cleared == $total),
@@ -164,7 +181,9 @@ bench::record_rollup() {
          costUsdSessions: ($s | map(.costUsd) | map(select(. != null)) | length),
          ticketsCleared:$cleared, ticketsTotal:$total,
          costUsdTotal: ($s | map(.costUsd) | map(select(. != null)) | if length==0 then null else add end),
-         tokensTotal: ($s | map(.tokens.total // 0) | add // 0) }' "$out" 2>/dev/null || true)"
+         tokensTotal: ($s | map(.tokens.total // 0) | add // 0),
+         workerSpawns:$workerspawns, perTicket:$perticket, hubSha:($hubsha | if .=="" then null else . end) }' \
+    "$out" 2>/dev/null || true)"
   if [[ -z "$row" ]]; then return 1; fi
   local sum; sum="$(bench::row_checksum "$row")"
   row="$(printf '%s' "$row" | jq -c --arg sum "$sum" '. + {checksum:$sum}' 2>/dev/null || printf '%s' "$row")"
@@ -229,6 +248,50 @@ bench::stream_had_subagent_activity() { # <jsonl> -> rc 0 spawned>0 && completed
   [[ "$spawned" =~ ^[0-9]+$ ]] || spawned=0
   [[ "$completed" =~ ^[0-9]+$ ]] || completed=0
   [[ "$spawned" -gt 0 && "$completed" -gt 0 ]]
+}
+
+# Count of Agent/Task tool_use invocations anywhere in one session stream — the direct evidence
+# that the advisor actually delegated, read off the stream itself rather than the result event's
+# own self-reported subagent_stats. Only lines carrying `"type":"assistant"` are handed to jq, so a
+# stray non-JSON line (bench::spawn merges stderr into the same stream) never aborts the count; jq
+# evaluates one JSON document per line by default with no `-s`, so a bad line only drops that line.
+bench::stream_worker_spawn_count() { # <jsonl> -> integer count on stdout
+  local jsonl="$1" n
+  n="$(govern::stream_grep "$jsonl" '"type":"assistant"' 2>/dev/null \
+    | jq -r '[(.message.content // [])[]? | select(.type=="tool_use" and (.name=="Agent" or .name=="Task"))] | length' 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
+  return 0
+}
+
+# Sum of bench::stream_worker_spawn_count over every stream in one cell's session-log directory.
+bench::cell_worker_spawns() { # <session-log-dir> -> integer count on stdout
+  local logdir="$1" f total=0 n
+  shopt -s nullglob
+  for f in "$logdir"/*.jsonl; do
+    n="$(bench::stream_worker_spawn_count "$f")"
+    total=$((total + n))
+  done
+  shopt -u nullglob
+  printf '%s\n' "$total"
+  return 0
+}
+
+# The activation gate: a shiploop cell that never delegated measured nothing, not a real
+# with-shiploop run, but a benchmark run keeps going rather than aborting whole-hog the way an
+# earlier design's hard `bench::die` did (see bench::arm_shiploop) — the pairing rollup excludes
+# and lists a cell like this by itself, the same way it already does for a capped one. `capped`
+# always wins: a session cut off by its own ceiling before it could even delegate is a rail
+# artifact, not evidence about whether the arm would have delegated given the room to.
+bench::activation_status() { # <base-status> <arm> <workerSpawns> -> the status to record
+  local status="$1" arm="$2" spawns="$3"
+  if [[ "$arm" == "shiploop" && "$status" != "capped" && "$spawns" -eq 0 ]]; then
+    printf 'void-no-activation\n'
+  else
+    printf '%s\n' "$status"
+  fi
+  return 0
 }
 
 # Reads a lever-events.jsonl file against an EXPLICIT allow-list of the three contract event names

@@ -18,6 +18,13 @@
 #      detectable; a row's subagent activity is asserted off its OWN result event, never the exit
 #      code; and the lever-events reader uses an explicit allow-list, counting a malformed line and
 #      an unrecognized event name rather than silently dropping either
+#  11. every rollup row also carries workerSpawns/models/hubSha; workerSpawns is a direct count of
+#      Agent/Task tool_use invocations in the stream, never subagent_stats alone, and a shiploop
+#      cell with zero forces status void-no-activation (capped still wins)
+#  12. the smoke gate: a dry run never needs one regardless of size; a live run bigger than one
+#      (backlog x rep) cell refuses to start with no BENCH_SMOKE_RUN; BENCH_SKIP_SMOKE_GATE=1 is
+#      logged into the run's own kind:"meta" row; a BENCH_SMOKE_RUN at the current hub sha with
+#      every cell resolved/failed and the shiploop cell activated lets the run past the gate
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -183,5 +190,72 @@ absent="$(BENCH_STATE_DIR="$T/state" bash -c '
 ' 2>/dev/null)"
 assert_eq "$(printf '%s' "$absent" | jq -r '.instrumented')" "false" \
   "10. a run with no lever-events.jsonl is uninstrumented, never zero-saving"
+
+# ── 11. workerSpawns / models / hubSha, and the activation gate ─────────────
+assert_eq "$(jq -sr '[ .[] | select(.kind=="rollup") | select(has("workerSpawns") and has("models") and has("hubSha") | not) ] | length' "$R")" \
+  "0" "11. every rollup row carries workerSpawns/models/hubSha"
+assert_eq "$(jq -r 'select(.kind=="rollup" and .arm=="shiploop") | .workerSpawns' "$R")" "2" \
+  "11. the shiploop dry-run cell's workerSpawns is the fixture's own two Task tool_use invocations"
+spawns="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::stream_worker_spawn_count "'"$HUB"'/bench/fixtures/shiploop-session.jsonl"
+  bench::stream_worker_spawn_count "'"$HUB"'/bench/fixtures/vanilla-session.jsonl"
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$spawns" | sed -n 1p)" "2" \
+  "11. the shiploop fixture shows exactly two Agent/Task tool_use invocations"
+assert_eq "$(printf '%s' "$spawns" | sed -n 2p)" "0" \
+  "11. the vanilla fixture, which never delegates, shows zero"
+act="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::activation_status resolved shiploop 0
+  bench::activation_status resolved shiploop 2
+  bench::activation_status capped shiploop 0
+  bench::activation_status resolved vanilla 0
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$act" | sed -n 1p)" "void-no-activation" \
+  "11. a shiploop cell with zero spawns is forced to void-no-activation"
+assert_eq "$(printf '%s' "$act" | sed -n 2p)" "resolved" \
+  "11. a shiploop cell WITH spawns keeps its real status"
+assert_eq "$(printf '%s' "$act" | sed -n 3p)" "capped" \
+  "11. capped wins over the activation check — a session cut off before it could delegate is a rail artifact"
+assert_eq "$(printf '%s' "$act" | sed -n 4p)" "resolved" \
+  "11. the activation gate only ever applies to the shiploop arm"
+
+# ── 12. the smoke gate ───────────────────────────────────────────────────────
+# The dry run above already used --backlog fixture-backlog (1 backlog, REPS default 1): reuse it as
+# a valid BENCH_SMOKE_RUN candidate, since its shiploop cell activated (11, above) and both cells
+# completed (status "failed" — the bare dry-run checkout clears nothing, which is still a completed
+# comparison, never capped). A dry run itself never needs a gate no matter its own size.
+out="$(BENCH_OUT_ROOT="$T/results2" bash "$HUB/bench/run.sh" --dry-run --run-id schema-multi \
+        --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog --reps 2 2>&1)"
+assert_eq "$?" "0" "12. a dry run bigger than one cell needs no smoke gate at all"
+assert_not_contains "$out" "smoke gate" "12. and never even mentions one"
+
+out="$(BENCH_OUT_ROOT="$T/results3" bash "$HUB/bench/run.sh" --run-id schema-live \
+        --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog --reps 2 2>&1)"
+assert_eq "$?" "1" "12. a live run bigger than one cell, with no BENCH_SMOKE_RUN, refuses to start"
+assert_contains "$out" "smoke gate:" "12. and says so"
+assert_not_contains "$out" "TEST FIXTURE" \
+  "12. it dies at the gate, before ever reaching the per-backlog fixture check"
+
+out="$(BENCH_OUT_ROOT="$T/results4" BENCH_SKIP_SMOKE_GATE=1 bash "$HUB/bench/run.sh" --run-id schema-skip \
+        --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog --reps 2 2>&1)"
+assert_contains "$out" "BENCH_SKIP_SMOKE_GATE=1" "12. the override is logged when used"
+assert_contains "$out" "TEST FIXTURE" \
+  "12. and the run gets PAST the gate — it now dies at the ordinary fixture-backlog check instead"
+assert_eq "$(jq -sr '[ .[] | select(.kind=="meta") | .smokeGateSkipped ] | first' "$T/results4/schema-skip/results.jsonl")" \
+  "true" "12. the skip is recorded in the run's own kind:\"meta\" row, not just logged"
+
+# BENCH_SMOKE_RUN names a run-id under the SAME --out root as this run, so reuse "$T/results"
+# (where the very first dry run above, run-id "schema", already recorded a completed, activated
+# cell) rather than a fresh root.
+out="$(BENCH_OUT_ROOT="$T/results" BENCH_SMOKE_RUN=schema-dry bash "$HUB/bench/run.sh" --run-id schema-gated \
+        --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog --reps 2 2>&1)"
+assert_contains "$out" "smoke gate: satisfied by BENCH_SMOKE_RUN=schema-dry" \
+  "12. a genuine BENCH_SMOKE_RUN at the current hub sha, fully completed and activated, passes the gate"
+assert_contains "$out" "TEST FIXTURE" \
+  "12. and the run proceeds to the ordinary fixture-backlog check, exactly like the skip case"
 
 assert_done

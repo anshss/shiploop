@@ -306,11 +306,18 @@ bench::arm_shiploop() { # <workdir> <backlog.jsonl> <logdir> <backlog-name>
   # Two failure modes that produce a clean-looking zero (section 6): a subagent refused for zero
   # tools, or a stream headed by bench::spawn's merged-stderr non-JSON line, both still exit 0 with
   # is_error:false. A treatment arm that never spawned a worker is indistinguishable from one that
-  # worked unless this is checked directly against subagent_stats, never the exit code. This is the
-  # REAL spawn path only — bench::run_arm calls bench::dry_arm instead of this function under
-  # --dry-run, so there is no canned-fixture case to special-case here.
+  # worked unless this is checked directly, never the exit code. This is the REAL spawn path only —
+  # bench::run_arm calls bench::dry_arm instead of this function under --dry-run, so there is no
+  # canned-fixture case to special-case here.
+  #
+  # Logged here, not enforced here: run.sh's main loop is what turns a zero-activation cell into
+  # status void-no-activation, off bench::cell_worker_spawns' own direct count of Agent/Task
+  # tool_use invocations in the stream — a stronger signal than this cell's self-reported
+  # subagent_stats, and one run.sh can act on per-cell (exclude and list the pair) rather than
+  # aborting the whole run the way a hard stop here would. subagent_stats stays useful for
+  # attribution (bench::report_attribution, below) even when it and the tool_use count disagree.
   if ! bench::stream_had_subagent_activity "$jsonl"; then
-    bench::die "arm shiploop ($name): the advisor session's own result event shows no completed subagent (subagent_stats.spawned>0 && completed>0 required) — this cell measured nothing, not a real with-shiploop run. See $jsonl."
+    bench::log "arm shiploop ($name): the advisor session's own result event shows no completed subagent (subagent_stats.spawned>0 && completed>0) — run.sh's own activation check on $jsonl decides this cell's status"
   fi
   bench::report_attribution "$jsonl" "$rundir" "$name"
   # Write-back: the dispatch above worked entirely inside "$ws/$slug", a COPY bench::scaffold_workspace

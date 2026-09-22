@@ -1,25 +1,21 @@
 #!/usr/bin/env node
-// bench/rollup.mjs: results.jsonl to the three metric cuts, the backlog
-// selection ranking, and the one published sentence. Node, zero dependencies.
+// bench/rollup.mjs: results.jsonl to the paired-comparison report. Node, zero dependencies.
 //
 // Usage:
-//   node bench/rollup.mjs [results.jsonl] [--json] [--floor 65] [--keep-max 3] [--window-usd N]
+//   node bench/rollup.mjs [results.jsonl] [--json]
 //
 //   results.jsonl   path to a run's results file. Omitted: the newest run under bench/results/.
 //   --json          machine-readable output instead of the report.
-//   --floor         selection stops as soon as the kept set clears this headline percentage.
-//                   Default 65, the number the claim has to beat to be worth making.
-//   --keep-max      most backlogs the kept set may contain. Default 3.
-//   --window-usd    an OBSERVED 5-hour window budget in API-rate dollars, for the absolute
-//                   tickets-per-window figures. Without it the third cut is reported only as the
-//                   ratio, which is what the "Nx more" claim actually rests on; the absolute
-//                   counts need a measured budget and are never guessed.
 //
-// Every number printed here is computed from total_cost_usd and the token counts in the file.
-// Nothing is modelled, extrapolated, or filled in. A cut that cannot be computed prints "n/a" and
-// says why, because a plausible placeholder next to real figures is how a benchmark stops being
-// one.
-
+// The pairing unit is (backlog, rep): a pair exists when both arms recorded a completed cell for
+// that backlog and rep. EVERY backlog is analysed — nothing is ranked, nothing is dropped for
+// looking bad. A pair is excluded only when the comparison itself would be dishonest: a cell hit
+// BENCH_MAX_USD (capped), a cost could not be read (error), or the shiploop cell never actually
+// activated a worker (void-no-activation). Exclusion is symmetric — the whole pair drops, never one
+// arm — and every excluded pair is listed with its reason.
+//
+// Every number here is computed from total_cost_usd and the token counts in the file. Nothing is
+// modeled, extrapolated, or filled in. A metric that cannot be computed prints "n/a" and says why.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,13 +29,9 @@ function die(msg) {
 
 // ---- args ------------------------------------------------------------------
 const argv = process.argv.slice(2);
-const opts = { json: false, floor: 65, keepMax: 3, windowUsd: null, file: null };
-for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
+const opts = { json: false, file: null };
+for (const a of argv) {
   if (a === "--json") opts.json = true;
-  else if (a === "--floor") opts.floor = Number(argv[++i]);
-  else if (a === "--keep-max") opts.keepMax = Number(argv[++i]);
-  else if (a === "--window-usd") opts.windowUsd = Number(argv[++i]);
   else if (a.startsWith("--")) die(`unknown argument: ${a}`);
   else opts.file = a;
 }
@@ -72,275 +64,406 @@ const rows = readFileSync(file, "utf8")
 const rollups = rows.filter((r) => r.kind === "rollup");
 if (rollups.length === 0) die(`${file} contains no kind:"rollup" rows`);
 
-// ---- folding ---------------------------------------------------------------
-// A cell is one (backlog, arm, rep). Reps of the same (backlog, arm) are averaged, so a backlog
-// with two reps does not outvote one with a single rep in the aggregate.
-const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+// ---- statistics primitives ---------------------------------------------------
+// Fixed seed, deterministic mulberry32 PRNG: the same input file always produces the same CI, on
+// any machine, forever. Nothing here is a source of nondeterminism that a re-run could disagree on.
+const BOOTSTRAP_SEED = 0x9e3779b9;
+const BOOTSTRAP_RESAMPLES = 10000;
 
-// Two token cuts. `billable` charges cache reads at nothing, which is the
-// conservative reading; `allIn` counts every token the API moved. Both are true statements about
-// the same file; the report says which one the headline used.
-const tokenCuts = (t) => ({
-  billable: num(t?.input) + num(t?.output) + num(t?.cacheCreation),
-  allIn: num(t?.total) || num(t?.input) + num(t?.output) + num(t?.cacheRead) + num(t?.cacheCreation),
-});
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function median(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  if (n === 0) return null;
+  const mid = n >> 1;
+  return n % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// 95% bootstrap CI of the median, fixed seed, BOOTSTRAP_RESAMPLES resamples, deterministic output.
+// Undefined below n=2 (a single point cannot support a confidence interval); the caller reports n/a.
+function bootstrapMedianCI(values) {
+  const n = values.length;
+  if (n < 2) return null;
+  const rng = mulberry32(BOOTSTRAP_SEED);
+  const meds = new Array(BOOTSTRAP_RESAMPLES);
+  for (let r = 0; r < BOOTSTRAP_RESAMPLES; r++) {
+    const sample = new Array(n);
+    for (let i = 0; i < n; i++) sample[i] = values[Math.floor(rng() * n)];
+    meds[r] = median(sample);
+  }
+  meds.sort((a, b) => a - b);
+  const lo = meds[Math.floor(0.025 * (BOOTSTRAP_RESAMPLES - 1))];
+  const hi = meds[Math.floor(0.975 * (BOOTSTRAP_RESAMPLES - 1))];
+  return [lo, hi];
+}
+
+// Lanczos approximation to ln(Gamma(x)), used for exact binomial coefficients in log-space so the
+// sign test never overflows on a large ticket count.
+function lgamma(x) {
+  const g = 7;
+  const c = [
+    0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+    771.32342877765313, -176.61502916214059, 12.507343278686905,
+    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+  ];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+  x -= 1;
+  let a = c[0];
+  const t = x + g + 0.5;
+  for (let i = 1; i < g + 2; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+function logChoose(n, k) {
+  return lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1);
+}
+
+// Exact two-sided sign test: X ~ Binomial(n, 0.5), p = 2 * P(X <= min(better,worse)), capped at 1.
+function signTestP(better, worse) {
+  const n = better + worse;
+  if (n === 0) return null;
+  const k = Math.min(better, worse);
+  let p = 0;
+  for (let i = 0; i <= k; i++) p += Math.exp(logChoose(n, i) - n * Math.log(2));
+  return Math.min(1, 2 * p);
+}
+
+function erf(x) {
+  // Abramowitz & Stegun 7.1.26, max error ~1.5e-7 — plenty for a two-sided p-value at this n.
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+const normalCdf = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+
+// Two-sided Wilcoxon signed-rank test over paired differences. Zero differences are dropped first
+// (the standard procedure); ties in the remaining absolute values get the average rank. n <= 25
+// (post-drop) is exact, via a subset-sum distribution over the (doubled, to stay integer) ranks —
+// every one of the 2^n sign assignments is enumerated by convolution, not simulated. Above that,
+// a normal approximation with the standard tie-correction term.
+function wilcoxonSignedRank(diffs) {
+  const nz = diffs.filter((d) => d !== 0);
+  const n = nz.length;
+  if (n === 0) return null;
+  const abs = nz.map(Math.abs);
+  const order = abs.map((_, i) => i).sort((a, b) => abs[a] - abs[b]);
+  const ranks = new Array(n);
+  const tieGroupSizes = [];
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j + 1 < n && abs[order[j + 1]] === abs[order[i]]) j++;
+    const avgRank = (i + 1 + (j + 1)) / 2; // 1-based
+    for (let k = i; k <= j; k++) ranks[order[k]] = avgRank;
+    tieGroupSizes.push(j - i + 1);
+    i = j + 1;
+  }
+  let wPlus = 0;
+  for (let k = 0; k < n; k++) if (nz[k] > 0) wPlus += ranks[k];
+
+  if (n <= 25) {
+    const doubled = ranks.map((r) => Math.round(r * 2));
+    let counts = new Map([[0, 1]]);
+    for (const r of doubled) {
+      const next = new Map();
+      for (const [s, c] of counts) {
+        next.set(s, (next.get(s) || 0) + c);
+        next.set(s + r, (next.get(s + r) || 0) + c);
+      }
+      counts = next;
+    }
+    const total = 2 ** n;
+    const obs = Math.round(wPlus * 2);
+    let le = 0, ge = 0;
+    for (const [s, c] of counts) {
+      if (s <= obs) le += c;
+      if (s >= obs) ge += c;
+    }
+    const p = Math.min(1, 2 * Math.min(le / total, ge / total));
+    return { p, method: "exact", n, wPlus };
+  }
+  const mean = (n * (n + 1)) / 4;
+  const tieCorrection = tieGroupSizes.reduce((a, t) => a + (t ** 3 - t), 0);
+  const variance = (n * (n + 1) * (2 * n + 1)) / 24 - tieCorrection / 48;
+  const sd = Math.sqrt(variance);
+  const cc = wPlus > mean ? -0.5 : wPlus < mean ? 0.5 : 0;
+  const z = sd > 0 ? (wPlus - mean + cc) / sd : 0;
+  const p = Math.min(1, 2 * (1 - normalCdf(Math.abs(z))));
+  return { p, method: "normal-approx", n, wPlus, z };
+}
+
+// ---- cells: one rollup row IS one (backlog, arm, rep) cell -----------------
+const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+function cellView(row) {
+  if (!row) return null;
+  const t = row.tokens || {};
+  const billable = (t.input ?? 0) + (t.output ?? 0) + (t.cacheCreation ?? 0);
+  const allIn = typeof t.total === "number" ? t.total : billable + (t.cacheRead ?? 0);
+  return {
+    status: row.status,
+    costUsd: num(row.costUsdTotal ?? row.costUsd),
+    tokensAllIn: allIn,
+    tokensBillable: billable,
+    tokensOutput: t.output ?? 0,
+    tokensCacheRead: t.cacheRead ?? 0,
+    freshInput: (t.input ?? 0) + (t.cacheCreation ?? 0),
+    turns: num(row.turns) ?? 0,
+    workerSpawns: num(row.workerSpawns) ?? 0,
+    models: Array.isArray(row.models) ? row.models : row.model ? [row.model] : [],
+    perTicket: Array.isArray(row.perTicket) ? row.perTicket : [],
+    ticketsTotal: num(row.ticketsTotal) ?? 0,
+    hubSha: row.hubSha ?? null,
+  };
+}
 
 const cells = new Map();
-for (const r of rollups) {
-  const key = `${r.backlog} ${r.arm}`;
-  if (!cells.has(key)) cells.set(key, []);
-  const tc = tokenCuts(r.tokens);
-  cells.get(key).push({
-    rep: r.rep,
-    status: r.status,
-    cleared: num(r.ticketsCleared),
-    total: num(r.ticketsTotal),
-    resolved: r.resolved === true,
-    costUsd: r.costUsdTotal ?? r.costUsd,
-    tokensBillable: tc.billable,
-    tokensAllIn: tc.allIn,
-    sessions: num(r.sessions),
-    model: r.model,
-    cli: r.cli_version,
-  });
-}
-
+for (const r of rollups) cells.set(`${r.backlog}|${r.arm}|${r.rep}`, r);
 const backlogNames = [...new Set(rollups.map((r) => r.backlog))].sort();
+const repNumbers = [...new Set(rollups.map((r) => r.rep))].sort((a, b) => a - b);
 
-function armFold(backlog, arm) {
-  const reps = cells.get(`${backlog} ${arm}`);
-  if (!reps || reps.length === 0) return null;
-  // A rep with no readable cost cannot be averaged into a cost claim. Report it rather than
-  // treating the missing dollars as zero, which would inflate every cut downstream.
-  const costed = reps.filter((r) => typeof r.costUsd === "number");
+// ---- pairing ----------------------------------------------------------------
+const pairs = [];
+const excluded = [];
+for (const backlog of backlogNames) {
+  for (const rep of repNumbers) {
+    const vRow = cells.get(`${backlog}|vanilla|${rep}`);
+    const sRow = cells.get(`${backlog}|shiploop|${rep}`);
+    if (!vRow && !sRow) continue; // this (backlog, rep) cell was never dispatched
+    if (!vRow || !sRow) {
+      excluded.push({ backlog, rep, reason: `error: no ${vRow ? "shiploop" : "vanilla"} cell recorded` });
+      continue;
+    }
+    const v = cellView(vRow), s = cellView(sRow);
+    if (v.status === "capped" || s.status === "capped") {
+      excluded.push({ backlog, rep, reason: "capped" });
+      continue;
+    }
+    if (s.status === "void-no-activation") {
+      excluded.push({ backlog, rep, reason: "void-no-activation" });
+      continue;
+    }
+    if (v.status === "no-tickets" || s.status === "no-tickets") {
+      excluded.push({ backlog, rep, reason: "error: zero-ticket backlog" });
+      continue;
+    }
+    if (typeof v.costUsd !== "number" || typeof s.costUsd !== "number") {
+      excluded.push({ backlog, rep, reason: "error: no readable cost" });
+      continue;
+    }
+    pairs.push({ backlog, rep, vanilla: v, shiploop: s, tickets: v.ticketsTotal || s.ticketsTotal });
+  }
+}
+
+// ---- metrics ------------------------------------------------------------------
+const METRICS = [
+  { key: "cost", label: "cost (USD)", primary: true, unit: "$", get: (c) => c.costUsd },
+  { key: "tokensAllIn", label: "all-in tokens", get: (c) => c.tokensAllIn },
+  { key: "tokensBillable", label: "billable tokens", get: (c) => c.tokensBillable },
+  { key: "tokensOutput", label: "output tokens", get: (c) => c.tokensOutput },
+  { key: "tokensCacheRead", label: "cache-read tokens", get: (c) => c.tokensCacheRead },
+  { key: "freshInput", label: "fresh input (input + cache creation)", get: (c) => c.freshInput },
+  { key: "turns", label: "turns", get: (c) => c.turns },
+];
+
+// Per-pair relative delta is (shiploop - vanilla) / vanilla. A positive delta means shiploop cost
+// MORE, printed as such — never dressed up as a saving. A pair whose vanilla value is exactly zero
+// cannot form a ratio and is skipped for THAT metric only (the pair itself stays included for
+// every other metric).
+function metricStats(metric) {
+  const deltas = [];
+  const backlogSet = new Set();
+  let vTotal = 0, sTotal = 0, totalsN = 0;
+  for (const p of pairs) {
+    const v = metric.get(p.vanilla), s = metric.get(p.shiploop);
+    if (typeof v !== "number" || typeof s !== "number") continue;
+    vTotal += v; sTotal += s; totalsN++;
+    if (v === 0) continue;
+    deltas.push((s - v) / v);
+    backlogSet.add(p.backlog);
+  }
+  const n = deltas.length;
+  const med = n ? median(deltas) : null;
+  const ci = n ? bootstrapMedianCI(deltas) : null;
+  const wil = n ? wilcoxonSignedRank(deltas) : null;
   return {
-    reps: reps.length,
-    repsCosted: costed.length,
-    capped: reps.some((r) => r.status === "capped"),
-    cleared: reps.every((r) => r.resolved),
-    tickets: reps[0].total,
-    costUsd: costed.length ? mean(costed.map((r) => r.costUsd)) : null,
-    tokensBillable: mean(reps.map((r) => r.tokensBillable)),
-    tokensAllIn: mean(reps.map((r) => r.tokensAllIn)),
-    sessions: mean(reps.map((r) => r.sessions)),
-    model: reps[reps.length - 1].model,
-    cli: reps[reps.length - 1].cli,
+    metric: metric.key,
+    n,
+    backlogs: backlogSet.size,
+    medianDeltaPct: med === null ? null : med * 100,
+    ci95Pct: ci === null ? null : [ci[0] * 100, ci[1] * 100],
+    wilcoxonP: wil ? wil.p : null,
+    wilcoxonMethod: wil ? wil.method : null,
+    pooledRatio: totalsN && vTotal !== 0 ? sTotal / vTotal : null,
+    vanillaTotal: totalsN ? vTotal : null,
+    shiploopTotal: totalsN ? sTotal : null,
+    totalsN,
   };
 }
 
-const pctLower = (base, treat) => (base > 0 ? ((base - treat) / base) * 100 : null);
-const ratio = (base, treat) => (treat > 0 ? base / treat : null);
+const metricResults = METRICS.map((m) => ({ ...m, stats: metricStats(m) }));
+const costResult = metricResults.find((m) => m.key === "cost");
 
-const perBacklog = backlogNames.map((name) => {
-  const v = armFold(name, "vanilla");
-  const s = armFold(name, "shiploop");
-  const vf = armFold(name, "vanilla-fresh");
-  // A backlog either arm failed to clear is not comparable and drops out. So is a
-  // capped one: a truncated run is cheaper for the wrong reason, and letting it into the ranking
-  // would make the cap itself look like a saving.
-  const eligible =
-    !!v && !!s && v.cleared && s.cleared && !v.capped && !s.capped &&
-    typeof v.costUsd === "number" && typeof s.costUsd === "number";
-  let reason = null;
-  if (!v) reason = "no vanilla arm recorded";
-  else if (!s) reason = "no shiploop arm recorded";
-  else if (v.capped || s.capped) reason = "run hit BENCH_MAX_USD (status capped)";
-  else if (!v.cleared || !s.cleared) reason = "an arm failed to clear the backlog";
-  else if (typeof v.costUsd !== "number" || typeof s.costUsd !== "number") reason = "no readable cost";
+// ---- quality: per-ticket cleared comparison, within included pairs only ------
+function qualityStats() {
+  let better = 0, worse = 0, same = 0, ticketsCompared = 0, vCleared = 0, sCleared = 0;
+  for (const p of pairs) {
+    const vBy = new Map(p.vanilla.perTicket.map((t) => [t.id ?? t.ticket, !!t.cleared]));
+    const sBy = new Map(p.shiploop.perTicket.map((t) => [t.id ?? t.ticket, !!t.cleared]));
+    const ids = new Set([...vBy.keys(), ...sBy.keys()]);
+    for (const id of ids) {
+      if (!vBy.has(id) || !sBy.has(id)) continue; // can't compare a ticket missing from either ledger
+      const vC = vBy.get(id), sC = sBy.get(id);
+      ticketsCompared++;
+      if (vC) vCleared++;
+      if (sC) sCleared++;
+      if (sC && !vC) better++;
+      else if (vC && !sC) worse++;
+      else same++;
+    }
+  }
   return {
-    backlog: name,
-    tickets: v?.tickets ?? s?.tickets ?? 0,
-    vanilla: v,
-    shiploop: s,
-    vanillaFresh: vf,
-    eligible,
-    reason,
-    costPct: eligible ? pctLower(v.costUsd, s.costUsd) : null,
-    tokenPctBillable: eligible ? pctLower(v.tokensBillable, s.tokensBillable) : null,
-    tokenPctAllIn: eligible ? pctLower(v.tokensAllIn, s.tokensAllIn) : null,
-  };
-});
-
-// ---- selection ---------------------------------------------------------------
-// Rank the eligible backlogs by cost delta, take them best-first, and stop as soon as the
-// AGGREGATE over the kept set clears the floor. The aggregate is what gets published, so it is
-// what the stopping rule reads: a set whose individual members all beat the floor can still
-// aggregate below it once a big cheap backlog is weighted in.
-function aggregate(set) {
-  const vCost = set.reduce((a, b) => a + b.vanilla.costUsd, 0);
-  const sCost = set.reduce((a, b) => a + b.shiploop.costUsd, 0);
-  const vTokB = set.reduce((a, b) => a + b.vanilla.tokensBillable, 0);
-  const sTokB = set.reduce((a, b) => a + b.shiploop.tokensBillable, 0);
-  const vTokA = set.reduce((a, b) => a + b.vanilla.tokensAllIn, 0);
-  const sTokA = set.reduce((a, b) => a + b.shiploop.tokensAllIn, 0);
-  const tickets = set.reduce((a, b) => a + b.tickets, 0);
-  return {
-    backlogs: set.length,
-    tickets,
-    vanillaCostUsd: vCost,
-    shiploopCostUsd: sCost,
-    costPct: pctLower(vCost, sCost),
-    tokenPctBillable: pctLower(vTokB, sTokB),
-    tokenPctAllIn: pctLower(vTokA, sTokA),
-    // Tickets per window is (window budget / cost per ticket), so the RATIO
-    // of the two arms is window-budget independent: the budget cancels. That ratio is the honest
-    // form of "Nx more tickets per 5-hour window". Absolute counts need a measured budget and
-    // only appear when --window-usd supplies one.
-    ticketsPerDollarRatio: ratio(vCost / tickets, sCost / tickets),
-    vanillaCostPerTicket: vCost / tickets,
-    shiploopCostPerTicket: sCost / tickets,
+    ticketsCompared,
+    vanillaClearRatePct: ticketsCompared ? (100 * vCleared) / ticketsCompared : null,
+    shiploopClearRatePct: ticketsCompared ? (100 * sCleared) / ticketsCompared : null,
+    better, worse, same,
+    signTestP: ticketsCompared ? signTestP(better, worse) : null,
   };
 }
+const quality = qualityStats();
 
-const ranked = perBacklog
-  .filter((b) => b.eligible)
-  .sort((a, b) => b.costPct - a.costPct);
+// ---- dose response: cost delta bucketed by spawn count / ticket count, descriptive only -----
+function doseTable(keyFn) {
+  const buckets = new Map();
+  for (const p of pairs) {
+    const v = p.vanilla.costUsd, s = p.shiploop.costUsd;
+    if (v === 0) continue;
+    const k = keyFn(p);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push((s - v) / v);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([bucket, deltas]) => ({ bucket, n: deltas.length, medianDeltaPct: median(deltas) * 100 }));
+}
+const doseBySpawns = doseTable((p) => p.shiploop.workerSpawns);
+const doseByTickets = doseTable((p) => p.tickets);
 
-const kept = [];
-for (const b of ranked) {
-  if (kept.length >= opts.keepMax) break;
-  kept.push(b);
-  const a = aggregate(kept);
-  // Two is the published minimum (keep 2 to 3): "our benchmark suite" of one backlog
-  // is a single data point wearing a plural.
-  if (kept.length >= 2 && a.costPct >= opts.floor) break;
+// ---- headline: exactly one sentence, always cost, direction-neutral ----------
+function modelsFor(arm) {
+  const s = new Set();
+  for (const r of rollups) if (r.arm === arm) for (const m of Array.isArray(r.models) ? r.models : r.model ? [r.model] : []) s.add(m);
+  return [...s].sort();
 }
 
-const agg = kept.length ? aggregate(kept) : null;
-const allEligible = ranked.length ? aggregate(ranked) : null;
-
-// ---- headline ------------------------------------------------------------
-// Exactly one sentence, "up to" phrasing, in the shape the spec fixes. The percentage is the
-// larger of the cost cut and the better token cut, and the report always says which one it is so
-// nobody publishes a token number under a cost word.
-function headline(a, model, cli) {
-  if (!a) return null;
-  const cuts = [
-    { label: "lower cost", value: a.costPct, verb: "lower cost" },
-    { label: "fewer tokens (billable)", value: a.tokenPctBillable, verb: "fewer tokens" },
-    { label: "fewer tokens (all-in)", value: a.tokenPctAllIn, verb: "fewer tokens" },
-  ].filter((c) => typeof c.value === "number" && Number.isFinite(c.value));
-  if (!cuts.length) return null;
-  const best = cuts.reduce((x, y) => (y.value > x.value ? y : x));
-  const pct = Math.floor(best.value);
-  return {
-    metric: best.label,
-    pct,
-    sentence:
-      `Up to ${pct}% ${best.verb} to ship the same backlog vs a stock Claude Code session ` +
-      `(${a.backlogs} real upstream backlogs, ${a.tickets} tickets, model ${model}, CLI ${cli}).`,
-  };
+function headline() {
+  const c = costResult.stats;
+  if (c.n === 0 || c.medianDeltaPct === null) return null;
+  const f1 = (n) => (n >= 0 ? "+" : "") + n.toFixed(1);
+  const ciStr = c.ci95Pct ? `${f1(c.ci95Pct[0])}%..${f1(c.ci95Pct[1])}%` : "n/a (n<2)";
+  const pStr = c.wilcoxonP === null ? "n/a" : c.wilcoxonP < 0.001 ? "<0.001" : c.wilcoxonP.toFixed(3);
+  const vanillaModels = modelsFor("vanilla").join("+") || "unknown";
+  const shiploopModels = modelsFor("shiploop").join("+") || "unknown";
+  return (
+    `Median paired cost change: ${f1(c.medianDeltaPct)}% (95% CI ${ciStr}, Wilcoxon p=${pStr}, ` +
+    `n=${c.n} pairs over ${c.backlogs} backlogs x ${repNumbers.length} reps; ` +
+    `vanilla model ${vanillaModels}, shiploop models ${shiploopModels}).`
+  );
 }
+const head = headline();
 
-const model = kept.length ? kept[0].vanilla.model : rollups[rollups.length - 1].model;
-const cli = kept.length ? kept[0].vanilla.cli : rollups[rollups.length - 1].cli_version;
-const head = headline(agg, model, cli);
-
-// ---- output ----------------------------------------------------------------
-function stripArms(b) {
-  return {
-    backlog: b.backlog, tickets: b.tickets, eligible: b.eligible, reason: b.reason,
-    vanillaCostUsd: b.vanilla?.costUsd ?? null, shiploopCostUsd: b.shiploop?.costUsd ?? null,
-    vanillaFreshCostUsd: b.vanillaFresh?.costUsd ?? null,
-    costPct: b.costPct, tokenPctBillable: b.tokenPctBillable, tokenPctAllIn: b.tokenPctAllIn,
-  };
-}
-
+// ---- output ------------------------------------------------------------------
 if (opts.json) {
   const payload = {
     file,
-    perBacklog: perBacklog.map(stripArms),
-    selection: {
-      floor: opts.floor,
-      keepMax: opts.keepMax,
-      ranked: ranked.map((b) => b.backlog),
-      kept: kept.map((b) => b.backlog),
-      dropped: perBacklog.filter((b) => !b.eligible).map((b) => ({ backlog: b.backlog, reason: b.reason })),
-    },
-    aggregateKept: agg,
-    aggregateAllEligible: allEligible,
+    pairs: pairs.map((p) => ({ backlog: p.backlog, rep: p.rep, tickets: p.tickets })),
+    excluded,
+    metrics: metricResults.map((m) => ({ key: m.key, label: m.label, primary: !!m.primary, ...m.stats })),
+    quality,
+    doseResponse: { byWorkerSpawns: doseBySpawns, byTicketCount: doseByTickets },
     headline: head,
   };
   process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
   process.exit(0);
 }
 
+const f1 = (n) => (typeof n === "number" && Number.isFinite(n) ? (n >= 0 ? "+" : "") + n.toFixed(1) : "n/a");
 const f2 = (n) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "n/a");
-const f1 = (n) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(1) : "n/a");
 const out = (s) => process.stdout.write(s + "\n");
 
 out(`bench rollup: ${file}`);
 out("");
 
-out("Per backlog");
-out("    backlog                        tickets   vanilla $   shiploop $   cost cut");
-for (const b of perBacklog) {
-  const flag = b.eligible ? "  " : "x ";
-  out(
-    `  ${flag}${b.backlog.padEnd(28)} ${String(b.tickets).padStart(9)} ` +
-      `${f2(b.vanilla?.costUsd).padStart(11)} ${f2(b.shiploop?.costUsd).padStart(12)} ` +
-      `${(b.costPct === null ? "n/a" : f1(b.costPct) + "%").padStart(11)}` +
-      (b.eligible ? "" : `   dropped: ${b.reason}`),
-  );
-}
+out("Pairs");
+out(`  ${pairs.length} included, over ${new Set(pairs.map((p) => p.backlog)).size} backlog(s) x ${repNumbers.length} rep(s)`);
+for (const e of excluded) out(`  excluded ${e.backlog} rep ${e.rep}: ${e.reason}`);
+if (!excluded.length) out("  no exclusions");
 out("");
 
-out("Cut 1: cost to clear the same backlog");
-if (agg) {
-  out(`  vanilla   $${f2(agg.vanillaCostUsd)}`);
-  out(`  shiploop  $${f2(agg.shiploopCostUsd)}`);
-  out(`  lower by  ${f1(agg.costPct)}%`);
-} else {
-  out("  n/a: no backlog had both arms clear with a readable cost");
-}
-out("");
-
-out("Cut 2: tokens to clear the same backlog");
-if (agg) {
-  // A negative cut is a real outcome, not a rendering accident: on the billable reading the
-  // shiploop arm can write MORE cache than one long session, because it primes a fresh context
-  // per ticket. Print the direction the number actually has rather than the word "fewer".
-  const dir = (v) => (v < 0 ? `${f1(-v)}% MORE` : `${f1(v)}% fewer`);
-  out(`  billable (input + output + cache creation)   ${dir(agg.tokenPctBillable)}`);
-  out(`  all-in   (billable + cache reads)            ${dir(agg.tokenPctAllIn)}`);
-} else {
-  out("  n/a: no eligible backlog");
-}
-out("");
-
-out("Cut 3: tickets shipped per 5-hour window");
-if (agg) {
-  out(`  vanilla   $${f2(agg.vanillaCostPerTicket)} per ticket`);
-  out(`  shiploop  $${f2(agg.shiploopCostPerTicket)} per ticket`);
-  out(`  ratio     ${f2(agg.ticketsPerDollarRatio)}x more tickets per window (the budget cancels, so this holds for any window size)`);
-  if (typeof opts.windowUsd === "number" && Number.isFinite(opts.windowUsd)) {
-    out(`  at an observed $${f2(opts.windowUsd)} window: vanilla ${f1(opts.windowUsd / agg.vanillaCostPerTicket)} tickets, shiploop ${f1(opts.windowUsd / agg.shiploopCostPerTicket)} tickets`);
-  } else {
-    out("  absolute per-window counts: n/a, pass --window-usd with a measured window budget");
+out("Metrics (per-pair relative delta, (shiploop - vanilla) / vanilla)");
+for (const m of metricResults) {
+  const s = m.stats;
+  out(`  ${m.label}${m.primary ? " [PRIMARY]" : ""}`);
+  if (s.n === 0) {
+    out(`    n/a: no pair had both arms' values readable for this metric`);
+    out("");
+    continue;
   }
+  out(`    n=${s.n} pairs over ${s.backlogs} backlog(s)`);
+  out(`    median delta   ${f1(s.medianDeltaPct)}%`);
+  out(`    95% CI         ${s.ci95Pct ? `${f1(s.ci95Pct[0])}% .. ${f1(s.ci95Pct[1])}%` : "n/a (n<2)"}`);
+  const wilcoxonPStr = s.wilcoxonP === null ? "n/a (every pair tied at zero delta)" : s.wilcoxonP < 0.001 ? "<0.001" : s.wilcoxonP.toFixed(3);
+  out(`    Wilcoxon p     ${wilcoxonPStr}${s.wilcoxonMethod ? ` (${s.wilcoxonMethod})` : ""}`);
+  out(`    pooled totals  ${m.unit === "$" ? `$${f2(s.vanillaTotal)} -> $${f2(s.shiploopTotal)}` : `${s.vanillaTotal} -> ${s.shiploopTotal}`}, ratio ${s.pooledRatio === null ? "n/a" : s.pooledRatio.toFixed(3) + "x"}`);
+  out("");
+}
+
+out("Quality (per-ticket, within included pairs only)");
+if (quality.ticketsCompared === 0) {
+  out("  n/a: no ticket was comparable across both arms' ledgers");
 } else {
-  out("  n/a: no eligible backlog");
+  out(`  tickets compared   ${quality.ticketsCompared}`);
+  out(`  vanilla clear rate  ${f1(quality.vanillaClearRatePct)}%`);
+  out(`  shiploop clear rate ${f1(quality.shiploopClearRatePct)}%`);
+  out(`  better ${quality.better}  worse ${quality.worse}  same ${quality.same}`);
+  out(`  sign test p        ${quality.signTestP === null ? "n/a" : quality.signTestP < 0.001 ? "<0.001" : quality.signTestP.toFixed(3)}`);
 }
 out("");
 
-out("Selection");
-out(`  ranked by cost delta: ${ranked.length ? ranked.map((b) => b.backlog).join(", ") : "(none eligible)"}`);
-out(`  kept (floor ${opts.floor}%, max ${opts.keepMax}): ${kept.length ? kept.map((b) => b.backlog).join(", ") : "(none)"}`);
-const dropped = perBacklog.filter((b) => !b.eligible);
-for (const d of dropped) out(`  dropped ${d.backlog}: ${d.reason}`);
-if (allEligible && agg && allEligible.costPct < agg.costPct) {
-  out(`  internal record: over ALL eligible backlogs the cut is ${f1(allEligible.costPct)}%, not ${f1(agg.costPct)}%. Never publish the kept-set figure without knowing this one.`);
+out("Activation");
+const voidPairs = excluded.filter((e) => e.reason === "void-no-activation");
+out(voidPairs.length
+  ? `  ${voidPairs.length} pair(s) excluded for void-no-activation: ${voidPairs.map((e) => `${e.backlog} rep ${e.rep}`).join(", ")}`
+  : "  no shiploop cell was excluded for zero worker-spawn activation");
+out("");
+
+out("Dose response (descriptive only, no test)");
+out("  by shiploop worker-spawn count");
+if (doseBySpawns.length) {
+  for (const b of doseBySpawns) out(`    spawns=${b.bucket}  n=${b.n}  median cost delta ${f1(b.medianDeltaPct)}%`);
+} else {
+  out("    n/a: no pair had a readable cost");
+}
+out("  by backlog ticket count");
+if (doseByTickets.length) {
+  for (const b of doseByTickets) out(`    tickets=${b.bucket}  n=${b.n}  median cost delta ${f1(b.medianDeltaPct)}%`);
+} else {
+  out("    n/a: no pair had a readable cost");
 }
 out("");
 
 out("Headline");
-if (head) {
-  out(`  metric: ${head.metric}`);
-  out(`  ${head.sentence}`);
-  if (head.pct < opts.floor) {
-    out(`  NOTE: ${head.pct}% is below the ${opts.floor}% floor. Ship it at this value or re-select; do not round it up.`);
-  }
-} else {
-  out("  n/a: nothing eligible to compute a headline from");
-}
+out(head ? `  ${head}` : "  n/a: no cost pair to compute a headline from");

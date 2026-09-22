@@ -250,7 +250,7 @@ got="$(BENCH_STATE_DIR="$T/state" bash -c '
 assert_contains "$got" "rc=1" \
   "10. a stream with no subagent_stats at all (the vanilla fixture) reports NO activity, never a false pass"
 assert_contains "$shiploop_body" "bench::stream_had_subagent_activity" \
-  "10. the arm asserts subagent activity directly, never trusting the spawn's exit code"
+  "10. the arm checks subagent activity directly off the result event, never trusting the spawn's exit code"
 
 # ── 11. Bash permission grant: same probe shape as --forward-subagent-text ─
 got="$(armsh '_GOVERN_SETTINGSFLAG_SUPPORTED=1 bench::resolve_bash_grant_flag /bin/true; printf "%s" "$bench_bash_grant_flag"')"

@@ -37,6 +37,13 @@
 #                    the run cap, the same way it always was for the vanilla arm. A session that
 #                    hits its cap records status "capped" for the whole cell, never "resolved" or
 #                    "failed": a budget-truncated run is not a completed comparison.
+#   Smoke gate       a LIVE (non-dry) run bigger than one (backlog x rep) cell refuses to start
+#                    unless BENCH_SMOKE_RUN=<run-id> names a prior results dir, recorded at this
+#                    SAME hub git sha, whose every cell completed (status resolved or failed —
+#                    never capped or another status) and whose shiploop cell(s) genuinely
+#                    activated a worker. A run of exactly one backlog and one rep IS a smoke run
+#                    and needs no gate. BENCH_SKIP_SMOKE_GATE=1 is the deliberate override,
+#                    recorded into results.jsonl's own kind:"meta" row when used.
 #
 # Every function ends `return 0` and dependent locals are split across statements: a function whose
 # LAST statement is a bare `[[ c ]] && cmd` returns the test's status and aborts the caller under
@@ -44,6 +51,10 @@
 set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The hub's own git sha, stamped onto every rollup row: the smoke gate compares a prior smoke run's
+# stamp against THIS one, so a pipeline fix never lets a smoke run from before the fix vouch for a
+# live run after it. "unknown" (never a fabricated sha) when the hub itself is not a git checkout.
+HUB_SHA="$(git -C "$BENCH_DIR/.." rev-parse HEAD 2>/dev/null || echo unknown)"
 
 DRY_RUN=0
 BACKLOG_DIR="$BENCH_DIR/backlogs"
@@ -338,7 +349,28 @@ bench::over_cap() { # -> rc 0 when the run has already spent its budget
 bench::record_capped_cell() { # <backlog> <arm> <rep> <ticketCount>
   local backlog="$1" arm="$2" rep="$3" total="$4"
   bench::record_rollup "$RESULTS" "$RUN_ID" "$backlog" "$arm" "$rep" "capped" 0 "$total" 0 \
-    "$(date +%s)"
+    "$(date +%s)" 0 "" "$HUB_SHA"
+  return 0
+}
+
+# ── smoke gate ──────────────────────────────────────────────────────────────
+# See the usage header ("Smoke gate") for what this enforces and why. Only ever consulted for a
+# LIVE run bigger than one cell; a dry run and a single-cell run never call this.
+bench::smoke_gate_check() { # <smoke-run-id>
+  local smoke_id="$1" smoke_file bad
+  smoke_file="$OUT_ROOT/$smoke_id/results.jsonl"
+  [[ -f "$smoke_file" ]] || bench::die "smoke gate: BENCH_SMOKE_RUN=$smoke_id names no results file at $smoke_file"
+  bad="$(jq -sr --arg sha "$HUB_SHA" \
+    '[ .[] | select(.kind=="rollup" and .hubSha != $sha) ] | length' "$smoke_file" 2>/dev/null || echo 1)"
+  [[ "$bad" == "0" ]] || bench::die "smoke gate: $smoke_file was not recorded at the current hub sha ($HUB_SHA) — re-run the smoke at this sha first"
+  bad="$(jq -sr \
+    '[ .[] | select(.kind=="rollup" and (.status != "resolved" and .status != "failed")) ] | length' \
+    "$smoke_file" 2>/dev/null || echo 1)"
+  [[ "$bad" == "0" ]] || bench::die "smoke gate: $smoke_file has a cell that did not complete (resolved/failed) — capped or another status means the pipeline is not proven clean at this sha"
+  bad="$(jq -sr \
+    '[ .[] | select(.kind=="rollup" and .arm=="shiploop" and ((.workerSpawns // 0) == 0)) ] | length' \
+    "$smoke_file" 2>/dev/null || echo 1)"
+  [[ "$bad" == "0" ]] || bench::die "smoke gate: $smoke_file has a shiploop cell with zero worker-spawn activation — dispatch itself is not proven at this sha"
   return 0
 }
 
@@ -348,6 +380,25 @@ while IFS= read -r n; do backlogs+=("$n"); done < <(bench::discover_backlogs)
 [[ "${#backlogs[@]}" -gt 0 ]] || bench::die "no backlogs found under $BACKLOG_DIR"
 
 bench::log "run $RUN_ID: ${#backlogs[@]} backlog(s) x ${#SEL_ARMS[@]} arm(s) x $REPS rep(s), cap \$$BENCH_MAX_USD"
+
+smoke_gate_skipped=0
+total_cells=$(( ${#backlogs[@]} * REPS ))
+if [[ "$DRY_RUN" -ne 1 && "$total_cells" -gt 1 ]]; then
+  if [[ "${BENCH_SKIP_SMOKE_GATE:-0}" == "1" ]]; then
+    bench::log "smoke gate: BENCH_SKIP_SMOKE_GATE=1 — running $total_cells cells with NO smoke-run proof at hub sha $HUB_SHA"
+    smoke_gate_skipped=1
+  elif [[ -n "${BENCH_SMOKE_RUN:-}" ]]; then
+    bench::smoke_gate_check "$BENCH_SMOKE_RUN"
+    bench::log "smoke gate: satisfied by BENCH_SMOKE_RUN=$BENCH_SMOKE_RUN at hub sha $HUB_SHA"
+  else
+    bench::die "smoke gate: this run has $total_cells (backlog x rep) cells, more than a smoke run's one. Run a 1-backlog 1-rep smoke first and pass BENCH_SMOKE_RUN=<its run id>, or set BENCH_SKIP_SMOKE_GATE=1 to run without proof (recorded in the results)."
+  fi
+fi
+jq -nc --arg run "$RUN_ID" --arg sha "$HUB_SHA" --arg smokerun "${BENCH_SMOKE_RUN:-}" \
+  --argjson dry "$([[ "$DRY_RUN" -eq 1 ]] && printf true || printf false)" \
+  --argjson skipped "$([[ "$smoke_gate_skipped" -eq 1 ]] && printf true || printf false)" \
+  '{kind:"meta", run:$run, hubSha:$sha, dryRun:$dry, smokeGateSkipped:$skipped,
+    smokeRun:($smokerun | if .=="" then null else . end)}' >> "$RESULTS"
 
 capped=0
 for name in "${backlogs[@]}"; do
@@ -391,10 +442,19 @@ for name in "${backlogs[@]}"; do
         status="capped"
         bench::log "cell $cell: a session hit its per-session ceiling mid-run; forcing status=capped"
       fi
+      # Direct evidence of delegation: how many Agent/Task tool_use invocations the stream itself
+      # shows, never the result event's self-reported subagent_stats alone. A shiploop cell with
+      # zero forces status void-no-activation (capped still wins — a session cut off before it
+      # could even delegate is a rail artifact, not evidence about whether it would have).
+      worker_spawns="$(bench::cell_worker_spawns "$logdir")"
+      status="$(bench::activation_status "$status" "$arm" "$worker_spawns")"
+      if [[ "$status" == "void-no-activation" ]]; then
+        bench::log "cell $cell: shiploop arm shows zero Agent/Task tool_use invocations; forcing status=void-no-activation"
+      fi
       sessions="$(bench::record_sessions "$logdir" "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" \
         "$MODEL_NAME" "$CLI_VERSION" "$status" "$worst" "$wall_ms" "$started" "$cleared" "$total")"
       bench::record_rollup "$RESULTS" "$RUN_ID" "$name" "$arm" "$rep" "$status" \
-        "$cleared" "$total" "$wall_ms" "$started"
+        "$cleared" "$total" "$wall_ms" "$started" "$worker_spawns" "$RUN_DIR/verify/$cell.jsonl" "$HUB_SHA"
       bench::log "cell $cell: $status, $cleared/$total cleared, $sessions session(s), spent \$$(bench::spent_usd "$RESULTS")"
     done
   done

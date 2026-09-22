@@ -58,7 +58,7 @@ bench/
   run.sh                          driver: backlog x arm x rep -> worktree -> arm -> verify -> record
   arms.sh                         the two arm shapes (plus the private vanilla-fresh variant)
   record.sh                       result events -> results.jsonl rows, plus attribution reading
-  rollup.mjs                      results.jsonl -> the three metric cuts, selection, headline
+  rollup.mjs                      results.jsonl -> the paired-comparison report (median, CI, p, headline)
   fixtures/                       canned streams and golden results.jsonl fixtures
   results/<run-id>/               results.jsonl + session logs, gitignored
   results/README.md               why no result table is committed right now
@@ -131,20 +131,48 @@ Requires `node`, `jq`, `git`, and a `claude` CLI on PATH. It spends real quota.
 # 1. Dry run first. Zero network, zero spend, canned fixtures for both arm shapes.
 bash bench/run.sh --dry-run
 
-# 2. The real run over the published backlog set.
-bash bench/run.sh --reps 2
+# 2. A 1-backlog, 1-rep smoke run — itself needs no gate, and proves the live pipeline works at
+#    this hub git sha before anything bigger is allowed to spend.
+bash bench/run.sh --backlog <one-name> --run-id smoke
 
-# 3. The three metric cuts, the selection ranking, and the headline sentence.
+# 3. The real run over the published backlog set, gated on that smoke run.
+BENCH_SMOKE_RUN=smoke bash bench/run.sh --reps 2
+
+# 4. The paired-comparison report: median delta, bootstrap CI, Wilcoxon p, per metric, plus quality,
+#    activation, and dose-response tables, and the one-sentence headline.
 node bench/rollup.mjs
 ```
 
 `run.sh` prints the results path; `rollup.mjs` with no argument reads the newest run under
 `bench/results/`. Pass a path to read a specific one.
 
-The rollup prints every cut it can compute and `n/a` with a reason for any it cannot. The headline
-line names which metric produced its percentage, so a token cut is never published under a cost
-word. A cell that is `capped`, has `status:"no-tickets"` (an empty backlog), or failed the
-subagent-activity assertion is excluded from every cut, counted as excluded, never averaged in.
+## How the rollup reads a run
+
+The pairing unit is **(backlog, rep)**: a pair exists when both arms recorded a completed cell for
+that backlog and rep. Every backlog is analysed — nothing is ranked, nothing is dropped for looking
+bad. A pair is excluded only when the comparison itself would be dishonest, and every exclusion is
+listed with its reason:
+
+| Reason | When |
+|---|---|
+| `capped` | either arm's cell hit `BENCH_MAX_USD` or its own per-session ceiling |
+| `void-no-activation` | the shiploop cell shows zero Agent/Task tool_use invocations — it measured nothing, not a real with-shiploop run |
+| `error` | a cell is missing for one arm, its cost could not be read, or the backlog had zero tickets |
+
+For every included pair, per metric — cost (USD, the PRIMARY metric), all-in tokens, billable
+tokens, output tokens, cache-read tokens, fresh input (input + cache creation), and turns — the
+rollup computes the per-pair relative delta `(shiploop - vanilla) / vanilla` and reports n, the
+median delta, a 95% bootstrap CI of the median (fixed seed, 10000 resamples, deterministic), a
+two-sided Wilcoxon signed-rank p (exact for n <= 25, normal approximation with tie correction
+above), and the pooled totals ratio as a secondary line. The **headline is exactly one sentence,
+always cost, direction-neutral** — a positive delta prints as MORE expensive, never dressed as a
+saving, and tokens never headline.
+
+Alongside the metrics: a **quality** section (per-ticket cleared-by-vanilla vs cleared-by-shiploop,
+clear rates, better/worse/same counts, and an exact sign test p over the discordant tickets), an
+**activation** section naming every pair excluded for `void-no-activation`, and a **dose-response**
+table (median cost delta bucketed by shiploop worker-spawn count and by backlog ticket count,
+descriptive only, no test).
 
 ## Rails
 
@@ -154,6 +182,7 @@ Always on. Neither is an option.
 |---|---|---|
 | `BENCH_MAX_USD` | 60 | Hard cap on API-rate `total_cost_usd` across the run, checked before each cell is dispatched. Past it the driver stops dispatching and records the remaining cells with `status: capped`; the rollup drops a capped backlog rather than counting a truncated run as a saving. |
 | `BENCH_MAX_TURNS` | 200, EQUAL on both arms | `--max-turns` on every spawned session. Non-binding by construction — each arm is one whole-backlog session now, so there is no shape-specific reason for one arm's ceiling to bind tighter than the other's. A cell that hits it is forced to `capped`. |
+| Smoke gate | n/a | A LIVE run bigger than one (backlog x rep) cell refuses to start unless `BENCH_SMOKE_RUN=<run-id>` names a prior results dir, at this SAME hub git sha, whose every cell completed (`resolved`/`failed`, never `capped`) and whose shiploop cell(s) activated. A run of exactly one backlog and one rep IS a smoke run and needs no gate. `BENCH_SKIP_SMOKE_GATE=1` is the override, recorded into the run's own `kind:"meta"` row. |
 
 `--max-turns` is gated on a cached `claude --help` capability probe, never a version compare. If the
 CLI does not support it, `run.sh` falls back to `--max-budget-usd` (equal on both arms, default the
@@ -186,9 +215,13 @@ time. The ordering is the contract:
 2. The arm finishes and commits.
 3. `verify_cmd` runs against the arm's own tree, exactly as it stands.
 
-Same path for both arms. Per-ticket outcomes land in `results/<run-id>/verify/<cell>.jsonl`, which
-is the private record; only the cell-level counts reach `results.jsonl`. Nothing is judged by a
-model. A backlog either arm fails to fully clear is dropped from the published set.
+Same path for both arms. Per-ticket outcomes land in `results/<run-id>/verify/<cell>.jsonl` (the
+private, gitignored ledger) AND are embedded into the cell's own `kind:"rollup"` row in
+`results.jsonl` as `perTicket`, so the paired report's quality section can compare per-ticket
+outcomes across arms without re-reading the ledger. Nothing is judged by a model. A losing backlog —
+one either arm fails to fully clear — is analysed exactly like a winning one: cost and token cuts
+never require both arms to clear, only quality does, and quality reports the loss rather than
+hiding it.
 
 **No published backlog exists yet.** `bench/backlogs/` carries only its schema and the test
 fixture; the only candidate pool is `bench/pilot-backlogs/`, gitignored and never pushed. Curating
@@ -221,7 +254,7 @@ list ever tried to close: see `bench/KNOWN-LIMITS.md`.
 
 ## Tests
 
-`templates/govern/test/test-bench-{schema,cap,arms,rollup,selection}.sh`, fixture-driven,
+`templates/govern/test/test-bench-{schema,cap,arms,rollup,pairing}.sh`, fixture-driven,
 zero spawns except through canned streams. They resolve the hub as `$DIR/../../..` and skip (exit
 77) anywhere else, so they are listed in `tools/hub-context-tests.txt` and run by the
 `hub-context-tests` CI job from the checkout, where a skip is a hard failure.
