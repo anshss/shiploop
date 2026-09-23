@@ -1240,6 +1240,22 @@ govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/sp
   printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_TICKET_RE" 2>/dev/null
 }
 
+# ── the STRICT half: structured fields only, no prose ───────────────────────────────────────────
+# govern::is_validation_ticket above is a RECOGNIZER: it stays broad (all four tells, prose
+# included) because worker-prompt.md tells the WORKER to self-recognize a validation ticket off
+# the same four tells, and the two must never drift. But a script deciding whether to BLOCK a
+# resolution is a different question: "Live-verif"/"actually work"/"PASS/FAIL" appearing anywhere
+# in a ticket's prose is the guard GUESSING the advisor's intent from wording, not a fact it can
+# check. The advisor writes the ticket and can mark it `**Type:** Validation` directly; a script
+# should never park a ticket the advisor never asked to be gated, off a phrase that merely
+# happened to appear in the Observed/Done-when text. So the BLOCKING gate (resolve-ticket.sh,
+# ticket-sweep-reminder.sh) uses only tells 1-2; the prose tells stay live for the advisory-only
+# nudge (govern::tickets_missing_validation_doc), which costs nothing when wrong.
+GOVERN_VALIDATION_STRICT_RE='^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)'
+govern::is_validation_ticket_strict() { # ticket-block -> rc 0 only on the heading/Type markers
+  printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_STRICT_RE" 2>/dev/null
+}
+
 # Which currently-OPEN tickets are validation-shaped (govern::is_validation_ticket) but have no
 # matching .claude/shiploop/validation/ticket-<N>-*.md evidence file yet? Backs the ticket-sweep
 # Stop-hook nudge (GOVERN_VALIDATION_NUDGE): a coarse, ALWAYS-ADVISORY proxy for "this session may
@@ -2754,7 +2770,13 @@ govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
         | if .type == "assistant" then
             ( ["T"]
               + [ $c[] | select(.type? == "tool_use" and (.name? == "Edit" or .name? == "Write" or .name? == "NotebookEdit")) | "X" ]
-              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash") | "C\t" + ((.input.command? // "") | tostring) ]
+              + [ $c[] | select(.type? == "tool_use" and .name? == "Bash")
+                  # Escaped, not raw: embedded newlines in a multi-line command would otherwise
+                  # split ONE Bash call across several lines of this projection, and the
+                  # line-oriented awk consumer below would then read only the FIRST LINE of the
+                  # command as the "C" record, with every later line an unmatched, un-prefixed
+                  # fragment -- one Bash call miscounted as its first line alone.
+                  | "C\t" + ((.input.command? // "") | tostring | gsub("\n"; "\\n")) ]
             ) []
           elif .type == "user" then
             ( $c[] | select(.type? == "tool_result")
@@ -2769,26 +2791,42 @@ govern::early_abort_signals() { # <jsonl> -> tab-separated projection on stdout
 # caller owns its own on/off switch and default (agent-progress-guard.sh's
 # GOVERN_AGENT_SUPERVISION), so this stays a pure function of the stream.
 # Thresholds read straight from env so both callers share the exact same defaults with no plumbing:
-# GOVERN_EARLY_ABORT_TURNS (30), GOVERN_EARLY_ABORT_REPEATS (5), GOVERN_EARLY_ABORT_ERROR_PCT (60),
-# GOVERN_EARLY_ABORT_ERROR_WINDOW (20).
+# GOVERN_EARLY_ABORT_TURNS (30), GOVERN_EARLY_ABORT_REPEATS (5), GOVERN_EARLY_ABORT_LOOP_WINDOW (20),
+# GOVERN_EARLY_ABORT_ERROR_PCT (60), GOVERN_EARLY_ABORT_ERROR_WINDOW (20).
 govern::early_abort_reason() { # <jsonl> -> reason | empty
   local f="${1:-}"
   govern::early_abort_signals "$f" | awk -F'\t' \
     -v turns="${GOVERN_EARLY_ABORT_TURNS:-30}" -v reps="${GOVERN_EARLY_ABORT_REPEATS:-5}" \
+    -v lwin="${GOVERN_EARLY_ABORT_LOOP_WINDOW:-20}" \
     -v epct="${GOVERN_EARLY_ABORT_ERROR_PCT:-60}" -v ewin="${GOVERN_EARLY_ABORT_ERROR_WINDOW:-20}" '
     $1=="T" { t++; since++ }
     $1=="X" { since=0; edits++ }
-    $1=="C" { n_c++; cmd[$2]++; if (cmd[$2] > maxrep) { maxrep = cmd[$2]; maxcmd = $2 } }
+    # Recorded, not counted, here: a command retired past the window must stop counting, the same
+    # way ERROR only weighs its last ewin results instead of the whole transcript. A running count
+    # that never decays stays tripped for the rest of the session once any command repeats enough
+    # times early on, so the window is recomputed fresh at END instead, over indices
+    # n_c-lwin+1..n_c, rather than accumulated across the whole transcript.
+    $1=="C" { n_c++; craw[n_c] = $2 }
     $1=="E" { ne++; err[ne] = ($2+0) }
     END {
       if (turns+0 > 0 && t+0 >= turns+0 && since+0 >= turns+0) {
         printf "STALL: no file edit (Edit/Write/NotebookEdit) in the last %d assistant turns of %d — the worker is reading, not converging on a diff\n", since, t
         exit
       }
-      if (reps+0 > 0 && maxrep+0 >= reps+0) {
-        c = maxcmd; if (length(c) > 160) c = substr(c, 1, 160) "…"
-        printf "LOOP: the same command ran identically %d times — re-running a failing command does not change its answer: %s\n", maxrep, c
-        exit
+      if (reps+0 > 0 && lwin+0 > 0 && n_c+0 > 0) {
+        cstart = n_c - lwin + 1; if (cstart < 1) cstart = 1
+        cwin = n_c - cstart + 1
+        maxrep = 0; maxcmd = ""
+        for (i = cstart; i <= n_c; i++) {
+          cnt[craw[i]]++
+          if (cnt[craw[i]] > maxrep) { maxrep = cnt[craw[i]]; maxcmd = craw[i] }
+        }
+        delete cnt
+        if (maxrep+0 >= reps+0) {
+          c = maxcmd; if (length(c) > 160) c = substr(c, 1, 160) "…"
+          printf "LOOP: the same command ran identically %d times in the last %d Bash calls, re-running a failing command does not change its answer: %s\n", maxrep, cwin, c
+          exit
+        }
       }
       if (ewin+0 > 0 && ne+0 >= ewin+0) {
         rec = 0; for (i = ne - ewin + 1; i <= ne; i++) rec += err[i]

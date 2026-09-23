@@ -16,9 +16,12 @@
 # Design constraints, shared with the once-per-session reminder this hook extends:
 #   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
 #     advises via additionalContext. Three deliberate exceptions elsewhere in
-#     this file return permissionDecision "deny": the verify-filter denial (a
-#     Bash call, its own switch), the ticket-route guard (an Agent call), and
-#     the proposed-solution gate (an Agent call, worker dispatches only).
+#     this file return permissionDecision "deny": the ticket-route guard (an
+#     Agent call, and only once a referenced ticket number is confirmed to
+#     exist), the proposed-solution gate (an Agent call, worker dispatches
+#     only), and the worker-spawns-worker guard (an Agent call whose CALLER is
+#     itself a worker). The verify-filter lever (a Bash call) no longer denies
+#     at all -- it rewrites the command via `updatedInput` instead (see below).
 #     Either way the script itself always exits 0.
 #   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
@@ -34,15 +37,17 @@
 # verify-filter.sh): a passing run's output still lands in the transcript and
 # is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
 #
-# The same lever also BLOCKS, on its own switch: a matching unwrapped command is denied outright
-# (never just advised) when scripts/govern/verify-filter.sh is actually present at the resolved
-# workspace root -- same dual-layout resolve and permissionDecision "deny" shape the proposed-
-# solution gate below uses. A workspace without the wrapper installed falls through to the advisory
-# instead of denying, so a partially scaffolded or hand-built workspace can never be bricked by
-# this. Unlike every advisory in this file, the denial is NOT capped by MAX_WARNS_PER_SESSION: a
-# lever that silently stops firing after N occurrences reads as enforced while controlling nothing
-# for the rest of the session. Kill switch: GOVERN_VF_DENY=0, independent of GOVERN_VF_NUDGE so the
-# block can be turned off without losing the advice.
+# The same lever also REWRITES, on its own switch: a matching unwrapped command is not denied, it
+# is silently re-issued wrapped in verify-filter.sh, when scripts/govern/verify-filter.sh is
+# actually present at the resolved workspace root -- same dual-layout resolve the proposed-solution
+# gate below uses. The rewrite returns permissionDecision "allow" plus an `updatedInput` carrying
+# the wrapped command (code.claude.com/docs/en/hooks: PreToolUse may pair `updatedInput` with
+# `permissionDecision`), so the tool call proceeds with no retry turn and no denial text to react
+# to. A workspace without the wrapper installed falls through to the advisory instead of rewriting,
+# so a partially scaffolded or hand-built workspace can never be bricked by this. Kill switch:
+# GOVERN_VF_DENY=0 disables the rewrite (name kept from when this lever denied; it is never printed
+# in agent-facing text now, since there is no denial to explain), independent of GOVERN_VF_NUDGE so
+# the rewrite can be turned off without losing the advice.
 #
 # THIRD behavior, one of three BLOCKING behaviors in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
@@ -84,9 +89,18 @@
 # `Agent` call that IS ticket-shaped WITHOUT subagent_type "worker" is a
 # full-fat subagent doing a worker's job: it inherits the driver's posture,
 # skips the worker doctrine, and costs multiples of a worker for the same
-# ticket. That call is DENIED with the correct call written out to paste,
-# plus the govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0
-# (default ON, same polarity as GOVERN_VF_NUDGE above). It never fires inside a worker: the
+# ticket. DENY is reserved for what the guard can actually VERIFY: a resolved
+# `#N` whose `## #N` block genuinely exists in queue/tickets.md, alongside the
+# surviving (non-exempt) write/dispatch marker above. A ticket-shaped or
+# item-shaped call that fails that fact check (no resolvable number, or a
+# number with no matching block -- a bare "ticket" word, a stale reference, a
+# typo) is not something this guard can confirm is real dispatch, so it gets
+# an ADVISORY line instead of a block: guessing a NUMBER'S EXISTENCE from
+# prose is exactly the kind of judgment call this file otherwise leaves to the
+# advisor. When it does deny, the reason is written out to paste, plus the
+# govern alternative. Kill switch: GOVERN_TICKET_ROUTE_GUARD=0 (default ON,
+# same polarity as GOVERN_VF_NUDGE above; it silences the advisory path too).
+# It never fires inside a worker: the
 # .../subagents/ exemption below is what actually identifies one. The GOVERN_RUN exemption below
 # also happens to exempt it, but for an unrelated reason -- GOVERN_RUN=1 marks any governor-spawned
 # headless session (today: the sync-porter, not a worker), not a worker-dispatch signal. Workers
@@ -115,6 +129,19 @@
 # unlike the deny paths elsewhere in this file. Kill switch:
 # GOVERN_WORKER_FANOUT_NUDGE=0.
 #
+# SIXTH behavior (the file's fourth BLOCKING path): a worker-spawns-worker deny. The hook payload
+# carries the CALLING session's own `agent_type` (code.claude.com/docs/en/hooks: "agent_id"/
+# "agent_type" in the input; hooks run inside subagents too), so an `Agent` call whose
+# subagent_type is "worker" AND whose caller is itself agent_type "worker" is denied outright: a
+# worker sub-delegating to a `lookup`/`investigator` is its own reconnaissance (never touched by
+# this), but a worker spawning ANOTHER worker has no fan-out cap and no proposal-gate coverage of
+# its own -- unbounded nesting by a different route than the fifth behavior's cap. This is the ONE
+# check in the file that fires even for a worker caller: every OTHER lever below treats a worker's
+# own tool calls (GOVERN_RUN=1 autonomous, or a transcript under .../subagents/ interactively) as
+# the delegation TARGET and stays silent for it, which is exactly wrong here. Shares
+# GOVERN_TICKET_ROUTE_GUARD (the same Agent-routing lever, gated on the caller instead of the
+# prompt) rather than adding a fourth kill switch to remember.
+#
 # Output contract: a PreToolUse hook that prints
 #   {"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"..."}}
 # on stdout (exit 0) injects that text into the model's context WITHOUT blocking
@@ -131,10 +158,10 @@ MAX_WARNS_PER_SESSION=3    # after this many warns in a session, stay quiet
 # session-wide count) gets flagged before it compounds.
 MAX_WORKERS_PER_SESSION=5
 
-# --- never nag the delegation target (sub-agent / governor worker) ----------
-[ -n "${GOVERN_RUN:-}" ] && exit 0
-
 # --- read the PreToolUse stdin payload --------------------------------------
+# Read unconditionally, BEFORE the "delegation target" exits below: the worker-spawns-worker
+# check (header SIXTH behavior) must still fire for a worker caller, and there is no way to know
+# whether a call is that case without parsing it first.
 payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
@@ -154,6 +181,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
   IFS= read -r agent_prompt
   IFS= read -r agent_desc
   IFS= read -r agent_name
+  IFS= read -r agent_type
 } < <(printf '%s' "$payload" | python3 -c '
 import sys, json
 try:
@@ -175,6 +203,7 @@ fields = [
     g("prompt"),
     g("description"),
     g("name"),
+    d.get("agent_type") or "",
 ]
 for f in fields:
     print(f.replace("\t", " ").replace("\n", " "))
@@ -185,7 +214,27 @@ limit="${limit:-}"; command="${command:-}"
 subagent_type="${subagent_type:-}"; agent_prompt="${agent_prompt:-}"
 agent_desc="${agent_desc:-}"
 agent_name="${agent_name:-}"
+agent_type="${agent_type:-}"
 [ -n "$tool_name" ] || exit 0
+
+# --- worker-spawns-worker: fires even for a worker caller (see header SIXTH behavior) -------
+if [ "$tool_name" = "Agent" ] && [ "$subagent_type" = "worker" ] && [ "$agent_type" = "worker" ] \
+   && [ "${GOVERN_TICKET_ROUTE_GUARD:-1}" != "0" ]; then
+  python3 -c '
+import json
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "you are the worker; spawn a lookup or investigator for your own reconnaissance, never another worker. A nested worker dispatch has no fan-out cap and no proposal-gate coverage of its own. Set GOVERN_TICKET_ROUTE_GUARD=0 to turn this off for the session.",
+  }
+}))
+' 2>/dev/null || true
+  exit 0
+fi
+
+# --- never nag the delegation target (sub-agent / governor worker) ----------
+[ -n "${GOVERN_RUN:-}" ] && exit 0
 
 # --- skip sub-agent calls (their transcript lives under .../subagents/) ------
 case "$transcript_path" in
@@ -227,8 +276,17 @@ if [ "$tool_name" = "Agent" ]; then
   # ticket-reference + dispatch_re checks below. `{2,}` floors t/w names at two digits: a
   # single-digit `t1`/`t2` used as an ad-hoc step label ("task 1", "task 2") is not a ticket number.
   item_shape_re='^(t[0-9]{2,}|w[0-9]{2,}|ticket-?[0-9]+)(-[a-zA-Z0-9-]+)?$'
-  resolve_tnum() { # -> the ticket number this Agent call is about, or "" if none is resolvable
-    local t
+  # The dispatch-packet contract clause, verbatim at the START of the prompt: "Resolve #12, #14."
+  # (or a single "Resolve #12."). Anchored to `^` so a prompt that merely MENTIONS "resolve #12"
+  # mid-sentence doesn't widen this -- that shape is still read by the single-number path below.
+  contract_re='^[Rr]esolve #[0-9]+(, #[0-9]+)*\.'
+  resolve_tnum() { # -> ticket number(s) this Agent call is about, one per line, "" if none
+    local t contract
+    contract="$(grep -oE "$contract_re" <<< "$probe" 2>/dev/null | head -1 || true)"
+    if [ -n "$contract" ]; then
+      grep -oE '#[0-9]+' <<< "$contract" | tr -d '#'
+      return
+    fi
     t="$(grep -oE '#[0-9]+' <<< "$probe_lc_noPR" 2>/dev/null | head -1 | tr -d '#' || true)"
     if [ -z "$t" ]; then
       t="$(grep -oEi '^(t|w|ticket-?)[0-9]+' <<< "$agent_name"$'\n'"$agent_desc" 2>/dev/null \
@@ -236,8 +294,28 @@ if [ "$tool_name" = "Agent" ]; then
     fi
     printf '%s' "$t"
   }
+  # Dual-layout resolve, same probe order router-posture-reminder.sh uses beside this file: a
+  # scaffolded workspace has govern at <root>/scripts/govern/, the hub template tree has it at
+  # templates/govern/ (one level up, not under scripts/). Shared by the PROPOSAL GATE below and
+  # the ticket-route deny path further down -- one resolve, so the two can never disagree about
+  # where queue/tickets.md lives.
+  SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  prop_sh="$SELF_ROOT/scripts/govern/ticket-proposal.sh"
+  [ -f "$prop_sh" ] || prop_sh="$SELF_ROOT/govern/ticket-proposal.sh"
+  source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null \
+    || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
+  tickets_file="${META_ROOT:-}/queue/tickets.md"
+  # ticket_block_exists: the ONE fact the ticket-route deny path below needs that prose can't
+  # supply -- is this a REAL ticket, not a stale reference, a typo, or a bare "ticket" mention?
+  # Degrades to "no" (never a hard fail) when the file isn't resolvable, same posture as the
+  # proposal gate: an unreadable queue must never be the reason something gets denied.
+  ticket_block_exists() { # <N> -> rc 0 if "## #<N>" heads a block in tickets_file
+    local n="$1"
+    [ -n "$n" ] && [ -f "$tickets_file" ] || return 1
+    grep -qE "^##[[:space:]]+#${n}([^0-9]|\$)" "$tickets_file" 2>/dev/null
+  }
   if [ "$subagent_type" = "worker" ]; then
-    # ── SIXTH behavior: the proposed-solution gate, on THIS lane ──────────────
+    # ── SEVENTH behavior: the proposed-solution gate, on THIS lane ──────────────
     # pre-dispatch-check.sh already refuses a dispatch on a ticket with no
     # **Proposed solution:**, off the same GOVERN_PROPOSAL_GATE switch, ON by default. But
     # nothing RUNS that script for an advisor dispatching a worker in-session: it is a command
@@ -253,34 +331,35 @@ if [ "$tool_name" = "Agent" ]; then
     # resolvable ticket number in the call, no ticket-proposal.sh on this install, no
     # workspace config, no queue file. An unreadable ticket must never block a dispatch --
     # the gate refuses a ticket it can SEE has no proposal, never one it cannot read.
+    #
+    # A dispatch-packet contract prompt ("Resolve #12, #14. Read your packet at ... and follow
+    # it.") names EVERY ticket the worker is about to touch, so every one of them is gated here,
+    # not just the first -- a batch worker with one proposed and one bare ticket must still refuse.
     if [ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]; then
-      gate_tnum="$(resolve_tnum)"
-      if [ -n "$gate_tnum" ]; then
-        # Dual-layout resolve, same probe order router-posture-reminder.sh uses beside this
-        # file: a scaffolded workspace has govern at <root>/scripts/govern/, the hub template
-        # tree has it at templates/govern/ (one level up, not under scripts/).
+      gate_tnums="$(resolve_tnum)"
+      if [ -n "$gate_tnums" ] && [ -f "$prop_sh" ] && [ -n "${META_ROOT:-}" ] && [ -f "$tickets_file" ]; then
         # ticket-proposal.sh is the thin CLI over govern::ticket_proposal -- the ONE
         # implementation that knows what a proposal is (placeholder text reads as absent);
         # this hook never re-parses the ticket file itself.
-        SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-        prop_sh="$SELF_ROOT/scripts/govern/ticket-proposal.sh"
-        [ -f "$prop_sh" ] || prop_sh="$SELF_ROOT/govern/ticket-proposal.sh"
-        source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null \
-          || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
-        tickets_file="${META_ROOT:-}/queue/tickets.md"
-        if [ -f "$prop_sh" ] && [ -n "${META_ROOT:-}" ] && [ -f "$tickets_file" ]; then
-          if [ -z "$(bash "$prop_sh" "$gate_tnum" "$tickets_file" 2>/dev/null || true)" ]; then
-            gate_deny="$(cat <<EOF
-[PROPOSAL GATE] Denied: ticket #${gate_tnum} has no \`**Proposed solution:**\`, so there is nothing for a worker to implement. You are the advisor: deciding what the change is is YOUR half of the work, and a worker handed a problem statement instead of a solution re-derives it at the wrong tier, or quietly builds something else.
+        gate_missing=""
+        while IFS= read -r gtn; do
+          [ -n "$gtn" ] || continue
+          if [ -z "$(bash "$prop_sh" "$gtn" "$tickets_file" 2>/dev/null || true)" ]; then
+            gate_missing="${gate_missing}${gate_missing:+, }#${gtn}"
+          fi
+        done <<< "$gate_tnums"
+        if [ -n "$gate_missing" ]; then
+          gate_deny="$(cat <<EOF
+[PROPOSAL GATE] Denied: ticket(s) ${gate_missing} have no \`**Proposed solution:**\`, so there is nothing for a worker to implement. You are the advisor: deciding what the change is is YOUR half of the work, and a worker handed a problem statement instead of a solution re-derives it at the wrong tier, or quietly builds something else.
 
-Write the proposal into the ticket block first:
+Write the proposal into each ticket block first:
 
   **Proposed solution:** <what to change, where, and why that shape -- concrete enough that a sonnet worker implements it without re-deciding anything>
 
 Then dispatch again. If the answer genuinely is not knowable yet, that is investigation, not dispatch: send a \`lookup\` or \`investigator\` child to collect what you need, write the proposal from what it returns, and dispatch the worker after. Set GOVERN_PROPOSAL_GATE=0 to turn this gate off for the session (the same switch governs pre-dispatch-check.sh).
 EOF
 )"
-            python3 -c '
+          python3 -c '
 import json, sys
 print(json.dumps({
   "hookSpecificOutput": {
@@ -290,8 +369,7 @@ print(json.dumps({
   }
 }))
 ' "$gate_deny" 2>/dev/null || true
-            exit 0
-          fi
+          exit 0
         fi
       fi
     fi
@@ -401,19 +479,20 @@ print(json.dumps({
   fi
 
   if { [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; } && [ "$exempt" != 1 ]; then
-    tnum="$(resolve_tnum)"
-    [ -n "$tnum" ] || tnum="N"
-    deny="$(cat <<EOF
+    tnum="$(resolve_tnum | head -1)"
+    if [ -n "$tnum" ] && ticket_block_exists "$tnum"; then
+      deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, ticket/group session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
 
 Paste this instead, one ticket or group:
 
   npm run govern:pre-dispatch -- ${tnum}       # verdict: proceed / skip / refuse
+  npm run govern:dispatch-packet -- ${tnum}    # creates the worktree + .dispatch-packet.md, prints the prompt below
 
   Agent(
     subagent_type: "worker",
     description: "ticket #${tnum}",
-    prompt: "<the ticket text plus anything the worker needs to start>"
+    prompt: "Resolve #${tnum}. Read your packet at <worktree path>/.dispatch-packet.md first and follow it."
   )
 
 A worker STOPS at PR-open plus the report. Landing it is the same last step: pipe that report into \`npm run govern:resolve -- ${tnum}\`, which awaits CI, merges, and edits the queue file. Never delete the queue block before merge. A worker that fails reports it, honest \`status\` plus \`escalation\`, rather than retrying; you own the one retry.
@@ -421,7 +500,7 @@ A worker STOPS at PR-open plus the report. Landing it is the same last step: pip
 Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer, or drafting/authoring prose about a ticket rather than resolving one)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") or an authoring framing ("draft"/"author" plus what you're producing: "prose", "write-up", "entries") with no SURVIVING write marker is already exempt; a write verb inside a prohibition ("do not open a PR", "never commit") does not count against you. Otherwise drop the dispatch verb, the ticket reference, and any item-shaped name/description (t<N>, ticket-<N>, w<N>), and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
 )"
-    python3 -c '
+      python3 -c '
 import json, sys
 print(json.dumps({
   "hookSpecificOutput": {
@@ -431,6 +510,39 @@ print(json.dumps({
   }
 }))
 ' "$deny" 2>/dev/null || true
+    else
+      # No fact to deny on: either no #N was in the call at all (a bare "ticket" word, an
+      # item-shaped name with no digits), or the resolved #N has no matching `## #N` block in
+      # queue/tickets.md (stale reference, typo, or queue/tickets.md isn't resolvable here).
+      # Guessing that such a number IS real dispatch would be exactly the prose-guessing this
+      # guard otherwise avoids, so this is advisory, never a block.
+      what="a referenced ticket"
+      [ -n "$tnum" ] && what="ticket #${tnum}"
+      advisory="$(cat <<EOF
+[ROUTER POSTURE] This reads as ticket-shaped dispatch language, but ${what} could not be confirmed against queue/tickets.md, so this is advisory only, not a block. If it IS real ticket work, paste this instead:
+
+  npm run govern:pre-dispatch -- <N>           # verdict: proceed / skip / refuse
+  npm run govern:dispatch-packet -- <N>        # creates the worktree + .dispatch-packet.md, prints the prompt below
+
+  Agent(
+    subagent_type: "worker",
+    description: "ticket #<N>",
+    prompt: "Resolve #<N>. Read your packet at <worktree path>/.dispatch-packet.md first and follow it."
+  )
+
+If it isn't (an investigation, a sweep, or prose merely naming ticket vocabulary), no action needed. Set GOVERN_TICKET_ROUTE_GUARD=0 to silence this for the session.
+EOF
+)"
+      python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "additionalContext": sys.argv[1],
+  }
+}))
+' "$advisory" 2>/dev/null || true
+    fi
   fi
   exit 0
 fi
@@ -480,41 +592,30 @@ if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
   vf_reason="a test/build run not wrapped in verify-filter"
 fi
 
-# The denial itself (see header): fires only when the wrapper is provably installed at the
-# resolved workspace root, mirroring the proposed-solution gate's own dual-layout resolve
-# above -- a scaffolded workspace has it at <root>/scripts/govern/, the hub template tree has
-# it at templates/govern/ (one level up, not under scripts/). No match on either path means no
-# denial: falls through to the advisory below (if GOVERN_VF_NUDGE left it on) exactly as before
-# this change. Never rate limited -- this exits before the shared warn-cap counter is touched.
+# The rewrite itself (see header): fires only when the wrapper is provably installed at the
+# resolved workspace root, mirroring the proposed-solution gate's own dual-layout resolve above --
+# a scaffolded workspace has it at <root>/scripts/govern/, the hub template tree has it at
+# templates/govern/ (one level up, not under scripts/). No match on either path means no rewrite:
+# falls through to the advisory below (if GOVERN_VF_NUDGE left it on), same as before this change.
+# Never rate limited -- this exits before the shared warn-cap counter is touched. The command is
+# passed to python3 as an argv, not string-interpolated into the JSON, so json.dumps handles
+# whatever quoting or newlines the original command carries.
 if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_DENY:-1}" != "0" ]; then
   VF_SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   vf_sh="$VF_SELF_ROOT/scripts/govern/verify-filter.sh"
   [ -f "$vf_sh" ] || vf_sh="$VF_SELF_ROOT/govern/verify-filter.sh"
   if [ -f "$vf_sh" ]; then
-    vf_deny="$(cat <<EOF
-[VERIFY-FILTER] Denied: this command matches a test/build runner and is not wrapped in
-verify-filter, which bypasses the output filtering the wrapper exists for -- a passing run's output
-still lands in the transcript and is re-sent every later turn.
-
-Run the wrapped form instead:
-
-  npm run vf -- ${command}
-
-(or \`bash scripts/govern/verify-filter.sh -- ${command}\` directly). A passing run then emits
-nothing into context; a failing run still shows its bounded tail. Set GOVERN_VF_DENY=0 to turn
-this denial off for the session -- GOVERN_VF_NUDGE governs the advisory separately and stays on.
-EOF
-)"
+    vf_wrapped="bash \"$vf_sh\" -- $command"
     python3 -c '
 import json, sys
 print(json.dumps({
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": sys.argv[1],
+    "permissionDecision": "allow",
+    "updatedInput": {"command": sys.argv[1]},
   }
 }))
-' "$vf_deny" 2>/dev/null || true
+' "$vf_wrapped" 2>/dev/null || true
     exit 0
   fi
 fi
