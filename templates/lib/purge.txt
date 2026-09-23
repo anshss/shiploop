@@ -118,3 +118,15 @@ scripts/govern/test/test-record-escalation-answer.sh
 # the cache was never written and those reads always returned nothing. govern::ticket_paths and
 # staleness-gate.sh, its two callers, now resolve purely from the ticket's explicit `**Files:**` field.
 scripts/govern/scout-ticket.sh
+
+# v1.19.12: the benchmark harness and the lever-event log it read are retired; shiploop no longer
+# claims a token/cost saving. The five bench test suites and the lever-events emitter test below
+# are belt-and-suspenders, same as the two blocks above: the directory-level scripts/govern/test/
+# entry near the top of this file already removes the whole folder on every writer run.
+scripts/govern/test/test-bench-arms.sh
+scripts/govern/test/test-bench-cap.sh
+scripts/govern/test/test-bench-rollup.sh
+scripts/govern/test/test-bench-schema.sh
+scripts/govern/test/test-bench-selection.sh
+scripts/govern/test/test-lever-events.sh
+scripts/govern/test/test-output-suppression.sh

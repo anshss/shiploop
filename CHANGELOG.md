@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.19.12 - 2026-09-23
+
+### Removed
+
+**The benchmark harness, `/shiploop:bench` and the lever-event log it read are removed; shiploop no
+longer claims a token or cost saving anywhere in its live copy.** The whole `bench/` directory, the
+`/shiploop:bench` command, and the five `test-bench-*.sh` suites are deleted outright. So is the
+lever-event instrumentation that existed only to feed bench: `govern::emit_lever_event` and its call
+sites in `deterministic-apply.sh`, `verify-filter.sh` and `agent-watchdog-guard.sh` (along with the
+helper functions and transcript reads that existed only to build that event's fields),
+`test-lever-events.sh`, the `GOVERN_LEVER_EVENTS` row in `CONFIGURATION.md`, and the three flag probes
+(`--max-turns`, `--max-budget-usd`, `--settings`) added in `common.sh` for bench's exclusive use.
+`test-output-suppression.sh` tested nothing but the removed event, so it is deleted too; the wrapper
+behavior it also incidentally covered (a passing command collapses to one line, a failing one keeps
+its output, the exit code survives verbatim) is already independently covered by
+`test-verify-filter.sh`. Existing fleets shed the installed test files on their next update.
+
+README.md, the plugin manifest and marketplace descriptions, and SKILL.md no longer claim shiploop
+ships on fewer tokens, runs cheaper, or spends less: they describe what the harness does — model
+tiering, a scripted codebase index, deterministic fixes for mechanical changes, output suppression
+in the transcript, a wall-clock watchdog, ticket batching — without a cost or savings framing.
+
 ## 1.19.11 - 2026-09-15
 
 ### Added

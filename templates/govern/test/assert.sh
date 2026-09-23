@@ -65,7 +65,6 @@ export GOVERN_STALENESS_RUN_TESTS=0  # never execute a queue-authored command in
 export GOVERN_EARLY_ABORT=0          # in-flight worker watchdog
 export GOVERN_RUN_MAX_TOKENS=0       # run-level spend ceiling (0 = off)
 export GOVERN_EVENTS=0               # fleet event log (lib/common.sh): OFF for the whole suite
-export GOVERN_LEVER_EVENTS=0          # bench lever-events emitter: its own test opts in
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge: its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush: its own test opts back in
 export GOVERN_GOTCHA_INJECT=0        # CLAUDE.md/learnings.md **Paths:** gotcha injection — several
@@ -113,26 +112,6 @@ export GOVERN_STEER_CAP=12           # advisor-steer-guard.sh's per-session cap 
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
 export GOVERN_INDEX=0
-
-# bench/arms.sh adds a `--max-turns` capability probe (CLAUDE.md anti-pattern 12: never put a new
-# `claude` flag on a spawning path without a cached --help gate). Pre-seed it UNSUPPORTED for the
-# whole suite so no test can ever shell out to a real `claude --help` and so the new mechanism is
-# OFF by default here, exactly like the dispatch-path knobs above. test-bench-arms.sh sets it
-# explicitly per case, which is what exercises the gate.
-export _GOVERN_MAXTURNS_SUPPORTED=0
-# Same for the --max-budget-usd fallback probe (bench's per-session ceiling when --max-turns is
-# unsupported): pre-seeded UNSUPPORTED so the whole suite is hermetic, its own test cases opt in.
-export _GOVERN_MAXBUDGETUSD_SUPPORTED=0
-# Same shape again for bench's --forward-subagent-text probe (treatment-arm attribution): pre-seeded
-# UNSUPPORTED so no test can shell out to a real `claude --help` for it either. Unlike the two
-# above, an unsupported CLI here is a HARD STOP for the shiploop arm (no degraded-arm fallback), so
-# test-bench-arms.sh's own cases opt in per case to exercise both the allow and the stop.
-export _GOVERN_FWDSUBAGENT_SUPPORTED=0
-# Same shape again for bench's --settings probe (the Bash permission grant every session gets, both
-# arms, from bench::spawn): pre-seeded UNSUPPORTED so no test can shell out to a real `claude --help`
-# for it either. Same HARD STOP as --forward-subagent-text (no degraded-arm fallback), so
-# test-bench-arms.sh's own cases opt in per case to exercise both the allow and the stop.
-export _GOVERN_SETTINGSFLAG_SUPPORTED=0
 
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without

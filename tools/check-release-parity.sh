@@ -3,7 +3,7 @@
 # something says so.
 #
 # v1.18.4 was tagged and pushed with no GitHub Release ever cut for it, and nothing noticed
-# until an operator read the releases page by eye. Separately, a bench PR bumped VERSION to
+# until an operator read the releases page by eye. Separately, a PR bumped VERSION to
 # 1.18.5 and merged with the tag+release cut only later, again caught by hand. Two directions
 # of the same gap: a tag with no release, and a version with no tag.
 #
