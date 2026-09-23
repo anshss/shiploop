@@ -133,6 +133,11 @@ export _GOVERN_FWDSUBAGENT_SUPPORTED=0
 # for it either. Same HARD STOP as --forward-subagent-text (no degraded-arm fallback), so
 # test-bench-arms.sh's own cases opt in per case to exercise both the allow and the stop.
 export _GOVERN_SETTINGSFLAG_SUPPORTED=0
+# Same shape again for bench's --strict-mcp-config probe (arm isolation from the operator's own
+# personal MCP servers, both arms, from bench::spawn): pre-seeded UNSUPPORTED so no test can shell
+# out to a real `claude --help` for it either. Optional, not a hard stop (an unsupported CLI just
+# runs without this extra isolation layer), so test-bench-arms.sh's own cases opt in per case.
+export _GOVERN_STRICTMCP_SUPPORTED=0
 
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without

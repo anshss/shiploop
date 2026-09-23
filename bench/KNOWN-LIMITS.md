@@ -30,6 +30,30 @@ is the one line of defense here. Do not add an install step to close this gap; t
 way to run one, and a network call from inside `verify_cmd` would silently give an arm's tree
 whatever that install pulls down.
 
+## Arm isolation from the operator's own machine, and what is still open
+
+Every arm session runs with `--setting-sources project,local` (excludes the operator's user-scope
+`settings.json` — CLAUDE.md, hooks, plugins, skills) and `--strict-mcp-config` (excludes every MCP
+server except the ones an explicit `--mcp-config` names, which bench never passes — closing the one
+gap `--setting-sources` cannot: a PERSONAL MCP server added with `claude mcp add --scope user` lives
+in `~/.claude.json`, a distinct app-state file that "setting sources" never governs). Both arms also
+get an empty `GOMODCACHE`, `GOPROXY=off`, `GOFLAGS=-mod=mod`, an empty `CARGO_HOME`, and `python3`
+resolving to a harness-built venv (no system site-packages) — the same isolation `verify_cmd` runs
+under. A cell's actual working directory lives under `BENCH_WORKDIR_ROOT` (default outside any repo),
+never nested inside this hub checkout or a workspace worktree, so neither arm's project-memory
+walk-up can find an ancestor CLAUDE.md or `.git` that isn't the cell's own.
+
+What this does NOT close: `--strict-mcp-config` is gated on a cached `claude --help` probe
+(CLAUDE.md anti-pattern 12) and is optional, not a hard stop — an old CLI, or `BENCH_STRICT_MCP_CONFIG=0`,
+runs without it, and the run's own `kind:"meta"` row records whether it was actually applied so this
+is never silent. The cache-isolation env vars stop the SPECIFIC toolchains they name from reaching a
+pre-populated cache or the network; they do not stop an arm's own Bash tool from calling `curl`,
+`pip`, or `go` with different flags, or reaching the network some other way — the same gap the
+offline guard below already discloses for git/`gh`. The isolated venv itself needs the network once,
+outside any arm, to `pip install pytest` — a one-time harness-setup cost, not a benchmarked arm's own
+spend, and best-effort (a failure there logs and continues without python isolation rather than
+aborting the run).
+
 ## The offline guard closes git remotes, not the network
 
 `bench::assert_offline` (bench/run.sh) strips every git remote from every clone and asserts none

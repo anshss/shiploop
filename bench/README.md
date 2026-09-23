@@ -210,6 +210,20 @@ name written onto each row and into the headline sentence).
 `fixture://` repo, so a non-dry run refuses it up front rather than failing halfway through a
 clone, and it can never be counted toward a published backlog total.
 
+## Isolation
+
+Both arms get `--setting-sources project,local` (excludes the operator's OWN user-scope CLAUDE.md,
+hooks, plugins, skills) and `--strict-mcp-config` (excludes every MCP server, closing the one gap
+`--setting-sources` cannot: a personal server added with `claude mcp add --scope user` lives outside
+"setting sources" entirely) — gated on a cached `claude --help` probe, optional rather than a hard
+stop (`BENCH_STRICT_MCP_CONFIG=0` is the kill switch). Both arms AND every `verify_cmd` also run with
+an empty `GOMODCACHE`, `GOPROXY=off`, `GOFLAGS=-mod=mod`, an empty `CARGO_HOME`, and `python3`
+resolving to a harness-built venv (`BENCH_ISOLATE=0` turns all of this off). A cell's working
+directory lives under `BENCH_WORKDIR_ROOT` (default `${TMPDIR}/shiploop-bench`, outside any repo),
+never nested inside this checkout or a workspace worktree. The run's own `kind:"meta"` row records
+which isolation was actually active. See `bench/KNOWN-LIMITS.md` ("Arm isolation...") for what this
+does and does not close.
+
 ## Verification: a mechanical oracle, nothing mined
 
 A backlog is purpose-built: its own tests already ship in the tree at the pinned `ref`, already

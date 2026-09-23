@@ -272,6 +272,22 @@ bench::stream_had_subagent_activity() { # <jsonl> -> rc 0 spawned>0 && completed
   [[ "$spawned" -gt 0 && "$completed" -gt 0 ]]
 }
 
+# `env KEY=val ...` tokens (space-separated, word-split by the caller — every value here is a plain
+# path or flag with no embedded whitespace) applied to BOTH an arm's own session (bench::spawn,
+# bench/arms.sh) and every verify_cmd run (bench::verify_backlog, bench/run.sh): empty by design when
+# BENCH_ISOLATE=0. Lives here, not in run.sh, because arms.sh calls it directly and record.sh is the
+# one library both run.sh and arms.sh already depend on. Reads BENCH_ISOLATE/BENCH_GOMODCACHE/
+# BENCH_CARGO_HOME/BENCH_VENV_DIR — run.sh sets and exports all four before sourcing this file; a
+# caller that sources record.sh standalone (a probe, a unit test) must set them itself.
+bench::isolation_env_args() {
+  [[ "${BENCH_ISOLATE:-1}" != "0" ]] || return 0
+  printf 'GOMODCACHE=%s GOPROXY=off GOFLAGS=-mod=mod CARGO_HOME=%s' "${BENCH_GOMODCACHE:-}" "${BENCH_CARGO_HOME:-}"
+  if [[ -n "${BENCH_VENV_DIR:-}" && -x "$BENCH_VENV_DIR/bin/python3" ]]; then
+    printf ' PATH=%s:%s' "$BENCH_VENV_DIR/bin" "$PATH"
+  fi
+  return 0
+}
+
 # Did a session stream end on an INFRA-class error (usage/session limit, a generic API error, an
 # auth failure) rather than finishing the work it was given OR being cut off by its own turn/budget
 # ceiling? The claude CLI marks any turn that ended in error with `is_error:true` on the LAST

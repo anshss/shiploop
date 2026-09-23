@@ -117,6 +117,64 @@ export BENCH_STATE_DIR
 mkdir -p "$RUN_DIR" "$BENCH_STATE_DIR"
 : > "$RESULTS"
 
+# ── isolation ────────────────────────────────────────────────────────────────
+# A cell's actual working directory used to live under $BENCH_STATE_DIR, which by default sits
+# inside THIS hub checkout inside the workspace worktree tree — so a workspace's own root CLAUDE.md
+# was a genuine ANCESTOR of every cell's cwd (the "project" memory walk-up finds it there, same as it
+# would for a real project file), and a shiploop-arm session walked up and ran `npm run
+# worktree:new` in the OUTER workspace, touching the real sub-repos' git. BENCH_WORKDIR_ROOT decouples
+# the actual arm working directory from $OUT_ROOT/$BENCH_STATE_DIR entirely: default is outside any
+# repo, so there is no ancestor CLAUDE.md, no ancestor .git, nothing to walk up into.
+_bench_tmp_root="${TMPDIR:-/tmp}"
+_bench_tmp_root="${_bench_tmp_root%/}"
+BENCH_WORKDIR_ROOT="${BENCH_WORKDIR_ROOT:-$_bench_tmp_root/shiploop-bench}"
+mkdir -p "$BENCH_WORKDIR_ROOT"
+export BENCH_WORKDIR_ROOT
+# Cache isolation, both arms AND every verify_cmd run (BENCH_ISOLATE=0 is the deliberate override):
+# an empty GOMODCACHE/CARGO_HOME so neither arm sees a module the OPERATOR's own machine already
+# fetched (observed live: a fixed upstream dependency version in the machine's Go module cache let
+# an arm diff against it), GOPROXY=off + GOFLAGS=-mod=mod so a `go` invocation fails rather than
+# silently reaching the network, and a harness-built venv (no system site-packages) so `python3`
+# never resolves to whatever the operator happens to have `pip install`ed globally (observed live:
+# system Python had `pygments` installed). Built ONCE, outside any arm — see
+# bench::ensure_isolated_venv, called below, never from bench::spawn or an arm's own session.
+BENCH_ISOLATE="${BENCH_ISOLATE:-1}"
+BENCH_CACHE_ROOT="${BENCH_CACHE_ROOT:-$BENCH_WORKDIR_ROOT/.caches}"
+BENCH_GOMODCACHE="${BENCH_GOMODCACHE:-$BENCH_CACHE_ROOT/gomod}"
+BENCH_CARGO_HOME="${BENCH_CARGO_HOME:-$BENCH_CACHE_ROOT/cargo}"
+BENCH_VENV_DIR="${BENCH_VENV_DIR:-$BENCH_CACHE_ROOT/venv}"
+export BENCH_ISOLATE BENCH_CACHE_ROOT BENCH_GOMODCACHE BENCH_CARGO_HOME BENCH_VENV_DIR
+
+# bench::isolation_env_args lives in record.sh, not here: arms.sh's bench::spawn calls it directly
+# (the one place every arm's session is launched), and record.sh is the shared library both run.sh
+# and arms.sh already depend on — a function only run.sh defined would break arms.sh the moment it
+# is sourced on its own (as a test or a probe does), rather than always via run.sh's own process.
+
+# Builds the isolated venv ONCE, in the driver's own process — never from bench::spawn or an arm's
+# own session, so an arm never gets credit (or blame) for provisioning its own test tooling. Memoized
+# on the venv's own python3 binary existing, so a second run on the same machine is a no-op. Network
+# use here is a one-time local `pip install`, not a benchmarked arm's own spend. Best-effort: a
+# failure here logs and continues without python isolation rather than aborting the whole run — the
+# no-install doctrine (bench/KNOWN-LIMITS.md) means most backlogs need no python at all.
+bench::ensure_isolated_venv() {
+  [[ "$BENCH_ISOLATE" != "0" ]] || return 0
+  [[ -x "$BENCH_VENV_DIR/bin/python3" ]] && return 0
+  command -v python3 >/dev/null 2>&1 || {
+    bench::log "isolation: no python3 on PATH — a verify_cmd that needs it will fail; no venv to build"
+    return 0
+  }
+  bench::log "isolation: building the isolated venv at $BENCH_VENV_DIR (one-time; may use the network for 'pip install pytest')"
+  if ! python3 -m venv "$BENCH_VENV_DIR" >/dev/null 2>&1; then
+    bench::log "isolation: failed to create a venv at $BENCH_VENV_DIR; continuing without python isolation"
+    rm -rf "$BENCH_VENV_DIR"
+    return 0
+  fi
+  if ! "$BENCH_VENV_DIR/bin/pip" install --quiet --disable-pip-version-check pytest >/dev/null 2>&1; then
+    bench::log "isolation: failed to install pytest into the isolated venv; continuing without it"
+  fi
+  return 0
+}
+
 # record.sh also defines bench::log / bench::die, so it must be sourced before anything speaks.
 # shellcheck source=./record.sh
 source "$BENCH_DIR/record.sh"
@@ -125,6 +183,11 @@ bench::load_govern_lib "$BENCH_STATE_DIR"
 source "$BENCH_DIR/arms.sh"
 
 command -v jq >/dev/null 2>&1 || bench::die "jq is required"
+
+if [[ "$BENCH_ISOLATE" != "0" ]]; then
+  mkdir -p "$BENCH_GOMODCACHE" "$BENCH_CARGO_HOME"
+  bench::ensure_isolated_venv
+fi
 
 # CLI version is recorded on every row so the published sentence can name it. A dry run has no
 # CLI to ask, and inventing one would put a false version next to real-looking numbers.
@@ -224,9 +287,15 @@ bench::assert_offline() { # <root-dir>
 # One fresh checkout of the pinned ref per cell, so no arm ever inherits another's commits. In a
 # dry run there is no upstream to clone, so a git repo is synthesized locally: the arms never touch
 # it (the fixtures stand in for their streams), but the verify step still runs for real inside it.
+#
+# Deliberately under $BENCH_WORKDIR_ROOT, NEVER $BENCH_STATE_DIR: the state dir lives inside this
+# hub checkout, itself typically inside a workspace worktree, so a cell's cwd would otherwise have
+# the workspace's OWN root CLAUDE.md (and its `.git`) as an ancestor. $BENCH_WORKDIR_ROOT defaults
+# outside any repo (see the isolation block above), so this cell's tree is the only ancestor CLAUDE.md
+# / .git either arm's session can find by walking up from its cwd.
 bench::prepare_workdir() { # <backlog.jsonl> <cell-id> -> path on stdout
   local backlog="$1" cell="$2" wd repo ref
-  wd="$BENCH_STATE_DIR/wd-$cell"
+  wd="$BENCH_WORKDIR_ROOT/$RUN_ID/wd-$cell"
   rm -rf "$wd"; mkdir -p "$wd"
   repo="$(jq -rs '.[0].repo' "$backlog")"
   ref="$(jq -rs '.[0].ref' "$backlog")"
@@ -290,7 +359,18 @@ bench::verify_backlog() { # <backlog.jsonl> <workdir> <verify-ledger>
     id="$(printf '%s' "$line" | jq -r '.id')"
     cmd="$(printf '%s' "$line" | jq -r '.verify_cmd')"
     rc=0
-    ( cd "$wd" && eval "$cmd" ) >/dev/null 2>&1 || rc=$?
+    # Same cache isolation an arm's own session gets (bench::isolation_env_args, above): a
+    # verify_cmd is real code execution against the arm's tree, so it gets the identical empty
+    # GOMODCACHE/GOPROXY=off/GOFLAGS/CARGO_HOME and isolated-venv python3, or an arm could pass
+    # verify_cmd only because the DRIVER's own machine happened to have a dependency cached or a
+    # system python package installed that the arm itself never fetched.
+    ( cd "$wd"
+      if [[ "$BENCH_ISOLATE" != "0" ]]; then
+        export GOMODCACHE="$BENCH_GOMODCACHE" GOPROXY=off GOFLAGS=-mod=mod CARGO_HOME="$BENCH_CARGO_HOME"
+        if [[ -x "$BENCH_VENV_DIR/bin/python3" ]]; then export PATH="$BENCH_VENV_DIR/bin:$PATH"; fi
+      fi
+      eval "$cmd"
+    ) >/dev/null 2>&1 || rc=$?
     if [[ "$rc" -eq 0 ]]; then cleared=$((cleared+1)); else worst="$rc"; fi
     jq -nc --arg id "$id" --argjson exit "$rc" \
       '{ticket:$id, verifyExit:$exit, cleared:($exit == 0)}' >> "$ledger"
@@ -427,11 +507,33 @@ if [[ "$DRY_RUN" -ne 1 && "$total_cells" -gt 1 ]]; then
     bench::die "smoke gate: this run has $total_cells (backlog x rep) cells, more than a smoke run's one. Run a 1-backlog 1-rep smoke first and pass BENCH_SMOKE_RUN=<its run id>, or set BENCH_SKIP_SMOKE_GATE=1 to run without proof (recorded in the results)."
   fi
 fi
+# Which isolation was actually active, recorded once per run rather than re-derived from logs
+# later. strict-mcp-config's own support is resolved eagerly here (never during a dry run, which
+# spawns nothing) so the meta row reflects what the CLI on THIS machine can actually do, not just
+# what was requested.
+strict_mcp_supported="n/a (dry run)"
+if [[ "$DRY_RUN" -ne 1 ]]; then
+  if [[ "${BENCH_STRICT_MCP_CONFIG:-1}" == "0" ]]; then
+    strict_mcp_supported="disabled (BENCH_STRICT_MCP_CONFIG=0)"
+  elif bench::claude_supports_strict_mcp_config "$BENCH_CLAUDE_BIN"; then
+    strict_mcp_supported="true"
+  else
+    strict_mcp_supported="false (unsupported CLI)"
+  fi
+fi
+python_venv_path="null"
+[[ -x "$BENCH_VENV_DIR/bin/python3" ]] && python_venv_path="$BENCH_VENV_DIR"
 jq -nc --arg run "$RUN_ID" --arg sha "$HUB_SHA" --arg smokerun "${BENCH_SMOKE_RUN:-}" \
   --argjson dry "$([[ "$DRY_RUN" -eq 1 ]] && printf true || printf false)" \
   --argjson skipped "$([[ "$smoke_gate_skipped" -eq 1 ]] && printf true || printf false)" \
+  --argjson isolate "$([[ "$BENCH_ISOLATE" != "0" ]] && printf true || printf false)" \
+  --arg workdirroot "$BENCH_WORKDIR_ROOT" --arg strictmcp "$strict_mcp_supported" \
+  --arg venv "$python_venv_path" \
   '{kind:"meta", run:$run, hubSha:$sha, dryRun:$dry, smokeGateSkipped:$skipped,
-    smokeRun:($smokerun | if .=="" then null else . end)}' >> "$RESULTS"
+    smokeRun:($smokerun | if .=="" then null else . end),
+    isolation:{active:$isolate, settingSources:"project,local", strictMcpConfig:$strictmcp,
+      workdirRoot:$workdirroot, goModCacheIsolated:$isolate, cargoHomeIsolated:$isolate,
+      pythonVenv:($venv | if .=="null" then null else . end)}}' >> "$RESULTS"
 
 capped=0
 halted_on_error=0

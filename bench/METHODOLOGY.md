@@ -218,6 +218,40 @@ deriving a status from ticket completion; a cell containing even one capped sess
 it, and `bench/rollup.mjs` drops a capped backlog from the published set the same way it drops one
 that hit the run-level `BENCH_MAX_USD` cap.
 
+## Arm isolation from the operator's own machine
+
+A benchmark of "vanilla Claude Code" and "Claude Code with shiploop" is only honest if the "vanilla"
+side is actually out of the box. Every arm session runs with `--setting-sources project,local`
+(excludes the operator's own user-scope `settings.json` — CLAUDE.md, hooks, plugins, skills) and
+`--strict-mcp-config` (excludes every MCP server except one an explicit `--mcp-config` names, which
+bench never passes). The second flag closes a gap the first cannot: a personal MCP server added with
+`claude mcp add --scope user` lives in `~/.claude.json`, a distinct app-state file "setting sources"
+never governs (code.claude.com/docs/en/claude-directory). Both flags are proven against a live probe
+through `bench::spawn` (the one place either arm's session is launched): the `system/init` event's
+`mcp_servers` is empty, `plugins` carries builtin entries only, and a canary prompt asking what the
+session was told about addressing the user gets no answer — the operator's own global CLAUDE.md rule
+never loaded.
+
+Both arms AND every `verify_cmd` also run with an empty `GOMODCACHE`, `GOPROXY=off`,
+`GOFLAGS=-mod=mod`, an empty `CARGO_HOME`, and `python3` resolving to a harness-built venv with no
+system site-packages — so neither arm's result depends on a module or package the OPERATOR's own
+machine happened to have cached or installed. The venv is built once, in the driver's own process,
+never inside an arm's session.
+
+A cell's actual working directory (the vanilla arm's checkout AND the shiploop arm's scaffolded
+workspace) lives under `BENCH_WORKDIR_ROOT`, default `${TMPDIR}/shiploop-bench`, fully decoupled from
+`BENCH_STATE_DIR`/`OUT_ROOT` (which, by default, sits inside this hub checkout, itself typically
+inside a workspace worktree). Before this, a shiploop-arm session could walk up from its cwd and find
+the WORKSPACE's own root CLAUDE.md as an ancestor project-memory file — observed live, one such
+session ran `npm run worktree:new` in the outer workspace, touching the real sub-repos' git.
+
+None of this is a network sandbox: see `bench/KNOWN-LIMITS.md` ("Arm isolation...") for what stays
+open (an arm's own Bash tool can still reach the network some other way, `--strict-mcp-config` is
+optional on an old CLI, and `BENCH_ISOLATE=0`/`BENCH_STRICT_MCP_CONFIG=0` are deliberate overrides).
+Auth is untouched by any of this — no `CLAUDE_CONFIG_DIR` relocation, no credential handling — because
+`--setting-sources`/`--strict-mcp-config` and the cache env vars close the observed leaks without
+touching where the CLI reads its login from.
+
 ## An empty backlog gets its own status, never "resolved"
 
 A backlog with zero tickets makes a naive `cleared == total` comparison read `0 == 0`, which is

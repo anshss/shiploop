@@ -203,6 +203,41 @@ bench::resolve_bash_grant_flag() { # <claude_bin>
   bench::die "claude CLI ($bin) does not support --settings, so neither arm can be given the Bash permission grant that keeps them on one permission regime. Upgrade the claude CLI, or set BENCH_BASH_GRANT=0 to run without the grant deliberately (both arms will then face whatever acceptEdits leaves them, identically, but a subagent's Bash calls may be refused)."
 }
 
+# ── MCP isolation, identical on both arms ───────────────────────────────────
+# `--setting-sources project,local` (bench::spawn) already excludes the operator's user-scope
+# settings.json, which is where a PROJECT- or TEAM-shared MCP server would be configured. It does
+# NOT touch a PERSONAL server added with `claude mcp add --scope user`: that lives in `~/.claude.json`
+# (code.claude.com/docs/en/claude-directory), a distinct app-state file that "setting sources" never
+# governs, so a personal MCP server survives `--setting-sources project,local` alone and would still
+# be available to either arm. `--strict-mcp-config` (no `--mcp-config` is ever passed) closes this by
+# refusing every MCP server outright, on both arms — no server exists in the backlog fixtures this
+# harness runs today, so nothing legitimate is lost.
+#
+# Gated on a cached `--help` probe per CLAUDE.md anti-pattern 12, own pre-seed seam
+# (`_GOVERN_STRICTMCP_SUPPORTED`) and env kill switch (`BENCH_STRICT_MCP_CONFIG=0`). Optional, not a
+# hard stop: unlike --forward-subagent-text/--settings above, losing this one extra isolation layer
+# on an old CLI does not corrupt what the run measures, so an unsupported CLI just runs without it
+# (logged), the same degrade `bench::resolve_max_turns_flag` uses for its own fallback.
+bench::claude_supports_strict_mcp_config() { # <claude_bin> -> rc 0 supported, 1 not
+  govern::claude_supports_strict_mcp_config "$1"
+}
+
+# Sets the global `bench_strict_mcp_flag` (empty or `--strict-mcp-config`).
+bench::resolve_strict_mcp_flag() { # <claude_bin>
+  local bin="$1"
+  bench_strict_mcp_flag=""
+  if [[ "${BENCH_STRICT_MCP_CONFIG:-1}" == "0" ]]; then
+    bench::log "BENCH_STRICT_MCP_CONFIG=0, omitting --strict-mcp-config (disabled by operator); a personal MCP server added with claude mcp add --scope user may still be available to either arm"
+    return 0
+  fi
+  if bench::claude_supports_strict_mcp_config "$bin"; then
+    bench_strict_mcp_flag='--strict-mcp-config'
+    return 0
+  fi
+  bench::log "claude CLI ($bin) does not support --strict-mcp-config; running without this extra MCP-isolation layer this run"
+  return 0
+}
+
 # ── prompts ─────────────────────────────────────────────────────────────────
 # Byte-identical ticket text across arms: both of these render from the same backlog.jsonl fields
 # through the same jq program, so there is one place where the wording lives.
@@ -393,8 +428,16 @@ bench::seed_tickets() { # <backlog.jsonl> <tickets.md> <repo-slug>
 # scaffold.sh so the loop under test is the shipped one, per the scaffold discipline in
 # CLAUDE.md anti-pattern 13. Prints the workspace path.
 bench::scaffold_workspace() { # <repo-workdir> <name> <repo-slug> -> workspace path
-  local wd="$1" name="$2" repo="$3" ws
-  ws="$BENCH_STATE_DIR/ws-$name"
+  local wd="$1" name="$2" repo="$3" ws root
+  # $BENCH_WORKDIR_ROOT (run.sh), not $BENCH_STATE_DIR: this scaffolded workspace IS the shiploop
+  # arm's actual session cwd, so it needs the SAME ancestor-CLAUDE.md/`.git` isolation
+  # bench::prepare_workdir already gives the vanilla arm's checkout — $BENCH_STATE_DIR sits inside
+  # this hub checkout, itself typically inside a workspace worktree, which is exactly the ancestor a
+  # shiploop-arm session walked up into and ran `npm run worktree:new` against, live. Falls back to
+  # $BENCH_STATE_DIR when $BENCH_WORKDIR_ROOT is unset (a standalone call, e.g. a unit test, that
+  # never goes through run.sh's own setup).
+  root="${BENCH_WORKDIR_ROOT:-$BENCH_STATE_DIR}"
+  ws="$root/${RUN_ID:+$RUN_ID/}ws-$name"
   rm -rf "$ws"; mkdir -p "$ws"
   cp -R "$wd" "$ws/$repo"
   bash "$BENCH_ARMS_HUB/scaffold.sh" \
@@ -437,10 +480,14 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
   local wd="$1" prompt="$2" jsonl="$3"; shift 3
   mkdir -p "$(dirname "$jsonl")"
   bench::resolve_bash_grant_flag "$BENCH_CLAUDE_BIN"
+  bench::resolve_strict_mcp_flag "$BENCH_CLAUDE_BIN"
   # -u GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/GH_HOST/GH_REPO: offline guard, part 2 (run.sh's
   # bench::assert_offline covers git remotes; this covers the OTHER way a gh credential reaches a
   # real repo — an ambient token in the operator's own shell, which a bare `gh` call honors with no
   # remote and no stored login required. Scrubbed from every spawned session, both arms, always.
+  # GOMODCACHE/GOPROXY/GOFLAGS/CARGO_HOME/PATH: cache isolation (bench::isolation_env_args, record.sh) —
+  # neither arm sees a module the operator's OWN machine already fetched, and `python3` on PATH
+  # resolves to the harness-built venv, never system site-packages.
   # </dev/null: bench::spawn merges stderr into the same stream (section 6), and with no stdin the
   # CLI printed a "no stdin data received in 3s, proceeding without it" warning line ahead of the
   # first real JSON line, once per cell — a non-JSON line a reader must otherwise learn to skip.
@@ -449,11 +496,13 @@ bench::spawn() { # <workdir> <prompt> <jsonl> [extra flags...]
       -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT \
       -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_EFFORT \
       -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GH_HOST -u GH_REPO \
+      $(bench::isolation_env_args) \
       "$BENCH_CLAUDE_BIN" -p "$prompt" \
       --output-format stream-json --verbose \
       --setting-sources project,local \
       --permission-mode acceptEdits \
       ${bench_bash_grant_flag:-} \
+      ${bench_strict_mcp_flag:-} \
       "$@" ) </dev/null >"$jsonl" 2>&1 || true
   return 0
 }
