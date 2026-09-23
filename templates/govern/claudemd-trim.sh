@@ -188,7 +188,11 @@ ct::path_index() {
   CT_PATH_INDEX="$CT_WORK/pathindex.txt"
   : > "$CT_PATH_INDEX"
   while IFS= read -r d; do
-    find "$d" \( -name node_modules -o -name .git -o -name .next -o -name dist \) -prune \
+    # .wt: the default worktree base lives INSIDE the workspace root now, and each entry under it
+    # is a full nested checkout of every sub-repo — walking into it would multiply this index by
+    # the number of live worktrees for zero benefit (a citation only needs to resolve once, at the
+    # real root/sub-repo paths this same find already covers).
+    find "$d" \( -name node_modules -o -name .git -o -name .next -o -name dist -o -name .wt \) -prune \
       -o -print 2>/dev/null | sed -e "s|^$d/||" >> "$CT_PATH_INDEX" || :
   done < <(ct::roots)
   return 0

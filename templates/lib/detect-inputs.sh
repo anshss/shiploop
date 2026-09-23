@@ -10,7 +10,7 @@
 #
 # Output (stdout), stable and grep-able:
 #   root_pm=<npm|pnpm|yarn|bun>
-#   worktree_base=</abs/path.wt>
+#   worktree_base=</abs/path/.wt>
 #   org=<github-org or empty>
 #   repo=<name>|<port>|<dev-cmd>|<visibility PUBLIC|PRIVATE|unknown>   (one per repo)
 #   repos_spec=<name:port:cmd,...>                                     (scaffold --repos arg)
@@ -127,7 +127,10 @@ fi
 
 # ── Emit ─────────────────────────────────────────────────────────────────────
 printf 'root_pm=%s\n' "$ROOT_PM"
-printf 'worktree_base=%s\n' "$(dirname "$WORKSPACE_DIR")/$(basename "$WORKSPACE_DIR").wt"
+# Inside the workspace root (not a sibling): a worker's Read/Write/Edit there stay covered by
+# the same working-directory grant the workspace itself has, with no additionalDirectories entry
+# or trust step needed. Gitignored (templates/gitignore's `.wt/` line).
+printf 'worktree_base=%s\n' "$WORKSPACE_DIR/.wt"
 printf 'org=%s\n' "$ORG"
 SPEC=""
 for ((i=0; i<n; i++)); do

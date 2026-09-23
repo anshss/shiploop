@@ -202,6 +202,28 @@ hydrate_from_workspace_sh() {
   return 0
 }
 
+# resolve_worktree_base — the WORKTREE_BASE value actually in effect for this workspace.
+# component_settings/component_settings_merge need it to know whether the worktree base sits
+# outside the workspace root (needs an additionalDirectories grant) even on `/shiploop:update`,
+# which never passes --worktree-base and never re-runs the interview. Priority: an explicit
+# --worktree-base flag > the value already written into the workspace's OWN
+# scripts/lib/workspace.sh (the only place an existing fleet's answer still lives) > the same
+# $WORKSPACE_DIR/.wt default component_workspace_sh would write on a truly fresh scaffold.
+resolve_worktree_base() {
+  if [ -n "$WORKTREE_BASE" ]; then printf '%s\n' "$WORKTREE_BASE"; return 0; fi
+  if [ -f scripts/lib/workspace.sh ]; then
+    local v
+    v="$(. scripts/lib/workspace.sh >/dev/null 2>&1 || exit 0; printf '%s' "${WORKTREE_BASE:-}")"
+    case "$v" in ''|*__*__*) ;; *) printf '%s\n' "$v"; return 0 ;; esac
+  fi
+  printf '%s\n' "$WORKSPACE_DIR/.wt"
+}
+
+# wt_base_outside_root — true (0) when <wt_base> is NOT the workspace root or under it.
+wt_base_outside_root() { # <wt_base> <root>
+  case "$1" in "$2"|"$2"/*) return 1 ;; *) return 0 ;; esac
+}
+
 # ── Component implementations ───────────────────────────────────────────────
 
 component_dirs() {
@@ -242,7 +264,11 @@ component_workspace_sh() {
   [ -n "$ORG" ] || die "--org is required for workspace.sh"
   [ "${#REPO_NAMES[@]}" -gt 0 ] || die "--repos required (at least one)"
 
-  local wt_base="${WORKTREE_BASE:-\$HOME/code/$(basename "$WORKSPACE_DIR").wt}"
+  # Default: inside the workspace root (gitignored `.wt/`), so a worker's Read/Write/Edit there
+  # is covered by the workspace's own working-directory grant with no trust step. $WORKSPACE_DIR
+  # is already resolved absolute (line ~137), so this is safe to embed directly, unlike the old
+  # sibling default it replaces.
+  local wt_base="${WORKTREE_BASE:-$WORKSPACE_DIR/.wt}"
   local meta_name; meta_name="$(basename "$WORKSPACE_DIR")"
 
   # Build quoted arrays for placeholders.
@@ -797,6 +823,25 @@ component_workspace_sh_merge() {
 component_settings() {
   log "component: .claude/settings.json"
   local root="$WORKSPACE_DIR"
+  local wt_base; wt_base="$(resolve_worktree_base)"
+  # Outside the workspace root, a worker's Read/Write/Edit under the worktree base need an
+  # explicit grant (the workspace's own working-directory grant doesn't cover it) — merging never
+  # applies here since this is a WHOLE fresh file, nothing pre-existing to preserve.
+  local extra_props=""
+  if wt_base_outside_root "$wt_base" "$root"; then
+    extra_props=",
+  \"permissions\": {
+    \"additionalDirectories\": [\"$wt_base\"]
+  }"
+  fi
+  # Every worktree is its own `git worktree add` checkout of the meta-repo, so it carries its OWN
+  # on-disk copy of the root CLAUDE.md one level under the base (<wt_base>/<name>/CLAUDE.md) —
+  # reading any file under it would load that copy on demand ALONGSIDE the one already loaded for
+  # the real root, wasting the per-turn budget on an identical duplicate. `*` stops at the `<name>`
+  # segment so this never touches a sub-repo's own CLAUDE.md one level deeper
+  # (<wt_base>/<name>/<subrepo>/CLAUDE.md), which still needs to load.
+  extra_props="$extra_props,
+  \"claudeMdExcludes\": [\"$wt_base/*/CLAUDE.md\"]"
   local content
   content=$(cat <<EOF
 {
@@ -836,7 +881,7 @@ component_settings() {
     "SessionEnd": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
     ]}]
-  }
+  }$extra_props
 }
 EOF
 )
@@ -1042,6 +1087,39 @@ JQ
   else
     rm -f "$tmp"
     die "jq failed to merge into $target (invalid JSON?)"
+  fi
+
+  # ── worktree base: additionalDirectories (outside the workspace root only) +
+  # claudeMdExcludes (always — every worktree carries its own on-disk copy of the root CLAUDE.md
+  # one level under the base) ── Runs on EVERY settings-merge, including from `/shiploop:update`,
+  # which never passes --worktree-base: resolve_worktree_base reads the value already recorded in
+  # this workspace's OWN scripts/lib/workspace.sh instead. Additive only — never removes an entry
+  # an operator or a prior run already added (index-checked before appending, same idempotency
+  # contract as the hook merge above).
+  local wt_base; wt_base="$(resolve_worktree_base)"
+  local outside=0
+  wt_base_outside_root "$wt_base" "$root" && outside=1
+  local cme_pattern="$wt_base/*/CLAUDE.md"
+  local tmp2; tmp2="$(mktemp)"
+  if jq --arg dir "$wt_base" --argjson outside "$outside" --arg cme "$cme_pattern" '
+    (if $outside == 1 then
+       (.permissions //= {})
+       | (.permissions.additionalDirectories //= [])
+       | (if (.permissions.additionalDirectories | index($dir)) then . else .permissions.additionalDirectories += [$dir] end)
+     else . end)
+    | (.claudeMdExcludes //= [])
+    | (if (.claudeMdExcludes | index($cme)) then . else .claudeMdExcludes += [$cme] end)
+  ' "$target" > "$tmp2"; then
+    if ! diff -q "$target" "$tmp2" >/dev/null 2>&1; then
+      mv "$tmp2" "$target"
+      info "merged worktree-base permissions/claudeMdExcludes into $target"
+    else
+      rm -f "$tmp2"
+      info "$target already carries the worktree-base grant — no changes needed (idempotent)"
+    fi
+  else
+    rm -f "$tmp2"
+    die "jq failed to merge worktree-base permissions into $target"
   fi
 }
 

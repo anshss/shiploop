@@ -23,6 +23,8 @@
 #      enough that the old (retired) demotion lane would have fired.
 #   J. A `<placeholder>` segment and a git refspec (`origin/main`) are unproven, never dead.
 #   K. A bare basename citation resolves LIVE via the suffix fallback, not just a templates/ path.
+#   L. A file that exists only under `.wt/` (a worktree checkout) never counts as LIVE — `.wt/` is
+#      pruned from the path index, the same way node_modules/.git/.next/dist already are.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -327,6 +329,44 @@ rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=10 bash "$CT" 2>&1)
 props="$(cat "$T/governor/claudemd-trim-proposals.md" 2>/dev/null || true)"
 assert_contains "$props" "Class: jit-candidate" "K1: the basename citation resolves LIVE (suffix fallback), so it's a jit-candidate"
 assert_not_contains "$props" "Class: dead-citation" "K2: NOT dead-citation (this is the aquanode false-positive class)"
+rm -rf "$T"
+
+# ── L: a file that exists only under .wt/ (a worktree checkout) never counts as LIVE ────────────
+# The default worktree base lives INSIDE the workspace root now, and every entry under it is a
+# full nested checkout of every sub-repo — the same basename a real source file would have. Without
+# pruning `.wt/`, the suffix fallback would read a script as live off a worktree's copy alone, even
+# after the real source file was deleted everywhere else.
+T="$(mktemp -d)"; mk_ws "$T"
+mkdir -p "$T/.wt/w1/alpha/scripts"
+printf '#!/usr/bin/env bash\n' > "$T/.wt/w1/alpha/scripts/wt-only-file.sh"
+cat > "$T/CLAUDE.md" <<'MD'
+# Workspace rules
+
+## Rules
+
+- run `wt-only-file.sh` before publishing (exists only under a worktree checkout, not at any real
+  workspace or sub-repo location).
+MD
+rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=10 bash "$CT" 2>&1)" || rc=$?
+props="$(cat "$T/governor/claudemd-trim-proposals.md" 2>/dev/null || true)"
+assert_contains "$props" "Class: dead-citation" "L1: a file that exists ONLY under .wt/ reads as dead, not live"
+assert_not_contains "$props" "Class: jit-candidate" "L2: .wt/ is pruned from the path index, so the suffix fallback never sees it"
+rm -rf "$T"
+# Control: the same basename at a REAL location (not under .wt/) still resolves live.
+T="$(mktemp -d)"; mk_ws "$T"
+mkdir -p "$T/alpha/scripts"
+printf '#!/usr/bin/env bash\n' > "$T/alpha/scripts/wt-only-file.sh"
+cat > "$T/CLAUDE.md" <<'MD'
+# Workspace rules
+
+## Rules
+
+- run `wt-only-file.sh` before publishing (exists only under a worktree checkout, not at any real
+  workspace or sub-repo location).
+MD
+rc=0; out="$(GOVERN_WS_ROOT="$T" SHIPLOOP_CLAUDEMD_MAX_CHARS=10 bash "$CT" 2>&1)" || rc=$?
+assert_contains "$(cat "$T/governor/claudemd-trim-proposals.md" 2>/dev/null || true)" "Class: jit-candidate" \
+  "L3: control: the same basename at a real (non-.wt) location resolves live, so the prune is what changed L1"
 rm -rf "$T"
 
 assert_done

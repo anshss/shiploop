@@ -50,6 +50,7 @@ __ROOT_LOCKFILE_IGNORES__
 # Worktree state — local registry, transient lock dirs, generated per-worktree env
 .worktrees/*
 !.worktrees/.gitkeep
+.wt/
 worktree.env
 # Worker findings scratchpad — per-worktree retry memory a worker appends to as it goes; the
 # governor injects it back on a retry. Machine-local runtime state, never source, never in a PR.
