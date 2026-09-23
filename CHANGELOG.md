@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.19.13 - 2026-09-24
+
+### Added
+
+**Worktrees default inside the workspace, so no manual trust step is needed to start.**
+`WORKTREE_BASE` now defaults to `<workspace>/.wt` (gitignored), inside the working-directory grant a
+worker already has. A fleet that configures a base outside the workspace root gets it written into
+`permissions.additionalDirectories` in `.claude/settings.json`, plus a trust line from `doctor.sh`
+reporting whether the workspace is trusted. Existing fleets with an explicit base are unchanged.
+
+**`govern:dispatch-packet` and `govern:ship` give a worker everything it needs to start and land, in
+one command each.** `govern:dispatch-packet -- <N>[,<N>...]` creates the worktree and writes a packet
+(the ticket text, recorded gotchas, budget, paths, and test command) plus the one-line dispatch
+prompt. `govern:ship -- <N>[,<N>...]` stages tracked changes, commits, pushes, and opens or reuses the
+PR, refusing any untracked file that was not named explicitly.
+
+**`pre-dispatch-check.sh` accepts a batch plan, not just a single item.** A plan like `12,14 17`
+(comma groups one worker, space separates parallel workers) runs every existing gate per item, then
+checks each batch for a shared sub-repo and a size at or under the new `GOVERN_GROUP_MAX` (default
+6), printing the reason for anything it drops. `GOVERN_BATCH_MEMBER_TURNS` (default 60) caps turns per
+member inside a batch.
+
+**`worktree:rm -- --sweep` clears orphaned worktrees on its own.** A packet-created worktree older
+than the wall-clock watchdog window, clean and holding no commit beyond its base branch, is removed;
+anything else is reported and left alone.
+
+### Changed
+
+**Workers carry a fixed `maxTurns: 150`, never `git stash`, and can't spawn another worker.** The
+router-posture guard enforces the last rule directly: an `Agent(subagent_type: "worker")` call whose
+own caller is itself a worker is denied.
+
+**verify-filter rewrites a plain, unwrapped test command instead of only denying it.** In a
+`bypassPermissions` session, a matching command is now allowed with an `updatedInput` that wraps it
+for verification; every other session keeps the deny path, with a wrap instruction in the denial.
+
+**The validation gate blocks only on structure, never on prose.** It now looks solely at the heading
+marker and the `Type` field, so a ticket that merely discusses validation in its body text no longer
+trips it.
+
+**The dispatch-routing guard denies only for an item that actually exists.** It checks a referenced
+number against the queue file and denies only when that item is really there, rather than reacting to
+any number-shaped mention.
+
+**The LOOP check keys on the full command and is windowed.** A repeated multi-line command counts as
+one record instead of fragmenting on its own embedded newlines, and the repeat count is windowed over
+a fixed number of recent commands instead of accumulating for the whole session.
+
+**The proposal gate checks every item in a batch dispatch.** A `Resolve <a>, <b>.` dispatch prompt now
+gates every number it names, not just the first.
+
 ## 1.19.12 - 2026-09-23
 
 ### Changed
