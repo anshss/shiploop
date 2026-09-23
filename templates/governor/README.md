@@ -10,23 +10,31 @@ own reasoning runs in an isolated subagent context that never touches the driver
 ## Run it
 There is no slash command. From your session, just say what you want worked: the session maps
 plain language straight onto the pipeline. Named dispatch is the only front door: you name the
-ticket(s) and each one runs `pre-dispatch-check.sh` → worker → `resolve-ticket.sh`, at the least
-spend, with every gate on. There is no backlog sweep and no grind-until-empty loop.
+ticket(s), `pre-dispatch-check.sh` gates each one, `dispatch-packet.sh` creates the worktree and
+writes everything the worker needs to start into it, then a worker reads that packet and
+`resolve-ticket.sh` lands the result, with every gate on. There is no backlog
+sweep and no grind-until-empty loop.
 ```
-"work on 42"                             → pre-dispatch-check.sh 42 → dispatch a worker subagent → resolve-ticket.sh 42
-"work on 42 51 63"                       → the same three steps per ticket, workers dispatched adjacently
+"work on 42"                             → pre-dispatch-check.sh 42 → dispatch-packet.sh 42 → dispatch a worker subagent → resolve-ticket.sh 42
+"work on 42 51 63"                       → the same steps per ticket, workers dispatched adjacently
+"work on 42,44 and 51 in parallel"       → pre-dispatch-check.sh 42,44 51 (a PLAN: comma = one worker, space = parallel)
 ```
-Or directly: `scripts/govern/pre-dispatch-check.sh <N>`, then `Agent(subagent_type: "worker")` for
-that ticket, then pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`.
+Or directly: `scripts/govern/pre-dispatch-check.sh <N>[,<N>...] [<N>[,<N>...] ...]`, then
+`scripts/govern/dispatch-packet.sh <N>[,<N>...]` per batch that proceeded (it prints the packet
+path and the one-line dispatch prompt), then `Agent(subagent_type: "worker")` with that prompt, then
+pipe its JSON report into `scripts/govern/resolve-ticket.sh <N>`. A dispatch with no packet (a manual
+dispatch): the worker self-serves per `worker-prompt.md`'s no-packet fallback.
 Naming several tickets dispatches their workers adjacently by default: the next worker starts while
 the previous one is still running instead of waiting on its PR and resolution, since a worker
 spawned while another is running reads the shared prefix instead of writing it. Each still gets its
-own worktree, and a worker never runs `git checkout`, `stash`, `reset` or `clean` outside its own
-tree, so concurrency is never permission to share one. Resolution stays sequential and unaffected by
-spawn spacing. `pre-dispatch-check.sh` still gates every ticket individually before its worker
-starts, and a `skip`/`refuse` drops that ticket, not the group; naming tickets as one group instead
-dispatches ONE worker that opens one branch and one PR and reports a per-ticket outcome array, which
-`resolve-ticket.sh` lands per ticket (see "Batching several tickets into one worker" below).
+own worktree, and a worker never runs `git checkout`, `reset` or `clean` outside its own tree, and
+never `git stash` AT ALL, even inside it: stash refs live in the object database every worktree of
+a repo shares, so a stash pushed in one is poppable from another. Resolution stays sequential and
+unaffected by spawn spacing. `pre-dispatch-check.sh` still gates every ticket individually before
+its worker starts, and a `skip`/`refuse` drops that ticket, not the group; naming tickets as one
+group instead dispatches ONE worker that opens one branch and one PR and reports a per-ticket
+outcome array, which `resolve-ticket.sh` lands per ticket (see "Batching several tickets into one
+worker" below).
 
 The trigger changed, and so did the substrate under it. Verdict files, resumable worktrees and
 reaping are still what survive a closed session (a later one can reap a worktree an earlier one
@@ -52,8 +60,8 @@ is not a detached process making its own connection.
   it any more; the retired self-improvement lane used to).
 - `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
   a recurring decision here graduates into a `preferences.md` rule.
-- `scripts/govern/*.sh`: the mechanism (select / gate / await-ci / merge / land-resolution / supervise /
-  escalation lifecycle).
+- `scripts/govern/*.sh`: the mechanism (gate / dispatch-packet / ship / await-ci / merge /
+  land-resolution / supervise / escalation lifecycle).
 - `queue/tickets-parked.md` — manual defer queue the governor ignores. A `defer` escalation answer
   auto-migrates a ticket here.
 - `claudemd-trim-proposals.md`: ranked, classified CLAUDE.md compression candidates awaiting your verdict (output;
@@ -178,6 +186,11 @@ knows), the worker EXECUTES the edits, the test runs, the build errors, the retr
 the verbose part that stays in a throwaway context. "Let the parent do the work" would destroy the
 flat-parent property the governor exists for.
 
+**An `investigator` runs only while the proposal cannot yet be written.** Once a ticket's proposal
+names files and lines, no investigator runs for it: its findings go straight into the proposal (the
+dispatch packet then carries them to the worker verbatim), so a worker never pays to re-investigate
+what the advisor already resolved.
+
 ## Hard bounds (a worker always ends; tune via env)
 There is no run-level ceiling. The operator naming tickets is the only
 bound on how many get worked in one sitting; per-ticket, `pre-dispatch-check.sh`'s failure-streak
@@ -223,22 +236,37 @@ without fixing it is far worse than a missed opportunity, and no narrow, safe de
 ## Batching several tickets into one worker
 
 Exploration is the dominant cost of a resolved ticket (~98% cacheRead): two tickets that touch the
-same code paying full discovery cost twice is real waste. Tickets sharing a measured file path can go
-to ONE worker as a named group: you name the set, `pre-dispatch-check.sh` still gates each member
-individually, and a member a gate skips or refuses drops out of the group while the rest proceed. The
-worker opens one branch and one PR keyed on the primary (first-named) ticket, and its report carries
-a `tickets` array, one `{ticket,status,note}` entry per group member. `resolve-ticket.sh` merges the
-PR once and lands each `resolved` entry on its own; a `parked`/`failed` entry, or a ticket the array
-never names, stays in the queue. Two constraints make a named set valid: every member must share at
-least one measured file path with the others, and two tickets in a dependency relation, either
-direction, never go to one worker. Naming the group is a judgment call the session makes per
-dispatch, not a configured setting: it has read the tickets and knows which ones sit in the same
-area, and confirms both constraints itself before dispatching.
+same code paying full discovery cost twice is real waste. The advisor has already read every ticket
+and written each proposal, so IT plans the dispatch (which tickets share a worker, which run in
+parallel), and `pre-dispatch-check.sh` only CHECKS the plan mechanically, it never invents one.
+
+**Naming a plan:** `pre-dispatch-check.sh <N>[,<N>...] [<N>[,<N>...] ...]`: a comma-joined group is
+ONE worker (one branch, one PR keyed on the primary/first-named ticket), space-separated groups run
+in parallel. A bare `<N>` with no comma and no other args gets the single-line verdict.
+Every existing gate still runs once per named ticket (a `skip`/`refuse` drops that member out of its
+batch, never the rest), then the plan is checked mechanically: no two members in a dependency
+relation share a batch (either direction), every member resolves to the same sub-repo, batch size is
+at most `GOVERN_GROUP_MAX` (default 6), and a batch with NO measured path shared across any pair of
+its members (an "unrelated" tiny batch) may only carry `stated`-precision members naming 1-2 measured
+files each. A member failing a check is dropped and named with its reason; the mechanical checks
+never try to confirm "same code area" for a batch that DOES share a path, that judgment is the
+advisor's, trusted. The final `plan:` line names exactly what survived, per batch.
+
+`dispatch-packet.sh <N>[,<N>...]` then creates the worktree (same code path as `worktree:new`) and
+writes `<worktree>/.dispatch-packet.md`: every named ticket's block verbatim, recorded gotchas for
+every path they name, each member's advisor-consult budget, the worktree path, and (2+ members)
+`GOVERN_BATCH_MEMBER_TURNS`. It prints the packet path and the one-line dispatch prompt; the worker
+reads the packet and follows it instead of re-deriving what the advisor already knows. Its report
+carries a `tickets` array, one `{ticket,status,note}` entry per group member; `resolve-ticket.sh`
+merges the PR once and lands each `resolved` entry on its own; a `parked`/`failed` entry, or a
+ticket the array never names, stays in the queue. **Stop valve:** a batched worker stops starting new
+members after `GOVERN_BATCH_MEMBER_TURNS` (default 60) turns spent on the batch so far, finishes the
+one in progress, and reports the rest `parked` (not started) for the advisor to re-dispatch fresh.
 
 `pre-dispatch-check.sh` still prints a non-blocking `[overlap]`/`[overlap-dir]` nudge when some OTHER
 open ticket shares a measured file (or, weaker, a directory) with the one you named
-(`GOVERN_OVERLAP_NUDGE`, on by default): it now points at naming that ticket into the group instead
-of dispatching it separately.
+(`GOVERN_OVERLAP_NUDGE`, on by default): it points at naming that ticket into the plan instead of
+dispatching it separately.
 
 ## Progress preservation (acts like a human reopening sessions)
 - Only a cleanly **resolved** ticket's worktree is torn down. **Failed / parked / timed-out worktrees

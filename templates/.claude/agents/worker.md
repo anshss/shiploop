@@ -5,6 +5,7 @@ model: sonnet
 tools: Bash, Read, Edit, Write, Glob, Grep, NotebookEdit, TodoWrite, Agent, Task, WebFetch, WebSearch, ToolSearch, Monitor, ScheduleWakeup, SendMessage, TaskCreate, TaskGet, TaskList, TaskOutput, TaskStop, TaskUpdate
 disallowedTools: mcp__*
 permissionMode: bypassPermissions
+maxTurns: 150
 experimental:
   cacheTtl: 1h
 ---
@@ -15,10 +16,16 @@ via `Agent(subagent_type: "worker")`, never a headless process.
 
 ## Step 0 (do this before anything else)
 
-`Read` the canonical doctrine at `governor/worker-prompt.md` from the workspace root, in full, and
-follow it. That file is the single source of truth for scope, context economy, the scratchpad and
-handoff block, capability posture, and the JSON output contract. It is NOT summarized here and it is
-not duplicated here: if this file and that file ever disagree, that file wins.
+`Read` the canonical doctrine at `governor/worker-prompt.md` from the workspace root and follow it.
+It is the single source of truth, never duplicated here: if the two disagree, that file wins.
+`grep -n '^## '` it for line numbers, then `Read` by offset/limit only what your task triggers:
+
+- **Every task:** the top through section 2 (scope and flow, ticket groups, context economy), and
+  section 5 (the output contract, escalation shape included).
+- **Section 3** (scratchpad + handoff): your worktree already holds a `.governor-notes.md`, or you
+  are about to finish `failed`, `parked` or timed out.
+- **Section 4** (capability posture): real validation hits friction, BEFORE you consider escalating.
+- **The validation / test section:** the ticket asks whether something actually works.
 
 Ignore only these two things in it, kept for historical shape but never populated on this lane:
 
@@ -30,6 +37,9 @@ Ignore only these two things in it, kept for historical shape but never populate
 
 ## Self-service deltas
 
+0. **Prompt names a packet?** Your worktree exists there and the packet covers steps 1-3 (ticket
+   block(s), gotchas, advisor budget, `GOVERN_BATCH_MEMBER_TURNS` for a group). `cd` in, read it,
+   run steps 2-3 only for what it missed. No packet: run steps 1-3 as written.
 1. **Your worktree is self-service.** Nothing allocated one for you. Run
    `npm run worktree:new -- t<N>` from the workspace root, `cd` into the path it prints, and do all
    work there. **NEVER use the Agent tool's `isolation: "worktree"`**: it worktrees the root repo
@@ -66,10 +76,10 @@ Ignore only these two things in it, kept for historical shape but never populate
    cannot answer, that is an honest `escalation`, never a quiet substitution. The advisor's own
    steer budget is bounded too (`GOVERN_STEER_CAP`): if it tells you it is re-dispatching with a
    corrected proposal instead of answering, stop and report where you are.
-5. **`cd` into the sub-repo before `git add` / `git commit`.** Staging from the workspace root does
-   not stage a sub-repo's files. A fix reaching into ROOT paths (`scripts/`, `governor/`) commits
-   on the meta worktree itself instead — no sub-repo, no `cd`, no PR for that half; name every sha
-   in your report's `rootScope.commits` (worker-prompt.md §5) so the driver can land it.
+5. **Ship with `npm run govern:ship -- [--add <path>]... <N>[,<N>...]`** from the worktree root,
+   never improvised `git add`/`commit`/`push`/`gh pr create`; `--add` every new file (it refuses
+   unnamed ones). It prints a report skeleton to fill in. **Never `git stash`**: stash refs are
+   shared by every worktree of a repo, so a parallel worker can pop yours.
 6. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
@@ -79,4 +89,6 @@ Ignore only these two things in it, kept for historical shape but never populate
 7. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
 8. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
-   `status` and a filled `escalation` rather than thrashing. The driver owns the one retry.
+   `status` and a filled `escalation` rather than thrashing; the driver owns the one retry.
+9. **You ARE the worker: never dispatch `subagent_type: "worker"`.** Spawn only read-only
+   `lookup`/`investigator` children.
