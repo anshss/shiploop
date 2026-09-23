@@ -56,6 +56,35 @@ assert_contains "$(govern::early_abort_reason "$TMP/heredoc.jsonl")" "STALL" \
 assert_contains "$(govern::early_abort_reason "$TMP/loop.jsonl")" "LOOP" \
   "the identical-command signature is untouched"
 
+# ── 1b. a multi-line command's embedded newlines must not fragment it into its first line alone ──
+# Without escaping, the jq emit puts the command's raw newlines into the tab-separated projection,
+# so a multi-line Bash call becomes several projection lines, and the line-oriented awk consumer
+# reads only the FIRST LINE as the "C" record. Six DISTINCT multi-line commands sharing the same
+# first line ("set -e") would then read as the SAME command repeated 6 times -- a false LOOP.
+{ for i in $(seq 1 6); do bash_turn "set -e
+echo step-$i
+true"; done; } > "$TMP/multiline-distinct.jsonl"
+assert_not_contains "$(govern::early_abort_reason "$TMP/multiline-distinct.jsonl")" "LOOP" \
+  "six DISTINCT multi-line commands sharing a first line do NOT trip LOOP (each is a whole record now)"
+
+{ for i in $(seq 1 6); do bash_turn "set -e
+echo always-the-same
+true"; done; } > "$TMP/multiline-identical.jsonl"
+assert_contains "$(govern::early_abort_reason "$TMP/multiline-identical.jsonl")" "LOOP" \
+  "six IDENTICAL multi-line commands still trip LOOP"
+
+# ── 1c. LOOP decays: a repeat early in the transcript must not stay tripped forever ───────────
+# Without a window, cmd[] would accumulate over the WHOLE transcript unlike STALL/ERROR, so
+# 5 identical commands firing anywhere in the session would flag LOOP for the rest of its life.
+# 5 identical calls, then 20 DISTINCT ones: with the default 20-call window, the identical run has
+# fully aged out by the time this is evaluated.
+{
+  for i in $(seq 1 5); do bash_turn "risky-thing --flag"; done
+  for i in $(seq 1 20); do bash_turn "distinct-step-$i"; done
+} > "$TMP/loop-decay.jsonl"
+assert_not_contains "$(govern::early_abort_reason "$TMP/loop-decay.jsonl")" "LOOP" \
+  "an early repeat ages out of the window instead of tripping LOOP for the rest of the session"
+
 # ── 2. which trees the probe resolves ───────────────────────────────────────────────────────────
 mk_repo() { # <dir>
   mkdir -p "$1"

@@ -176,8 +176,13 @@ if [[ -n "$_pr_num" ]]; then
 fi
 
 # ── 2. The validation-evidence gate ─────────────────────────────────────────────────────────────
+# Structured fields only (heading VALIDATION|SPIKE marker, **Type:**), never the prose tells
+# (govern::is_validation_ticket's broader match): those are the advisor's own wording in
+# Observed/Done-when text, not something a script should guess dispatch intent from before
+# refusing to land a PR. GOVERN_VALIDATION_GATE is the same kill switch ticket-sweep-reminder.sh's
+# Stop-hook block already answers to, so one switch disables both blocking call sites at once.
 tblock="$(govern::ticket_block "$N" "$TICKETS_FILE" 2>/dev/null || true)"
-if govern::is_validation_ticket "$tblock"; then
+if [[ "${GOVERN_VALIDATION_GATE:-1}" != "0" ]] && govern::is_validation_ticket_strict "$tblock"; then
   case "$(govern::validation_gate_action "$report")" in
     park-no-evidence)
       echo "resolve-ticket #$N: VALIDATION ticket but the worker gave no live-test evidence (validation.ranLiveTest != true, or no evidence): refusing to auto-resolve. Run the actual test and attach evidence, or confirm it cannot be automated and record a disposition. The PR (if any) is left open for review." >&2

@@ -129,7 +129,7 @@ if [ "${GOVERN_VALIDATION_GATE:-1}" != "0" ] && [ -f "$MAIN/queue/tickets.md" ];
     export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
     source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
       || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
-    command -v govern::is_validation_ticket >/dev/null 2>&1 || exit 0
+    command -v govern::is_validation_ticket_strict >/dev/null 2>&1 || exit 0
     command -v govern::ticket_block >/dev/null 2>&1 || exit 0
     base_ref="HEAD"
     if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
@@ -146,7 +146,12 @@ if [ "${GOVERN_VALIDATION_GATE:-1}" != "0" ] && [ -f "$MAIN/queue/tickets.md" ];
       # Still present in the working tree → not something this session removed.
       grep -qE "^##[[:space:]]+#${n}([^0-9]|\$)" "$MAIN/queue/tickets.md" 2>/dev/null && continue
       block="$(govern::ticket_block "$n" "$base_tmp" 2>/dev/null || true)"
-      govern::is_validation_ticket "$block" || continue
+      # Structured fields only (heading marker, **Type:**), not the broader prose-inclusive
+      # recognizer the advisory nudge further below still uses: BLOCKING a session's stop on a
+      # phrase the advisor happened to write in Observed/Done-when text is exactly the kind of
+      # guessed intent this file's other levers were pulled back from -- the nudge is the right
+      # place for a prose-only hit, at advisory cost, never at block cost.
+      govern::is_validation_ticket_strict "$block" || continue
       compgen -G "$MAIN/.claude/shiploop/validation/ticket-$n-"'*.md' >/dev/null 2>&1 && continue
       printf '%s\n' "$n"
     done
