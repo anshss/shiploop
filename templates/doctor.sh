@@ -208,6 +208,35 @@ else
   warn "registry missing or jq unavailable — worktree state unknown"
 fi
 
+# Worktree base trust: outside the workspace root, a worker's Read/Write/Edit under it need
+# permissions.additionalDirectories (written by scaffold's settings/settings-merge components),
+# which Claude Code only applies once this workspace has been through the trust dialog. Detect the
+# accepted state from ~/.claude.json's projects[<repo-root>].hasTrustDialogAccepted when it's
+# readable; when it isn't (no jq, no file, key absent), print the line anyway rather than staying
+# silent about a grant that may not be active yet. Inside the workspace root (the default since
+# this ticket), no trust step is needed at all, so the whole check is skipped.
+if [ "${GOVERN_DOCTOR_WORKTREE_TRUST:-1}" != "0" ]; then
+  case "$WORKTREE_BASE" in
+    "$ROOT"|"$ROOT"/*) : ;;   # inside the workspace root — covered by the working-directory grant
+    *)
+      trust_state="unknown"
+      if command -v jq >/dev/null 2>&1 && [ -f "$HOME/.claude.json" ]; then
+        # NOT `.hasTrustDialogAccepted // "unknown"`: jq's `//` treats an explicit `false` the
+        # same as absent/null and would report every untrusted workspace as "unknown" — check
+        # `has()` instead so a real `false` (untrusted) is distinguished from no recorded state.
+        trust_state="$(jq -r --arg p "$ROOT" \
+          '(.projects[$p] // {}) as $proj | if ($proj | type) == "object" and ($proj | has("hasTrustDialogAccepted")) then ($proj.hasTrustDialogAccepted | tostring) else "unknown" end' \
+          "$HOME/.claude.json" 2>/dev/null || echo unknown)"
+      fi
+      case "$trust_state" in
+        true)  ok "worktree base $WORKTREE_BASE is outside the workspace and trusted (additionalDirectories active)" ;;
+        false) warn "worktree base $WORKTREE_BASE is outside the workspace and NOT trusted yet — accept the trust dialog once, or in a headless/CI session set projects[\"$ROOT\"].hasTrustDialogAccepted to true in ~/.claude.json, for permissions.additionalDirectories to grant workers Read/Write/Edit there" ;;
+        *)     warn "worktree base $WORKTREE_BASE is outside the workspace — trust state unknown (no jq or no ~/.claude.json entry); trust this workspace once so permissions.additionalDirectories grants workers Read/Write/Edit there" ;;
+      esac
+      ;;
+  esac
+fi
+
 # ── Project-specific doctor hook ──
 # If the project provides scripts/lib/doctor-extra.sh, source it here.
 # That file can add project-specific checks (e.g. blockchain/RPC health,

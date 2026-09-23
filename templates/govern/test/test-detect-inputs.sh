@@ -40,7 +40,7 @@ assert_eq "$(grep -c '^repo=' <<<"$out")" "3" "1. three repos detected (non-repo
 assert_contains "$out" "org=acme" "1. org parsed from first origin"
 assert_contains "$out" "root_pm=npm" "1. root PM defaults to npm (no root lockfile)"
 WP="$(cd "$W" && pwd -P)"   # detect-inputs canonicalizes (macOS /var → /private/var)
-assert_contains "$out" "worktree_base=$(dirname "$WP")/$(basename "$WP").wt" "1. worktree base = sibling .wt"
+assert_contains "$out" "worktree_base=$WP/.wt" "1. worktree base = \$WORKSPACE_DIR/.wt (inside the workspace root)"
 assert_contains "$out" "|pnpm dev|" "1. pnpm lockfile → pnpm dev"
 assert_contains "$out" "|npm run dev|" "1. package-lock → npm run dev"
 assert_contains "$out" "|go run ./...|" "1. go.mod fallback"

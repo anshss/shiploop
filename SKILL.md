@@ -78,7 +78,9 @@ classic tolerates it either way. Bare verbs are fine without it.
 main checkout is read/plan/main-branch-ops only — never edit code there. Each worktree is isolated:
 own branches, dev stack, ports, SessionEnd cleanup.
 
-- Worktrees live at `$WORKTREE_BASE/<slug>/` (sibling of the main checkout, so editors/watchers don't index them).
+- Worktrees live at `$WORKTREE_BASE/<slug>/`, gitignored under the workspace root by default (`.wt/`)
+  so a worker's Read/Write/Edit there stay covered by the workspace's own directory grant; an
+  explicit sibling base still works but needs the workspace trusted once (`doctor` says so).
 - A slot **registry** (`.worktrees/registry.json`, mkdir-locked) assigns each worktree a slot number.
   **Ports offset by `slot × 10`** (set in `worktree.env`, consumed by `dev.sh`/`doctor.sh`/hooks) — N
   stacks run at once without collisions.
