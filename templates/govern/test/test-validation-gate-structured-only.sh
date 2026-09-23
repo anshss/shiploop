@@ -6,8 +6,8 @@
 # (govern::tickets_missing_validation_doc); a script should never REFUSE to land a PR off a phrase
 # the advisor happened to write in Observed/Done-when text.
 #
-# Also covers the new GOVERN_VALIDATION_GATE kill switch at this call site (previously only the
-# Stop-hook block, ticket-sweep-reminder.sh, answered to it).
+# Also covers the GOVERN_VALIDATION_GATE kill switch at this call site: the Stop-hook block,
+# ticket-sweep-reminder.sh, answers to the same switch.
 #
 # Hermetic, resolve-ticket.sh sandboxed next to stubs of merge-pr.sh / await-ci.sh /
 # land-resolution.sh, no network, no gh, no real push -- same harness shape as
@@ -82,11 +82,11 @@ out3="$( cd "$T" && printf '%s' "$(rpt 3)" | bash "$T/bin/resolve-ticket.sh" 3 2
 
 assert_eq "$rc1" "3" "1. a structured VALIDATION heading still trips the gate (exit 3, no evidence)"
 assert_contains "$out1" "no live-test evidence" "1b. #1 refuses on the no-evidence wording"
-assert_eq "$rc2" "0" "2. a PROSE-ONLY tell ('actually works', no structured marker) no longer trips the gate"
+assert_eq "$rc2" "0" "2. a PROSE-ONLY tell ('actually works', no structured marker) does not trip the gate"
 assert_eq "$rc3" "3" "3. an explicit **Type:** Validation line still trips the gate (exit 3, no evidence)"
 assert_contains "$out3" "no live-test evidence" "3b. #3 refuses on the no-evidence wording"
 
-# #2 must actually have LANDED (the whole point: a prose-only tell no longer blocks resolution).
+# #2 must actually have LANDED (the whole point: a prose-only tell does not block resolution).
 assert_eq "$(landed_count)" "1" "4. exactly the prose-only ticket (#2) landed; the two structured ones stayed parked"
 
 # ── 5. GOVERN_VALIDATION_GATE=0 bypasses even a structured VALIDATION heading ────────────────

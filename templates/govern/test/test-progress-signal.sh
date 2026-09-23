@@ -57,10 +57,10 @@ assert_contains "$(govern::early_abort_reason "$TMP/loop.jsonl")" "LOOP" \
   "the identical-command signature is untouched"
 
 # ── 1b. a multi-line command's embedded newlines must not fragment it into its first line alone ──
-# The defect: the jq emit put the command's raw newlines into the tab-separated projection, so a
-# multi-line Bash call became several projection lines, and the line-oriented awk consumer read
-# only the FIRST LINE as the "C" record. Six DISTINCT multi-line commands sharing the same first
-# line ("set -e") used to read as the SAME command repeated 6 times -- a false LOOP.
+# Without escaping, the jq emit puts the command's raw newlines into the tab-separated projection,
+# so a multi-line Bash call becomes several projection lines, and the line-oriented awk consumer
+# reads only the FIRST LINE as the "C" record. Six DISTINCT multi-line commands sharing the same
+# first line ("set -e") would then read as the SAME command repeated 6 times -- a false LOOP.
 { for i in $(seq 1 6); do bash_turn "set -e
 echo step-$i
 true"; done; } > "$TMP/multiline-distinct.jsonl"
@@ -74,8 +74,8 @@ assert_contains "$(govern::early_abort_reason "$TMP/multiline-identical.jsonl")"
   "six IDENTICAL multi-line commands still trip LOOP"
 
 # ── 1c. LOOP decays: a repeat early in the transcript must not stay tripped forever ───────────
-# The defect: cmd[] accumulated over the WHOLE transcript with no window, unlike STALL/ERROR, so
-# once 5 identical commands fired anywhere the session was flagged LOOP for the rest of its life.
+# Without a window, cmd[] would accumulate over the WHOLE transcript unlike STALL/ERROR, so
+# 5 identical commands firing anywhere in the session would flag LOOP for the rest of its life.
 # 5 identical calls, then 20 DISTINCT ones: with the default 20-call window, the identical run has
 # fully aged out by the time this is evaluated.
 {

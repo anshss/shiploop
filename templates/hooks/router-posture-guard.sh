@@ -15,14 +15,13 @@
 #
 # Design constraints, shared with the once-per-session reminder this hook extends:
 #   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
-#     advises via additionalContext. Three deliberate exceptions elsewhere in
-#     this file return permissionDecision "deny": the ticket-route guard (an
-#     Agent call, and only once a referenced ticket number is confirmed to
-#     exist), the proposed-solution gate (an Agent call, worker dispatches
-#     only), and the worker-spawns-worker guard (an Agent call whose CALLER is
-#     itself a worker). The verify-filter lever (a Bash call) no longer denies
-#     at all -- it rewrites the command via `updatedInput` instead (see below).
-#     Either way the script itself always exits 0.
+#     advises via additionalContext. Four deliberate exceptions elsewhere in
+#     this file return permissionDecision "deny": the verify-filter lever (a
+#     Bash call, only when it can't safely rewrite instead), the ticket-route
+#     guard (an Agent call, and only once a referenced ticket number is
+#     confirmed to exist), the proposed-solution gate (an Agent call, worker
+#     dispatches only), and the worker-spawns-worker guard (an Agent call
+#     whose CALLER is itself a worker). Either way the script always exits 0.
 #   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
 #   • DRIVER only: skip when the call originates from a sub-agent (its
@@ -37,17 +36,25 @@
 # verify-filter.sh): a passing run's output still lands in the transcript and
 # is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
 #
-# The same lever also REWRITES, on its own switch: a matching unwrapped command is not denied, it
-# is silently re-issued wrapped in verify-filter.sh, when scripts/govern/verify-filter.sh is
-# actually present at the resolved workspace root -- same dual-layout resolve the proposed-solution
-# gate below uses. The rewrite returns permissionDecision "allow" plus an `updatedInput` carrying
-# the wrapped command (code.claude.com/docs/en/hooks: PreToolUse may pair `updatedInput` with
-# `permissionDecision`), so the tool call proceeds with no retry turn and no denial text to react
-# to. A workspace without the wrapper installed falls through to the advisory instead of rewriting,
+# The same lever REWRITES a matching unwrapped command instead of denying it, but only when BOTH
+# hold: the session's own `permission_mode` is `bypassPermissions`, and the command is SIMPLE (no
+# `;`, `&&`, `||`, `|`, newline, backtick, or `$(`). `permissionDecision: "allow"` skips whatever
+# prompt or allow/deny rule the current mode would otherwise apply, so returning it outside
+# `bypassPermissions` would auto-approve a command the operator never saw and no rule ever cleared;
+# `bypassPermissions` already skips every prompt, so allow+rewrite changes nothing about what gets
+# approved there, only how (no retry turn). A compound command is excluded because the rewrite
+# splices the original text after `bash <verify-filter.sh> --`, and the OUTER shell -- not
+# verify-filter.sh -- re-parses any `;`/`&&`/`||`/`|` in it: `cd x && npm test` would run `cd x`
+# wrapped and `npm test` bare, unfiltered and in the wrong place. `updatedInput` carries every
+# field of the original tool_input, not just `command`, so `timeout`/`run_in_background`/
+# `description` survive the rewrite. Either condition failing takes the deny path below instead,
+# same wrap-it-yourself message, without naming its own kill switch (an agent that cannot set an
+# env var for itself has no use for the name). scripts/govern/verify-filter.sh must also be
+# present at the resolved workspace root -- same dual-layout resolve the proposed-solution gate
+# below uses -- or neither the rewrite nor the deny fires, falling through to the advisory instead,
 # so a partially scaffolded or hand-built workspace can never be bricked by this. Kill switch:
-# GOVERN_VF_DENY=0 disables the rewrite (name kept from when this lever denied; it is never printed
-# in agent-facing text now, since there is no denial to explain), independent of GOVERN_VF_NUDGE so
-# the rewrite can be turned off without losing the advice.
+# GOVERN_VF_DENY=0 skips this whole lever (both the rewrite and the deny), independent of
+# GOVERN_VF_NUDGE so either can be turned off without losing the other.
 #
 # THIRD behavior, one of three BLOCKING behaviors in this file: the ticket-route guard.
 # Vocabulary (one noun, one meaning): a **worker** is the trim, single-ticket
@@ -130,9 +137,8 @@
 # GOVERN_WORKER_FANOUT_NUDGE=0.
 #
 # SIXTH behavior (the file's fourth BLOCKING path): a worker-spawns-worker deny. The hook payload
-# carries the CALLING session's own `agent_type` (code.claude.com/docs/en/hooks: "agent_id"/
-# "agent_type" in the input; hooks run inside subagents too), so an `Agent` call whose
-# subagent_type is "worker" AND whose caller is itself agent_type "worker" is denied outright: a
+# carries the CALLING session's own `agent_type`, so an `Agent` call whose subagent_type is
+# "worker" AND whose caller is itself agent_type "worker" is denied outright: a
 # worker sub-delegating to a `lookup`/`investigator` is its own reconnaissance (never touched by
 # this), but a worker spawning ANOTHER worker has no fan-out cap and no proposal-gate coverage of
 # its own -- unbounded nesting by a different route than the fifth behavior's cap. This is the ONE
@@ -182,6 +188,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
   IFS= read -r agent_desc
   IFS= read -r agent_name
   IFS= read -r agent_type
+  IFS= read -r permission_mode
 } < <(printf '%s' "$payload" | python3 -c '
 import sys, json
 try:
@@ -204,6 +211,7 @@ fields = [
     g("description"),
     g("name"),
     d.get("agent_type") or "",
+    d.get("permission_mode") or "",
 ]
 for f in fields:
     print(f.replace("\t", " ").replace("\n", " "))
@@ -215,6 +223,7 @@ subagent_type="${subagent_type:-}"; agent_prompt="${agent_prompt:-}"
 agent_desc="${agent_desc:-}"
 agent_name="${agent_name:-}"
 agent_type="${agent_type:-}"
+permission_mode="${permission_mode:-}"
 [ -n "$tool_name" ] || exit 0
 
 # --- worker-spawns-worker: fires even for a worker caller (see header SIXTH behavior) -------
@@ -592,30 +601,80 @@ if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_NUDGE:-1}" != "0" ]; then
   vf_reason="a test/build run not wrapped in verify-filter"
 fi
 
-# The rewrite itself (see header): fires only when the wrapper is provably installed at the
+# The rewrite/deny itself (see header): fires only when the wrapper is provably installed at the
 # resolved workspace root, mirroring the proposed-solution gate's own dual-layout resolve above --
 # a scaffolded workspace has it at <root>/scripts/govern/, the hub template tree has it at
-# templates/govern/ (one level up, not under scripts/). No match on either path means no rewrite:
-# falls through to the advisory below (if GOVERN_VF_NUDGE left it on), same as before this change.
-# Never rate limited -- this exits before the shared warn-cap counter is touched. The command is
-# passed to python3 as an argv, not string-interpolated into the JSON, so json.dumps handles
-# whatever quoting or newlines the original command carries.
+# templates/govern/ (one level up, not under scripts/). No match on either path means neither the
+# rewrite nor the deny fires: falls through to the advisory below (if GOVERN_VF_NUDGE left it on).
+# Never rate limited -- this exits before the shared warn-cap counter is touched.
 if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_DENY:-1}" != "0" ]; then
   VF_SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   vf_sh="$VF_SELF_ROOT/scripts/govern/verify-filter.sh"
   [ -f "$vf_sh" ] || vf_sh="$VF_SELF_ROOT/govern/verify-filter.sh"
   if [ -f "$vf_sh" ]; then
-    vf_wrapped="bash \"$vf_sh\" -- $command"
+    # The whole payload (not the flattened $command var, which has already had every embedded
+    # newline turned into a space for the field-per-line read above) goes to python3 so it can
+    # read tool_input.command byte-for-byte, merge the rewritten command back into every OTHER
+    # field of the original tool_input (timeout, run_in_background, description all survive),
+    # and refuse the rewrite itself when either condition below doesn't hold, leaving the deny
+    # path as the only thing that ran. Exit 0 with JSON on stdout means "rewrote it"; exit 1 with
+    # nothing on stdout means "didn't" -- bash below acts on which one happened.
+    vf_rewrite="$(printf '%s' "$payload" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+vf_sh = sys.argv[1]
+ti = dict(d.get("tool_input") or {})
+cmd = ti.get("command") or ""
+# A shell metacharacter here means the OUTER shell, not verify-filter.sh, re-parses it once this
+# is spliced after "bash <verify-filter.sh> --": "cd x && npm test" would run "cd x" wrapped and
+# "npm test" bare and unfiltered, in the wrong place. Rewriting only a single simple command
+# means the splice can never change which commands run or their order.
+unsafe = any(tok in cmd for tok in (";", "&&", "||", "|", "\n", "`", "$("))
+# permissionDecision "allow" skips whatever prompt or allow/deny rule the CURRENT mode would
+# otherwise apply, so returning it outside bypassPermissions would auto-approve a command the
+# operator never saw and no rule ever cleared. Under bypassPermissions every prompt is already
+# skipped, so allow+rewrite changes nothing about what gets approved, only how.
+if unsafe or d.get("permission_mode") != "bypassPermissions":
+    sys.exit(1)
+ti["command"] = "bash " + json.dumps(vf_sh) + " -- " + cmd
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": ti,
+  }
+}))
+' "$vf_sh" 2>/dev/null)"
+    if [ -n "$vf_rewrite" ]; then
+      printf '%s\n' "$vf_rewrite"
+      exit 0
+    fi
+    vf_deny="$(cat <<EOF
+[VERIFY-FILTER] Denied: this command matches a test/build runner and is not wrapped in
+verify-filter, which bypasses the output filtering the wrapper exists for -- a passing run's output
+still lands in the transcript and is re-sent every later turn.
+
+Run the wrapped form instead:
+
+  npm run vf -- ${command}
+
+(or \`bash scripts/govern/verify-filter.sh -- ${command}\` directly). A passing run then emits
+nothing into context; a failing run still shows its bounded tail.
+EOF
+)"
     python3 -c '
 import json, sys
 print(json.dumps({
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "permissionDecision": "allow",
-    "updatedInput": {"command": sys.argv[1]},
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
   }
 }))
-' "$vf_wrapped" 2>/dev/null || true
+' "$vf_deny" 2>/dev/null || true
     exit 0
   fi
 fi

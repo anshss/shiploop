@@ -30,6 +30,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"   # scripts/lib/workspace.sh -> META_ROOT="$T"
 
 mkdir -p "$T/hooks" "$T/queue" "$T/scripts/govern/lib"
+clear_fanout() { rm -f "${TMPDIR:-/tmp}/metarepo-router-posture-worker-fanout-$1" 2>/dev/null || true; }
 cp "$GOVERN_HOOKS_DIR/router-posture-guard.sh" "$T/hooks/router-posture-guard.sh"
 GUARD="$T/hooks/router-posture-guard.sh"
 
@@ -90,6 +91,7 @@ print(json.dumps({
 
 # ── 1. single-number contract clause, proposal present -> proceeds ──────────────────────────
 payload "Resolve #60. Read your packet at $T/.dispatch-packet.md first and follow it." "pgate-1"
+clear_fanout "pgate-1"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=1 bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "1. single-number contract clause with a real proposal proceeds untouched"
 
@@ -110,6 +112,7 @@ cat > "$T/queue/tickets.md" <<'TIX'
 **Precision:** scoped
 TIX
 payload "Resolve #60, #61. Read your packet at $T/.dispatch-packet.md first and follow it." "pgate-2"
+clear_fanout "pgate-2"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=1 bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "2. multi-number contract clause with proposals on BOTH proceeds untouched"
 
@@ -130,6 +133,7 @@ cat > "$T/queue/tickets.md" <<'TIX'
 **Precision:** _(advisor: stated | scoped | open — filled at dispatch time)_
 TIX
 payload "Resolve #60, #61. Read your packet at $T/.dispatch-packet.md first and follow it." "pgate-3"
+clear_fanout "pgate-3"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=1 bash "$GUARD" < "$PL" 2>&1)"
 assert_contains "$out" '"permissionDecision": "deny"' "3a. one ticket in the batch missing a proposal still DENIES the whole dispatch"
 assert_contains "$out" "#61" "3b. the deny names the ticket that's actually missing a proposal"
@@ -151,6 +155,7 @@ cat > "$T/queue/tickets.md" <<'TIX'
 **Precision:** _(advisor: stated | scoped | open — filled at dispatch time)_
 TIX
 payload "Resolve #60, #61. Read your packet at $T/.dispatch-packet.md first and follow it." "pgate-4"
+clear_fanout "pgate-4"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=1 bash "$GUARD" < "$PL" 2>&1)"
 assert_contains "$out" '"permissionDecision": "deny"' "4a. neither ticket in the batch has a proposal: DENIED"
 assert_contains "$out" "#60" "4b. the deny names #60"
@@ -173,6 +178,7 @@ cat > "$T/queue/tickets.md" <<'TIX'
 **Precision:** _(advisor: stated | scoped | open — filled at dispatch time)_
 TIX
 payload "Following up on the discussion, I'll resolve #60, #61 today; see notes." "pgate-5"
+clear_fanout "pgate-5"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=1 bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "5. a mid-sentence mention (not the anchored contract clause) gates on #60 alone, which has a proposal"
 
@@ -191,6 +197,7 @@ cat > "$T/queue/tickets.md" <<'TIX'
 **Proposed solution:** _(advisor: fill in before dispatch — filing is not specifying)_
 TIX
 payload "Resolve #60, #61. Read your packet at $T/.dispatch-packet.md first and follow it." "pgate-6"
+clear_fanout "pgate-6"
 out="$(env -u GOVERN_RUN GOVERN_PROPOSAL_GATE=0 bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "6. GOVERN_PROPOSAL_GATE=0 bypasses the gate even on a fully-unproposed batch"
 
