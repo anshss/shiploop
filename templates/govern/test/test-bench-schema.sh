@@ -25,6 +25,10 @@
 #      (backlog x rep) cell refuses to start with no BENCH_SMOKE_RUN; BENCH_SKIP_SMOKE_GATE=1 is
 #      logged into the run's own kind:"meta" row; a BENCH_SMOKE_RUN at the current hub sha with
 #      every cell resolved/failed and the shiploop cell activated lets the run past the gate
+#  13. a session whose final result event is an infra-class error (is_error:true, not one of the
+#      error_max_* ceiling subtypes) records status "error", never "failed" or "void-no-activation";
+#      capped still wins over it; and a live dispatch loop stops starting NEW cells after the first
+#      one, recording every later cell "error" too, with zero sessions and a null cost
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -257,5 +261,49 @@ assert_contains "$out" "smoke gate: satisfied by BENCH_SMOKE_RUN=schema-dry" \
   "12. a genuine BENCH_SMOKE_RUN at the current hub sha, fully completed and activated, passes the gate"
 assert_contains "$out" "TEST FIXTURE" \
   "12. and the run proceeds to the ordinary fixture-backlog check, exactly like the skip case"
+
+# ── 13. infra-class error: status, precedence, and the dispatch halt ───────────
+errchk="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  set +e
+  bench::stream_hit_error "'"$HUB"'/bench/fixtures/error-session.jsonl"; echo "err=$?"
+  bench::stream_hit_error "'"$HUB"'/bench/fixtures/vanilla-session.jsonl"; echo "clean=$?"
+' 2>&1)"
+assert_contains "$errchk" "err=0" "13. the error fixture's result event is detected as an infra-class error"
+assert_contains "$errchk" "clean=1" "13. an ordinary successful result is never mistaken for one"
+
+act13="$(BENCH_STATE_DIR="$T/state" bash -c '
+  source "'"$HUB"'/bench/record.sh"
+  bench::load_govern_lib "'"$T"'/state"
+  bench::activation_status error shiploop 0
+  bench::activation_status capped shiploop 0
+' 2>/dev/null)"
+assert_eq "$(printf '%s' "$act13" | sed -n 1p)" "error" \
+  "13. an error status is never overridden to void-no-activation, same as capped"
+assert_eq "$(printf '%s' "$act13" | sed -n 2p)" "capped" \
+  "13. capped still wins when both would otherwise apply"
+
+# End-to-end: BENCH_DRY_ERROR_REP is a test-only seam (bench/run.sh, bench::dry_arm) that swaps the
+# named arm's rep onto fixtures/error-session.jsonl, so the REAL dispatch loop derives status "error"
+# and the halt from a live stream the same way it would for a genuine outage — no live spend.
+out="$(BENCH_OUT_ROOT="$T/results13" BENCH_DRY_ERROR_REP=1 bash "$HUB/bench/run.sh" --dry-run \
+        --run-id err13 --backlogs "$HUB/bench/backlogs" --backlog fixture-backlog \
+        --arm shiploop --reps 2 2>&1)"
+assert_eq "$?" "0" "13. a run carrying an infra-class error still exits 0"
+assert_contains "$out" "forcing status=error and halting further dispatch this run" \
+  "13. the halt is logged when the first error-class cell is dispatched"
+assert_contains "$out" "SKIPPED, an earlier cell hit an infra-class error this run" \
+  "13. and the next cell is logged as skipped because of it"
+R13="$T/results13/err13-dry/results.jsonl"
+assert_eq "$(jq -sr '[.[] | select(.kind=="rollup")] | map(.status) | sort | join(",")' "$R13")" \
+  "error,error" "13. both reps record status error: the one that ran, and the one skipped after it"
+assert_eq "$(jq -sr '[.[] | select(.kind=="rollup" and .rep==2)][0] | .sessions' "$R13")" "0" \
+  "13. the skipped (halted) rep never spawned a session"
+assert_eq "$(jq -sr '[.[] | select(.kind=="rollup" and .rep==2)][0] | .costUsdTotal' "$R13")" "null" \
+  "13. and reports a null cost, never a fabricated zero"
+
+# The rollup excludes an error-status pair the same way it excludes a capped one — proven directly
+# against fixtures/pairing-results.jsonl (bl-z rep 1), not re-derived here.
 
 assert_done

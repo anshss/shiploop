@@ -44,6 +44,13 @@
 #                    activated a worker. A run of exactly one backlog and one rep IS a smoke run
 #                    and needs no gate. BENCH_SKIP_SMOKE_GATE=1 is the deliberate override,
 #                    recorded into results.jsonl's own kind:"meta" row when used.
+#   Infra-class error  a session whose final result event carries `is_error:true` for a reason other
+#                    than its own turn/budget ceiling (a usage/session limit, a generic API error, an
+#                    auth outage) records status "error", never "failed" or "void-no-activation" — an
+#                    outage is not a measurement of either arm. The driver stops dispatching NEW
+#                    cells after the first one (the outage will not have cleared a turn later) and
+#                    records every remaining cell "error" too, the same zero-session/null-cost shape
+#                    bench::record_capped_cell already uses for a cell skipped past BENCH_MAX_USD.
 #
 # Every function ends `return 0` and dependent locals are split across statements: a function whose
 # LAST statement is a bare `[[ c ]] && cmd` returns the test's status and aborts the caller under
@@ -296,10 +303,21 @@ bench::verify_backlog() { # <backlog.jsonl> <workdir> <verify-ledger>
 # Canned `"type":"result"` events. Every arm is ONE whole-backlog session now (vanilla-fresh is the
 # one exception, one session per ticket), so every case here writes exactly the same shape
 # bench::arm_vanilla / bench::arm_shiploop write for real: a single 01-<name>.jsonl stream.
-bench::dry_arm() { # <arm> <backlog.jsonl> <logdir> <backlog-name>
-  local arm="$1" backlog="$2" logdir="$3" name="$4"
+#
+# BENCH_DRY_ERROR_REP=<N>: test seam only, unset by default. When set, the arm named by
+# BENCH_DRY_ERROR_ARM (default "shiploop") gets `fixtures/error-session.jsonl` instead of its usual
+# fixture for rep N alone, so the test suite can drive an infra-class error through the REAL run.sh
+# dispatch loop (status derivation, the halt-on-error flag, the next cell's skip) without a live
+# spawn. No effect on a real run: nothing sets this outside the test suite.
+bench::dry_arm() { # <arm> <backlog.jsonl> <logdir> <backlog-name> <rep>
+  local arm="$1" backlog="$2" logdir="$3" name="$4" rep="$5"
   local fx="$BENCH_DIR/fixtures"
   local i=0 id
+  if [[ -n "${BENCH_DRY_ERROR_REP:-}" && "$rep" == "$BENCH_DRY_ERROR_REP" \
+        && "$arm" == "${BENCH_DRY_ERROR_ARM:-shiploop}" ]]; then
+    cp "$fx/error-session.jsonl" "$logdir/01-$name.jsonl"
+    return 0
+  fi
   case "$arm" in
     vanilla)
       cp "$fx/vanilla-session.jsonl" "$logdir/01-$name.jsonl"
@@ -318,10 +336,10 @@ bench::dry_arm() { # <arm> <backlog.jsonl> <logdir> <backlog-name>
   return 0
 }
 
-bench::run_arm() { # <arm> <workdir> <backlog.jsonl> <logdir> <backlog-name>
-  local arm="$1" wd="$2" backlog="$3" logdir="$4" name="$5"
+bench::run_arm() { # <arm> <workdir> <backlog.jsonl> <logdir> <backlog-name> <rep>
+  local arm="$1" wd="$2" backlog="$3" logdir="$4" name="$5" rep="$6"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    bench::dry_arm "$arm" "$backlog" "$logdir" "$name"
+    bench::dry_arm "$arm" "$backlog" "$logdir" "$name" "$rep"
     return 0
   fi
   case "$arm" in
@@ -349,6 +367,21 @@ bench::over_cap() { # -> rc 0 when the run has already spent its budget
 bench::record_capped_cell() { # <backlog> <arm> <rep> <ticketCount>
   local backlog="$1" arm="$2" rep="$3" total="$4"
   bench::record_rollup "$RESULTS" "$RUN_ID" "$backlog" "$arm" "$rep" "capped" 0 "$total" 0 \
+    "$(date +%s)" 0 "" "$HUB_SHA"
+  return 0
+}
+
+# ── halt on infra-class error ────────────────────────────────────────────────
+# A cell whose session ended on an infra-class error (bench::cell_hit_error, record.sh) is not a
+# measurement, and neither is anything dispatched after it while the SAME outage is still live: a
+# subscription/session limit does not clear itself mid-run, so every remaining cell would just burn
+# a few more seconds recording the same non-measurement. The first error-class cell still runs (the
+# halt is checked before the NEXT dispatch, the same "cannot un-spend a session already started"
+# rule bench::over_cap follows) and every cell after it records status "error" with zero sessions and
+# a null cost, same shape as bench::record_capped_cell, without ever spawning.
+bench::record_error_cell() { # <backlog> <arm> <rep> <ticketCount>
+  local backlog="$1" arm="$2" rep="$3" total="$4"
+  bench::record_rollup "$RESULTS" "$RUN_ID" "$backlog" "$arm" "$rep" "error" 0 "$total" 0 \
     "$(date +%s)" 0 "" "$HUB_SHA"
   return 0
 }
@@ -401,6 +434,7 @@ jq -nc --arg run "$RUN_ID" --arg sha "$HUB_SHA" --arg smokerun "${BENCH_SMOKE_RU
     smokeRun:($smokerun | if .=="" then null else . end)}' >> "$RESULTS"
 
 capped=0
+halted_on_error=0
 for name in "${backlogs[@]}"; do
   backlog_file="$BACKLOG_DIR/$name/backlog.jsonl"
   bench::validate_backlog "$backlog_file"
@@ -414,11 +448,16 @@ for name in "${backlogs[@]}"; do
         bench::record_capped_cell "$name" "$arm" "$rep" "$ticket_count"
         continue
       fi
+      if [[ "$halted_on_error" -eq 1 ]]; then
+        bench::log "cell $cell: SKIPPED, an earlier cell hit an infra-class error this run"
+        bench::record_error_cell "$name" "$arm" "$rep" "$ticket_count"
+        continue
+      fi
       logdir="$RUN_DIR/sessions/$cell"
       mkdir -p "$logdir"
       started="$(date +%s)"
       workdir="$(bench::prepare_workdir "$backlog_file" "$cell")"
-      bench::run_arm "$arm" "$workdir" "$backlog_file" "$logdir" "$name"
+      bench::run_arm "$arm" "$workdir" "$backlog_file" "$logdir" "$name" "$rep"
       # NOT inside $logdir: record_sessions globs every *.jsonl there as a claude session stream,
       # so a ledger written beside the streams would be recorded as an extra zero-cost session.
       mkdir -p "$RUN_DIR/verify"
@@ -441,6 +480,15 @@ for name in "${backlogs[@]}"; do
       if bench::cell_hit_session_cap "$logdir"; then
         status="capped"
         bench::log "cell $cell: a session hit its per-session ceiling mid-run; forcing status=capped"
+      elif bench::cell_hit_error "$logdir"; then
+        # A usage/session limit, a generic API error, or an auth outage — never the arm's own
+        # competence. This cell already dispatched (it cannot be un-spent, same as bench::over_cap),
+        # but the outage is unlikely to have cleared a turn later, so every cell dispatched AFTER
+        # this one this run is skipped and recorded the same way (see the halted_on_error check
+        # above), rather than burning the rest of the run on doomed attempts.
+        status="error"
+        halted_on_error=1
+        bench::log "cell $cell: a session's final result event was an infra-class error (session/usage limit, API error, auth); forcing status=error and halting further dispatch this run"
       fi
       # Direct evidence of delegation: how many Agent/Task tool_use invocations the stream itself
       # shows, never the result event's self-reported subagent_stats alone. A shiploop cell with

@@ -3,17 +3,19 @@
 #
 # Fixture `pairing-results.jsonl` is a static, hand-derived results.jsonl (schema: a raw
 # kind:"rollup" row per (backlog, arm, rep) cell, same shape bench::record_rollup writes). Two
-# backlogs, two reps each:
+# backlogs, two reps each, plus a third backlog excluded for an infra-class error:
 #
 #   bl-x rep 1   vanilla $10.00 -> shiploop $6.00    cost delta -40%, workerSpawns=2, 3 tickets
 #   bl-x rep 2   shiploop status void-no-activation (workerSpawns=0)               -- EXCLUDED
 #   bl-y rep 1   vanilla $8.00  -> shiploop $9.60     cost delta +20%, workerSpawns=3, 4 tickets
 #   bl-y rep 2   shiploop status capped                                           -- EXCLUDED
+#   bl-z rep 1   shiploop status error (a session/usage limit, API error, or auth outage)  -- EXCLUDED
 #
 # so exactly 2 pairs are included (n=2), one cheaper and one more expensive — a losing backlog is
 # INCLUDED, never dropped, which is the whole point of retiring the old best-first selection. Every
-# number below is arithmetic on those two rows; the CI bounds are a locked snapshot of the fixed-seed
-# bootstrap (deterministic: the same file always reproduces the same bounds, forever).
+# number below is arithmetic on those two rows (bl-z never enters the included set, so it changes
+# nothing downstream of pairing); the CI bounds are a locked snapshot of the fixed-seed bootstrap
+# (deterministic: the same file always reproduces the same bounds, forever).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -39,13 +41,16 @@ assert_not_contains "$(cat "$HUB/bench/rollup.mjs")" "opts.floor" "1. the headli
 assert_eq "$(printf '%s' "$j" | jq -r '.pairs | length')" "2" "2. exactly 2 (backlog, rep) pairs included"
 assert_eq "$(printf '%s' "$j" | jq -r '[.pairs[] | .backlog] | sort | join(",")')" "bl-x,bl-y" \
   "2. one pair from each backlog — a losing backlog (bl-y) is included, never dropped"
-assert_eq "$(printf '%s' "$j" | jq -r '.excluded | length')" "2" "2. exactly 2 pairs excluded"
+assert_eq "$(printf '%s' "$j" | jq -r '.excluded | length')" "3" "2. exactly 3 pairs excluded"
 assert_eq "$(printf '%s' "$j" | jq -r '.excluded[] | select(.backlog=="bl-x") | .reason')" \
   "void-no-activation" "2. the zero-worker-spawn shiploop cell excludes its pair, reason named"
 assert_eq "$(printf '%s' "$j" | jq -r '.excluded[] | select(.backlog=="bl-y") | .reason')" \
   "capped" "2. a capped cell excludes its pair, reason named"
+assert_eq "$(printf '%s' "$j" | jq -r '.excluded[] | select(.backlog=="bl-z") | .reason')" \
+  "error" "2. an infra-class error excludes its pair, reason named, never void-no-activation or capped"
 assert_contains "$report" "excluded bl-x rep 2: void-no-activation" "2. the report lists the exclusion, not just the count"
 assert_contains "$report" "excluded bl-y rep 2: capped" "2. and the other one"
+assert_contains "$report" "excluded bl-z rep 1: error" "2. and the infra-class-error exclusion"
 
 # ── 3. every metric in the spec's list is reported, cost first and marked primary ──
 for m in "cost (USD)" "all-in tokens" "billable tokens" "output tokens" "cache-read tokens" \

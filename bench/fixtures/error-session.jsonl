@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-error","model":"claude-opus-4-8"}
+{"type":"assistant","message":{"id":"fixture-error-msg-0","model":"claude-opus-4-8","usage":{"input_tokens":900,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}}
+{"type":"result","subtype":"success","is_error":true,"num_turns":1,"session_id":"fixture-error","total_cost_usd":0,"usage":{"input_tokens":900,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}},"modelUsage":{},"result":"Claude usage limit reached. Your limit will reset at 3pm."}

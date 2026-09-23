@@ -13,6 +13,7 @@ Canned `claude -p --output-format stream-json` streams for `bench/run.sh --dry-r
 | `vanilla-fresh-session.jsonl` | one fresh-context, per-ticket session for the private `vanilla-fresh` arm |
 | `shiploop-session.jsonl` | the one advisor session the `shiploop` (with shiploop) arm runs over the same backlog: two `Task` tool_use invocations (the activation check reads these directly, never `subagent_stats` alone), forwarding two worker subagents' turns, and carrying a `subagent_stats` block on its `result` event |
 | `partial-no-result.jsonl` | a session hard-killed before it emitted a `result` event |
+| `error-session.jsonl` | a session that ended on an infra-class error: `is_error:true` on its `result` event, `subtype:"success"` (not one of the `error_max_*` ceiling subtypes bench::stream_hit_session_cap claims as "capped"), a real usage-limit-shaped `result` string |
 
 The numbers in these are synthetic and arithmetically convenient. They carry no claim about real
 runs and nothing published may be computed from them.
@@ -22,7 +23,7 @@ runs and nothing published may be computed from them.
 | File | What it is |
 |---|---|
 | `golden-results.jsonl` | a `results.jsonl` for one backlog (one pair, n=1), four shiploop sessions and one vanilla session, locking the arithmetic `bench/rollup.mjs`'s per-metric deltas assert against, and the n=1 edges (no bootstrap CI, a tied metric has no Wilcoxon p) |
-| `pairing-results.jsonl` | two backlogs x two reps, exercising the PAIRING unit itself: one clean pair per backlog (one cheaper, one more expensive — a losing backlog is included, never dropped), one pair excluded `void-no-activation`, one pair excluded `capped`. Each backlog here has exactly one usable rep, so it does not exercise mean-of-reps arithmetic |
+| `pairing-results.jsonl` | two backlogs x two reps plus a third backlog x one rep, exercising the PAIRING unit itself: one clean pair per backlog (one cheaper, one more expensive — a losing backlog is included, never dropped), one pair excluded `void-no-activation`, one pair excluded `capped`, one pair excluded `error` (an infra-class error, never scored as a loss). Each backlog here has exactly one usable rep, so it does not exercise mean-of-reps arithmetic |
 | `backlog-level-results.jsonl` | three backlogs x two GOOD reps each, no exclusions, exercising the STATISTICAL unit: n=3 (backlogs), never n=6 (pairs), and every per-backlog delta is a mean over that backlog's own two reps, not either rep's value alone |
 
 All three are static, hand-derived `kind:"rollup"` rows (the same shape `bench::record_rollup` writes),
@@ -73,6 +74,7 @@ each reason the pairing loop can produce:
 | `bl-x` | 2 | $9.50 | $4.00 (n/a) | — | excluded: shiploop `workerSpawns=0` -> `void-no-activation` |
 | `bl-y` | 1 | $8.00 | $9.60 | +20% | included — MORE expensive, and stays in (a losing/costlier backlog is never dropped) |
 | `bl-y` | 2 | $8.20 | null (capped) | — | excluded: shiploop status `capped` |
+| `bl-z` | 1 | $5.00 | null (error) | — | excluded: shiploop status `error` (an infra-class error, e.g. a usage/session limit) |
 
 The two included pairs' median cost delta is exactly `(-40% + 20%) / 2 = -10%`; the pooled ratio is
 `(6 + 9.6) / (10 + 8) = 0.867x`. `perTicket` on each row carries a small, hand-chosen set of

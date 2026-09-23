@@ -157,7 +157,8 @@ listed with its reason:
 |---|---|
 | `capped` | either arm's cell hit `BENCH_MAX_USD` or its own per-session ceiling |
 | `void-no-activation` | the shiploop cell shows zero Agent/Task tool_use invocations — it measured nothing, not a real with-shiploop run |
-| `error` | a cell is missing for one arm, its cost could not be read, or the backlog had zero tickets |
+| `error` | either arm's cell ended on an infra-class error (a usage/session limit, a generic API error, an auth outage) |
+| `error: ...` | a cell is missing for one arm, its cost could not be read, or the backlog had zero tickets |
 
 The **statistical unit is the backlog, not the pair.** Each backlog folds its own included reps
 into one mean per arm before the relative delta is taken — `(mean_shiploop - mean_vanilla) /
@@ -187,6 +188,7 @@ Always on. Neither is an option.
 | `BENCH_MAX_USD` | 60 | Hard cap on API-rate `total_cost_usd` across the run, checked before each cell is dispatched. Past it the driver stops dispatching and records the remaining cells with `status: capped`; the rollup drops a capped backlog rather than counting a truncated run as a saving. |
 | `BENCH_MAX_TURNS` | 200, EQUAL on both arms | `--max-turns` on every spawned session. Non-binding by construction — each arm is one whole-backlog session now, so there is no shape-specific reason for one arm's ceiling to bind tighter than the other's. A cell that hits it is forced to `capped`. |
 | Smoke gate | n/a | A LIVE run bigger than one (backlog x rep) cell refuses to start unless `BENCH_SMOKE_RUN=<run-id>` names a prior results dir, at this SAME hub git sha, whose every cell completed (`resolved`/`failed`, never `capped`) and whose shiploop cell(s) activated. A run of exactly one backlog and one rep IS a smoke run and needs no gate. `BENCH_SKIP_SMOKE_GATE=1` is the override, recorded into the run's own `kind:"meta"` row. |
+| Infra-class error halt | n/a | A cell whose session ended on `is_error:true` for a reason other than its own ceiling records `status: error` and the driver stops dispatching new cells for the rest of the run — a session/usage limit will not have cleared a turn later. Every cell dispatched after the first one is recorded `error` too, zero sessions, null cost, without ever spawning. |
 
 `--max-turns` is gated on a cached `claude --help` capability probe, never a version compare. If the
 CLI does not support it, `run.sh` falls back to `--max-budget-usd` (equal on both arms, default the

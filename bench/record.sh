@@ -272,6 +272,45 @@ bench::stream_had_subagent_activity() { # <jsonl> -> rc 0 spawned>0 && completed
   [[ "$spawned" -gt 0 && "$completed" -gt 0 ]]
 }
 
+# Did a session stream end on an INFRA-class error (usage/session limit, a generic API error, an
+# auth failure) rather than finishing the work it was given OR being cut off by its own turn/budget
+# ceiling? The claude CLI marks any turn that ended in error with `is_error:true` on the LAST
+# `"type":"result"` event, regardless of subtype: `error_max_*` is the ceiling family
+# bench::stream_hit_session_cap already claims as "capped", so this checks the SAME is_error field
+# but excludes that family — the two are mutually exclusive statuses for the same underlying event.
+#
+# This matters for the same reason the ceiling gets its own status: a session that hit a
+# subscription/session limit, a transient API error, or an auth outage failed for a reason that has
+# nothing to do with either arm's competence. Recording it as an ordinary "failed" cell (or, for the
+# shiploop arm, "void-no-activation" when the error struck before it could delegate) would score an
+# infra outage as a loss. Observed live: a subscription session limit hit mid-run turned every later
+# vanilla cell into a scored loss and every later shiploop cell into void-no-activation, in seconds.
+bench::stream_hit_error() { # <jsonl> -> rc 0 if this stream's final result event is an infra error
+  local jsonl="$1" line is_error subtype
+  line="$(govern::stream_grep "$jsonl" '"type":"result"' 2>/dev/null | tail -1)"
+  [[ -n "$line" ]] || return 1
+  is_error="$(printf '%s' "$line" | jq -r '.is_error // false' 2>/dev/null || true)"
+  [[ "$is_error" == "true" ]] || return 1
+  subtype="$(printf '%s' "$line" | jq -r '.subtype // empty' 2>/dev/null || true)"
+  [[ "$subtype" != error_max_* ]]
+}
+
+# rc 0 if ANY *.jsonl stream under <session-log-dir> ended on an infra-class error. Same
+# every-stream-in-the-cell shape as bench::cell_hit_session_cap, for the same reason: a cell can
+# carry more than one stream (vanilla-fresh is one session per ticket).
+bench::cell_hit_error() { # <session-log-dir>
+  local logdir="$1" f
+  shopt -s nullglob
+  for f in "$logdir"/*.jsonl; do
+    if bench::stream_hit_error "$f"; then
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
 # Count of Agent/Task tool_use invocations anywhere in one session stream — the direct evidence
 # that the advisor actually delegated, read off the stream itself rather than the result event's
 # own self-reported subagent_stats. Only lines carrying `"type":"assistant"` are handed to jq, so a
@@ -303,12 +342,13 @@ bench::cell_worker_spawns() { # <session-log-dir> -> integer count on stdout
 # The activation gate: a shiploop cell that never delegated measured nothing, not a real
 # with-shiploop run, but a benchmark run keeps going rather than aborting whole-hog the way an
 # earlier design's hard `bench::die` did (see bench::arm_shiploop) — the pairing rollup excludes
-# and lists a cell like this by itself, the same way it already does for a capped one. `capped`
-# always wins: a session cut off by its own ceiling before it could even delegate is a rail
-# artifact, not evidence about whether the arm would have delegated given the room to.
+# and lists a cell like this by itself, the same way it already does for a capped one. `capped` and
+# `error` always win: a session cut off by its own ceiling, or one that never got a real answer back
+# because of an infra outage, is a rail artifact before it could even delegate, not evidence about
+# whether the arm would have delegated given the room to.
 bench::activation_status() { # <base-status> <arm> <workerSpawns> -> the status to record
   local status="$1" arm="$2" spawns="$3"
-  if [[ "$arm" == "shiploop" && "$status" != "capped" && "$spawns" -eq 0 ]]; then
+  if [[ "$arm" == "shiploop" && "$status" != "capped" && "$status" != "error" && "$spawns" -eq 0 ]]; then
     printf 'void-no-activation\n'
   else
     printf '%s\n' "$status"

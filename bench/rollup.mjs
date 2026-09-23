@@ -10,9 +10,11 @@
 // The pairing unit is (backlog, rep): a pair exists when both arms recorded a completed cell for
 // that backlog and rep. EVERY backlog is analysed — nothing is ranked, nothing is dropped for
 // looking bad. A pair is excluded only when the comparison itself would be dishonest: a cell hit
-// BENCH_MAX_USD (capped), a cost could not be read (error), or the shiploop cell never actually
-// activated a worker (void-no-activation). Exclusion is symmetric — the whole pair drops, never one
-// arm — and every excluded pair is listed with its reason.
+// BENCH_MAX_USD (capped), a session ended on an infra-class error such as a usage/session limit,
+// generic API error, or auth outage (error), a cost could not be read (also reported as an
+// "error:"-prefixed reason, distinct from the row-status "error" above), or the shiploop cell never
+// actually activated a worker (void-no-activation). Exclusion is symmetric — the whole pair drops,
+// never one arm — and every excluded pair is listed with its reason.
 //
 // The STATISTICAL unit is the backlog, not the pair: each backlog folds its own included reps into
 // one mean per arm before the relative delta is taken, so a backlog run many times cannot out-vote
@@ -260,6 +262,13 @@ for (const backlog of backlogNames) {
     const v = cellView(vRow), s = cellView(sRow);
     if (v.status === "capped" || s.status === "capped") {
       excluded.push({ backlog, rep, reason: "capped" });
+      continue;
+    }
+    // An infra-class error (usage/session limit, a generic API error, an auth outage) recorded by
+    // run.sh/record.sh: not a measurement of either arm, so the pair is dropped the same way a
+    // capped pair is, before the void-no-activation and cost checks below ever see it.
+    if (v.status === "error" || s.status === "error") {
+      excluded.push({ backlog, rep, reason: "error" });
       continue;
     }
     if (s.status === "void-no-activation") {

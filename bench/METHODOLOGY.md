@@ -238,6 +238,26 @@ gate — there is nothing bigger it could be proving the pipeline for. `BENCH_SK
 the deliberate override, recorded into the run's own `kind:"meta"` row so a run without proof is
 never silently indistinguishable from one with it.
 
+## Infra-class errors are their own status, and stop the run
+
+A session's final `"type":"result"` event can carry `is_error:true` for a reason that has nothing to
+do with either arm's competence: a subscription/session limit, a generic API error, an auth outage.
+`bench::stream_hit_error` (`bench/record.sh`) reads that event and reports one whenever `is_error` is
+true and the `subtype` is NOT one of the `error_max_*` ceiling family `bench::stream_hit_session_cap`
+already claims as `capped` — the two checks read the same field but are mutually exclusive statuses.
+`run.sh` checks every cell for this the same way it checks for a session cap, forcing `status:
+"error"` over whatever `resolved`/`failed` the ticket count alone would have given it; `capped` still
+wins when both would otherwise apply, since a session cut off by its own ceiling never got the room
+to hit an unrelated outage.
+
+Once a cell records `status: "error"`, the driver stops dispatching NEW cells for the rest of the
+run — an outage of this kind is not something a later cell, seconds afterward, is likely to have
+outlived. Every remaining cell is recorded `status: "error"` too, zero sessions, a null cost, the
+same shape `bench::record_capped_cell` already uses for a cell skipped past `BENCH_MAX_USD`, rather
+than spawning session after session into the same outage. Observed live: a subscription session
+limit hit mid-run turned every later vanilla cell into a scored loss and every later shiploop cell
+into `void-no-activation`, in seconds, before this rail existed.
+
 ## Rows integrity
 
 Every `kind:"rollup"` row `bench::record_rollup` writes carries a `checksum`: a hash over just that
