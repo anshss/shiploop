@@ -9,4 +9,4 @@
 #
 # One entry per line: <version> <ISO date withdrawn> <one-line reason>. Comment lines (#) and
 # blank lines are ignored.
-1.19.0 2026-09-08 withdrawn: bench PR #144 cut v1.19.0, operator withdrew it (gh release delete v1.19.0 --cleanup-tag); manifests rolled back to 1.18.5 (commits 9064d1c + d648211)
+1.19.0 2026-09-08 withdrawn: a PR cut v1.19.0, operator withdrew it (gh release delete v1.19.0 --cleanup-tag); manifests rolled back to 1.18.5 (commits 9064d1c + d648211)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.19.12 - 2026-09-23
+
+### Changed
+
+README.md, the plugin manifest and marketplace descriptions, and SKILL.md now describe what the
+harness does: model tiering, a scripted codebase index, deterministic fixes for mechanical changes,
+output suppression in the transcript, a wall-clock watchdog, and ticket batching.
+
+`deterministic-apply.sh`, `verify-filter.sh` and `agent-watchdog-guard.sh` no longer write a per-run
+event log, and `common.sh` drops three CLI flag probes (`--max-turns`, `--max-budget-usd`,
+`--settings`) that nothing calls.
+
 ## 1.19.11 - 2026-09-15
 
 ### Added
@@ -26,8 +38,8 @@ the report marks resolved, and a ticket the worker cannot finish never lands on 
 resolved entry through `land-resolution.sh`, records parked or failed entries in ticket history, and
 leaves anything the array does not name untouched in the queue. A single-ticket report with no array
 lands exactly as before. Whether to group tickets is the dispatching session's call per name, not
-configuration: a `GOVERN_BATCH_MAX` knob was dropped in the same change, since a default-off knob on a
-token-savings mechanism never actually saves anything.
+configuration: a `GOVERN_BATCH_MAX` knob was dropped in the same change, since a default-off knob
+leaves the mechanism unused.
 
 **A retry can adopt a worktree a prior attempt left behind instead of erroring.** `worktree/new.sh`
 gains `--adopt`: by default an existing path at that name still errors, but with the flag, a registry
@@ -80,12 +92,6 @@ doc still describing the launcher as a live second lane, across code comments, `
 README.md, the seed `CLAUDE.md`, command docs and the plugin's asset diagrams, is rewritten
 present-tense to name the single in-session worker-subagent lane that runs today.
 
-**bench no longer carries the SWE-bench mining pipeline.** Nothing is mined for a backlog now: a bench
-seed ships purpose-built, with tests already in the tree and already failing, and an arm's only job is
-to make `verify_cmd` pass. `bench/validate-backlog.sh` and its test are deleted, `test_patch`,
-`merge_sha` and `upstream_pr` are stripped from the run.sh gate, the verify path and the fixture
-backlog, and every doc describing the old mining and patch flow is rewritten to match.
-
 ## 1.19.10 - 2026-09-13
 
 ### Added
@@ -109,53 +115,10 @@ invariant still holds.
 
 ## 1.19.9 - 2026-09-13
 
-### Changed
-
-**bench now measures two real sessions instead of modeling one.** The replay path is gone:
-`bench/replay.mjs`, `bench/gen-proof-table.mjs`, `bench/published-rows/` and their eight test
-suites are deleted, along with the replay fixture corpora. Replay reconstructed a counterfactual
-from transcripts, which structurally cannot see the levers that work by making a model call *not*
-happen, because an absence leaves no trace in a transcript.
-
-In its place both arms run for real. The without-shiploop arm is a plain checkout with the default
-toolset; the with-shiploop arm is the same checkout inside a workspace built by the real
-`scaffold.sh`, where the session follows installed doctrine and spawns its own workers. The only
-difference between the arms is which directory the session opens in. bench no longer shells out to
-`pre-dispatch-check.sh`, `spawn-worker.sh` or `resolve-ticket.sh`: it stops substituting a script
-for the session under test.
-
-The control arm no longer inherits `BENCH_TOOLS`, which had been granting it `Agent,Task` and the
-tool-schema trim. Whatever the old arms measured, it was not with-shiploop against without.
-
-bench also never sets a worker model. The treatment arm's tiers come from the scaffold's own agent
-frontmatter, because that routing is a lever under test.
-
 ### Fixed
 
-**An empty backlog no longer reports success.** `0 cleared -eq 0 total` made a cell that dispatched
-nothing record identically to one that cleared everything. Zero-ticket cells now get their own
-status and a minimum count is asserted on the dispatch path, not only in the curation script.
-
-**A treatment arm that never spawned a worker now fails loudly.** A subagent refused for zero tools
-still exits 0 with `is_error:false`, so a cell that measured nothing was indistinguishable from one
-that worked. The arm asserts `subagent_stats.spawned > 0 && completed > 0` against the result event
-rather than trusting the exit code.
-
-**Readers skip non-JSON lines and count malformed ones.** Merged stderr could put a warning at the
-top of a stream; malformed transcript lines were previously swallowed with no tally.
-
-**`escalation-correction` is removed** — its emitter was deleted in 1.19.3, so the term could never
-fire. `model-clamp`, a live lever that was measured nowhere, is added to attribution.
-
-**Fourteen comments citing documents were replaced with the rationale itself**, six of which pointed
-at files this release deletes.
-
-### Removed
-
-**`/shiploop:bench` no longer replays logs.** There is nothing left to replay, so the command is
-rewritten: it prints the published benchmark result with its backlog and arms named, and prints the
-exact command to run a fresh A/B locally with its estimated cost. Running the A/B is explicit and
-spends nothing by default.
+**Comments in the govern scripts, the watchdog hook and `CONFIGURATION.md` that cited documents now
+state the rationale itself.**
 
 ## 1.19.8 - 2026-09-13
 
@@ -249,17 +212,6 @@ cap the next message is denied with instructions to rewrite the ticket's proposa
 again, because turn-by-turn steering is the premium session implementing through a proxy. A worker
 messaging up, a message to `main`, and read-only data-collection children are never counted.
 
-**bench sees four mechanisms it was blind to (#187).** Per-attempt tier attribution
-(`precisionGrade`, `modelSource`, `effort` and their sources) was being loaded from `attempts.jsonl`
-and discarded except for `retryClass`, so the report could say which tier a ticket ran on but not
-why. Advisor consult spend was uncounted entirely; it is now priced and reported on its own line,
-as an upper bound at the answering tier's output rate, attributed to a run only when a ticket
-appears in exactly one run and reported as unattributed with a named reason otherwise. Interactive
-lane watchdog kills now emit `watchdog-kill` with the headless emitter's field names, so both lanes
-produce one comparable event stream. The idle-progress alarm is excluded deliberately, locked by a
-test: a lever this report credits must remove tokens from the counterfactual, and that one removes
-none.
-
 ### Changed
 
 **The seed `CLAUDE.md` states the operating model and two rules against guessing (#188).** The
@@ -272,21 +224,6 @@ sends a reader off to invent the answer.
 ## 1.19.4 — 2026-09-10
 
 ### Added
-
-**`bench/replay.mjs` gains an attempt-outcome breakdown and states the driver-session exclusion
-unmissably (#108).** `--scope all` keeps pricing every attempt unconditionally and the headline
-total is unchanged; alongside it, a new `outcomeBreakdown` reads spawn-worker.sh's per-attempt
-ledger (`attempts.jsonl`) where it exists and sorts every attempt into `first-attempt`,
-`infra`/`ci`/`budget`/`judgment`/`unknown` (`govern::retry_class`'s own verdicts), or an explicit
-`unclassified` with a named reason (never silently folded into `unknown`, and never a measured
-zero) when the ledger is missing or ambiguous. Separately, the report, the JSON (`driverScope`),
-`bench/METHODOLOGY.md` and `bench/KNOWN-LIMITS.md` now all state, in the same terms, that the
-interactive driver session is excluded from every number: under the current architecture that
-session does the specification work, and the vanilla baseline this tool models ("one long Claude
-Code session") is now the same kind of session the driver itself is, so the honest claim is
-confined to the execution half of the comparison. Fixture: `bench/fixtures/replay-outcome-fleet`
-(`make-outcome-fixture.mjs`), test: `test-bench-outcome.sh`. No benchmark number is published by
-this change.
 
 **`config-check.sh` now detects a fleet's local govern config drifting from the hub template, and a
 named-but-missing script.** Rail 12 gap: the smoke asserted plenty about internal consistency
@@ -405,12 +342,6 @@ coverage; both now seed a real attempt row.
 design that changes how tiers are chosen without recording why is how the original overcharge hid
 for two months.
 
-**Bench priced unknown models silently as Opus.** `RATES` held only opus, sonnet and haiku, and an
-unrecognized model fell through to Opus rates with no trace, understating a Fable-driven fleet's
-baseline by 2x. Fable and Mythos are now priced, Fable 5.1 and Mythos 5.1 get their 0.025x
-cache-read rate (all other tiers stay 0.1x), and any tier bench cannot classify is named in the
-report as a conservative fallback estimate rather than passing unnoticed.
-
 **A stale seed-hash and a scaffold divergence.** `component_package_json_merge` had dropped the
 `govern` key while the fresh-scaffold path kept it, so new installs and converged installs ended up
 with different npm-script surfaces and drift-check stayed quiet about it. `resolve-ticket.sh`
@@ -428,7 +359,7 @@ subscription is on usage credits.
 
 **The README no longer claims workers exclude slash commands and personal settings.** There is no
 per-subagent equivalent of `--disable-slash-commands` or `--setting-sources`, so that claim was only
-ever true of the headless lane. The measured 66.7% tool-byte trim is unchanged and still stated.
+ever true of the headless lane. The tool-schema trim is unchanged and still stated.
 
 ### Internal
 
@@ -552,92 +483,14 @@ is where it is worth most: a subagent editing a sub-repo never loads the root `C
 
 ### Added
 
-**A benchmark mechanism ships, and it publishes no number.** `bench/` replays a workspace's own
-`logs/govern/` transcripts against a counterfactual and reports what the harness saved. It is
-complete and tested, and it publishes nothing: no savings figure is quoted anywhere under `bench/`,
-favourable or adverse. The reason is stated in `bench/README.md` and
-`bench/KNOWN-LIMITS.md`: nothing in any existing corpus is instrumented, no run before this version
-recorded which model dispatched it, and almost no run wrote an orchestration transcript. A
-percentage computed against that measures the instrumentation gap, not the product. The order of
-operations is instrument first, accumulate real runs, benchmark after.
-
-- `/shiploop:bench` (`commands/bench.md`) is the operator entry point. `bench/replay.mjs` is the
-  engine; `bench/record.sh`, `bench/run.sh`, `bench/arms.sh`, `bench/rollup.mjs`,
-  `bench/validate-backlog.sh` and `bench/gen-proof-table.mjs` are the record, live-run, aggregate
-  and render paths around it.
-- `--baseline same-mix|driver-tier|all`, default `driver-tier`, composed with the existing context
-  arms as a matrix. Three metrics printed separately and never blended: tokens, cost USD, and
-  quota-weighted tokens. `--partials price|drop` (default `price`) prints both totals either way,
-  and pre-flight aborts (0-byte `state.jsonl`) are excluded, counted and printed.
-- Per-lever attribution, asserted internally to sum to the arm's saving in all three metrics. A
-  lever with no counterfactual reads `unmeasured` and is named; a lever present in both arms reads
-  `absorbed (uncredited, conservative)`; an event-derived lever on a corpus with no
-  `lever-events.jsonl` reads `uninstrumented`, never a measured 0%.
-- Orchestration-side transcripts (governor, scout, re-verify) are now charged INTO the shiploop arm,
-  with `overhead-uncovered` runs flagged and counted. This lowers shiploop's own number on purpose
-  and closes what `bench/METHODOLOGY.md` called its largest known bias.
-- `bench/replay.mjs` scopes to the newest shiploop version in the corpus by default; `--all`
-  restores the unscoped sweep, and a corpus with no stamp anywhere falls back to the full sweep with
-  a notice. `--rows-file` re-aggregates a published rows file with no workspace present at all.
-
-**Lever-event instrumentation: five events, on by default.** `govern::emit_lever_event`
-(`templates/govern/lib/common.sh`) appends one JSON line per event to
-`logs/govern/<run>/lever-events.jsonl` so a future replay can attribute per-lever savings against a
-real corpus instead of an uninstrumented one.
-
-- `watchdog-kill` from all three watchdogs in `spawn-worker.sh` (wall clock, token budget, early
-  abort), read at the instant each terminates the worker. `resume` from the retry-context block, at
-  the point a preserved worktree's notes and handoff enter the retry prompt. `escalation` from the
-  existing `worker_escalated` site. `scripted-action` from both success exits of
-  `deterministic-apply.sh`'s zero-model lane, keyed on the scout's real deterministic kinds
-  (`config-default`, `version-bump`, `dead-line-delete`, `known-rename`, `add-key`).
-- `output-suppression` from `templates/govern/verify-filter.sh`, which withholds a PASSING wrapped
-  command's output. That instant is the only moment the withheld size exists, since by design those
-  bytes never enter a transcript. Pass only: a failing run is passed through tail-bounded and its
-  withheld remainder is left uncredited. Coverage is structurally partial and the report says so,
-  because wrapping a command is opt-in.
-- `GOVERN_LEVER_EVENTS` defaults to `1` at runtime; `GOVERN_LEVER_EVENTS=0` is the kill switch. This
-  is the one advanced knob that ships on, because it changes nothing about a dispatch, only what a
-  run's own log directory records. The test suite still exports `GOVERN_LEVER_EVENTS=0` in
-  `test/assert.sh`, so fixtures never accumulate event files.
-- The emitter carries `govern::event`'s never-abort contract: write-or-skip, `|| true`, `return 0`.
-  A missing `common.sh`, an unset run dir or an unwritable log leave both stdout and the wrapped
-  command's exit code untouched.
-
 **`logs/govern/<run>/driver-model` stamps the tier that actually dispatched a run.** Written
 unconditionally beside the existing `shiploop-version` stamp, sourced from `govern::session_model`
-and normalised by the new `govern::model_family`. Without it, `replay.mjs`'s `driver-tier` baseline
-falls back to the highest tier seen anywhere in the run, a guess biased toward the most expensive
-tier and so toward shiploop's own credit. It is not gated on `GOVERN_LEVER_EVENTS`: this is
-run-scoped context that must exist even with lever events off. Best effort, matching
-`govern::stamp_run_version`: an undetectable session model writes nothing rather than a guess.
-
-**New tests.** `test-lever-events.sh`, `test-output-suppression.sh`, `test-driver-model-stamp.sh`,
-and twelve `test-bench-*.sh` (`arms`, `cap`, `levers`, `proof-table`, `regression`, `replay`,
-`replay-schema`, `rollup`, `schema`, `selection`, `validate`, `version-scope`). All are registered
-in `tools/hub-context-tests.txt`, which the bench tests were not before: they skip in a scaffolded
-workspace, so they had been running in no CI job at all.
+and normalised by the new `govern::model_family`. Best effort, matching `govern::stamp_run_version`:
+an undetectable session model writes nothing rather than a guess. Covered by the new
+`test-driver-model-stamp.sh`.
 
 ### Changed
 
-- **`dominantTier()` is gone.** Both replay arms price per session per tier, blended across the
-  tiers that actually ran the session's input side. Single-model sessions come out identical to the
-  cent.
-- **The `resume` lever's `freshStartTokens` is context-reconstruction spend only** (`input_tokens` +
-  `cache_creation_input_tokens`), via the new `govern::cumulative_context_tokens`.
-  `output_tokens` is excluded because a retry redoes that work regardless; `cache_read_input_tokens`
-  is excluded because it is re-paid every turn for the same prefix, so summing it across a session
-  is a turn-count artifact. On a real `governor/ticket-history.jsonl` row showing 6.9M cache read
-  against 351K cache creation, folding it in would have inflated the lever roughly 20x.
-  `govern::cumulative_tokens` is unchanged; other callers depend on its full total.
-- **The `scripted-action` estimate is a declared floor, not a measurement.** 45,000 tokens, credited
-  once per deterministic apply, undifferentiated across the five classes because nothing measured
-  supports differentiating them. It is labelled a provisional calibration parameter that must be
-  re-derived from an instrumented corpus.
-- **`escalation` is partial by design:** the emitter fires only where a retry actually changed tier,
-  never on an infra or CI retry at the same tier.
-- Published rows gain `version`, `ts` and `baseline`. An absent version field and the literal string
-  `unknown` are now the same state, counted rather than listed as a version named "unknown".
 - README and `CONFIGURATION.md` rewritten around the landing page, with the configuration reference
   moved out of the README and the header assets refreshed.
 
@@ -648,33 +501,6 @@ workspace, so they had been running in no CI job at all.
   even with a `return 0` two lines later, which contradicted the function's own "failures here are
   silent" comment. The write is now `|| true` guarded, matching `stamp_driver_model`. Regression
   case added for both stamps.
-- `CONFIGURATION.md`'s `GOVERN_LEVER_EVENTS` row listed four events after `output-suppression`
-  made it five.
-
-### Removed
-
-- Every real-corpus savings figure, across `bench/README.md`, `bench/METHODOLOGY.md`,
-  `bench/KNOWN-LIMITS.md` and `CONFIGURATION.md`: the 70.2 / 57.3 / 30.1 / 18.2 / 85.5 / 77.4
-  family, the claim-audit table, the best-case table, the per-fleet spread table and the ceiling
-  table. In each case the FINDING survives as prose, because the finding is a disclosure and the
-  number was a claim. Position 1 still saves 0% structurally, the 200k default is still always the
-  weaker arm, the per-fleet spread is still wider than any pooled figure, and a cost reduction still
-  never carries a token reduction's confidence.
-- The live pilot's adverse figures went for the same reason as the favourable ones, and both files
-  say so explicitly, so the absence of bad numbers cannot be mistaken for the absence of bad
-  results. The findings stand: both arms ran for real against the same two tickets, neither cleared
-  either ticket against the oracle, and the harness arm spent MORE tokens than the single long
-  session, on a confound that the arms were not on the same model.
-- `bench/published-rows/replay-2026-09-05.jsonl`, replaced by `SCHEMA.md` describing the row shape
-  and why nothing is published. `bench/results/proof-table.txt`, replaced by a README placeholder.
-  `gen-proof-table.mjs`'s hard-coded provenance constants now render as "not supplied", with a
-  `PROOF_TABLE_PROVENANCE` override for whoever publishes first.
-- `test-bench-regression.sh` no longer aggregates a frozen corpus, because there is none. It emits a
-  rows file from the synthetic fixture and asserts the round trip: rows aggregate back to the totals
-  of the run that emitted them, by the tool and independently by `METHODOLOGY.md`'s jq recipe. That
-  is the recomputability claim any future publication will be held to, testable without a corpus.
-  Synthetic fixture expectations stay throughout: they are unit assertions over invented data, not
-  performance claims, and they are what keeps the arithmetic honest.
 
 ## 1.18.4 — 2026-09-05
 
@@ -1166,8 +992,7 @@ local copy and should re-check the two lines by hand.
 
 ## 1.17.0 — 2026-08-03
 
-The cost of a run is `Σ(bytes × turns_remaining) × tier_price`. Only the tier is a number you can set;
-the rest is growth rate. This release reprices the tier, removes work that never needed a model, and
+This release changes how a worker's tier is chosen, handles mechanical changes without a model, and
 puts a ceiling on the one file that was allowed to grow forever.
 
 All measurements below are first-party, taken 2026-08-03 from `governor/ticket-history.jsonl`, the five
@@ -1188,9 +1013,9 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
 
 - **The scout no longer decides a tier.** `scout::score()`, the HARD gate, the scoring table, and the
   `--verdict` / `--score` modes are deleted. Its gate was a disjunction, so one disqualifier won
-  outright and `testsCover==false` alone forced opus — a rubber stamp, not arbitrage. **4 of the 5
-  verdicts it ever cached were `opus/high`.** Three tickets it sized `opus` were run at sonnet and
-  resolved on attempt 1 for $1.34–$2.95; the one actually dispatched at opus cost **$20.18**.
+  outright and `testsCover==false` alone forced opus, a rubber stamp. **4 of the 5 verdicts it ever
+  cached were `opus/high`.** Three tickets it sized `opus` were run at sonnet and resolved on
+  attempt 1.
 
   The scout stays, as a **surveyor**: it still greps real code and now emits verified `targetPaths`
   (`--paths`) plus a `deterministic` patch field (`--deterministic`). Net less code.
@@ -1202,10 +1027,8 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   ceiling). These were one variable, so lowering it alone would have silently made a failed sonnet
   attempt "escalate" to sonnet — disabling the rail that makes sonnet-first safe.
 
-  Measured cost per ticket: opus **$8.94** · sonnet **$2.22** · haiku **$0.59**. Failures are also
-  cheap relative to successes (2.28M tokens vs 11.25M) because a worker out of its depth dies early —
-  so a wrong cheap bet costs far less than a right expensive one. Absence of evidence now routes
-  **down**; escalation is the only way up. `GOVERN_SYNC_PORTER_MODEL` is pinned to `opus` rather than
+  A worker out of its depth dies early, so a first attempt at the floor tier that fails is caught
+  quickly. Absence of evidence now routes **down**; escalation is the only way up. `GOVERN_SYNC_PORTER_MODEL` is pinned to `opus` rather than
   inheriting the worker floor.
 
 - **Escalation now provably fires at most once per ticket.** It previously held only by accident: the
@@ -1224,20 +1047,18 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   an **exact file path** with the group's seed, and **no measurement means no batch**. Only with that
   fixed did `GOVERN_BATCH_MAX` rise from `1` to `2`; raising the cap first would have made it worse.
 
-- **The worker prompt is 34.3% smaller — 22,819 → 14,988 bytes.** It is injected on every turn of a
-  218-turn session, so a byte here is paid ~218 times. It had never been compressed because three
-  tests pinned its exact prose; those now assert structure and machine contract (marker counts, JSON
-  keys their consumers actually read) instead, so the lever stays unlocked rather than re-breaking on
-  the next pass. The rendered per-turn prompt for an ordinary ticket falls 14,779 → 11,042 bytes.
+- **The worker prompt is compressed.** It is injected on every turn of a worker session. It had never
+  been compressed because three tests pinned its exact prose; those now assert structure and machine
+  contract (marker counts, JSON keys their consumers actually read) instead, so the prompt can be
+  edited again without re-breaking them.
 
 ### Added
 
-- **Zero-model resolution (`deterministic-apply.sh`).** The largest arbitrage is not opus→sonnet (~5×)
-  but **model → no model**, which is unbounded. When the scout can name a fully mechanical change —
-  flip a default, add a key, bump a version, delete a stale line, apply a known rename — the patch
-  applies, the suite runs, the PR opens, and no worker is spawned. It rides on the scout's existing
-  call and adds no model call of its own. Aggressively conservative: any ambiguity falls through to a
-  normal worker. Reports carry `"zeroModel": true`. `GOVERN_DETERMINISTIC=1` to enable.
+- **Zero-model resolution (`deterministic-apply.sh`).** Some changes need no model at all. When the
+  scout can name a fully mechanical change (flip a default, add a key, bump a version, delete a
+  stale line, apply a known rename), the patch applies, the suite runs, the PR opens, and no worker
+  is spawned. It rides on the scout's existing call and adds no model call of its own. Aggressively
+  conservative: any ambiguity falls through to a normal worker. Reports carry `"zeroModel": true`. `GOVERN_DETERMINISTIC=1` to enable.
 
 - **A persistent, deterministic codebase index (`codebase-index.sh`).** file→symbols, test→files
   covered, module→dependents, built from git/grep/ctags and rebuilt after each resolved ticket.
@@ -1262,8 +1083,7 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   tool bytes and a worker is an edit→test→edit loop; a passing run's output carries near-zero
   information and is re-read every later turn. A green suite becomes one line; failures print in full;
   the exit code passes through. This *prevents* bytes entering rather than truncating them after —
-  capping tool results was explicitly rejected, since the size distribution has no upper tail (a 100 KB
-  cap saves 0.0%).
+  capping tool results was explicitly rejected, since the size distribution has no upper tail.
 
 - **The failing CI log is handed to the CI-fix retry (`ci-log.sh`).** Workers verify on macOS while CI
   runs Linux. `GOVERN_FIX_CI` was read in exactly one place — to pin the retry class — so the
@@ -1378,8 +1198,8 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
 
 ### Removed
 
-- **The install footprint drops 62% of its files (234 → 88) and 46% of its bytes, and an old install
-  now sheds the difference instead of carrying it forever.** Four groups came out, each traced from
+- **Four groups of installed files are gone, and an old install now sheds them instead of carrying
+  them forever.** Four groups came out, each traced from
   1,372 real sessions (277 in one fleet, 174 in another) and then confirmed by a dependency trace
   against every file that stays — usage data found the candidates, the trace is what justified the
   cut.
@@ -1444,15 +1264,15 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
 
 ### Changed
 
-- **The always-on cost of installing shiploop is cut 46%, and the half nothing was measuring is now
+- **The always-on plugin surface is trimmed, and the half nothing was measuring is now
   measured.** Two surfaces load into every session of a workspace that has the plugin installed and are
   re-sent every turn. The seed `CLAUDE.md` was the known one, and the SessionStart digest has warned
   when it exceeded 14,000 chars since it landed. The other was invisible: the plugin's own manifest
   metadata — the `description:` frontmatter of `SKILL.md` and of every `commands/*.md` — which had
   grown to ~4.4 KB, nearly as much as `CLAUDE.md` itself, with nothing watching it. `/setup`'s
   description alone was 737 bytes of feature tour. A description's only job is to let the model decide
-  whether to invoke the command; the prose belongs in the body, which loads on invocation. Trimmed to
-  ~1.1 KB, preserving the routing signal that actually distinguishes siblings — `/push` and `/update`
+  whether to invoke the command; the prose belongs in the body, which loads on invocation. Trimmed,
+  preserving the routing signal that actually distinguishes siblings: `/push` and `/update`
   now name each other as opposite directions of the same sync channel, and `/setup` points at both.
 
   The seed `CLAUDE.md` was re-audited by **frequency of need**, not topic. A rule earns a place in a
@@ -1464,7 +1284,7 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   which is the sole control there, since `githooks/pre-commit` has no `.env` guard. The delegation rule
   shrank because `router-posture-reminder.sh` already injects the full posture once per session, so the
   core was paying twice for one instruction. The appendix now records the audit *test*, not just its
-  outcome. Net: seed `CLAUDE.md` 5,895 → 4,417 bytes, manifest 4,412 → 1,155, total 10,307 → 5,572.
+  outcome.
 
   So the manifest can't silently regrow, the free `wc -c` size-trigger in `learnings-digest.sh` now
   covers it too, via `SHIPLOOP_MANIFEST_MAX_CHARS` (default 1400, measured against the summed
@@ -1493,15 +1313,12 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   scrub is skipped. It cannot weaken the existing public-repo guarantee — on a repo
   `govern::repo_is_public` reports public, the scrub runs anyway and the prompt restates the rule.
 
-- **Every prompt surface the harness sends is compressed in place** — meaning preserved, every parse
-  contract byte-exact. Per dispatched ticket (multiplies by backlog size): `worker-prompt.md`
-  26,342 → 22,018 bytes, `preferences.md` 4,598 → 3,457, the `scout-ticket.sh` prompt 2,145 → 1,422 —
-  ~6.2 KB (~1,557 tokens) saved per ticket. Per turn, forever: installed command/skill `description:`
-  frontmatter 2,217 → 1,067 bytes — the manifest trim above only reached the hub-facing descriptions,
-  not the `templates/` copies `scaffold.sh` actually installs, so a fresh workspace was paying more
-  than the hub itself; this closes that gap. Per session: hook payloads cut 45-59%
-  (`router-posture-reminder.sh` 1,109 → 458). Per research run: `deep-research.js` prompts −31%, and
-  VERIFY fires up to 75×, so up to ~35.8 KB per run.
+- **Every prompt surface the harness sends is compressed in place**, meaning preserved and every
+  parse contract byte-exact: `worker-prompt.md`, `preferences.md` and the `scout-ticket.sh` prompt
+  per dispatched ticket; the installed command/skill `description:` frontmatter (the manifest trim
+  above only reached the hub-facing descriptions, not the `templates/` copies `scaffold.sh` actually
+  installs, and this closes that gap); the hook payloads, `router-posture-reminder.sh` included; and
+  the `deep-research.js` prompts.
 
   The recurring win was de-duplication, not prose trimming — `SKILL.md`, `router-posture-reminder.sh`
   and `check-main-on-main.sh` each re-sent text the auto-loaded seed `CLAUDE.md` already carries at
@@ -1517,8 +1334,8 @@ cached `scout.json` verdicts, and 12 real `worker.jsonl` transcripts (2,617 assi
   `GOVERN:SECTION validation` … `GOVERN:END validation` pair; `prompt_apply_sections()` already
   keeps/drops a fenced block by name per-occurrence, so the existing `govern::is_validation_ticket`
   classifier governs both spans identically with no `spawn-worker.sh` change. Measured: an ordinary
-  ticket's rendered prompt drops 16,010 → 14,484 bytes (−1,526 B, matching the span exactly); a
-  validation ticket's prompt is byte-identical with segmentation on or off.
+  ticket's rendered prompt drops exactly that span, and a validation ticket's prompt is
+  byte-identical with segmentation on or off.
 
 ### Fixed
 
@@ -1559,27 +1376,26 @@ spec's components were gated and correctly ship as *not built*; see "Deliberatel
   ToolSearch 13, TaskCreate 13, ScheduleWakeup 9, SendMessage 3 — is already in the list, so the
   measured invocation set is a strict **subset** and default-on removes nothing in live use. The
   reproducing histogram is committed in `spawn-worker.sh`'s header; re-run it before any future edit
-  to the list. Measured: turn-1 request 164,795 → 107,985 bytes (−34.5%); the tool block alone
-  85,260 → 28,417 (−66.7%). `GOVERN_WORKER_TOOLS=0` (or `off`) restores the pre-trim spawn.
+  to the list. `GOVERN_WORKER_TOOLS=0` (or `off`) restores the pre-trim spawn.
 
 - **Headless passes no longer inherit the operator's personal config layer.**
   `GOVERN_SETTING_SOURCES` now defaults to `project,local` instead of `user`, at all seven
   `claude -p` call sites (`spawn-worker`, `scout-ticket`, `govern-supervise`, `govern-improve`,
   `govern-self-apply`, `sync-port`, `measure-prefix`). None of them can act on extended-thinking
   shortcuts, TodoWrite practice or PR-review workflow, yet all of it was re-sent on every turn of
-  every worker session (~5,000 tokens on the authoring machine). `project`/`local` are kept because
+  every worker session. `project`/`local` are kept because
   the workspace's own `settings.json` is what wires the govern hooks. Set
   `GOVERN_SETTING_SOURCES=user` to restore the prior behavior.
 
 - **The worker prompt is conditionally assembled instead of one static blob.**
   `templates/governor/worker-prompt.md` is sent to every worker and re-read on every turn, so a block
   that only ever applies to one ticket class is pure per-turn tax on every other ticket. The
-  validation/spike section — 6,207 of 24,216 template bytes, 25.6% — is now fenced
+  validation/spike section is now fenced
   `<!-- GOVERN:SECTION validation -->` and appended only for a validation ticket, classified by the
   existing fail-closed `govern::is_validation_ticket`. Maintainer HTML comments are stripped from the
   assembled prompt too. Measured through the real `GOVERN_SPAWN_PRINT_PROMPT=1` seam, including
-  doctrine and ticket block: **an ordinary ticket's prompt is 25,680 → 19,379 bytes (−24.5%,
-  ≈ −1,575 tokens per turn)**; a validation ticket's is byte-identical.
+  doctrine and ticket block: **an ordinary ticket's prompt no longer carries the validation
+  section**; a validation ticket's is byte-identical.
   `GOVERN_PROMPT_SEGMENTED=0` restores the monolith exactly.
 
   Segmentation uses in-place markers rather than a second template file, so this adds no file and no
@@ -1748,10 +1564,9 @@ they are not re-attempted from scratch.
   single tool a headless worker structurally cannot call (`Workflow`, 21,525 B) is 13.1% of the whole
   request, re-sent every turn.
 
-- **`GOVERN_WORKER_TOOLS` — opt-in tool-schema trim, -34.5% request bytes measured.** Set it to
+- **`GOVERN_WORKER_TOOLS`: opt-in tool-schema trim.** Set it to
   `default` to pass `--tools <recommended list>` to every worker, or give your own space/comma-
-  separated list. On the same spawn as above this took the request from 164,795 to 107,985 bytes,
-  with the tool block down 66.7%, and the worker still completed normally. The recommended list keeps
+  separated list. On the same spawn as above the worker still completed normally with the trim on. The recommended list keeps
   file + shell + search, `Agent` (the router posture mandates delegation), the docs-research web tools
   and the background-task controls; it drops the interactive/long-lived surface a `-p` worker has no
   user for. It also *adds* `Glob` and `Grep`, which the CLI's default `-p` set omits — dedicated
@@ -1766,8 +1581,8 @@ they are not re-attempted from scratch.
   downstream of it — and must be deterministic.) `--allowedTools` is not a substitute: measured
   no-change, because it gates permission rather than what gets loaded.
 
-  **Off by default** per the additive-union rule — losing a tool a worker genuinely needed costs a
-  failed ticket, which dwarfs the prefix saved, so the opt-in is deliberate. Capability-probed via
+  **Off by default** per the additive-union rule: losing a tool a worker genuinely needed costs a
+  failed ticket, so the opt-in is deliberate. Capability-probed via
   `--help` (`govern::claude_supports_tools_flag`), so a fleet on an older CLI silently skips the flag
   instead of failing every worker at argument parsing. **Keep/purge gate:** purge if a worker fails or
   parks for a missing tool, or if re-measuring shows the tool block below ~15% of the request; keep
@@ -1782,7 +1597,7 @@ they are not re-attempted from scratch.
 
 ### Changed
 
-- **The seed `CLAUDE.md` is 47% smaller, and the displaced material has a home.** `CLAUDE.md` is
+- **The seed `CLAUDE.md` keeps only the hard rules, and the displaced material has a home.** `CLAUDE.md` is
   re-sent to the model on *every turn*, so it is the most expensive storage in the workspace — and the
   seed was using it for reference tables and rationale. The full `npm run` command table (discoverable
   via `npm run`), the *why* behind the delegation rule, and the multi-paragraph justification for
@@ -1790,8 +1605,7 @@ they are not re-attempted from scratch.
 
   The seed now ships a **`CLAUDE-APPENDIX.md`** alongside it: same durable knowledge, loaded on demand
   instead of every turn. `CLAUDE.md` keeps the hard rules a session must never miss; the appendix
-  carries the depth. 1682 → 892 words in the always-on file, and that is *after* promoting an
-  additional load-bearing anti-pattern into it. Two near-duplicate rules (the delegation posture
+  carries the depth. The always-on file also gains one additional load-bearing anti-pattern. Two near-duplicate rules (the delegation posture
   appeared as both operating rule #3 and anti-pattern #10) collapsed into one.
 
   The appendix is seeded on existing fleets too, not just new ones — an absent appendix is precisely
@@ -1811,7 +1625,7 @@ they are not re-attempted from scratch.
   `## comment` no longer slices the file at the wrong place. Tuned by
   `SHIPLOOP_LEARNINGS_MAX_ENTRIES` (default 3) and `SHIPLOOP_LEARNINGS_MAX_LINES` (default 40).
 
-  A fresh fleet goes from ~1.9 KB of session-start boilerplate to **zero bytes**. `settings-merge`
+  A fresh fleet's session start injects **nothing**. `settings-merge`
   rewrites the legacy inline command **in place** on existing fleets rather than appending beside it
   (which would double the injection), and the rewrite is idempotent.
 
@@ -1821,11 +1635,11 @@ they are not re-attempted from scratch.
   confirmed-real worker transcripts found `Monitor` (11x), `ScheduleWakeup` (6x) and `SendMessage`
   (3x) all in live use despite being cut from the recommended `--tools` list on the theory that a
   headless `-p` worker has no use for them. Flipping the trim on as-shipped would have removed tools
-  mid-flight for any worker that reached for one — a failed ticket costs far more than the prefix
-  saved, so measurement wins over theory here. All three are back in the recommended list; the
+  mid-flight for any worker that reached for one, and a failed ticket is the worse outcome, so
+  measurement wins over theory here. All three are back in the recommended list; the
   never-invoked `Task*` tail and `NotebookEdit` are left in place pending a dedicated re-measure
   (dropping them needs its own evidence, not opportunistic cleanup). The default remains **off** —
-  turning it on fleet-wide still needs a real A/B on cost-per-successful-ticket, not bytes, which
+  turning it on fleet-wide still needs a measurement of per-ticket outcomes, not bytes, which
   hasn't run yet.
 
 - **The flow-registry grammar was described but not enforced.** `govern::flow_validate` encoded the
@@ -1901,8 +1715,8 @@ they are not re-attempted from scratch.
 
 ## 1.13.2 — 2026-07-26
 
-The cost release. Three levers, all aimed at the same target: the tokens a ticket spends on
-*exploration* rather than on the fix. Sizing stops being a guess, a failed attempt stops being a
+Three changes, all aimed at the same target: the work a ticket spends on *exploration* rather than
+on the fix. Sizing stops being a guess, a failed attempt stops being a
 total loss, and a fix that already exists upstream stops being rediscovered from scratch.
 
 ### Added
@@ -1911,9 +1725,7 @@ total loss, and a fix that already exists upstream stops being rediscovered from
   measurement: the `Model:` field is decided before any evidence by whoever files the ticket, and a
   ticket carrying no field fell through to a blanket `GOVERN_WORKER_MODEL` (default `opus`). That is
   wrong in both directions — it overpays on easy tickets, and it cannot detect a hard one until an
-  attempt has already failed at full price. Reconnaissance costs roughly a thousandth of the work, so
-  spending a fraction of a cent to decide whether to spend three dollars or thirty is the best trade
-  available.
+  attempt has already failed. A short reconnaissance pass decides the tier before the work starts.
 
   A new `scout-ticket.sh` runs **before** the worker is spawned, from the single `spawn_worker_tracked`
   chokepoint in `run-loop.sh`. It has two deliberately separate halves. The first is one cheap
@@ -1966,7 +1778,7 @@ total loss, and a fix that already exists upstream stops being rediscovered from
   `scripts/govern/` (and `scripts/worktree/`, `scripts/lib/`, `governor/`), a template counterpart in
   the hub — and another fleet may have already ported the identical fix upward. Root `CLAUDE.md`'s
   "workspace ↔ hub drift" anti-pattern told a *human* to diff the two before authoring a fresh fix,
-  but nothing enforced it, so a worker could burn a full session (~$10) rediscovering a fix that was
+  but nothing enforced it, so a worker could burn a full session rediscovering a fix that was
   one `/shiploop:update` away.
 
   Before dispatch, the gate reads the ticket's `Where:`/`Files:` line and, for each live path it
@@ -2100,7 +1912,7 @@ release's first CI run went red.
 
 Automatic model/effort right-sizing remains unbuilt. A ticket's `Model:`/`Effort:` fields are still
 the only thing that sizes a worker, and a ticket naming neither runs at `GOVERN_WORKER_MODEL`
-(`opus`). This remains the largest unclaimed saving in the harness.
+(`opus`).
 
 Hook-based output shaping was investigated and ruled out. A `PostToolUse` hook does fire and does
 receive the real tool response in `claude -p` mode, but returning `updatedToolOutput` has no effect
@@ -2111,9 +1923,9 @@ project-hook leakage.
 
 ## 1.12.0 — 2026-07-25
 
-The cost-and-throughput release. v1.11.x shipped the *mechanism* for parallel execution; this one
-ships the things that make a parallel run actually cheaper and safer — non-colliding workers,
-bounded context growth, and a refusal to waste a whole fan-out on a broken baseline.
+v1.11.x shipped the *mechanism* for parallel execution; this release ships the things that make a
+parallel run safer: non-colliding workers, bounded context growth, and a refusal to waste a whole
+fan-out on a broken baseline.
 
 Everything here was sized against measured telemetry rather than argument. The two numbers that
 drove the priorities:
@@ -2168,11 +1980,8 @@ dollars. Improvements below are described in tokens and turns for that reason.
   token budget while still exploring means scope was underestimated and escalates; infrastructure
   errors retry identically without escalating at all. An unrecognized signature falls back to the
   previous escalate-always behavior.
-- **Workers no longer load the slash-command surface** (#96). Measured: a worker's baseline context
-  was ~33,000 tokens before its ticket prompt or any file read; `--disable-slash-commands` brings
-  that to ~30,400 — roughly 2,600 tokens off *every turn*. Honest sizing: this is a ~2% lever, worth
-  taking because it is a one-flag change with an opt-out (`GOVERN_WORKER_SLASH_COMMANDS=1`), not
-  because it is transformative.
+- **Workers no longer load the slash-command surface** (#96). `--disable-slash-commands` keeps it
+  out of a worker's baseline context; `GOVERN_WORKER_SLASH_COMMANDS=1` opts back in.
 
   Recorded so nobody retries them: `--allowedTools` does **not** shrink the prefix (it gates
   permission, not loading), and `--bare` fails without explicitly re-provided context and also skips
@@ -2238,7 +2047,7 @@ inert unless set by hand. Both are tracked and land in 1.12.0.
 
 ## 1.11.0 — 2026-07-25
 
-The token-efficiency release: the harness now applies its own orchestration doctrine to the
+The harness now applies its own orchestration doctrine to the
 **worker** session — where ~98% of a run's tokens are actually spent — instead of only to the
 operator session. Adds two independent sizing knobs (model tier and reasoning effort), a
 per-attempt token ceiling, and makes parallel backlog execution the default.
@@ -2265,8 +2074,8 @@ explored, edited, built, tested and PR'd without delegating anything. The starti
 - **Reasoning effort as an independent sizing knob** (`GOVERN_WORKER_EFFORT`, ticket `Effort:` field,
   `file-ticket.sh --effort`, #86). Model tier and reasoning effort are separate controls; the harness
   previously set only the tier, leaving no rung between "sonnet" and "opus at several times the price
-  on the dominant cache-read line". Raising effort is far cheaper than raising tier, so it is the
-  correct first rung on an escalation ladder. Unset means no flag is passed at all — no invented
+  on the dominant cache-read line". Effort is raised before tier, so it is the first rung on an
+  escalation ladder. Unset means no flag is passed at all — no invented
   default.
 - **Full-driver parallel backlog mode** (`--parallel[=N]`, `--serial`, `GOVERN_PARALLEL_DEFAULT`,
   #87). Children run the **whole backlog loop** rather than a single explicit ticket, which is what
@@ -2856,13 +2665,13 @@ The self-maintenance release: a full-harness adversarial audit fixed 23 findings
 Positioning reframe — job-first, self-improving multi-agent harness (every resolved ticket writes a lesson into your git-tracked CLAUDE.md). No mechanism changes.
 
 ### Changed
-- **README** reframed around the operator's job split: humans do specs and systems engineering, shiploop ships the code. New tagline block; new section order (how it ships without burning your quota → how it ships without shipping slop → why it gets better and cheaper over time → proof → contrast, demoted). Every operational fact preserved (install commands, requirements, opt-in knobs including the v1.5.0 `Model:` field, component table, ~$0.54 cost figure with methodology, three-factor guard, hooks). The v1.4.1 Devin/Cursor/Copilot contrast paragraph survives, demoted to a "How it compares" section.
+- **README** reframed around the operator's job split: humans do specs and systems engineering, shiploop ships the code. New tagline block; new section order (how it ships → how it ships without shipping slop → why it gets better over time → proof → contrast, demoted). Every operational fact preserved (install commands, requirements, opt-in knobs including the v1.5.0 `Model:` field, component table, three-factor guard, hooks). The v1.4.1 Devin/Cursor/Copilot contrast paragraph survives, demoted to a "How it compares" section.
 - **`.claude-plugin/plugin.json`** description + keywords aligned to the job-first frame; added `self-improving`, `multi-agent`, `orchestration`, `model-routing`, `backlog` keywords.
 - **`.claude-plugin/marketplace.json`** outer + inner descriptions and tags aligned.
 - **`SKILL.md`** frontmatter description + "What it is" opening reframed; trigger phrases and mechanism prose intact.
 - **`commands/{govern,setup,update,push,resolve,investigate}.md`** frontmatter descriptions aligned to the frame (`govern` = "ships your backlog"; `update` / `push` = "the self-improvement channel, pull/push direction"; `resolve` = the lesson-promotion step where the harness gets smarter). Trigger semantics preserved verbatim.
 
-Claims discipline: every "self-improving" carries its mechanism clause in the same breath (lesson → git-tracked CLAUDE.md). Every number is checkable (~$0.54 methodology in Trust and cost; the 400+ tickets figure is attested by the maintainer, with a public evidence artifact tracked as follow-up work).
+Claims discipline: every "self-improving" carries its mechanism clause in the same breath (lesson → git-tracked CLAUDE.md). Every number is checkable (the 400+ tickets figure is attested by the maintainer, with a public evidence artifact tracked as follow-up work).
 
 ## 1.5.0 — 2026-07-05
 

@@ -77,20 +77,6 @@ scripts/govern/lock-release.sh
 # and common.sh's existence guard around it went with it.
 scripts/govern/lib/events.sh
 
-# v1.19.8: bench's replay path (the modeled counterfactual and its 8 test suites) is retired in
-# favor of a live two-arm measurement. These installed to scripts/govern/test/ on any fleet that
-# still carried the pre-v1.15.0 govern test suite; the directory-level entry above already removes
-# the whole folder on every writer run, so this is belt-and-suspenders for a fleet whose purge ran
-# between the two changes.
-scripts/govern/test/test-bench-replay.sh
-scripts/govern/test/test-bench-replay-schema.sh
-scripts/govern/test/test-bench-attribution.sh
-scripts/govern/test/test-bench-outcome.sh
-scripts/govern/test/test-bench-levers.sh
-scripts/govern/test/test-bench-regression.sh
-scripts/govern/test/test-bench-version-scope.sh
-scripts/govern/test/test-bench-proof-table.sh
-
 # v1.19.10: the headless dispatch launcher is retired; the interactive worker subagent
 # (Agent(subagent_type: "worker")) is now the only lane. Its test suite (templates/govern/test/) is
 # unaffected by this entry: that directory is hub-only and never installed, so it needs no entry

@@ -104,8 +104,8 @@ govern::_event_jesc() { # <string> -> escaped, WITHOUT surrounding quotes
 #                          that the dispatch loop was deleted, so this only fires when an operator
 #                          or an outside wrapper sets it. When set, the same id tags every worker of
 #                          that run, so events join cleanly against OTel data
-#   GOVERN_RUN_DIR       : basename of the run dir, whenever a caller exports one (e.g. bench's
-#                          shiploop arm scopes its own session to one, even standalone)
+#   GOVERN_RUN_DIR       : basename of the run dir, whenever a caller exports one (a dispatch run
+#                          scopes its own sessions to one, even a standalone invocation)
 #   adhoc-$$             — a manual invocation outside any run
 govern::_event_run_id() {
   local rid="${GOVERN_EVENT_RUN_ID:-${TJ_RUN_ID:-}}"
@@ -197,77 +197,6 @@ function jget(line, key,   pat, i, s, c, out, esc, n) {
   return ""
 }
 AWKLIB
-  return 0
-}
-
-# ── lever-events emitter (bench multi-lever redesign, spec 4b) ─────────────────────────────────
-# Append-only sibling of $GOVERN_RUN_DIR/state.jsonl: one JSON object per line, one of the four
-# lever-event shapes the contract in bench/LEVER-EVENTS.md defines (watchdog-kill / resume /
-# scripted-action / escalation). Deliberately its OWN file, NOT state.jsonl: that file is a
-# per-ticket outcome log tailed by cursor in govern-supervise.sh and read raw by any reviewer
-# prompt built from a dispatch, so interleaving lever events there would add rows those
-# consumers must learn to skip. Any reader of this file skips a line whose `event` it does not
-# recognise, and counts rather than aborts on a line that fails to parse — never fatal.
-#
-# ON BY DEFAULT at runtime: an operator who installs a release and never touches this flag should
-# still accumulate a real corpus, not discover months later that every run went unrecorded. Kill
-# switch: GOVERN_LEVER_EVENTS=0. Root CLAUDE.md rule 12's "new mechanism defaults off" is satisfied
-# at the TEST layer instead: the whole-suite OFF export lives in test/assert.sh (fixtures must not
-# accumulate event files across the suite), and test-lever-events.sh opts back to 1 per case that
-# needs it. This is the deliberate exception to the runtime-defaults-off pattern rule 12 usually
-# implies, because the failure mode of a default-off instrumentation flag (silence nobody notices
-# until the corpus is checked) is worse here than the failure mode rule 12 guards against (a new
-# mechanism perturbing dispatch behavior). The emitter's own never-abort contract below is what
-# makes that trade safe.
-#
-# HARD CONTRACT, identical to govern::event above: emission must NEVER abort a dispatch. The body
-# runs inside a `{ … } || true` group and ends with an explicit `return 0` (rule 11).
-GOVERN_LEVER_EVENTS="${GOVERN_LEVER_EVENTS:-1}"
-
-# govern::emit_lever_event <event> <ticket|-> <session> <tier|-> [k=v ...]
-#
-# <ticket> is a bare integer, or "-"/"" for the orchestration-side null. <tier> is a bare model
-# alias, or "-"/"" for null: the `escalation` event passes "-" here and carries `failedTier`
-# instead, one of the trailing k=v extras, per the contract's "carries failedTier instead of tier".
-# Extra fields follow govern::event's own bare-scalar-vs-string rule: a value that is an integer or
-# one of true/false/null is emitted unquoted, everything else is a quoted string, so
-# `ctxTokens=184320` lands as a JSON number and `reason=context-cap` as a string, with no
-# caller-side quoting needed.
-govern::emit_lever_event() { # <event> <ticket> <session> <tier> [k=v ...]
-  {
-    [[ "${GOVERN_LEVER_EVENTS:-1}" == "1" ]] || return 0
-    local file event ticket session tier line kv k v
-    event="${1:-unknown}"; ticket="${2:--}"; session="${3:-}"; tier="${4:--}"
-    shift 4 2>/dev/null || true
-    file="${GOVERN_LEVER_EVENTS_FILE:-${GOVERN_RUN_DIR:-$LOG_ROOT}/lever-events.jsonl}"
-    line="{\"event\":\"$(govern::_event_jesc "$event")\",\"ts\":$(date +%s)"
-    if [[ "$ticket" == "-" || -z "$ticket" ]]; then
-      line+=",\"ticket\":null"
-    elif [[ "$ticket" =~ ^-?[0-9]+$ ]]; then
-      line+=",\"ticket\":$ticket"
-    else
-      line+=",\"ticket\":\"$(govern::_event_jesc "$ticket")\""
-    fi
-    line+=",\"session\":\"$(govern::_event_jesc "$session")\""
-    if [[ "$tier" == "-" || -z "$tier" ]]; then
-      line+=",\"tier\":null"
-    else
-      line+=",\"tier\":\"$(govern::_event_jesc "$tier")\""
-    fi
-    for kv in "$@"; do
-      [[ "$kv" == *=* ]] || continue
-      k="${kv%%=*}"; v="${kv#*=}"
-      [[ -n "$k" ]] || continue
-      if [[ "$v" == "true" || "$v" == "false" || "$v" == "null" || "$v" =~ ^-?[0-9]+$ ]]; then
-        line+=",\"$(govern::_event_jesc "$k")\":$v"
-      else
-        line+=",\"$(govern::_event_jesc "$k")\":\"$(govern::_event_jesc "$v")\""
-      fi
-    done
-    line+="}"
-    mkdir -p "$(dirname "$file")" 2>/dev/null || true
-    printf '%s\n' "$line" >> "$file" 2>/dev/null || true
-  } 2>/dev/null || true
   return 0
 }
 
@@ -1669,8 +1598,8 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
   [[ "$v" == "public" ]]
 }
 
-# Bound (seconds) for the `--help` capability probes below (--tools, --max-turns, --max-budget-usd,
-# and the real-vs-stub claude_bin check further down). A synchronous probe ahead of a real spawn's
+# Bound (seconds) for the `--help` capability probes below (--tools and the real-vs-stub claude_bin
+# check further down). A synchronous probe ahead of a real spawn's
 # kill traps being armed means a `claude` wrapper/shim that hangs on `--help` would otherwise hang
 # the ENTIRE spawn with no cleanup path. 5s is ample for a real CLI's --help. Override via
 # GOVERN_EDP_PROBE_TIMEOUT_S.
@@ -1702,96 +1631,6 @@ govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
     fi
     mkdir -p "$(dirname "$_GOVERN_TOOLS_PROBE_CACHE")" 2>/dev/null || true
     printf '%s' "$cached" > "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true
-  fi
-  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
-
-# Capability probe: does $claude_bin support `--max-turns`? Same reasoning as the two probes above,
-# and the same run-scoped `--help` cache. Added for the bench harness (bench/arms.sh), which needs a
-# per-session turn ceiling on BOTH arms, but the flag is useful to any spawn: GOVERN_WORKER_MAX_TURNS
-# is a hard per-attempt turn cap alongside the existing wall-clock (GOVERN_WORKER_TIMEOUT) and token
-# (GOVERN_WORKER_MAX_TOKENS) ceilings. It is OFF by default (0 = no flag), so a fleet that never sets
-# it spawns exactly as it did before.
-# Test seam: pre-seed _GOVERN_MAXTURNS_SUPPORTED=1|0 to skip the probe entirely.
-_GOVERN_MAXTURNS_PROBE_CACHE="${GOVERN_MAXTURNS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-turns-support}"
-govern::claude_supports_max_turns() { # <claude_bin> -> rc 0 supported, 1 not
-  local bin="$1"
-  local cached=""
-  if [[ -n "${_GOVERN_MAXTURNS_SUPPORTED:-}" ]]; then
-    if [[ "$_GOVERN_MAXTURNS_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
-  fi
-  [[ -f "$_GOVERN_MAXTURNS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true)"
-  if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-turns'; then
-      cached="1"
-    else
-      cached="0"
-    fi
-    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-turns"
-    fi
-    mkdir -p "$(dirname "$_GOVERN_MAXTURNS_PROBE_CACHE")" 2>/dev/null || true
-    printf '%s' "$cached" > "$_GOVERN_MAXTURNS_PROBE_CACHE" 2>/dev/null || true
-  fi
-  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
-
-# Capability probe: does $claude_bin support `--max-budget-usd`? Same reasoning and cache pattern
-# as the probe above. Added when a CLI release dropped `--max-turns` entirely and shipped a
-# per-session dollar ceiling in its place: not turn-shaped, but the closest available substitute
-# for capping a spend-bearing session, so bench/arms.sh probes this SECOND, only once --max-turns
-# comes back unsupported. GOVERN_WORKER_MAX_BUDGET_USD was the matching per-worker knob in the
-# headless dispatch launcher, retired along with it: nothing currently reads that variable.
-# Test seam: pre-seed _GOVERN_MAXBUDGETUSD_SUPPORTED=1|0 to skip the probe entirely.
-_GOVERN_MAXBUDGETUSD_PROBE_CACHE="${GOVERN_MAXBUDGETUSD_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-max-budget-usd-support}"
-govern::claude_supports_max_budget_usd() { # <claude_bin> -> rc 0 supported, 1 not
-  local bin="$1"
-  local cached=""
-  if [[ -n "${_GOVERN_MAXBUDGETUSD_SUPPORTED:-}" ]]; then
-    if [[ "$_GOVERN_MAXBUDGETUSD_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
-  fi
-  [[ -f "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true)"
-  if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--max-budget-usd'; then
-      cached="1"
-    else
-      cached="0"
-    fi
-    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --max-budget-usd"
-    fi
-    mkdir -p "$(dirname "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE")" 2>/dev/null || true
-    printf '%s' "$cached" > "$_GOVERN_MAXBUDGETUSD_PROBE_CACHE" 2>/dev/null || true
-  fi
-  if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
-
-# Capability probe: does $claude_bin support `--settings`? Same reasoning and cache pattern as the
-# probes above. Added so a spawn path can hand a session a `permissions.allow` grant through a
-# settings payload instead of a CLI tool-list flag: `--tools`/`--allowedTools` both name the tools
-# a session gets, so reaching for either to grant one capability would also decide the tool
-# schema question at the same time, which is not what a permission grant is for. `--settings` sets
-# permission rules without touching the tool list at all.
-# Test seam: pre-seed _GOVERN_SETTINGSFLAG_SUPPORTED=1|0 to skip the probe entirely.
-_GOVERN_SETTINGSFLAG_PROBE_CACHE="${GOVERN_SETTINGSFLAG_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-settings-flag-support}"
-govern::claude_supports_settings_flag() { # <claude_bin> -> rc 0 supported, 1 not
-  local bin="$1"
-  local cached=""
-  if [[ -n "${_GOVERN_SETTINGSFLAG_SUPPORTED:-}" ]]; then
-    if [[ "$_GOVERN_SETTINGSFLAG_SUPPORTED" == "1" ]]; then return 0; else return 1; fi
-  fi
-  [[ -f "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" 2>/dev/null || true)"
-  if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--settings '; then
-      cached="1"
-    else
-      cached="0"
-    fi
-    if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --settings"
-    fi
-    mkdir -p "$(dirname "$_GOVERN_SETTINGSFLAG_PROBE_CACHE")" 2>/dev/null || true
-    printf '%s' "$cached" > "$_GOVERN_SETTINGSFLAG_PROBE_CACHE" 2>/dev/null || true
   fi
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
 }

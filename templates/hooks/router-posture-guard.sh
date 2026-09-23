@@ -30,7 +30,7 @@
 # Second advisory (same file, same cap, same driver-only guard): a test/build
 # runner (npm test, npm run build/test/check, pytest, go test, cargo test,
 # vitest, jest, tsc) invoked WITHOUT verify-filter.sh / `npm run vf` wrapping it
-# loses the context savings verify-filter exists for (see templates/govern/
+# bypasses the output filtering verify-filter exists for (see templates/govern/
 # verify-filter.sh): a passing run's output still lands in the transcript and
 # is re-sent every later turn. Kill switch: GOVERN_VF_NUDGE=0.
 #
@@ -493,7 +493,7 @@ if [ "$vf_command_hit" = 1 ] && [ "${GOVERN_VF_DENY:-1}" != "0" ]; then
   if [ -f "$vf_sh" ]; then
     vf_deny="$(cat <<EOF
 [VERIFY-FILTER] Denied: this command matches a test/build runner and is not wrapped in
-verify-filter, which loses the context savings the wrapper exists for -- a passing run's output
+verify-filter, which bypasses the output filtering the wrapper exists for -- a passing run's output
 still lands in the transcript and is re-sent every later turn.
 
 Run the wrapped form instead:

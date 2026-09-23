@@ -4,9 +4,8 @@
 </p>
 
 <p align="center">
-Shiploop is a harness for Claude Code. Most token tools compress what Claude reads.  <br> 
-Shiploop changes how each session runs: which model handles the work, what context it gets, and how much runs in parallel,
-so the same work ships on fewer tokens.
+Shiploop is a harness for Claude Code. Most tools compress what Claude reads.  <br> 
+Shiploop changes how each session runs: which model handles the work, what context it gets, and how much runs in parallel.
 </p>
 
 ## Get Started
@@ -40,35 +39,21 @@ You launch regular Claude Code sessions to build your project. What comes out of
 How a named ticket actually ships, in one pass:
 
 1. Each ticket gets a fresh **worker**: a trim, single-ticket session in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
-2. Advisor-worker orchestration. Intractive claude session becomes a advisor and spawns subagent in right-sized cheap-tier models. A classified judgment failure of subagent raises reasoning effort and files a re-specification request for the advisor.
+2. Advisor-worker orchestration. An interactive Claude session becomes an advisor and spawns subagents in right-sized models. A classified judgment failure in a subagent raises reasoning effort and files a re-specification request for the advisor.
 3. When a ticket resolves, it leaves a short lesson in CLAUDE.md, which every later session reads, so the next worker starts a little smarter.
 
 
-### Why this uses fewer tokens
+### Other mechanisms
 
-The goal is simple: spend the fewest tokens per shipped ticket. Here is what actually does that:
+- **Every worker shares a scripted codebase map.** A worker is a single-ticket session that reads the code and does the job. Pre-dispatch scripts index files, symbols, and structure, so a worker does not have to rediscover the repository from scratch. Retries inherit the prior attempt's findings, and manual audits read only what changed.
 
-- **Every worker shares a scripted codebase map.** A worker is a single-ticket session that reads the code and does the job. Pre-dispatch scripts index files, symbols, and structure, so workers do not repeatedly rediscover the repository. Retries inherit prior findings, and manual audits read only what changed.
-
-- **Workers run lean.** Each Shiploop worker gets only the tools it needs: no MCP servers or unused definitions.
-
-- **Model orchestration.** The costly mistake is asking low-cost workers to rediscover a solution at the wrong tier. A high-tier session must turn the change into a proposed solution before dispatch; the lower-cost worker implements it in an isolated worktree and stops at a PR.
-
-- **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker.
+- **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker instead. This lane is off by default.
 
 - **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this through `npm run vf -- <cmd>` and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
 
-- **A watchdog stops runaway sessions.** It enforces a time limit, while the stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress—not how much it read. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
+- **A watchdog stops runaway sessions.** It enforces a time limit, while separate stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
 
-- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket. A five-ticket batch is therefore far cheaper than five separate workers.
-
-- **Retries resume instead of restart.** Failed workers keep their worktree and findings, avoiding another clone and repeated exploration.
-
-- **Memory improves within a fixed budget.** Resolved tickets add lessons to CLAUDE.md, which is re-sent on every turn. Entries are capped, the file has a budget, and overflow moves to an appendix.
-
-- **Blocked work is caught early.** Shiploop checks dependencies, repository health, capacity, setup, and duplicate upstream fixes before dispatching a worker. Work that cannot succeed never consumes one.
-
-Tokens are the currency. Shiploop breaks work into tickets; you choose the priorities, and each dispatched ticket is completed with the least token spend. The coordination layer uses no model tokens. The zero-model lane is off by default. Parallelism improves throughput, not per-ticket efficiency.
+- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket.
 
 ## The dispatch flow
 
@@ -83,7 +68,7 @@ You name the tickets, and the coordination happens almost entirely outside Claud
 
 - **Inside the worktree.** Branches are ticket-named in every in-scope sub-repo; out-of-scope sub-repos stay detached and read-only. A worker's prompt is built from a fixed skeleton, `governor/preferences.md`, the ticket text, and, on a retry, the prior attempt's handoff. It can act without asking permission at each step, but only inside that worktree, on the branch it pushes.
   
-- **Manual audit on demand** `npm run govern:audit` starts another cheap, fresh session to review a run and can return halt. Hard stops go to `governor/escalations.md`. It spends no model tokens unless you invoke it.
+- **Manual audit on demand** `npm run govern:audit` starts another small, fresh session to review a run and can return halt. Hard stops go to `governor/escalations.md`. It spends no model tokens unless you invoke it.
 
 - **Harness improvement follows discipline.** Fixes to the mechanism itself go to `governor/improvements.md` through observe, propose, triage, and never auto-apply to safety rails. `/shiploop:update` and `/shiploop:push` move those fixes between the workspace and template repo, always through a human-reviewed PR.
 
@@ -98,7 +83,7 @@ agents". In shiploop they mean exactly this:
 | **governor** | The deterministic script layer under `scripts/govern/`: `pre-dispatch-check.sh` gates a ticket, `resolve-ticket.sh` awaits CI, merges, and lands the resolution. It owns state and control flow deterministically and never calls a model itself; deciding *when* to run it is the driver's job. |
 | **driver** | The orchestrating session: your interactive Claude Code session. A driver dispatches and relays verdicts; it does not bulk-read product source. |
 | **worker** | The trim, single-ticket session: an `Agent(subagent_type: "worker")` subagent in your own session, running at a fixed model floor in its own worktree, ending at a PR plus a structured report. Never used for any other kind of child. |
-| **scout** | The cheap pre-dispatch survey pass (haiku). It only surveys: verified file paths, whether tests cover the area, whether history holds a precedent commit. Cached per run, so a retry never re-scouts. |
+| **scout** | The pre-dispatch survey pass (haiku). It only surveys: verified file paths, whether tests cover the area, whether history holds a precedent commit. Cached per run, so a retry never re-scouts. |
 | **supervisor** | The review pass over a run's state (`npm run govern:audit`, `GOVERN_SUPERVISOR_MODEL`). It can return a `halt` verdict; it never edits code. |
 | **subagent** | The platform's own term for an Agent-tool child that is **not** `subagent_type: "worker"` (the shipped `lookup` and `investigator` agent types, or a stock `Agent` call). Sized per the delegation table for investigation, sweeps, and diagnosis. A subagent is never called a worker, and ticket-shaped work never goes to one. |
 

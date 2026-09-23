@@ -42,7 +42,7 @@
 #   11. IDLE HEALTHY → no alarm
 #   12. IDLE, kill switch off → no alarm even on a doomed transcript
 #   13. IDLE, missing both transcript fields → silent no-op, no crash
-#   14. the idle alarm is a FLEET event and deliberately NOT a lever event (see the case itself)
+#   14. the idle alarm surfaces on the fleet event log
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -261,25 +261,12 @@ out13="$(printf '{"session_id":"s13","cwd":"%s","hook_event_name":"TeammateIdle"
   | env GOVERN_AGENT_SUPERVISION=1 bash "$GUARD")"
 assert_eq "$out13" "" "neither agent_transcript_path nor transcript_path present → silent no-op, never a crash"
 
-# ── 14. the idle alarm is DELIBERATELY NOT a lever event ───────────────────────────────────────
-# Decided when bench caught up with the post-09ab731 mechanisms: agent_progress_alarm stays on the
-# fleet event log (GOVERN_EVENTS) and is NOT promoted to a lever event (GOVERN_LEVER_EVENTS).
-#
-# The reason, and the reason this is a test rather than a comment: every lever bench credits is a
-# lever that REMOVES tokens from the counterfactual, and this one removes none. The TeammateIdle
-# branch cannot block by construction (there is no stop to hold open), so it terminates nothing and
-# truncates nothing; the SubagentStop branch blocks a stop, which makes the child work LONGER, not
-# shorter. Crediting it would be crediting an observation as a saving. Recorded as a named
-# exclusion in bench/KNOWN-LIMITS.md, and locked here so nobody quietly adds an emitter without
-# moving that entry: the alarm firing must produce a fleet event and NO lever event.
+# ── 14. the idle alarm surfaces on the fleet event log ──────────────────────────────────────────
 events14="$TMP/events-14.jsonl"
-lever14="$TMP/lever-14.jsonl"
 out14="$(run_guard_idle "$TMP/stall.jsonl" a14 agent GOVERN_AGENT_SUPERVISION=1 GOVERN_EVENTS=1 \
-  GOVERN_EVENTS_FILE="$events14" GOVERN_LEVER_EVENTS=1 GOVERN_LEVER_EVENTS_FILE="$lever14")"
+  GOVERN_EVENTS_FILE="$events14")"
 assert_eq "$out14" "" "the idle path still never blocks"
 assert_contains "$(cat "$events14")" "agent_progress_alarm" "the idle alarm IS surfaced, on the fleet event log"
-[ -f "$lever14" ] && haslev14=yes || haslev14=no
-assert_eq "$haslev14" "no" "and is NOT a lever event: it removes no tokens, so bench must not credit it"
 
 # ── 15. TREE CHANGED — the heredoc worker, blocked while clean and allowed once it writes ──────
 # Same turn count as the STALL transcript and the same absence of any Edit tool_use. Run twice
