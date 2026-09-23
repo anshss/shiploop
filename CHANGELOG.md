@@ -17,10 +17,10 @@ behavior it also incidentally covered (a passing command collapses to one line, 
 its output, the exit code survives verbatim) is already independently covered by
 `test-verify-filter.sh`. Existing fleets shed the installed test files on their next update.
 
-README.md, the plugin manifest and marketplace descriptions, and SKILL.md no longer claim shiploop
-ships on fewer tokens, runs cheaper, or spends less: they describe what the harness does — model
-tiering, a scripted codebase index, deterministic fixes for mechanical changes, output suppression
-in the transcript, a wall-clock watchdog, ticket batching — without a cost or savings framing.
+README.md, the plugin manifest and marketplace descriptions, and SKILL.md now describe what the
+harness does instead of what it costs: model tiering, a scripted codebase index, deterministic
+fixes for mechanical changes, output suppression in the transcript, a wall-clock watchdog, and
+ticket batching.
 
 ## 1.19.11 - 2026-09-15
 
