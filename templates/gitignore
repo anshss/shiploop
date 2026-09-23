@@ -54,6 +54,9 @@ worktree.env
 # Worker findings scratchpad — per-worktree retry memory a worker appends to as it goes; the
 # governor injects it back on a retry. Machine-local runtime state, never source, never in a PR.
 .governor-notes.md
+# Dispatch packet (govern:dispatch-packet): everything a worker needs to start, written once per
+# dispatch. Machine-local runtime state, never source, never staged by govern:ship.
+.dispatch-packet.md
 
 # Auto-generated planning/spec artifacts (skill output — not source of truth)
 .plans/

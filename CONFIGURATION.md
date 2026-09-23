@@ -76,6 +76,8 @@ prints nothing at all when there is no fleet.
 | `GOVERN_CI_MAX_TRIES` | `60` | Polls before CI is treated as never-settling (≈30 min at the default interval) |
 | `GOVERN_SUPERVISOR_MODEL` | `sonnet` | Tier the manual audit (`govern:audit`) runs at |
 | `GOVERN_OVERLAP_NUDGE` | `1` (on) | Dispatch-time hint, zero model calls: `pre-dispatch-check.sh` prints up to 5 `[overlap]`/`[overlap-dir]` lines naming any OTHER open ticket that shares a file (or, weaker, a directory) with the one you named. Log line only, never blocks and never touches the queue; `0` silences it |
+| `GOVERN_GROUP_MAX` | `6` | Largest batch `pre-dispatch-check.sh` accepts in a plan (`12,14 17`: comma = one worker, space = parallel workers). A batch over the cap keeps its first `GOVERN_GROUP_MAX` members and prints every dropped ticket with its reason |
+| `GOVERN_BATCH_MEMBER_TURNS` | `60` | Stop valve for a batched worker, written into its dispatch packet when a batch has more than one member: once the worker has spent this many turns on the batch, it starts no new member, finishes the one in progress, and reports the rest `parked` (not started) for a fresh dispatch |
 
 ### Script-level overrides (not seeded in workspace.sh)
 

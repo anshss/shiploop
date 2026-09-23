@@ -58,6 +58,7 @@ MERGE_ALLOWLIST=""
 WORKTREE_BASE=""
 COMPONENT="all"
 COMPONENT_EXPLICIT=0
+WORKER_MAX_TURNS=150   # worker.md's maxTurns frontmatter; --worker-max-turns overrides at scaffold time
 DO_GIT_INIT=0
 DO_VERIFY=0
 YES=0
@@ -87,6 +88,7 @@ while [ "$#" -gt 0 ]; do
     --worktree-base)     WORKTREE_BASE="$2"; shift 2 ;;
     --templates)         TEMPLATES_DIR="$2"; shift 2 ;;
     --component)         COMPONENT="$2"; COMPONENT_EXPLICIT=1; shift 2 ;;
+    --worker-max-turns)  WORKER_MAX_TURNS="$2"; shift 2 ;;
     --git-init)          DO_GIT_INIT=1; shift ;;
     --verify)            DO_VERIFY=1; shift ;;
     --yes|-y)            YES=1; shift ;;
@@ -383,6 +385,16 @@ component_agents() {
   log "component: shipped subagent definitions (.claude/agents/)"
   mkdir -p .claude/agents
   cp "$T"/.claude/agents/*.md .claude/agents/ 2>/dev/null || true
+  # worker.md's maxTurns is a plain frontmatter value, not a template placeholder -- rewrite it
+  # in place only when the operator asked for something other than the shipped default, so a diff
+  # against the template stays empty for every install that never touched the flag.
+  if [ -f .claude/agents/worker.md ] && [ "$WORKER_MAX_TURNS" != "150" ]; then
+    case "$WORKER_MAX_TURNS" in
+      *[!0-9]*|"") die "--worker-max-turns must be a positive integer (got: $WORKER_MAX_TURNS)" ;;
+    esac
+    sed -i.bak "s/^maxTurns: .*/maxTurns: $WORKER_MAX_TURNS/" .claude/agents/worker.md && rm -f .claude/agents/worker.md.bak
+    info "worker.md maxTurns set to $WORKER_MAX_TURNS (--worker-max-turns)"
+  fi
   info "installed .claude/agents/"
 }
 
@@ -628,6 +640,8 @@ $(printf "$dev_lines" | sed '/^$/d')
     "worktree:exec": "bash scripts/worktree/exec.sh",
     "govern:resolve": "bash scripts/govern/resolve-ticket.sh",
     "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
+    "govern:dispatch-packet": "bash scripts/govern/dispatch-packet.sh",
+    "govern:ship": "bash scripts/govern/ship.sh",
     "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
     "govern:escalations-emit": "bash scripts/govern/escalations-emit-pending.sh",
     "govern:health": "bash scripts/govern/govern-health.sh",
@@ -689,6 +703,8 @@ component_package_json_merge() {
     "worktree:exec":      "bash scripts/worktree/exec.sh",
     "govern:resolve":     "bash scripts/govern/resolve-ticket.sh",
     "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
+    "govern:dispatch-packet": "bash scripts/govern/dispatch-packet.sh",
+    "govern:ship":        "bash scripts/govern/ship.sh",
     "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
     "govern:escalations-emit":  "bash scripts/govern/escalations-emit-pending.sh",
     "govern:health":      "bash scripts/govern/govern-health.sh",
@@ -1263,7 +1279,7 @@ config_drift_report() {
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
-         "worktree:exec","govern:resolve","govern:pre-dispatch","govern:escalations-apply","govern:escalations-emit",
+         "worktree:exec","govern:resolve","govern:pre-dispatch","govern:dispatch-packet","govern:ship","govern:escalations-apply","govern:escalations-emit",
          "govern:health","govern:dry-run","govern:status","govern:audit",
          "govern:context-budgets","govern:trim","govern:externalize","govern:validations",
          "validation:record","preflight:base-ci","preflight:main","vf"]
