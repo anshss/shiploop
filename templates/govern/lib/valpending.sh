@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Durable validation runner — pending-results delivery substrate. Sourced by the three
-# readers (validations-pending-apply.sh for the supervisor pass + SessionStart hook,
+# Durable validation runner — pending-results delivery substrate. Sourced by the
+# readers (validations-pending-apply.sh for the SessionStart hook,
 # govern-validations.sh for the on-demand surface); definitions only.
 #
 # Interface contract (OWNED by sibling ticket #5 — consume, never edit): a job dir

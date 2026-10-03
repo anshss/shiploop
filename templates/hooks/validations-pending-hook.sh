@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# SessionStart hook — durable validation runner, one of three readers of the pending-results
+# SessionStart hook — durable validation runner, one of two readers of the pending-results
 # surface. A long validation job can
 # finish with no governor run active; without this it lands in silence until the next scheduled
-# supervisor pass. Runs the SAME mechanical apply script the supervisor uses (mutex-serialized, so
+# governor pass. Runs the SAME mechanical apply script the other readers use (mutex-serialized, so
 # racing readers never double-stamp/double-escalate one terminal job) and prints whichever jobs got
 # adopted THIS session. Best-effort: guarded on the mechanism script + jq, always exits 0 (never
 # blocks session start).

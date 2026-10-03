@@ -61,7 +61,6 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run govern:resolve -- <N>` | Fed a worker's JSON report on stdin: awaits CI, merges, and lands the resolution |
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
-| `npm run govern:audit` | Manual run audit, zero model spend unless invoked |
 | `npm run govern:context-budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` |
 | `npm run govern:trim` | Evidence-based CLAUDE.md compression detector alone: classifies every over-budget block, never edits the file |
 | `npm run govern:externalize` | File open low-severity tickets as public good-first-issues and drop them from the queue (no-op until `GOVERN_EXTERNALIZE_REPO` is set) |
@@ -194,8 +193,6 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
   `pre-dispatch-check.sh` file an escalation and skip re-spawning instead of retrying forever.
 - **Progress-preserving:** only a cleanly-landed worktree is torn down (by `resolve-ticket.sh`);
   failed/parked/timed-out worktrees are kept and an existing `ticket-<N>` PR is reused on re-run.
-- **Manual audit** (`npm run govern:audit`, zero model spend unless invoked) reviews recent dispatch
-  state for duplicates/dependency-ordering/failure-patterns and can return a `halt` verdict.
   `governor/improvements.md` is operator-maintained notes on harness friction; nothing proposes or
   applies a fix to it automatically.
 

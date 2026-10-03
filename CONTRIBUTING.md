@@ -7,8 +7,8 @@ Thanks for looking. This repo is unusual: it is the template source for an auton
 - `scaffold.sh` — deterministic scaffolder. Every mechanical file operation is here. Idempotent, non-interactive with `--yes`, component-scoped with `--component <name>`.
 - `commands/*.md` — the slash commands (`setup`, `update`, `flows`, `push`). Judgment only; mechanical work belongs in `scaffold.sh` or a template script.
 - `templates/lib/workspace.sh` — the one config file every mechanism script sources. Mechanism scripts are byte-identical across installs; per-workspace values live here.
-- `templates/govern/` — governor driver, ticket selector, merge-PR, supervisor, escalations.
-- `templates/govern/test/` — 158 hermetic bash tests locking governor invariants.
+- `templates/govern/` — governor driver, ticket selector, merge-PR, escalations.
+- `templates/govern/test/` — 154 hermetic bash tests locking governor invariants.
 - `templates/githooks/`, `templates/hooks/` — enforced git hooks and Claude Code hooks.
 - `.github/workflows/ci.yml` — lint, manifest validation, and the scaffold-and-test job that runs all 60 govern tests against a freshly-scaffolded workspace on every PR.
 

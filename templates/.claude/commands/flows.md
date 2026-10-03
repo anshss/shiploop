@@ -99,7 +99,7 @@ auto-withdrawn by the sweep — a stale negative must not be acted on.
 
 Effectiveness gates accrue over days; a worker lives minutes. The split is **arm → collect**: an *arm*
 ticket verifies the experiment is running (flow → `MEASURING`); a later *collect* ticket reads the
-accrued gate and stamps `EFFECTIVE`/`INEFFECTIVE`. The periodic governor supervisor surfaces, as
+accrued gate and stamps `EFFECTIVE`/`INEFFECTIVE`. Two conditions are surfaced as
 **advisory lines only** (never auto-filing — billable safety):
 
 - a `MEASURING` flow whose `Sample-window: <N>d` has plausibly elapsed → file a collect run;

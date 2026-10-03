@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Durable validation runner: pending-results delivery. All three readers (the governor
-# supervisor audit `npm run govern:audit`, the SessionStart hook, and `govern-validations.sh` on
-# demand) call this SAME mechanical script so "apply + mark consumed" always runs through one code
+# Durable validation runner: pending-results delivery. Both readers (the SessionStart hook
+# and `govern-validations.sh` on demand) call this SAME mechanical script so "apply + mark consumed" always runs through one code
 # path under one mutex. First scans every job dir under logs/govern/validations/<job>/ (owned by the
 # runner, ticket #5) for a terminal status.jsonl record, atomically emitting a pending-result.json
 # the first time one appears (mirrors escalations-emit-pending.sh's tmp+mv pattern), then applies
