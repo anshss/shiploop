@@ -32,7 +32,6 @@ GOVERNOR_DIR="$WS_ROOT/governor"
 PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
 WORKER_PROMPT_FILE="${GOVERN_WORKER_PROMPT_FILE:-$GOVERNOR_DIR/worker-prompt.md}"
-SUPERVISOR_PROMPT_FILE="${GOVERN_SUPERVISOR_PROMPT_FILE:-$GOVERNOR_DIR/supervisor-prompt.md}"
 # The live + parked queues live in one folder at the meta-repo root: queue/. Override QUEUE_DIR to
 # relocate the whole folder; the individual GOVERN_*_FILE overrides still win per-file (the tests
 # point them at temp dirs).
@@ -711,7 +710,7 @@ govern::kill_tree() { # leader_pid [grace_s=5]
 
 # ── TokenJam cross-session run tagging (OTel resource attributes) ────────────
 # Build the OTEL_RESOURCE_ATTRIBUTES string for a governor-spawned claude session so TokenJam groups
-# EVERY session of one run (per-ticket workers + supervisor + self-improve) under a single
+# EVERY session of one run (per-ticket workers and any other governor-spawned session) under a single
 # `tokenjam.run_id` "Run". APPENDS to any INHERITED attributes (an onboarding / per-terminal claude
 # wrapper may already set service.name / service.namespace / service.instance.id) — never clobbering
 # them. The run id comes from TJ_RUN_ID, if an operator or an outside wrapper set it (nothing in this
@@ -1924,7 +1923,7 @@ govern::collect_ticket_prs() {
   done || true
   # The loop's own exit status is the last iteration's `is_harness_repo && harness_pr_verify` chain —
   # 1 whenever the ticket's rows include no harness repo (the common case). Under a caller's `set -e`
-  # (govern-supervise.sh, resolve-ticket.sh, this file's own test suite) that nonzero would abort the WHOLE
+  # (resolve-ticket.sh, this file's own test suite) that nonzero would abort the WHOLE
   # calling script right here, before this function's own `return 0` below ever runs — the `|| true`
   # neutralizes the loop's exit status so callers always see a clean 0 from this function regardless
   # of whether a harness row was found.

@@ -28,7 +28,7 @@ Which part of the harness does the bug live in? Pick the closest.
 
 - [ ] `scaffold.sh` — scaffolding a fresh or existing workspace
 - [ ] `commands/*.md` — a slash command's behavior (`setup`, `update`, `govern`, `flows`, `push`)
-- [ ] `templates/govern/` — the governor driver, ticket selector, merge-PR, supervisor
+- [ ] `templates/govern/` — the governor driver, ticket selector, merge-PR
 - [ ] `templates/worktree/` — worktree allocation, slots, ports
 - [ ] `templates/githooks/` — `pre-push`, `prepare-commit-msg`, `pre-commit`
 - [ ] `templates/hooks/` — SessionStart / UserPromptSubmit / PreToolUse / Stop / SessionEnd

@@ -4,8 +4,8 @@
 # deploy-ids, and heartbeat age (a terminal job
 # shows its verdict instead of a heartbeat, since the runner stops touching the heartbeat once it
 # writes the terminal record). On-demand checks also double as an adoption pass — by default this
-# scans + applies any unconsumed pending-results on the way (same mutex-serialized path the supervisor
-# and SessionStart-hook readers use), so asking "what's running?" also adopts whatever just finished.
+# scans + applies any unconsumed pending-results on the way (same mutex-serialized path the
+# SessionStart-hook reader uses), so asking "what's running?" also adopts whatever just finished.
 # Pass --no-apply for a read-only peek.
 #
 # Usage: govern-validations.sh [--no-apply]

@@ -65,7 +65,7 @@ scripts/govern/govern-bookkeep.sh
 # pre-spawn gate the loop ran (including the failure-streak breaker, ported verbatim), a worker runs
 # one item, and resolve-ticket.sh awaits CI, merges and lands. The `govern` npm script that pointed
 # at run-loop.sh is dropped from scaffold.sh in the same release; govern:dry-run, govern:resolve,
-# govern:pre-dispatch and govern:audit are unaffected.
+# govern:pre-dispatch are unaffected.
 scripts/govern/run-loop.sh
 scripts/govern/govern-improve.sh
 scripts/govern/govern-improve-triage.sh
@@ -104,3 +104,9 @@ scripts/govern/test/test-record-escalation-answer.sh
 # the cache was never written and those reads always returned nothing. govern::ticket_paths and
 # staleness-gate.sh, its two callers, now resolve purely from the ticket's explicit `**Files:**` field.
 scripts/govern/scout-ticket.sh
+
+# 2026-10-03: the manual supervisor audit had no caller (no hook, dispatch step or resolve path ran
+# it, and nothing read its halt verdict). Its script and prompt template are both shiploop-owned
+# (scaffold.sh refreshed the prompt on every writer run), so neither holds operator data.
+scripts/govern/govern-supervise.sh
+governor/supervisor-prompt.md

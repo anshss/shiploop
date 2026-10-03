@@ -54,8 +54,7 @@ is not a detached process making its own connection.
 - `pending-escalations.json` — machine-readable driver→relay hand-off of the unanswered `## Open`
   entries (regenerated at SessionStart by `templates/hooks/session-reconcile.sh`; gitignored runtime
   state).
-- `worker-prompt.md` / `supervisor-prompt.md`: the templates workers run / the manual audit
-  (`npm run govern:audit`) runs.
+- `worker-prompt.md`: the template workers run.
 - `improvements.md`, operator-maintained notes on harness friction (no automated pipeline writes to
   it any more; the retired self-improvement lane used to).
 - `decisions-log.md` — append-only record of dated operator decisions (audit / continuity reference);
@@ -124,8 +123,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
   `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
   `--verdict`/`--score` modes are deleted. `haiku` runs the scout survey by default
-  (`GOVERN_SCOUT_MODEL`); the supervisor audit defaults to `sonnet` (`GOVERN_SUPERVISOR_MODEL`).
-  Neither is a ticket-work tier.
+  (`GOVERN_SCOUT_MODEL`); it is not a ticket-work tier.
 - Tickets do **not** carry effective `Model:` / `Effort:` fields. An entry still holding them is
   inert: ignored, never an error, because a filing-time guess is made before any evidence exists.
   `GOVERN_MEASURED_SIZING=0` restores the old precedence in which those fields win.
@@ -160,7 +158,7 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   failures. The sonnet capability-failure rate, the one quantity that could justify or refute an
   escalation rail, does not exist in the data.
 - **A session may never spawn above its own tier.** Every `--model` the harness assembles (worker,
-  scout, supervisor, sync porter) is clamped to `max(opus, the model of the
+  scout, sync porter) is clamped to `max(opus, the model of the
   session that spawned it)`. Opus is the FLOOR of that ceiling, not the ceiling itself, so a haiku or
   sonnet driver can still be configured to dispatch opus; what the rail forbids is a driver
   buying a tier ABOVE the one it is itself running at, which is the only way a cheap session could
@@ -198,12 +196,6 @@ breaker (`GOVERN_MAX_TICKET_FAILS`, default 2 consecutive failed/timed-out/budge
 files an escalation and stops re-spawning that ONE ticket rather than retrying it forever.
 - `GOVERN_WORKER_TIMEOUT` (3600s) — per-worker wall-clock; a stuck/offline worker is killed, not left
   to stall. `0` = unbounded.
-- No periodic supervisor sits on this path. `govern-supervise.sh` is a manual audit
-  (`npm run govern:audit -- <run-dir>`) that reads `<run-dir>/state.jsonl`; it costs zero model spend
-  otherwise. Nothing in the session lane writes `state.jsonl` any more, that was the retired
-  run-level driver's own bookkeeping, so this audit currently has no live input to read. Treat it as
-  not wired up until its input is replaced with something the session lane still writes (`ticket-history.jsonl`,
-  `governor/events.jsonl`).
 
 ## Upstream-drift pre-gate (`GOVERN_PREGATE_DRIFT`, default `1` = on)
 
@@ -394,7 +386,7 @@ hooks now, so each one that would misfire inside a worker session self-exempts i
 The automated observe → propose → triage → guarded-auto-apply pipeline (`govern-improve.sh` /
 `govern-improve-triage.sh` / `govern-self-apply.sh`) was retired along with the run-level driver that
 fired it once per run. `governor/improvements.md` is now plain operator-maintained notes on harness
-friction: nothing reads a parked/failed ticket or a supervisor concern and proposes a fix to it
+friction: nothing reads a parked/failed ticket and proposes a fix to it
 automatically, and nothing applies one either. Write to it by hand when you notice friction worth
 fixing, and safety rails (hard-stops, per-worker bounds, permission gate, merge allowlist) stay
 exactly as change-controlled as everything else in this repo.

@@ -177,7 +177,7 @@ assert_contains "$out2" "nothing to apply" "second apply is a no-op (idempotent)
 # apply-answers regenerates a clean count that reflects the current escalations.md truth, not the
 # stale snapshot. This is the "crashed prior run / manual resolution left pending stale" recovery.
 cat > "$T/pending.json" <<'EOF'
-{"generatedAt":0,"run":"ghost","count":3,"escalations":[{"ticket":999,"title":"ghost","reason":"not real","question":"n/a","options":""}],"supervisorConcerns":[]}
+{"generatedAt":0,"run":"ghost","count":3,"escalations":[{"ticket":999,"title":"ghost","reason":"not real","question":"n/a","options":""}]}
 EOF
 env "${env_common[@]}" bash "$APPLY" >/dev/null 2>&1
 recovered_count="$(jq -r '.count' "$T/pending.json")"
