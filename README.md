@@ -55,7 +55,7 @@ How a named ticket actually ships, in one pass:
 
 - **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket.
 
-## The dispatch flow
+## Dispatch flow
 
 You name the tickets, and the coordination happens almost entirely outside Claude. A small check runs before anything starts, and another step waits for CI, merges, and completes the ticket. Claude only uses tokens for the actual work in between. Every dispatch checks the same gates: claim lock, dependencies, staleness, base CI, upstream changes, and recent failures.
 
