@@ -81,7 +81,7 @@ agents". In shiploop they mean exactly this:
 | Term | Definition |
 |---|---|
 | **driver** | Your interactive Claude Code session, acting as the advisor. It decides what a change is, writes that down as the ticket's `**Proposed solution:**`, dispatches a worker to implement it, and steers that worker mid-run. It delegates reading and execution to children rather than bulk-reading product source itself. |
-| **worker** | The one subagent type that takes a ticket: `Agent(subagent_type: "worker")`, running at sonnet in a worktree it creates itself, ending at an open PR plus a JSON report (`resolved`, `parked` or `failed`). Only this type is ever called a worker, and ticket-shaped work goes only to it. |
+| **worker** | The one subagent type that takes a ticket: `Agent(subagent_type: "worker")`, working in a worktree it creates itself, ending at an open PR plus a JSON report (`resolved`, `parked` or `failed`). Only this type is ever called a worker, and ticket-shaped work goes only to it. |
 | **subagent** | The platform's term for any Agent-tool child, the worker included. The other shipped types are `lookup` (haiku, single-fact lookups) and `investigator` (sonnet, multi-file diagnosis). |
 | **governor** | The script layer under `scripts/govern/`. `pre-dispatch-check.sh` gates a ticket (`proceed`, `skip:` or `refuse:`); `resolve-ticket.sh` waits for CI, merges, and records the resolution in the ticket file. That path never calls a model. Deciding *when* to run it is the driver's job. |
 
