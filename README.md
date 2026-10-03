@@ -84,7 +84,6 @@ agents". In shiploop they mean exactly this:
 | **worker** | The one subagent type that takes a ticket: `Agent(subagent_type: "worker")`, running at sonnet in a worktree it creates itself, ending at an open PR plus a JSON report (`resolved`, `parked` or `failed`). A failed worker gets one retry at opus. Only this type is ever called a worker, and ticket-shaped work goes only to it. |
 | **subagent** | The platform's term for any Agent-tool child, the worker included. The other shipped types are `lookup` (haiku, single-fact lookups) and `investigator` (sonnet, multi-file diagnosis). |
 | **governor** | The script layer under `scripts/govern/`. `pre-dispatch-check.sh` gates a ticket (`proceed`, `skip:` or `refuse:`); `resolve-ticket.sh` waits for CI, merges, and records the resolution in the ticket file. That path never calls a model. Deciding *when* to run it is the driver's job. |
-| **supervisor** | A manual audit of a run's state (`npm run govern:audit`). It makes one read-only `claude -p` call at `GOVERN_SUPERVISOR_MODEL` (default sonnet) and returns `ok`, `concerns` or `halt`. It never edits code, and nothing on the dispatch path runs it. |
 
 ## Commands
 
