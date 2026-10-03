@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.20.0 - 2026-10-03
+
+### Removed
+
+**The manual supervisor audit is gone: `govern-supervise.sh`, `npm run govern:audit`, and
+`governor/supervisor-prompt.md`.** Nothing called it: no hook, dispatch step or resolve path ran
+the audit, and nothing read its halt verdict. The `GOVERN_SUPERVISOR_MODEL` knob and the
+`supervisorConcerns` field of `pending-escalations.json` go with it. Both removed files are listed in
+the purge manifest, so `/shiploop:update` deletes them from an existing workspace. Neither holds
+operator data.
+
+### Changed
+
+**The README glossary matches the shipped code.** The governor row no longer claims the script layer
+never calls a model (only the gate, resolve and land path is model-free), the scout row no longer
+describes a deleted pass, the subagent and worker rows no longer contradict each other, the driver
+row names its advisor role, and the worker row names no model and no tier escalation. The command
+table drops `govern:audit`, `govern:context-budgets` and `govern:trim`.
+
 ## 1.19.13 - 2026-09-24
 
 ### Added
