@@ -53,11 +53,11 @@ How a named ticket actually ships, in one pass:
 
 - **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker instead. This lane is off by default.
 
-- **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this through `npm run vf -- <cmd>` and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
+- **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
 
 - **A watchdog stops runaway sessions.** It enforces a time limit, while separate stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
 
-- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket.
+- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path, exploring an area once instead of once per ticket.
 
 - **Workers run lean.** Each worker gets only the tools it needs.
 
