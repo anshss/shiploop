@@ -47,6 +47,10 @@ How a named ticket actually ships, in one pass:
 
 - **Every worker shares a scripted codebase map.** A worker is a single-ticket session that reads the code and does the job. Pre-dispatch scripts index files, symbols, and structure, so a worker does not have to rediscover the repository from scratch. Retries inherit the prior attempt's findings, and manual audits read only what changed.
 
+- **Memory self-improves.** Resolved tickets add lessons to CLAUDE.md which they learned with failures, which is re-sent on every turn. Entries are capped, the file has a budget, and overflow moves to an appendix.
+
+- **Model orchestration.** The costly mistake is asking low-cost workers to rediscover a solution at the wrong tier. A high-tier session must turn the change into a proposed solution before dispatch; the lower-cost worker implements it in an isolated worktree and stops at a PR.
+
 - **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker instead. This lane is off by default.
 
 - **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this through `npm run vf -- <cmd>` and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
@@ -54,6 +58,10 @@ How a named ticket actually ships, in one pass:
 - **A watchdog stops runaway sessions.** It enforces a time limit, while separate stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
 
 - **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path (`**Files:**`), exploring an area once instead of once per ticket.
+
+- **Workers run lean.** Each worker gets only the tools it needs.
+
+- **Retries resume instead of restart.** Failed workers keep their findings and worktree, avoiding another clone and repeated exploration.
 
 ## Dispatch flow
 
