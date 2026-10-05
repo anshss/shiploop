@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-Shiploop is a harness for Claude Code. Most tools compress what Claude reads.  <br> 
-Shiploop changes how each session runs: which model handles the work, what context it gets, and how much runs in parallel.
+Shiploop is a harness for Claude Code that makes you build faster.  <br> 
+Shiploop gives each task the right model, context, and execution path so Claude can ship more work with less wasted effort.
 </p>
 
 ## Get Started
@@ -38,30 +38,29 @@ You launch regular Claude Code sessions to build your project. What comes out of
 
 How a named ticket actually ships, in one pass:
 
-1. Each ticket gets a fresh **worker**: a trim, single-ticket session in its own Git worktree, so parallel tickets can never collide or inherit each other's state. It reads only what that ticket needs, makes the change, opens a pull request, and writes a short report.
-2. Advisor-worker orchestration. An interactive Claude session becomes an advisor and spawns subagents in right-sized models. A classified judgment failure in a subagent raises reasoning effort and files a re-specification request for the advisor.
-3. When a ticket resolves, it leaves a short lesson in CLAUDE.md, which every later session reads, so the next worker starts a little smarter.
+1. Each ticket gets a fresh worker in its own Git worktree. It reads only what it needs, makes the change, opens a pull request, and reports the result. Parallel tickets never collide or inherit each other’s state.
+2. Advisor-worker orchestration. An interactive Claude session acts as the advisor and delegates work to subagents using the right model for each task. If a subagent hits a judgment failure, it increases reasoning effort and sends the issue back to the advisor for re-specification.
+3. Memory improves over time. Resolved tickets leave short lessons in CLAUDE.md, which later sessions read so each new worker starts with what the system has already learned.
 
+### Core Idea
 
-### Other mechanisms
+- **Multi-repo workspace.** Multiple repos can be driven as one workspace from a single terminal.
 
-- **Every worker shares a scripted codebase map.** A worker is a single-ticket session that reads the code and does the job. Pre-dispatch scripts index files, symbols, and structure, so a worker does not have to rediscover the repository from scratch. Retries inherit the prior attempt's findings, and manual audits read only what changed.
+- **Advisor + workers.** One advisor session thinks and plans. Workers do the coding, each in its own git worktree, so parallel work does not collide.
 
-- **Memory self-improves.** Resolved tickets add lessons to CLAUDE.md which they learned with failures, which is re-sent on every turn. Entries are capped, the file has a budget, and overflow moves to an appendix.
+- **Persistent context.** Manages context across sessions, preserving learnings from failures and allowing retries to resume instead of starting over.
 
-- **Model orchestration.** The costly mistake is asking low-cost workers to rediscover a solution at the wrong tier. A high-tier session must turn the change into a proposed solution before dispatch; the lower-cost worker implements it in an isolated worktree and stops at a PR.
+- **Model orchestration.** Matches work to the right model tier, with higher-tier sessions planning solutions and lower-cost workers handling implementation.
 
-- **Routine changes skip the model.** Shiploop detects mechanical work during its survey, applies it deterministically, and verifies it. Ambiguous, unsafe, or unverified work goes to a normal worker instead. This lane is off by default.
+- **Deterministic work.** Identifies work that can be handled deterministically and skips the model when it can.
 
-- **Successful output stays out of the transcript.** Green test output adds little value, so it is omitted; failures are trimmed to the useful excerpt. CI logs work the same way. The interactive driver exposes this and can delegate lookup or multi-file diagnosis to lookup and investigator agents.
+- **Task queue.** Every task is written to a queue file first, so work is not lost if a session dies.
 
-- **A watchdog stops runaway sessions.** It enforces a time limit, while separate stall, identical-command-loop, and tool-error-rate checks measure whether the child is making progress. The worktree is kept so work can resume rather than restart. Both controls are independently configurable.
+- **Shared codebase knowledge.** Workers share codebase knowledge, avoid repeated exploration, stay lean, and filter noise from successful runs.
 
-- **Related work can share exploration.** A worker can handle a named group of tickets that share a measured file path, exploring an area once instead of once per ticket.
+- **Parallel exploration.** Related tasks can share exploration instead of repeatedly rediscovering the same part of the codebase.
 
-- **Workers run lean.** Each worker gets only the tools it needs.
-
-- **Retries resume instead of restart.** Failed workers keep their findings and worktree, avoiding another clone and repeated exploration.
+- **Runaway protection.** Watchdogs detect stalled or runaway sessions while preserving the worktree so work can resume.
 
 ## Dispatch flow
 
