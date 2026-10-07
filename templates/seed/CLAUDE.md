@@ -49,6 +49,12 @@
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
 
+5. **A turn that needs the operator ends with the whole ask, written for someone who skipped the
+   thread.** One or two lines of what got done. Then each decision, numbered: what it is in plain
+   words, what yes and what no each change, and your pick. Then what happens next regardless, with
+   dates, and how to answer (`1 yes, 2 no`). Bookkeeping, hook output and agent chatter never stand in
+   for it: if a Stop-hook turn runs after the ask, repeat the block in full.
+
 ## Ask before a sweep or a fan-out
 
 **Routine delegation needs no permission.** One worker on one ticket, a lookup, an investigation
