@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.20.1 - 2026-10-07
+
+### Changed
+
+**A turn that needs the operator now ends with the whole ask.** The Stop-hook ticket sweep used to
+tell the agent "nothing to file, say so in one line and stop", so a hook-forced bookkeeping turn
+became the last message the operator read and buried the decision the session was waiting on. The
+sweep now requires the full ask at the end of that reply whenever anything is still pending, and the
+seed `CLAUDE.md` (How to operate, rule 5) defines its shape: what got done, each decision numbered
+with what yes and no change and the agent's pick, what happens next with dates, and how to answer.
+An unedited workspace `CLAUDE.md` picks the rule up on `/shiploop:update`; a customized one keeps
+its own text, so add rule 5 by hand there.
+
 ## 1.20.0 - 2026-10-03
 
 ### Removed

@@ -314,7 +314,11 @@ that\") binds here too. \
 (2) RESOLVED: for any ticket whose fix PR you opened this session, delete it from tickets.md now; \
 promote a durable lesson to CLAUDE.md first only if settled/new/<=3 lines (else CLAUDE-APPENDIX.md); \
 name the PR# in the deletion commit. \
-Nothing to file/delete -> say so in one line and stop. Bookkeeping only, no new work."
+Nothing to file/delete -> say so in one line. Bookkeeping only, no new work. \
+If anything from this session still needs the operator, END this reply with the full operator ask \
+(the shape CLAUDE.md defines: what got done, numbered decisions with what yes/no each change and your \
+pick, what happens next, how to answer). This reply is the last thing they read, so a one-line \
+pointer back at the thread is not an ask."
 
 # JSON-escape the reason and emit the block decision.
 esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
