@@ -316,7 +316,7 @@ promote a durable lesson to CLAUDE.md first only if settled/new/<=3 lines (else 
 name the PR# in the deletion commit. \
 Nothing to file/delete -> say so in one line. Bookkeeping only, no new work. \
 If anything from this session still needs the operator, END this reply with the full operator ask \
-(CLAUDE.md, How to operate: what got done, numbered decisions with what yes/no each change and your \
+(the shape CLAUDE.md defines: what got done, numbered decisions with what yes/no each change and your \
 pick, what happens next, how to answer). This reply is the last thing they read, so a one-line \
 pointer back at the thread is not an ask."
 
