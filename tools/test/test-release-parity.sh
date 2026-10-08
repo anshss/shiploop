@@ -232,6 +232,47 @@ assert_eq "$rc" "0" "10. releaseless tag below the floor → exit 0"
 assert_contains "$out" "predate the release convention" "10. says why it was not checked"
 assert_contains "$out" "1 tag(s) below" "10. counts the skipped tag"
 
+# ── 11. RELEASE_PARITY_POST_WAIT: a push run that starts before the tag exists ─────────────
+# 11a. The tag appears (as a release cut after merge would) while the check is waiting: with
+# WAIT > 0 the retry passes, with WAIT = 0 the same fixture fails on the single shot.
+d="$(mk_fixture f11a-tag-arrives 2.0.0 "$CHANGELOG_2ONLY")"
+out="$(RELEASE_PARITY_POST_WAIT=0 run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n')"
+rc=$?
+assert_eq "$rc" "1" "11a. WAIT=0 with no tag yet → exit 1"
+assert_contains "$out" "no matching tag" "11a. WAIT=0 names the missing tag"
+( sleep 2; tag_head "$d" v2.0.0 ) >/dev/null 2>&1 &
+late_tag_pid=$!
+out="$(RELEASE_PARITY_POST_WAIT=15 RELEASE_PARITY_POST_POLL=1 run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n')"
+rc=$?
+wait "$late_tag_pid" 2>/dev/null
+assert_eq "$rc" "0" "11a. WAIT>0 passes once the tag arrives → exit 0"
+assert_contains "$out" "note - post checks failed on attempt 1" "11a. prints a retry note"
+case "$out" in
+  *"::error::"*) printf 'FAIL - 11a. a passing final attempt must not print ::error:: lines\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS + 1)) ;;
+  *) printf 'ok   - 11a. no ::error:: lines from earlier attempts\n' ;;
+esac
+
+# 11b. A fixture that never becomes consistent still fails after the wait elapses.
+d="$(mk_fixture f11b-never-tagged 2.0.0 "$CHANGELOG_2ONLY")"
+start=$SECONDS
+out="$(RELEASE_PARITY_POST_WAIT=3 RELEASE_PARITY_POST_POLL=1 run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n')"
+rc=$?
+elapsed=$((SECONDS - start))
+assert_eq "$rc" "1" "11b. permanently inconsistent fixture → exit 1 after the wait"
+assert_contains "$out" "::error::VERSION (2.0.0) has no matching tag" "11b. final attempt reports the error"
+assert_contains "$out" "release-parity --post checks failed" "11b. final summary printed"
+if [ "$elapsed" -ge 3 ]; then
+  printf 'ok   - 11b. waited the full %ss before giving up\n' "$elapsed"
+else
+  printf 'FAIL - 11b. gave up after %ss, before WAIT=3 elapsed\n' "$elapsed"; ASSERT_FAILS=$((ASSERT_FAILS + 1))
+fi
+
 echo ""
 if [ "$ASSERT_FAILS" -eq 0 ]; then
   echo "ok - all test-release-parity.sh assertions passed"

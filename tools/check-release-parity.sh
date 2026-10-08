@@ -44,6 +44,15 @@
 #                 nothing else (trimmed). Same class of bug as v1.12.0's release body
 #                 absorbing a stale "## Unreleased" block, generalized past that one incident
 #
+#           RELEASE_PARITY_POST_WAIT (seconds, default 0) makes --post wait for a release that
+#           is still being cut. A release here is cut AFTER the merge, so a push run can start
+#           before the tag and release exist. With WAIT > 0 a failing run refetches tags
+#           (`git fetch --tags --force --quiet origin`, a failed fetch is ignored so fixture
+#           trees with no remote still work) and re-runs the whole check every
+#           RELEASE_PARITY_POST_POLL seconds (default 20) until it passes or WAIT elapses. Each
+#           retry prints one `note -` line; only the final attempt's output and exit status
+#           count. WAIT=0 is a single shot.
+#
 # All GitHub reads go through `gh`, authenticated via the workflow's GITHUB_TOKEN
 # (`gh release list --json tagName,isDraft`, `gh release view <tag> --json body`). Never
 # auto-publishes anything: release notes stay hand-curated, and this only fails loudly. Exits 0
@@ -316,6 +325,32 @@ check_post() {
   return "$fail"
 }
 
+# Runs check_post once; with RELEASE_PARITY_POST_WAIT > 0, keeps re-running it (after a tag
+# refetch) every RELEASE_PARITY_POST_POLL seconds until it passes or the wait elapses. Output
+# of an attempt is held back and printed only when it is the final one.
+post_with_wait() {
+  local wait="${RELEASE_PARITY_POST_WAIT:-0}" poll="${RELEASE_PARITY_POST_POLL:-20}"
+  case "$wait" in ''|*[!0-9]*) wait=0 ;; esac
+  case "$poll" in ''|*[!0-9]*) poll=20 ;; esac
+  [ "$poll" -lt 1 ] && poll=1
+  local deadline=$((SECONDS + wait)) attempt=1 out arc remaining nap
+  while true; do
+    arc=0
+    out="$(check_post 2>&1)" || arc=$?
+    if [ "$arc" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then
+      printf '%s\n' "$out"
+      return "$arc"
+    fi
+    remaining=$((deadline - SECONDS))
+    nap="$poll"
+    [ "$remaining" -lt "$nap" ] && nap="$remaining"
+    echo "note - post checks failed on attempt $attempt; refetching tags and retrying in ${nap}s (waiting up to ${wait}s for the release to be cut)"
+    sleep "$nap"
+    git fetch --tags --force --quiet origin >/dev/null 2>&1 || true
+    attempt=$((attempt + 1))
+  done
+}
+
 # `check_pre; rc=$?` would never reach the assignment: under `set -e` a function returning
 # non-zero aborts the script, and the ::error:: summary below would be lost. `|| rc=$?` is
 # the exempt form.
@@ -323,7 +358,7 @@ rc=0
 if [ "$MODE" = "--pre" ]; then
   check_pre || rc=$?
 else
-  check_post || rc=$?
+  post_with_wait || rc=$?
 fi
 
 if [ "$rc" -ne 0 ]; then
