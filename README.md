@@ -38,7 +38,7 @@ You launch regular Claude Code sessions to build your project. What comes out of
 
 How a named ticket actually ships, in one pass:
 
-1. Each ticket gets a fresh worker in its own Git worktree. It reads only what it needs, makes the change, opens a pull request, and reports the result. Parallel tickets never collide or inherit each other’s state.
+1. Each ticket gets a fresh worker, a single-ticket session in its own Git worktree. It reads only what it needs, makes the change, opens a pull request, and reports the result. Parallel tickets never collide or inherit each other’s state.
 2. Advisor-worker orchestration. An interactive Claude session acts as the advisor and delegates work to subagents using the right model for each task. If a subagent hits a judgment failure, it increases reasoning effort and sends the issue back to the advisor for re-specification.
 3. Memory improves over time. Resolved tickets leave short lessons in CLAUDE.md, which later sessions read so each new worker starts with what the system has already learned.
 

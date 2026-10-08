@@ -415,4 +415,7 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A push run can start before the post-merge release is cut, so it waits for the tag.
+          # The daily schedule does not wait: by then a missing tag is real drift.
+          RELEASE_PARITY_POST_WAIT: ${{ github.event_name == 'push' && '300' || '0' }}
         run: bash tools/check-release-parity.sh --post

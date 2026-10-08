@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.20.2 - 2026-10-08
+
+### Fixed
+
+**The README defines "worker" again on first use.** A rewrite of the "How it works" list dropped the
+appositive, so the vocabulary test failed on every push to main. The first mention now reads
+"a fresh worker, a single-ticket session in its own Git worktree".
+
+**The post-merge release-parity check waits for the release to be cut.** A release here is cut after
+the merge, so the push-to-main run could start before the tag existed and fail on a release that was
+seconds from published. `tools/check-release-parity.sh --post` now honors
+`RELEASE_PARITY_POST_WAIT` (seconds, default 0) and `RELEASE_PARITY_POST_POLL` (seconds, default 20):
+on failure it refetches tags and re-runs the whole check until it passes or the wait elapses, and only
+the final attempt's result counts. The push run waits up to 300 seconds; the daily schedule does not
+wait, since a missing tag by then is real drift.
+
 ## 1.20.1 - 2026-10-07
 
 ### Changed
