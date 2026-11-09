@@ -70,10 +70,24 @@ PRIMARY="${TICKET_NUMS[0]}"
 WORKTREE_PATH="$WS_ROOT"
 
 # ── ticket text helpers ──────────────────────────────────────────────────────────────────────────
-ticket_heading() { # N -> heading text, "" if the ticket isn't in TICKETS_FILE
-  local n="$1"
-  grep -m1 -E "^##[[:space:]]+#$n([^0-9]|\$)" "$TICKETS_FILE" 2>/dev/null \
-    | sed -E "s/^##[[:space:]]+#${n}[[:space:]]*(—|-|,)?[[:space:]]*//"
+# A worker's worktree branches from origin/main BEFORE its ticket is filed on main, so the worktree's
+# own queue/tickets.md usually lacks the heading. Resolve headings from the MAIN checkout's queue (the
+# parent of the shared git-common-dir), which is authoritative. An explicit GOVERN_TICKETS_FILE
+# (hermetic tests, manual override) always wins, and every failure path falls back to the local
+# TICKETS_FILE instead of aborting.
+authoritative_tickets_file() {
+  if [[ -n "${GOVERN_TICKETS_FILE:-}" ]]; then printf '%s' "$GOVERN_TICKETS_FILE"; return 0; fi
+  local common main
+  common="$(git -C "$WS_ROOT" rev-parse --git-common-dir 2>/dev/null)" || { printf '%s' "$TICKETS_FILE"; return 0; }
+  case "$common" in /*) : ;; *) common="$WS_ROOT/$common" ;; esac
+  main="$(cd "$(dirname "$common")" 2>/dev/null && pwd)" || { printf '%s' "$TICKETS_FILE"; return 0; }
+  if [[ -f "$main/queue/tickets.md" ]]; then printf '%s' "$main/queue/tickets.md"; else printf '%s' "$TICKETS_FILE"; fi
+}
+ticket_heading() { # N -> heading text, "" (exit 0) when the ticket isn't in the authoritative queue
+  local n="$1" file
+  file="$(authoritative_tickets_file)"
+  grep -m1 -E "^##[[:space:]]+#$n([^0-9]|\$)" "$file" 2>/dev/null \
+    | sed -E "s/^##[[:space:]]+#${n}[[:space:]]*(—|-|,)?[[:space:]]*//" || true
 }
 # A ticket number must never survive into a git commit message (unlike a PR, a pushed commit can't
 # be edited after the fact), so strip every named ticket's "#N" out of caller-supplied --title/--body
