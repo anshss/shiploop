@@ -10,6 +10,9 @@
 #   4. --overwrite-local-edits restores the old overwrite (and drops the stale .shiploop-new)
 #   5. check-manifests `mechanism-hashes-current` fails when a current mechanism file's hash is
 #      missing from the manifest (positive control: passes on the untouched copy)
+#   7. the keep is PER COMPONENT: when one file of a component is locally edited, a sibling that
+#      equals an OLD shipped version is kept too (with .shiploop-new), never half-upgraded; a
+#      component with only old-shipped versions still upgrades
 #   6. the same holds for a worktrees and a core-scripts file, not only govern
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,6 +106,37 @@ assert_not_contains "$(cat "$LOG")" "KEPT" "2. no kept summary on a clean upgrad
 printf '\n# my fix\n' >> "$W/$F"
 run_scaffold "$W" "$T2" --component govern
 assert_contains "$(tail -c 100 "$W/$F")" "my fix" "2. edit on top of the upgraded version is kept"
+
+# ── 7. the keep decision is per COMPONENT ───────────────────────────────────────────
+# T3 = a newer hub whose worktree/status.sh and worktree/rm.sh both changed. The workspace holds
+# the previously shipped (recorded) status.sh; rm.sh is edited locally.
+T3="$ROOT/tpl3"; cp -R "$TEMPLATES" "$T3"
+printf '\n# newer hub status\n' >> "$T3/worktree/status.sh"
+printf '\n# newer hub rm\n' >> "$T3/worktree/rm.sh"
+W7="$ROOT/ws7"; cp -R "$W" "$W7"
+run_scaffold "$W7" "$TEMPLATES" --component worktrees --overwrite-local-edits   # clean baseline
+cp "$W7/scripts/worktree/status.sh" "$ROOT/status-old"
+printf '\n# LOCAL FIX in rm\n' >> "$W7/scripts/worktree/rm.sh"
+run_scaffold "$W7" "$T3" --component worktrees
+out="$(cat "$LOG")"
+cmp -s "$W7/scripts/worktree/status.sh" "$ROOT/status-old" && r=kept || r=upgraded
+assert_eq "$r" "kept" "7. old-shipped sibling is KEPT, not half-upgraded, next to a locally edited file"
+cmp -s "$W7/scripts/worktree/status.sh.shiploop-new" "$T3/worktree/status.sh" && r=hub || r=other
+assert_eq "$r" "hub" "7. the kept sibling gets its .shiploop-new"
+assert_contains "$(tail -c 100 "$W7/scripts/worktree/rm.sh")" "LOCAL FIX in rm" "7. the locally edited file is kept"
+assert_contains "$out" "worktrees: kept 2 file(s)" "7. summary names the component and count"
+assert_contains "$out" "status.sh kept with them" "7. summary says the sibling was kept with the edited files"
+# Control: a component with only old-shipped versions still upgrades.
+W8="$ROOT/ws8"; cp -R "$W" "$W8"
+run_scaffold "$W8" "$TEMPLATES" --component worktrees --overwrite-local-edits
+run_scaffold "$W8" "$T3" --component worktrees
+cmp -s "$W8/scripts/worktree/status.sh" "$T3/worktree/status.sh" && r=upgraded || r=stale
+assert_eq "$r" "upgraded" "7. a component with only old-shipped versions still upgrades"
+assert_not_contains "$(cat "$LOG")" "KEPT" "7. and prints no kept summary"
+# --overwrite-local-edits still overwrites the whole component.
+run_scaffold "$W7" "$T3" --component worktrees --overwrite-local-edits
+cmp -s "$W7/scripts/worktree/rm.sh" "$T3/worktree/rm.sh" && r=hub || r=local
+assert_eq "$r" "hub" "7. --overwrite-local-edits overwrites every file of the component"
 
 # ── 5. manifest check fails when a current mechanism hash is missing ────────────────
 H2="$ROOT/hub2"; mkdir -p "$H2"

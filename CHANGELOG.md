@@ -8,10 +8,12 @@
 (#232).** `core-scripts`, `worktrees` and `govern` installed every script with a bare `cp`, so a
 converge replaced local edits with the hub's version and said nothing; one workspace lost fixes to
 about 37 scripts this way and found out weeks later from its own red tests. They now install through
-`mechanism_install`, the same idea seeds already used: an absent file is copied, a byte-identical one
+`mechanism_install_component`, the same idea seeds already used: an absent file is copied, a byte-identical one
 is skipped, and a file whose sha256 is a version shiploop ever shipped
 (`templates/lib/mechanism-hashes.txt`, built by `tools/gen-mechanism-hashes.sh` from git history) is
-provably unedited and upgraded. Any other file carries local edits: it is KEPT, the hub's version is
+provably unedited and upgraded. Any other file carries local edits, and the keep is per component: when any file of a component has
+local edits, every file of that component that differs from the hub is KEPT (a sibling equal to an
+older shipped version is kept with them, so a component is never half hub, half local). Each kept file gets the hub's version
 written beside it as `<file>.shiploop-new` (same mode; `*.shiploop-new` is in the gitignore
 template), and the run ends with one `KEPT N file(s) with LOCAL EDITS` block naming each. While any
 file is kept, `.harness-version` is not stamped, so the workspace keeps reading as behind. Merge the

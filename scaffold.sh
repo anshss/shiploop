@@ -381,60 +381,88 @@ mechanism_pristine() {
   grep -Fq "$h  $rel" "$manifest"
 }
 
-# Files a run kept because the workspace copy carries local edits (see mechanism_install).
+# Files a run kept because their component carries local edits (see mechanism_install_component).
 KEPT_COUNT=0
-KEPT_LIST=""
+KEPT_LIST=""       # one "<dest>" per line
+KEPT_SUMMARY=""    # one pre-formatted line per component
 
-# mechanism_install <template> <dest> <template-relative-path>
-#   dest absent                          -> copy
-#   byte-identical                       -> skip
-#   dest is a shipped version (pristine) -> overwrite (provably unedited)
-#   --overwrite-local-edits              -> overwrite
-#   otherwise (local edits)              -> KEEP dest, write the hub version beside it as
-#                                           <dest>.shiploop-new, record it for the loud summary
-mechanism_install() {
+# mechanism_state <template> <dest> <rel> — absent | identical | pristine | local
+#   pristine = differs from the hub but is byte-identical to a version shiploop shipped.
+mechanism_state() {
   local template="$1" dest="$2" rel="$3"
-  [ -f "$template" ] || return 0
-  mkdir -p "$(dirname "$dest")"
-  if [ ! -e "$dest" ]; then
-    cp "$template" "$dest"
-    return 0
+  if [ ! -e "$dest" ]; then echo absent
+  elif cmp -s "$dest" "$template"; then echo identical
+  elif mechanism_pristine "$dest" "$rel"; then echo pristine
+  else echo local
   fi
-  if cmp -s "$dest" "$template"; then
-    rm -f "$dest.shiploop-new"
-    return 0
-  fi
-  if [ "$OVERWRITE_LOCAL" -eq 1 ] || mechanism_pristine "$dest" "$rel"; then
-    cp "$template" "$dest"
-    rm -f "$dest.shiploop-new"
-    return 0
-  fi
+}
+
+# mechanism_keep <template> <dest> — leave dest alone, write the hub copy beside it, record it.
+mechanism_keep() {
+  local template="$1" dest="$2"
   cp "$template" "$dest.shiploop-new"
   if [ -x "$dest" ] || [ -x "$template" ]; then chmod +x "$dest.shiploop-new"; fi
   KEPT_COUNT=$((KEPT_COUNT+1))
   KEPT_LIST="${KEPT_LIST}${dest}"$'\n'
+}
+
+# mechanism_install_component <component> — the keep decision is PER COMPONENT, not per file.
+#   Classify every file first. If ANY file carries local edits (not identical, not a shipped
+#   version), KEEP every file of the component that differs from the hub, each with its
+#   <dest>.shiploop-new: upgrading only the pristine ones would leave a half-hub, half-local
+#   component that mixes versions which never ran together. A component with no local edits
+#   upgrades exactly as before (absent -> copy, identical -> skip, shipped version -> overwrite).
+#   --overwrite-local-edits overwrites everything.
+mechanism_install_component() {
+  local comp="$1" rel dest st
+  local rels=() dests=() states=() i n=0 has_local=0
+  while IFS=$'\t' read -r rel dest; do
+    [ -n "$rel" ] || continue
+    [ -f "$T/$rel" ] || continue
+    st="$(mechanism_state "$T/$rel" "$dest" "$rel")"
+    rels[$n]="$rel"; dests[$n]="$dest"; states[$n]="$st"; n=$((n+1))
+    [ "$st" = local ] && has_local=1
+  done < <(mechanism_map "$comp")
+  [ "$OVERWRITE_LOCAL" -eq 1 ] && has_local=0
+
+  local local_names="" with_names="" kept=0
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    rel="${rels[$i]}"; dest="${dests[$i]}"; st="${states[$i]}"
+    mkdir -p "$(dirname "$dest")"
+    case "$st" in
+      absent)    cp "$T/$rel" "$dest" ;;
+      identical) rm -f "$dest.shiploop-new" ;;
+      *)
+        if [ "$has_local" -eq 1 ]; then
+          mechanism_keep "$T/$rel" "$dest"; kept=$((kept+1))
+          if [ "$st" = local ]; then local_names="${local_names}${local_names:+, }$(basename "$dest")"
+          else with_names="${with_names}${with_names:+, }$(basename "$dest")"; fi
+        else
+          cp "$T/$rel" "$dest"; rm -f "$dest.shiploop-new"
+        fi ;;
+    esac
+    i=$((i+1))
+  done
+  if [ "$kept" -gt 0 ]; then
+    KEPT_SUMMARY="${KEPT_SUMMARY}${comp}: kept ${kept} file(s) (local edits in ${local_names}${with_names:+; ${with_names} kept with them})"$'\n'
+  fi
   return 0
 }
 
-# mechanism_install_component <component> — run mechanism_install over mechanism_map.
-mechanism_install_component() {
-  local rel dest
-  while IFS=$'\t' read -r rel dest; do
-    [ -n "$rel" ] || continue
-    mechanism_install "$T/$rel" "$dest" "$rel"
-  done < <(mechanism_map "$1")
-}
-
-# mechanism_kept_summary — one loud block naming every kept file. Called at the end of every run.
+# mechanism_kept_summary — one loud block naming every kept component and file. Called at the end of every run.
 mechanism_kept_summary() {
   [ "$KEPT_COUNT" -gt 0 ] || return 0
   {
     printf '\n'
     printf '!! ============================================================\n'
     printf '!! KEPT %d file(s) with LOCAL EDITS (not overwritten):\n' "$KEPT_COUNT"
+    printf '%s' "$KEPT_SUMMARY" | while IFS= read -r l; do [ -n "$l" ] && printf '!!   %s\n' "$l"; done
     printf '%s' "$KEPT_LIST" | while IFS= read -r f; do
-      [ -n "$f" ] && printf '!!   %s   (hub version written to %s.shiploop-new)\n' "$f" "$f"
+      [ -n "$f" ] && printf '!!     %s   (hub version in %s.shiploop-new)\n' "$f" "$f"
     done
+    printf '!! The keep is per component: when any file has local edits, every differing file of\n'
+    printf '!! that component is kept, so the component never mixes hub and local versions.\n'
     printf '!! Merge each (diff <file> <file>.shiploop-new), or port your edit upstream with\n'
     printf '!! /shiploop:push, then delete the .shiploop-new. The workspace is NOT stamped as\n'
     printf '!! converged while any file is kept. Re-run with --overwrite-local-edits to discard\n'

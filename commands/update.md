@@ -124,8 +124,11 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component config-merge --yes
 **Local edits to mechanism scripts are KEPT, never overwritten.** `core-scripts`, `worktrees` and
 `govern` install each file through `mechanism_install`: an absent file is copied, a byte-identical one
 is skipped, and a file whose sha256 is a version shiploop shipped (`templates/lib/mechanism-hashes.txt`,
-every version of every such file) is provably unedited and upgraded. Anything else carries local edits:
-the workspace file is left exactly as it is, the hub's version is written beside it as
+every version of every such file) is provably unedited and upgraded. Anything else carries local edits,
+and the keep is **per component**: if ANY file of `core-scripts`, `worktrees` or `govern` carries local
+edits, EVERY file of that component that differs from the hub is kept (a sibling that merely equals an
+older shipped version is kept with them, so the component never mixes hub and local versions). A
+component with no local edits upgrades as before. The kept workspace file is left exactly as it is, the hub's version is written beside it as
 `<file>.shiploop-new` (same mode, gitignored), and the run ends with one loud `KEPT N file(s) with
 LOCAL EDITS` block listing each. **While any file is kept the run does not stamp `.harness-version`**,
 so the workspace keeps reading as behind and `--diff-only` keeps exiting 3. For each kept file, show
