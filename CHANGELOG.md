@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.21.0 - 2026-11-10
+
+### Changed
+
+**`/shiploop:update` no longer silently overwrites a workspace-local fix to a mechanism script
+(#232).** `core-scripts`, `worktrees` and `govern` installed every script with a bare `cp`, so a
+converge replaced local edits with the hub's version and said nothing; one workspace lost fixes to
+about 37 scripts this way and found out weeks later from its own red tests. They now install through
+`mechanism_install`, the same idea seeds already used: an absent file is copied, a byte-identical one
+is skipped, and a file whose sha256 is a version shiploop ever shipped
+(`templates/lib/mechanism-hashes.txt`, built by `tools/gen-mechanism-hashes.sh` from git history) is
+provably unedited and upgraded. Any other file carries local edits: it is KEPT, the hub's version is
+written beside it as `<file>.shiploop-new` (same mode; `*.shiploop-new` is in the gitignore
+template), and the run ends with one `KEPT N file(s) with LOCAL EDITS` block naming each. While any
+file is kept, `.harness-version` is not stamped, so the workspace keeps reading as behind. Merge the
+`.shiploop-new` by hand or port the fix upstream with `/shiploop:push`.
+
+**`--overwrite-local-edits`** (new `scaffold.sh` flag, off by default) restores the old
+overwrite-everything behaviour for an operator who wants their local edits gone.
+
+**`/shiploop:update` runs the workspace's offline tests around the bump.** When the workspace has
+`npm run test-harness` or `scripts/tests/`, the command runs it before and after, reports every test
+that went green to red, and does not leave the workspace stamped as converged if any did.
+
+### Added
+
+`scaffold.sh --list-mechanism-files` (the single list the installer, the generator and the check all
+read), the `mechanism-hashes-current` check in `tools/check-manifests.sh` (every currently-shipped
+mechanism script's hash must be in the manifest; run `bash tools/gen-mechanism-hashes.sh >
+templates/lib/mechanism-hashes.txt` after changing one), and `test-mechanism-local-edits` (hub-context).
+
 ## 1.20.2 - 2026-10-08
 
 ### Fixed

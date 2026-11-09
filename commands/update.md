@@ -14,13 +14,15 @@ reachability resolution + safety guards + verification.
 1. **Locate the hub** (same priority as `/setup`, see "Locate the plugin" there).
 2. **Verify preconditions** — meta-repo workspace, harness paths not dirty, no governor running.
 3. **Cheap version + diff check** (writes nothing).
+3b. **Baseline the workspace's offline tests** (if it has any) BEFORE touching anything.
 4. **Component-by-component bump** via `scaffold.sh --component <name> --yes` — PRESERVES
    `scripts/lib/workspace.sh` (never overwritten without explicit ask).
 5. **Run no-auth verifiers** — `config-check.sh` + `bash -n` sweep + stale-relocations warning.
    The bump itself also **purges retired files**: every writer run applies `templates/lib/purge.txt`,
    so files an older shiploop installed and no longer ships are deleted from this workspace. Report
    what went, since a purge can remove something the operator was still opening by habit.
-6. **Update `.harness-version` stamp** (scaffold does this every run).
+5b. **Re-run the offline tests** and report every test that went green to red.
+6. **Update `.harness-version` stamp** (scaffold does this only when nothing was kept and no test regressed).
 7. **Report** a concise per-component `in-sync | bumped | skipped` summary.
 
 ## Phase 0 — Locate the hub
@@ -100,6 +102,13 @@ bash "$SCAFFOLD" --workspace-dir "$(pwd)" --diff-only    # exit 3 = drift, 0 = c
 Exit 0 + stamps match → print `── /update: workspace is up to date (hub=$HUB_V) ──` and stop. Else
 proceed to Phase 3 with the `behind` components as the bump plan.
 
+## Phase 2b — Baseline the offline tests
+
+If the workspace has an offline test runner (`npm run test-harness`, or `scripts/tests/`), run it NOW,
+before any bump, and save the per-test pass/fail list. This is the only way to see a bump that
+silently reverted a workspace fix: the tests that pin the fix go red. No runner, say so in the report
+and skip this phase and Phase 4b.
+
 ## Phase 3 — Component-by-component bump
 
 Safe to refresh without an interview — these only read `workspace.sh`. Must cover every component
@@ -111,6 +120,20 @@ for c in core-scripts worktrees govern githooks commands agents workflows; do
 done
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component config-merge --yes
 ```
+
+**Local edits to mechanism scripts are KEPT, never overwritten.** `core-scripts`, `worktrees` and
+`govern` install each file through `mechanism_install`: an absent file is copied, a byte-identical one
+is skipped, and a file whose sha256 is a version shiploop shipped (`templates/lib/mechanism-hashes.txt`,
+every version of every such file) is provably unedited and upgraded. Anything else carries local edits:
+the workspace file is left exactly as it is, the hub's version is written beside it as
+`<file>.shiploop-new` (same mode, gitignored), and the run ends with one loud `KEPT N file(s) with
+LOCAL EDITS` block listing each. **While any file is kept the run does not stamp `.harness-version`**,
+so the workspace keeps reading as behind and `--diff-only` keeps exiting 3. For each kept file, show
+the operator `diff <file> <file>.shiploop-new` and let them pick: merge the hub's change into the local
+file, or port the local fix upstream with `/shiploop:push` (the hub then ships it and the next bump
+takes the file cleanly). Delete the `.shiploop-new` when done; the next run also removes it once the
+file is current. `--overwrite-local-edits` on a `scaffold.sh` call restores the old
+overwrite-everything behaviour; use it only when the operator explicitly wants their local edits gone.
 
 `config-merge` is the **merge tier** — the components that converge an EXISTING workspace's config.
 None are byte-comparable, and until this landed none were reachable from `/update` at all, so a hub
@@ -231,6 +254,14 @@ The govern test suite is hub-only (never installed into a workspace) — there i
 resolution would do to a ticket's open PRs and to `tickets.md`, so it needs `gh` auth but no worker
 auth, and it is safe to run from anywhere.
 
+## Phase 4b — Re-run the offline tests
+
+Run the same offline runner as Phase 2b and compare per test. Report EVERY test that went green to red
+by name, with the kept-file list next to it (a red test usually names the script whose local fix was
+reverted, for instance by `--overwrite-local-edits`, or whose hub version regressed it). If any
+test regressed, DO NOT stamp the workspace as converged: write the pre-bump value back into
+`scripts/lib/.harness-version` (scaffold stamps on its own once nothing is kept) and say so.
+
 ## Phase 5 — Report
 
 ```
@@ -251,6 +282,8 @@ Config (merge tier):
   seeds          CLAUDE.md left as-is (customized) · CLAUDE-APPENDIX.md upgraded (was unedited)
   .gitignore     +2 lines
   README.md      created
+Kept (local edits): <N files, each with its .shiploop-new>, or "none"   (stamp NOT advanced if any)
+Tests:       <runner> before P pass / after Q pass, green->red: <names or "none">
 Preserved:   every operator-defined package.json script, every existing workspace.sh knob value,
              every hook pointing outside this workspace, every seed carrying local edits
 Purged:      <retired paths removed this run, or "none">
@@ -271,7 +304,8 @@ than discover it on the next run.
   is a byte-level no-op on a second run — verified by test-update-config-converge.sh.
 - **`workspace.sh` values preserved.** Existing knobs are never rewritten; only absent ones are
   appended, with their doc comments.
-- **Operator content is never lost.** No package.json key you defined is overwritten, no hook of yours
+- **Operator content is never lost.** No mechanism script carrying local edits is overwritten (the hub
+  copy lands as `.shiploop-new`), no package.json key you defined is overwritten, no hook of yours
   is touched, and no seed carrying local edits is modified — a seed upgrade requires a sha256 match
   against a version the hub actually shipped.
 - **No network required.** Runs against the local hub clone / plugin install; no `gh`, no `git fetch`.
