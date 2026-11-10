@@ -160,7 +160,15 @@ upgrade is gated on a sha256 hit against `templates/lib/seed-hashes.txt`, which 
 of every seed the hub has ever shipped. Byte-identity is the entire safety argument: no diff, no merge,
 no heuristic. Anything else is left untouched and silent.
 
-**Deletions already ride a separate channel** and need nothing here: `templates/lib/purge.txt` lists
+**Retired files follow the same rule.** The purge below deletes a retired path only when its bytes are
+a version shiploop shipped (`templates/lib/mechanism-hashes.txt` also records every historical hash of
+every `purge.txt` path). A retired file that carries local edits may still be wired in (a `package.json`
+script, a hook), so it is KEPT and listed in the KEPT block as `retired by the hub, kept because it
+carries local edits: <path>`; check its callers, then port it with `/shiploop:push` or delete it by
+hand. A retired directory is walked file by file: unedited files go, edited or workspace-owned files
+stay. `--overwrite-local-edits` deletes them regardless. Kept retired files also hold the stamp back.
+
+**Deletions ride a separate channel** and need nothing extra here: `templates/lib/purge.txt` lists
 every path shiploop used to install and no longer ships, and `purge_removed` applies it on EVERY
 writer run — so the v1.15.0 install-footprint cut (7 cross-repo wrappers, 2 commands, the 134-file
 hub-only test suite) is removed from an old workspace by the Phase-3 loop above. CI guard

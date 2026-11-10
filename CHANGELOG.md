@@ -19,8 +19,16 @@ template), and the run ends with one `KEPT N file(s) with LOCAL EDITS` block nam
 file is kept, `.harness-version` is not stamped, so the workspace keeps reading as behind. Merge the
 `.shiploop-new` by hand or port the fix upstream with `/shiploop:push`.
 
+**The purge of retired files keeps what carries local edits.** `purge_removed` deleted every path in
+`templates/lib/purge.txt` blindly, including a retired script a workspace had fixed and still calls from
+`package.json`. It now deletes a retired path only when its sha256 is a version the hub shipped
+(`mechanism-hashes.txt` also records every historical hash of every `purge.txt` path, keyed by installed
+path; a directory entry is walked per file). Anything else is kept and named in the KEPT block as
+"retired by the hub, kept because it carries local edits", and the stamp is held back. `check-manifests`
+fails when a `purge.txt` path has no recorded hash.
+
 **`--overwrite-local-edits`** (new `scaffold.sh` flag, off by default) restores the old
-overwrite-everything behaviour for an operator who wants their local edits gone.
+overwrite-everything behaviour, purge included for an operator who wants their local edits gone.
 
 **`/shiploop:update` runs the workspace's offline tests around the bump.** When the workspace has
 `npm run test-harness` or `scripts/tests/`, the command runs it before and after, reports every test

@@ -461,6 +461,10 @@ mechanism_kept_summary() {
     printf '%s' "$KEPT_LIST" | while IFS= read -r f; do
       [ -n "$f" ] && printf '!!     %s   (hub version in %s.shiploop-new)\n' "$f" "$f"
     done
+    case "$KEPT_SUMMARY" in *"retired by the hub"*)
+      printf '!! A retired file is no longer shipped: port it with /shiploop:push or delete it by\n'
+      printf '!! hand (check package.json and hooks for callers first).\n' ;;
+    esac
     printf '!! The keep is per component: when any file has local edits, every differing file of\n'
     printf '!! that component is kept, so the component never mixes hub and local versions.\n'
     printf '!! Merge each (diff <file> <file>.shiploop-new), or port your edit upstream with\n'
@@ -1396,7 +1400,7 @@ purge_removed() {
   local mode="${1:-apply}"
   local manifest="$T/lib/purge.txt"
   [ -f "$manifest" ] || return 0
-  local line count=0
+  local line count=0 f
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
     [ -z "$line" ] && continue
@@ -1406,15 +1410,59 @@ purge_removed() {
     count=$((count+1))
     if [ "$mode" = "warn" ]; then
       warn "retired-but-present: $line (a writer run — scaffold/update — removes it)"
-    else
+      continue
+    fi
+    if [ "$OVERWRITE_LOCAL" -eq 1 ]; then
       rm -rf -- "$line"
       info "removed $line"
+      continue
+    fi
+    # Delete only what is provably an unedited shipped version (sha256 in mechanism-hashes.txt,
+    # keyed by the installed path). A retired file carrying local edits may still be wired into
+    # the workspace (a package.json script, a hook), so it is KEPT and named in the KEPT summary.
+    # A directory is walked file by file; anything non-pristine inside it, including a file the
+    # workspace added itself, is kept and the directory stays.
+    if [ -d "$line" ] && [ ! -L "$line" ]; then
+      local removed=0 kept_here=0
+      while IFS= read -r f; do
+        if purge_pristine "$f"; then
+          rm -f -- "$f"; removed=$((removed+1))
+        else
+          purge_keep "$f"; kept_here=$((kept_here+1))
+        fi
+      done < <(find "$line" \( -type f -o -type l \) 2>/dev/null)
+      find "$line" -depth -type d -empty -delete 2>/dev/null || true
+      info "removed $line ($removed file(s) removed, $kept_here kept)"
+    elif purge_pristine "$line"; then
+      rm -f -- "$line"
+      info "removed $line"
+    else
+      purge_keep "$line"
     fi
   done < "$manifest"
   if [ "$count" -gt 0 ] && [ "$mode" != "warn" ]; then
     info "purged $count retired path(s)"
   fi
   return 0
+}
+
+# purge_pristine <installed-path> — is the file byte-identical to a version shiploop shipped?
+# Consults templates/lib/mechanism-hashes.txt (entries keyed by the installed path). A symlink,
+# a missing manifest or a miss all mean "not provably unedited".
+purge_pristine() {
+  local file="$1" manifest="$T/lib/mechanism-hashes.txt" h
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ -f "$manifest" ] || return 1
+  h="$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)" || return 1
+  [ -n "$h" ] || return 1
+  grep -Fq "$h  $file" "$manifest"
+}
+
+purge_keep() {
+  KEPT_COUNT=$((KEPT_COUNT+1))
+  KEPT_LIST="${KEPT_LIST}${1}"$'\n'
+  KEPT_SUMMARY="${KEPT_SUMMARY}retired by the hub, kept because it carries local edits: ${1}"$'\n'
+  warn "retired by the hub but kept (local edits): $1"
 }
 
 # ── Verification ────────────────────────────────────────────────────────────

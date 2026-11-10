@@ -50,3 +50,44 @@ bash "$HUB/scaffold.sh" --list-mechanism-files | cut -f1 | sort -u | while IFS= 
   done
   echo
 done
+
+# ── Retired paths (templates/lib/purge.txt) ─────────────────────────────────────────
+# purge_removed deletes a retired file only when its bytes are a version shiploop shipped, so every
+# path in purge.txt needs its historical hashes here, keyed by the INSTALLED path (what the
+# workspace holds), not by a template path that no longer exists. A directory entry (trailing /)
+# records every file that ever lived under its template dir.
+echo "# ---- retired paths (purge.txt), keyed by installed path ----"
+echo
+
+# retired_hashes <installed-path> <template-pathspec> — "<sha256>  <installed key>" lines.
+retired_hashes() {
+  local inst="$1" spec="$2" tprefix="$3"
+  git log --all --no-renames --raw --no-abbrev --format= -- "$spec" 2>/dev/null \
+  | awk '$5 != "D" { print $4 "\t" $6 }' | sort -u \
+  | while IFS=$'\t' read -r blob path; do
+      [ -n "$blob" ] || continue
+      key="$inst${path#$tprefix}"
+      printf '%s  %s\n' "$(git cat-file blob "$blob" 2>/dev/null | shasum -a 256 | cut -d' ' -f1)" "$key"
+    done
+}
+
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+  [ -z "$line" ] && continue
+  case "$line" in /*|*..*) continue ;; esac
+  printf '# -- %s --\n' "$line"
+  {
+    case "$line" in
+      */)
+        # directory: scripts/govern/test/ -> templates/govern/test/
+        rest="${line#scripts/}"
+        retired_hashes "$line" "templates/$rest" "templates/$rest" ;;
+      *)
+        rest="${line#scripts/}"
+        retired_hashes "$line" "templates/$rest" "templates/$rest"
+        # top-level scripts/<x>.sh were also installed from templates/hooks/<x>.sh
+        case "$line" in scripts/*/*) ;; scripts/*) retired_hashes "$line" "templates/hooks/$rest" "templates/hooks/$rest" ;; esac ;;
+    esac
+  } | sort -u
+  echo
+done < templates/lib/purge.txt
