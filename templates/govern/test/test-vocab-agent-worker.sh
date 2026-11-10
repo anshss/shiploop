@@ -37,7 +37,9 @@ SELF="$(basename "${BASH_SOURCE[0]}")"
 targets=(commands templates README.md SKILL.md)
 [ -d "$HUB/skills" ] && targets+=(skills)
 
-hits="$(cd "$HUB" && grep -rInE -i --exclude="$SELF" --exclude-dir=.git "$PATTERN" "${targets[@]}" 2>/dev/null)"
+# The content-hash manifests are generated data (a sha256 and a path per line), and a retired
+# path can legitimately contain this test's own filename: they are not prose, so skip them.
+hits="$(cd "$HUB" && grep -rInE -i --exclude="$SELF" --exclude=mechanism-hashes.txt --exclude=seed-hashes.txt --exclude-dir=.git "$PATTERN" "${targets[@]}" 2>/dev/null)"
 
 if [ -z "$hits" ]; then
   printf 'ok   - vocab: no /%s/i in %s\n' "$PATTERN" "${targets[*]}"

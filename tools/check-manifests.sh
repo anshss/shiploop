@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-manifests.sh — keep the "update pulls everything" channel honest.
 #
-# Two independent guards:
+# Three independent guards:
 #
 #   purge-manifest-complete   Every file deleted from templates/** in this diff (vs. the
 #                             base branch) must have its INSTALLED path listed in
@@ -15,6 +15,14 @@
 #                             to a seed's content can never losslessly reach an existing
 #                             workspace (component_seeds has nothing to match the old
 #                             content against).
+#
+#   mechanism-hashes-current  Every purge.txt path also needs a recorded hash (purge keeps
+#                             a retired file whose bytes are not a shipped version). Every currently-shipped mechanism script (the files core-scripts,
+#                             worktrees and govern install, listed by
+#                             `scaffold.sh --list-mechanism-files`) must have its sha256 in
+#                             templates/lib/mechanism-hashes.txt — otherwise mechanism_install
+#                             cannot tell an unedited old copy from a locally-edited one and
+#                             /shiploop:update would keep (never upgrade) it forever.
 #
 # Usage:  bash tools/check-manifests.sh
 #
@@ -226,6 +234,54 @@ check_seed_hashes() {
   return 0
 }
 
+check_mechanism_hashes() {
+  local hash_file="${MECH_HASH_FILE:-templates/lib/mechanism-hashes.txt}"
+
+  if [ ! -f "$hash_file" ]; then
+    echo "::error::mechanism-hashes-current: missing $hash_file"
+    fail=1
+    return 0
+  fi
+
+  local missing=() rel dest sha
+  while IFS=$'\t' read -r rel dest; do
+    [ -n "$rel" ] || continue
+    [ -f "templates/$rel" ] || continue
+    sha="$(shasum -a 256 "templates/$rel" | cut -d' ' -f1)"
+    if ! grep -qE "^${sha}[[:space:]]+${rel}\$" "$hash_file"; then
+      missing+=("$rel  (sha256 $sha not recorded in $hash_file)")
+    fi
+  done < <(bash "$HUB/scaffold.sh" --list-mechanism-files)
+
+  # Retired paths: purge_removed deletes one only when its hash is recorded, so every purge.txt
+  # entry needs at least one recorded hash (keyed by installed path; a directory by prefix).
+  local purge_file="templates/lib/purge.txt" line
+  if [ -f "$purge_file" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+      [ -z "$line" ] && continue
+      case "$line" in /*|*..*) continue ;; esac
+      if ! grep -qE "^[0-9a-f]{64}[[:space:]]+${line//./\\.}" "$hash_file"; then
+        missing+=("$line  (retired path in $purge_file has no recorded hash, so a pristine copy would never be purged)")
+      fi
+    done < "$purge_file"
+  fi
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "::error::mechanism-hashes-current: current mechanism script content missing from $hash_file"
+    local m
+    for m in "${missing[@]}"; do
+      echo "  MISSING: $m"
+    done
+    echo "Run: bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt"
+    fail=1
+    return 0
+  fi
+
+  echo "ok - mechanism-hashes-current (every shipped mechanism script's content hash is recorded)"
+  return 0
+}
+
 main() {
   BASE="$(resolve_base_ref)"
   if [ -n "$BASE" ]; then
@@ -239,6 +295,9 @@ main() {
   echo
   echo "== seed-hashes-current =="
   check_seed_hashes
+  echo
+  echo "== mechanism-hashes-current =="
+  check_mechanism_hashes
   echo
 
   if [ "$fail" -ne 0 ]; then

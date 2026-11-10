@@ -51,8 +51,10 @@ assert_eq "$rc" "3" "2. mutated mechanism → --diff-only exit 3"
 assert_contains "$out" "govern: behind" "2. govern reported behind"
 
 # ── 3. --component govern --yes bumps → back in-sync ───────────────────────
+# The injected drift is a local edit, which a plain bump KEEPS (#232, see
+# test-mechanism-local-edits); --overwrite-local-edits is the explicit re-sync.
 bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" \
-  --component govern --yes >/tmp/scaf-bump.log 2>&1
+  --component govern --overwrite-local-edits --yes >/tmp/scaf-bump.log 2>&1
 out="$(bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --diff-only 2>&1)"; rc=$?
 assert_eq "$rc" "0" "3. after component bump → --diff-only exit 0"
 

@@ -45,12 +45,20 @@ assert_eq "$?" "0" "0. fresh scaffold succeeds"
 
 exists() { [ -e "$1" ] && echo present || echo absent; }
 
+# Purge deletes only bytes that are a version the hub shipped (sha256 in mechanism-hashes.txt,
+# keyed by installed path). `shipped <installed-path>` records the fixture's current bytes there,
+# in the private templates copy, standing in for "an older shiploop installed exactly this".
+shipped() { # <installed-path-relative-to-workspace>
+  printf '%s  %s\n' "$(shasum -a 256 "$W/$1" | cut -d' ' -f1)" "$1" >> "$TEMPLATES/lib/mechanism-hashes.txt"
+}
+
 # ── 1 + 2. A writer run removes a retired file and a retired directory ─────
 # Simulate an OLD install: re-create paths a previous shiploop shipped and the
 # current purge.txt lists.
 printf '#!/usr/bin/env bash\necho legacy\n' > "$W/scripts/status.sh"
 mkdir -p "$W/.claude/commands" && printf '# legacy\n' > "$W/.claude/commands/resolve.md"
 mkdir -p "$W/scripts/govern/test" && printf '# legacy\n' > "$W/scripts/govern/test/test-legacy.sh"
+shipped scripts/status.sh; shipped .claude/commands/resolve.md; shipped scripts/govern/test/test-legacy.sh
 
 bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --component core-scripts --yes \
   >"$ROOT/purge.log" 2>&1
@@ -98,5 +106,34 @@ assert_eq "$?" "0" "5a. second refresh succeeds"
 clean_log="$(cat "$ROOT/clean.log")"
 assert_not_contains "$clean_log" "purge: removing files retired by the hub" \
   "5b. purge stays silent when there is nothing to remove"
+
+# ── 6. a retired file carrying LOCAL EDITS is kept, not deleted ────────────
+# The retired file may still be wired into the workspace (a package.json script), so purge only
+# removes bytes that are provably a shipped version.
+printf '#!/usr/bin/env bash\necho legacy\n' > "$W/scripts/status.sh"      # recorded above: pristine
+printf '#!/usr/bin/env bash\necho local fix\n' > "$W/scripts/branch.sh"    # purge.txt path, unrecorded bytes
+mkdir -p "$W/scripts/govern/test"
+printf '# legacy\n' > "$W/scripts/govern/test/test-legacy.sh"                # recorded: pristine
+printf '# my own test\n' > "$W/scripts/govern/test/test-mine.sh"             # workspace's own file
+bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --component core-scripts --yes \
+  >"$ROOT/keep.log" 2>&1
+keep_log="$(cat "$ROOT/keep.log")"
+assert_eq "$(exists "$W/scripts/status.sh")" "absent" "6a. pristine retired file is deleted"
+assert_eq "$(exists "$W/scripts/branch.sh")" "present" "6b. locally edited retired file is KEPT"
+assert_contains "$(cat "$W/scripts/branch.sh")" "local fix" "6b. and its content is untouched"
+assert_contains "$keep_log" "retired by the hub, kept because it carries local edits: scripts/branch.sh" \
+  "6c. named in the KEPT summary"
+assert_contains "$keep_log" "/shiploop:push" "6c. summary says how to resolve it"
+assert_eq "$(exists "$W/scripts/govern/test/test-mine.sh")" "present" "6d. workspace-owned file inside a retired dir is kept"
+assert_eq "$(exists "$W/scripts/govern/test/test-legacy.sh")" "absent" "6d. pristine file inside it is deleted"
+stamp="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$W/scripts/lib/.harness-version" 2>/dev/null)"
+printf '0.0.1\n' > "$W/scripts/lib/.harness-version"
+bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --component core-scripts --yes >/dev/null 2>&1
+assert_eq "$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$W/scripts/lib/.harness-version")" "0.0.1" \
+  "6e. stamp not advanced while a retired file is kept"
+bash "$SCAFFOLD" --workspace-dir "$W" --templates "$TEMPLATES" --component core-scripts --yes --overwrite-local-edits \
+  >"$ROOT/ow.log" 2>&1
+assert_eq "$(exists "$W/scripts/branch.sh")" "absent" "6f. --overwrite-local-edits deletes the edited retired file"
+assert_eq "$(exists "$W/scripts/govern/test")" "absent" "6f. and the whole retired directory"
 
 assert_done

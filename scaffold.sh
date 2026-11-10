@@ -20,6 +20,11 @@
 # Usage (refresh one component in place):
 #   scaffold.sh --workspace-dir . --component govern
 #
+# Mechanism scripts (core-scripts, worktrees, govern) with LOCAL EDITS are never overwritten: the
+# workspace file is kept, the hub version lands beside it as <file>.shiploop-new, every kept file is
+# listed in one summary, and the workspace is not stamped converged. --overwrite-local-edits (off by
+# default) restores the old unconditional overwrite.
+#
 # Components: core-scripts, worktrees, govern, hooks, githooks, seeds,
 #             gitignore, package-json, settings, commands, agents, workflows, all
 #   merge-tier (additive, idempotent, safe on an existing workspace — what /update runs):
@@ -64,6 +69,8 @@ DO_VERIFY=0
 YES=0
 VERBOSE=0
 DIFF_ONLY=0
+OVERWRITE_LOCAL=0      # --overwrite-local-edits: restore the old unconditional-overwrite of mechanism scripts
+LIST_MECH=0
 SKIP_SUBREPO_HOOKS=0   # wrap.sh sets this: it must not mutate the moved sub-repo's
                        # .git/hooks before its byte-identical rollback point retires.
 
@@ -94,6 +101,8 @@ while [ "$#" -gt 0 ]; do
     --yes|-y)            YES=1; shift ;;
     --verbose|-v)        VERBOSE=1; shift ;;
     --diff-only)         DIFF_ONLY=1; shift ;;
+    --overwrite-local-edits) OVERWRITE_LOCAL=1; shift ;;
+    --list-mechanism-files) LIST_MECH=1; shift ;;
     --skip-subrepo-hooks) SKIP_SUBREPO_HOOKS=1; shift ;;
     --version)           hub_version; exit 0 ;;
     -h|--help)           usage ;;
@@ -113,6 +122,51 @@ if [ -z "$TEMPLATES_DIR" ]; then
 fi
 [ -d "$TEMPLATES_DIR" ] || die "templates dir does not exist: $TEMPLATES_DIR"
 T="$TEMPLATES_DIR"
+
+# mechanism_map — component -> lines "template-relative-path<TAB>installed-path" for every
+# mechanism script component_core_scripts / component_worktrees / component_govern install.
+# ONE list drives the installer, `--list-mechanism-files`, tools/gen-mechanism-hashes.sh and the
+# `mechanism-hashes-current` check, so a file can never be installed without being hash-tracked.
+mechanism_map() {
+  local s f
+  case "$1" in
+    core-scripts)
+      for s in doctor dev sync tail; do
+        printf '%s.sh\tscripts/%s.sh\n' "$s" "$s"
+      done
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit; do
+        printf 'hooks/%s.sh\tscripts/%s.sh\n' "$s" "$s"
+      done
+      for s in session-state preflight githooks install-semaphore; do
+        printf 'lib/%s.sh\tscripts/lib/%s.sh\n' "$s" "$s"
+      done ;;
+    worktrees)
+      for s in new rm reap status exec main session-end-cleanup; do
+        printf 'worktree/%s.sh\tscripts/worktree/%s.sh\n' "$s" "$s"
+      done
+      for s in registry base-ref; do
+        printf 'worktree/lib/%s.sh\tscripts/worktree/lib/%s.sh\n' "$s" "$s"
+      done ;;
+    govern)
+      # incl. run-validation.sh (durable validation runner); lib = common.sh + flows.sh + valjob.sh
+      # (job substrate) + the Node helpers (request-capture proxy + reporter). A glob that matches
+      # nothing is skipped, so an older template tree without the .mjs helpers still scaffolds.
+      for f in "$T"/govern/*.sh; do
+        [ -f "$f" ] && printf 'govern/%s\tscripts/govern/%s\n' "$(basename "$f")" "$(basename "$f")"
+      done
+      for f in "$T"/govern/lib/*.sh "$T"/govern/lib/*.mjs; do
+        [ -f "$f" ] && printf 'govern/lib/%s\tscripts/govern/lib/%s\n' "$(basename "$f")" "$(basename "$f")"
+      done ;;
+  esac
+  return 0
+}
+
+# Maintainer introspection (tools/gen-mechanism-hashes.sh, check-manifests.sh): print
+# "template-path<TAB>installed-path" for every hash-tracked mechanism file, then exit.
+if [ "$LIST_MECH" -eq 1 ]; then
+  for _c in core-scripts worktrees govern; do mechanism_map "$_c"; done
+  exit 0
+fi
 
 # ── Read-only mode detection ────────────────────────────────────────────────
 # --verify or --diff-only, standalone (no fresh-scaffold flags), against an
@@ -312,55 +366,132 @@ component_workspace_sh() {
 
 }
 
+# mechanism_pristine — is $1 (an installed mechanism script) byte-identical to SOME version of
+# template path $2 that shiploop has shipped? Consults templates/lib/mechanism-hashes.txt.
+# Same contract as seed_pristine: a hit proves the file was never edited, so replacing it is
+# lossless; a miss (or no manifest) means "assume locally edited" and is always safe.
+mechanism_pristine() {
+  local file="$1" rel="$2"
+  local manifest="$T/lib/mechanism-hashes.txt"
+  [ -f "$file" ] || return 1
+  [ -f "$manifest" ] || return 1
+  local h
+  h="$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)" || return 1
+  [ -n "$h" ] || return 1
+  grep -Fq "$h  $rel" "$manifest"
+}
+
+# Files a run kept because their component carries local edits (see mechanism_install_component).
+KEPT_COUNT=0
+KEPT_LIST=""       # one "<dest>" per line
+KEPT_SUMMARY=""    # one pre-formatted line per component
+
+# mechanism_state <template> <dest> <rel> — absent | identical | pristine | local
+#   pristine = differs from the hub but is byte-identical to a version shiploop shipped.
+mechanism_state() {
+  local template="$1" dest="$2" rel="$3"
+  if [ ! -e "$dest" ]; then echo absent
+  elif cmp -s "$dest" "$template"; then echo identical
+  elif mechanism_pristine "$dest" "$rel"; then echo pristine
+  else echo local
+  fi
+}
+
+# mechanism_keep <template> <dest> — leave dest alone, write the hub copy beside it, record it.
+mechanism_keep() {
+  local template="$1" dest="$2"
+  cp "$template" "$dest.shiploop-new"
+  if [ -x "$dest" ] || [ -x "$template" ]; then chmod +x "$dest.shiploop-new"; fi
+  KEPT_COUNT=$((KEPT_COUNT+1))
+  KEPT_LIST="${KEPT_LIST}${dest}"$'\n'
+}
+
+# mechanism_install_component <component> — the keep decision is PER COMPONENT, not per file.
+#   Classify every file first. If ANY file carries local edits (not identical, not a shipped
+#   version), KEEP every file of the component that differs from the hub, each with its
+#   <dest>.shiploop-new: upgrading only the pristine ones would leave a half-hub, half-local
+#   component that mixes versions which never ran together. A component with no local edits
+#   upgrades exactly as before (absent -> copy, identical -> skip, shipped version -> overwrite).
+#   --overwrite-local-edits overwrites everything.
+mechanism_install_component() {
+  local comp="$1" rel dest st
+  local rels=() dests=() states=() i n=0 has_local=0
+  while IFS=$'\t' read -r rel dest; do
+    [ -n "$rel" ] || continue
+    [ -f "$T/$rel" ] || continue
+    st="$(mechanism_state "$T/$rel" "$dest" "$rel")"
+    rels[$n]="$rel"; dests[$n]="$dest"; states[$n]="$st"; n=$((n+1))
+    [ "$st" = local ] && has_local=1
+  done < <(mechanism_map "$comp")
+  [ "$OVERWRITE_LOCAL" -eq 1 ] && has_local=0
+
+  local local_names="" with_names="" kept=0
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    rel="${rels[$i]}"; dest="${dests[$i]}"; st="${states[$i]}"
+    mkdir -p "$(dirname "$dest")"
+    case "$st" in
+      absent)    cp "$T/$rel" "$dest" ;;
+      identical) rm -f "$dest.shiploop-new" ;;
+      *)
+        if [ "$has_local" -eq 1 ]; then
+          mechanism_keep "$T/$rel" "$dest"; kept=$((kept+1))
+          if [ "$st" = local ]; then local_names="${local_names}${local_names:+, }$(basename "$dest")"
+          else with_names="${with_names}${with_names:+, }$(basename "$dest")"; fi
+        else
+          cp "$T/$rel" "$dest"; rm -f "$dest.shiploop-new"
+        fi ;;
+    esac
+    i=$((i+1))
+  done
+  if [ "$kept" -gt 0 ]; then
+    KEPT_SUMMARY="${KEPT_SUMMARY}${comp}: kept ${kept} file(s) (local edits in ${local_names}${with_names:+; ${with_names} kept with them})"$'\n'
+  fi
+  return 0
+}
+
+# mechanism_kept_summary — one loud block naming every kept component and file. Called at the end of every run.
+mechanism_kept_summary() {
+  [ "$KEPT_COUNT" -gt 0 ] || return 0
+  {
+    printf '\n'
+    printf '!! ============================================================\n'
+    printf '!! KEPT %d file(s) with LOCAL EDITS (not overwritten):\n' "$KEPT_COUNT"
+    printf '%s' "$KEPT_SUMMARY" | while IFS= read -r l; do [ -n "$l" ] && printf '!!   %s\n' "$l"; done
+    printf '%s' "$KEPT_LIST" | while IFS= read -r f; do
+      [ -n "$f" ] && printf '!!     %s   (hub version in %s.shiploop-new)\n' "$f" "$f"
+    done
+    case "$KEPT_SUMMARY" in *"retired by the hub"*)
+      printf '!! A retired file is no longer shipped: port it with /shiploop:push or delete it by\n'
+      printf '!! hand (check package.json and hooks for callers first).\n' ;;
+    esac
+    printf '!! The keep is per component: when any file has local edits, every differing file of\n'
+    printf '!! that component is kept, so the component never mixes hub and local versions.\n'
+    printf '!! Merge each (diff <file> <file>.shiploop-new), or port your edit upstream with\n'
+    printf '!! /shiploop:push, then delete the .shiploop-new. The workspace is NOT stamped as\n'
+    printf '!! converged while any file is kept. Re-run with --overwrite-local-edits to discard\n'
+    printf '!! the local edits instead.\n'
+    printf '!! ============================================================\n'
+  } >&2
+}
+
 component_core_scripts() {
   log "component: core scripts"
-  local s
-  for s in doctor dev sync tail; do
-    cp "$T/$s.sh" "scripts/$s.sh"
-    chmod +x "scripts/$s.sh"
-  done
-  # hooks that live in scripts/
-  cp "$T/hooks/check-main-on-main.sh" scripts/
-  cp "$T/hooks/ticket-sweep-reminder.sh" scripts/
-  cp "$T/hooks/session-snapshot.sh" scripts/
-  cp "$T/hooks/router-posture-reminder.sh" scripts/
-  cp "$T/hooks/router-posture-guard.sh" scripts/
-  cp "$T/hooks/rules-on-touch.sh" scripts/
-  cp "$T/hooks/validations-pending-hook.sh" scripts/
-  cp "$T/hooks/learnings-digest.sh" scripts/
-  cp "$T/hooks/session-reconcile.sh" scripts/
-  cp "$T/hooks/agent-progress-guard.sh" scripts/
-  cp "$T/hooks/agent-watchdog-guard.sh" scripts/
-  cp "$T/hooks/advisor-steer-guard.sh" scripts/
-  cp "$T/hooks/worker-event-emit.sh" scripts/
+  mechanism_install_component core-scripts
   chmod +x scripts/*.sh
-  # sourced libs (no +x needed but harmless)
-  cp "$T/lib/session-state.sh" scripts/lib/
-  cp "$T/lib/preflight.sh" scripts/lib/
-  cp "$T/lib/githooks.sh" scripts/lib/
-  cp "$T/lib/install-semaphore.sh" scripts/lib/
   info "installed core scripts + hooks + libs"
 }
 
 component_worktrees() {
   log "component: worktrees"
-  cp "$T/worktree/new.sh" "$T/worktree/rm.sh" "$T/worktree/reap.sh" "$T/worktree/status.sh" \
-     "$T/worktree/exec.sh" "$T/worktree/main.sh" "$T/worktree/session-end-cleanup.sh" \
-     scripts/worktree/
-  cp "$T/worktree/lib/registry.sh" "$T/worktree/lib/base-ref.sh" scripts/worktree/lib/
+  mechanism_install_component worktrees
   chmod +x scripts/worktree/*.sh
   info "installed worktree scripts"
 }
 
 component_govern() {
   log "component: govern"
-  cp "$T"/govern/*.sh scripts/govern/           # incl. run-validation.sh (durable validation runner)
-  cp "$T"/govern/lib/*.sh scripts/govern/lib/   # common.sh + flows.sh + valjob.sh (job substrate)
-  # Node helpers under govern/lib (the request-capture proxy + its reporter). Guarded: the glob is
-  # only copied when it actually matches, so an older template tree without them still scaffolds.
-  if compgen -G "$T/govern/lib/*.mjs" >/dev/null 2>&1; then
-    cp "$T"/govern/lib/*.mjs scripts/govern/lib/
-  fi
+  mechanism_install_component govern
   # NOTE: govern/test/ is deliberately NOT installed. The suite is hub-only — nothing in a
   # fleet workspace executes it (sync-port.sh builds its own scratch copy from the hub tree,
   # and hub CI scaffolds a throwaway workspace and copies the suite in itself).
@@ -1233,6 +1364,10 @@ workspace_converged() {
 # run, a fresh scaffold, or the converging final bump of an /update loop all leave
 # zero drift and DO stamp.
 component_stamp() {
+  if [ "$KEPT_COUNT" -gt 0 ]; then
+    [ "$VERBOSE" -eq 1 ] && info "not stamping .harness-version — $KEPT_COUNT mechanism file(s) kept with local edits"
+    return 0
+  fi
   if ! workspace_converged; then
     [ "$VERBOSE" -eq 1 ] && info "not stamping .harness-version — mechanism drift remains (partial/non-converged run)"
     return 0
@@ -1265,7 +1400,7 @@ purge_removed() {
   local mode="${1:-apply}"
   local manifest="$T/lib/purge.txt"
   [ -f "$manifest" ] || return 0
-  local line count=0
+  local line count=0 f
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
     [ -z "$line" ] && continue
@@ -1275,15 +1410,59 @@ purge_removed() {
     count=$((count+1))
     if [ "$mode" = "warn" ]; then
       warn "retired-but-present: $line (a writer run — scaffold/update — removes it)"
-    else
+      continue
+    fi
+    if [ "$OVERWRITE_LOCAL" -eq 1 ]; then
       rm -rf -- "$line"
       info "removed $line"
+      continue
+    fi
+    # Delete only what is provably an unedited shipped version (sha256 in mechanism-hashes.txt,
+    # keyed by the installed path). A retired file carrying local edits may still be wired into
+    # the workspace (a package.json script, a hook), so it is KEPT and named in the KEPT summary.
+    # A directory is walked file by file; anything non-pristine inside it, including a file the
+    # workspace added itself, is kept and the directory stays.
+    if [ -d "$line" ] && [ ! -L "$line" ]; then
+      local removed=0 kept_here=0
+      while IFS= read -r f; do
+        if purge_pristine "$f"; then
+          rm -f -- "$f"; removed=$((removed+1))
+        else
+          purge_keep "$f"; kept_here=$((kept_here+1))
+        fi
+      done < <(find "$line" \( -type f -o -type l \) 2>/dev/null)
+      find "$line" -depth -type d -empty -delete 2>/dev/null || true
+      info "removed $line ($removed file(s) removed, $kept_here kept)"
+    elif purge_pristine "$line"; then
+      rm -f -- "$line"
+      info "removed $line"
+    else
+      purge_keep "$line"
     fi
   done < "$manifest"
   if [ "$count" -gt 0 ] && [ "$mode" != "warn" ]; then
     info "purged $count retired path(s)"
   fi
   return 0
+}
+
+# purge_pristine <installed-path> — is the file byte-identical to a version shiploop shipped?
+# Consults templates/lib/mechanism-hashes.txt (entries keyed by the installed path). A symlink,
+# a missing manifest or a miss all mean "not provably unedited".
+purge_pristine() {
+  local file="$1" manifest="$T/lib/mechanism-hashes.txt" h
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ -f "$manifest" ] || return 1
+  h="$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)" || return 1
+  [ -n "$h" ] || return 1
+  grep -Fq "$h  $file" "$manifest"
+}
+
+purge_keep() {
+  KEPT_COUNT=$((KEPT_COUNT+1))
+  KEPT_LIST="${KEPT_LIST}${1}"$'\n'
+  KEPT_SUMMARY="${KEPT_SUMMARY}retired by the hub, kept because it carries local edits: ${1}"$'\n'
+  warn "retired by the hub but kept (local edits): $1"
 }
 
 # ── Verification ────────────────────────────────────────────────────────────
@@ -1510,6 +1689,7 @@ esac
 
 # Update-channel stamp — written on every scaffold invocation so doctor / govern-
 # health can compare against the hub VERSION.
+mechanism_kept_summary
 component_stamp
 
 # ── Optional git init + initial commit ──────────────────────────────────────
