@@ -27,6 +27,26 @@
 set -uo pipefail
 
 WT_ROOT="${WT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+
+# Registry operations are MAIN-CHECKOUT-ONLY. WT_ROOT above is derived from THIS file's
+# location, and every dispatch worktree carries its own full copy of scripts/, so a script
+# invoked with cwd inside a worktree (its own package.json, or a relative path) sources the
+# WORKTREE's copy and resolves WT_ROOT to the worktree. Every function below would then read
+# and write <worktree>/.worktrees/registry.json — a file that does not exist until a read
+# default-creates one whose __main__ slot points at the worktree itself. That scoped registry
+# poisons both directions: dispatches registered against it never reach the real registry
+# (the worktree is on disk but unknown to worktree:rm / govern:resolve), and its slot-0 path
+# re-anchors every __main__ resolution inside a worktree. A linked worktree is detectable by
+# its .git being a FILE (the main checkout's is a directory), so refuse the whole library in
+# that context rather than operate on the wrong file silently.
+if [ -f "$WT_ROOT/.git" ]; then
+  printf '%s\n' \
+    "worktree registry: WT_ROOT resolved to '$WT_ROOT', a linked git worktree — not the main checkout." \
+    "This scripts/ copy was invoked from inside a worktree; its registry helpers would read and write" \
+    "'$WT_ROOT/.worktrees/registry.json' instead of the main checkout's registry. Re-run from the main checkout." >&2
+  if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 1; else exit 1; fi
+fi
+
 WT_REGISTRY="$WT_ROOT/.worktrees/registry.json"
 WT_LOCK="$WT_ROOT/.worktrees/slot-alloc.lock.d"
 
@@ -41,6 +61,22 @@ wt_registry_read() {
 
 wt_registry_write() {
   local json="$1"
+  # Slot 0 is contractually __main__ -> WT_ROOT (the main checkout). Refuse any write that
+  # moves or drops it: it would re-anchor every __main__ resolution (worktree:rm, govern:resolve,
+  # the exec/stack lookups) at a worktree and reset nextSlot with it. Every writer in this file
+  # round-trips slot 0 unchanged from a prior read, so a mismatch means a caller stitched in a
+  # foreign or stale registry body — refuse loudly rather than persist it.
+  local slot0
+  slot0="$(printf '%s' "$json" | jq -r --arg root "$WT_ROOT" '
+    (.slots["0"] // null) as $s
+    | if ($s | type) == "object" and $s.name == "__main__" and $s.path == $root
+      then "ok"
+      else "bad:" + (($s.path // "<absent>") | tostring)
+      end' 2>/dev/null || echo "bad:<unparseable>")"
+  if [ "$slot0" != "ok" ]; then
+    echo "wt_registry_write: refusing write — slot 0 (__main__) must stay the main checkout '$WT_ROOT'; got path: ${slot0#bad:}" >&2
+    return 1
+  fi
   local tmp="$WT_REGISTRY.tmp.$$"
   printf '%s\n' "$json" > "$tmp"
   mv -f "$tmp" "$WT_REGISTRY"
