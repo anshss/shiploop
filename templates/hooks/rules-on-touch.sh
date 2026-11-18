@@ -235,6 +235,7 @@ EOF
 [RULES/worklist] Editing queue/tickets.md:
 - Work items only, one `## #N` each. Scope: this workspace's sub-repos and the harness, nothing external.
 - **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
+- **Numbering:** blocks are NOT number-ordered and resolved numbers are never reused. Before filing, compute next = 1 + max(N) over (a) every `## #N` heading in the whole current file and (b) every `file #N` / `resolve #N` subject in `git log --all`. The file's tail is not the ceiling. Re-verify uniqueness right before committing.
 - Editing ONE ticket: bound its region by the `## #N` heading FIRST. Anchors like `**Done when:**` repeat across tickets, so a bare index-of can slice backwards and a scripted replace then rewrites the whole file. Verify the line count after any scripted edit, BEFORE committing.
 EOF
 ;;
@@ -248,7 +249,7 @@ EOF
 ;;
     pr) cat <<'EOF'
 [RULES/pr] Touching a pull request:
-- **Never mutate an OPEN PR with `gh pr edit`.** Its GraphQL query pulls `projectCards`, which hard-fails where that field is unavailable, and `--base` is worse: it reports success while changing nothing.
+- **Never mutate an OPEN PR with `gh pr edit`.** Its GraphQL query pulls `projectCards`, which hard-fails where that field is unavailable, and `--base` is worse: it reports success while changing nothing. Patch an open PR body via `gh api repos/<owner>/<repo>/pulls/<N>` instead (works as of 2026-11-17).
 - Use the REST API instead: `gh api -X PATCH repos/<org>/<repo>/pulls/<N> -F body=@body.md` (add `-F base=<branch>` for the base). No projectCards query, and it fails loudly.
 EOF
 ;;
