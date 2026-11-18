@@ -31,6 +31,11 @@ mkdir -p "$T/bin/lib" "$T/queue"
 cp "$RT" "$T/bin/resolve-ticket.sh"
 cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
 [[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+# resolve-ticket.sh invokes the post-merge gate ($DIR/post-merge-check.sh) after every successful
+# merge. Copy the REAL script into the sandbox: with GOVERN_POST_MERGE_CMD empty its gate is
+# armed-but-inert (nothing to run, pass), so these landing paths stay hermetic while the real pass
+# path still runs. The gate's refusal path is asserted in a dedicated scenario below.
+if [[ -f "$DIR/../post-merge-check.sh" ]]; then cp "$DIR/../post-merge-check.sh" "$T/bin/"; fi
 
 LANDED="$T/landed.log"
 cat > "$T/bin/land-resolution.sh" <<'STUB'
@@ -129,5 +134,21 @@ assert_eq "$rc" "1" "6. GOVERN_RESOLVE_TICKET=0 exits 1 (never a silent no-op)"
 : > "$LANDED"
 rc="$(STUB_MERGE_RC=0 run_rt 41 "$(rpt resolved true null)")"
 assert_eq "$(landed_count)" "1" "5. a green, merged, evidenced resolve lands exactly once"
+
+# ── 5b. the post-merge gate refusing blocks the landing even though the MERGE succeeded ──────────
+# The PR is already merged when the gate runs, so the merge cannot be undone: the contract is
+# "merged but NOT booked landed" (refusal exit + no land call), never a silent land on a broken
+# merged ref. Replace the sandbox's real post-merge-check.sh with a failing stub to model the
+# check-command-failed contract (exit 7); any non-zero rc must refuse identically.
+: > "$LANDED"
+cat > "$T/bin/post-merge-check.sh" <<'STUB'
+#!/usr/bin/env bash
+exit "${STUB_PM_RC:-0}"
+STUB
+chmod +x "$T/bin/post-merge-check.sh"
+out="$( cd "$T" && printf '%s' "$(rpt resolved true null)" | STUB_PM_RC=7 bash "$T/bin/resolve-ticket.sh" 41 2>&1 )"
+rc="$( cd "$T" && printf '%s' "$(rpt resolved true null)" | STUB_PM_RC=7 bash "$T/bin/resolve-ticket.sh" 41 >/dev/null 2>&1; echo $? )"
+assert_eq "$(landed_count)" "0" "5b. a failed post-merge check on a MERGED PR never books 'landed'"
+assert_contains "$out" "post-merge check FAILED" "5b. the merged-post-merge-check-failed refusal is classified on stderr"
 
 assert_done

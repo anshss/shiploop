@@ -32,6 +32,11 @@ mkdir -p "$T/bin/lib" "$T/queue"
 cp "$RT" "$T/bin/resolve-ticket.sh"
 cp "$DIR/../lib/common.sh" "$T/bin/lib/common.sh"
 [[ -f "$DIR/../lib/flows.sh" ]] && cp "$DIR/../lib/flows.sh" "$T/bin/lib/"
+# resolve-ticket.sh invokes the post-merge gate ($DIR/post-merge-check.sh) after every successful
+# merge. Copy the REAL script into the sandbox: with GOVERN_POST_MERGE_CMD empty its gate is
+# armed-but-inert (nothing to run, pass), so these landing paths stay hermetic while the real pass
+# path still runs. The gate's refusal path is asserted in test-resolve-ticket.sh.
+if [[ -f "$DIR/../post-merge-check.sh" ]]; then cp "$DIR/../post-merge-check.sh" "$T/bin/"; fi
 
 LANDED="$T/landed.log"
 cat > "$T/bin/land-resolution.sh" <<'STUB'

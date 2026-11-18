@@ -40,8 +40,15 @@ assert_eq "$(git_q -C "$TMP/local-wt" rev-parse HEAD)" "$origin_tip" "new worktr
 git_q init -q "$TMP/lonely"; commit "$TMP/lonely" solo; git_q -C "$TMP/lonely" branch -M main
 assert_eq "$(wt_subrepo_base_ref "$TMP/lonely")" "main" "falls back to local main when there is no origin remote"
 
-# ── 3. Origin configured but UNREACHABLE (offline) → fetch fails → fall back to local main.
+# ── 3. Origin configured but UNREACHABLE (offline) → the fetch is LOAD-BEARING: a stale origin ref
+#    is exactly as stale as local main (the stacked-PR clobber shape), so the default REFUSES
+#    (non-zero) instead of silently deriving a base. GOVERN_BASE_FETCH_GATE=0 restores the old
+#    best-effort fallback to local main.
 git_q -C "$TMP/lonely" remote add origin "$TMP/does-not-exist.git"
-assert_eq "$(wt_subrepo_base_ref "$TMP/lonely")" "main" "falls back to local main when origin is unreachable (fetch fails)"
+out="$(wt_subrepo_base_ref "$TMP/lonely" 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "1" "an unreachable origin REFUSES to derive a base (fetch gate on by default)"
+assert_contains "$out" "GOVERN_BASE_FETCH_GATE" "the refusal names its own escape hatch"
+base="$(GOVERN_BASE_FETCH_GATE=0 wt_subrepo_base_ref "$TMP/lonely")"
+assert_eq "$base" "main" "GOVERN_BASE_FETCH_GATE=0 restores the best-effort fallback to local main"
 
 assert_done
