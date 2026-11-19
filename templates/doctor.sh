@@ -190,8 +190,18 @@ fi
 
 # ── Worktrees ──
 section "worktrees"
-if [ -f "$ROOT/.worktrees/registry.json" ] && command -v jq >/dev/null 2>&1; then
-  count=$(jq '[.slots | to_entries[] | select(.key != "0")] | length' "$ROOT/.worktrees/registry.json")
+# Read the registry through registry.sh, never by jq against $ROOT/.worktrees/registry.json
+# directly. The library refuses to operate when this scripts/ copy resolves WT_ROOT into a
+# linked worktree (its guard prints the reason to stderr); a direct read bypasses that guard
+# and would print scoped/wrong data as if it were the real registry state. Check the guard
+# FIRST — before any file-existence test, which from inside a worktree would silently fall
+# through to the "registry missing" warn and exit 0. On refusal, abort nonzero.
+if ! source "$ROOT/scripts/worktree/lib/registry.sh"; then
+  fail "worktree registry unusable from this context — see the refusal above; aborting"
+  exit 1
+fi
+if command -v jq >/dev/null 2>&1 && [ -f "$WT_REGISTRY" ]; then
+  count=$(wt_registry_read | jq '[.slots | to_entries[] | select(.key != "0")] | length')
   if [ "$count" -eq 0 ]; then
     ok "no worktrees registered (slot 0 only)"
   else
@@ -202,7 +212,7 @@ if [ -f "$ROOT/.worktrees/registry.json" ] && command -v jq >/dev/null 2>&1; the
       else
         warn "slot $slot: $name → $path (orphaned, run $ROOT_PM run worktree:status -- --gc)"
       fi
-    done < <(jq -r '.slots | to_entries[] | select(.key != "0") | [.key, .value.name, .value.path] | @tsv' "$ROOT/.worktrees/registry.json")
+    done < <(wt_registry_read | jq -r '.slots | to_entries[] | select(.key != "0") | [.key, .value.name, .value.path] | @tsv')
   fi
 else
   warn "registry missing or jq unavailable — worktree state unknown"

@@ -13,15 +13,32 @@
 #                plus the meta root is clean, AND none has a commit beyond its base. Anything else
 #                (too young, dirty, or holding commits, pushed or not) is REPORTED, never removed: a
 #                worker that is genuinely still running, or that finished with real work sitting on
-#                disk, must never be swept out from under it. A worktree with no packet at all
-#                (never created by govern:dispatch-packet) is outside --sweep's scope entirely.
+#                disk, must never be swept out from under it. A REGISTERED worktree with no packet
+#                at all is outside --sweep's scope entirely.
+#
+#                --sweep also reclaims registry-UNKNOWN dirs found on disk under WORKTREE_BASE —
+#                invisible to the named path above (it exits 1 on unknown names) and to
+#                govern:resolve, so they would otherwise rot forever. Gated harder, since nothing
+#                registered vouches for them: packetless, dir mtime older than the same
+#                GOVERN_AGENT_WALLCLOCK cap, no live session (lsof +D cwd), every repo and the meta
+#                root clean with no commits beyond base. A packet-bearing unregistered dir is KEPT:
+#                a dispatch-preserved worker tree is evidence, and only the packet's epoch is a
+#                trustworthy age signal for one.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/workspace.sh
 source "$ROOT/scripts/lib/workspace.sh"
 # shellcheck source=lib/registry.sh
-source "$ROOT/scripts/worktree/lib/registry.sh"
+# Same guard catch as status.sh: the library refuses to operate from inside a linked
+# worktree (reason on stderr), and without `set -e` a bare `source` continues with every
+# wt_* helper undefined. Here that failure is worse than an empty table: --sweep's
+# registry read would silently yield NOTHING, its unregistered second pass would then
+# judge every dir on disk as registry-unknown, and sweep real worktrees of the main
+# checkout. Refuse loudly instead.
+if ! source "$ROOT/scripts/worktree/lib/registry.sh"; then
+  exit 1
+fi
 
 NAME=""
 FORCE=0
@@ -247,6 +264,73 @@ sweep_candidate_ok() { # <path>
   return 0
 }
 
+# rc 0 = qualifies for removal; rc 1 = does not (sets $UNREG_REASON). Never touches disk.
+# For a registry-UNKNOWN dir on disk — no registry entry vouches for it, so every gate is
+# its own defence. reuses beyond_base_count above and reap.sh's live-session probe.
+unregistered_candidate_ok() { # <path>
+  local path="$1" dir label n now mtime cap livepids
+  if [ -f "$path/.dispatch-packet.md" ]; then
+    UNREG_REASON="has .dispatch-packet.md (preserved-worker evidence — manual scope)"
+    return 1
+  fi
+  if [ ! -d "$path/.git" ] && [ ! -f "$path/.git" ]; then
+    UNREG_REASON="not a git worktree (no .git)"
+    return 1
+  fi
+  # Age: a packetless dir has no creation timestamp, so the dir's mtime is the only signal.
+  # It tracks the dir entry itself, so a fresh checkout reads young and a rotted dir reads
+  # old; it can only UNDERestimate age (any direct-child write refreshes it), never hide
+  # one. Unreadable mtime = unmeasurable = keep.
+  cap="${GOVERN_AGENT_WALLCLOCK:-3600}"
+  now="$(date +%s)"
+  mtime="$(stat -f %m "$path" 2>/dev/null || stat -c %Y "$path" 2>/dev/null)"
+  if [ -z "$mtime" ] || [ "$((now - mtime))" -lt "$cap" ]; then
+    UNREG_REASON="unmeasurable or too young (${mtime:+$((now - mtime))s; }cap ${cap}s)"
+    return 1
+  fi
+  # Live session: any process whose cwd is inside (the same probe reap.sh runs).
+  livepids="$(lsof -a +D "$path" -d cwd 2>/dev/null | tail -n +2 | awk '{print $2}' | sort -u | tr '\n' ' ')"
+  if [ -n "$livepids" ]; then
+    UNREG_REASON="live-session(pids: ${livepids% })"
+    return 1
+  fi
+  for label in meta "${REPOS[@]}"; do
+    if [ "$label" = meta ]; then dir="$path"; else dir="$path/$label"; fi
+    { [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; } || continue
+    if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+      UNREG_REASON="'$label' has uncommitted changes"
+      return 1
+    fi
+    n="$(beyond_base_count "$dir")"
+    if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
+      UNREG_REASON="'$label' has $n commit(s) beyond its base"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Direct removal of a registry-UNKNOWN dir. Must NOT go through the named path (it exits 1
+# on unknown names, and there is no slot entry to free): git-worktree-remove each sub-repo
+# and the meta root directly. The candidate gates above already refused anything dirty,
+# live, or holding commits; --force here only overrides git's own unclean-tree refusal.
+unreg_remove() { # <path>
+  local path="$1" repo src dst
+  for repo in "${REPOS[@]}"; do
+    src="$ROOT/$repo"
+    dst="$path/$repo"
+    { [ -d "$src/.git" ] || [ -f "$src/.git" ]; } || continue
+    [ -e "$dst" ] || continue
+    git -C "$src" worktree remove --force "$dst" 2>&1 | sed "s/^/[$repo] /" || true
+  done
+  git -C "$ROOT" worktree remove --force "$path" 2>&1 | sed 's/^/[meta] /' || true
+  if [ -e "$path" ]; then
+    echo "  dir still present after git worktree remove — left in place" >&2
+    return 1
+  fi
+  return 0
+}
+
 swept=0
 kept=0
 while IFS=$'\t' read -r _name _path; do
@@ -265,4 +349,38 @@ while IFS=$'\t' read -r _name _path; do
   fi
 done < <(wt_registry_read | jq -r '.slots[] | select(.name != "__main__") | "\(.name)\t\(.path)"' 2>/dev/null)
 
-echo "✓ sweep done: $swept removed, $kept kept"
+# ── --sweep, second pass: registry-UNKNOWN dirs on disk (the .wt/t35 class) ──────────────────────
+# The loop above only ever sees REGISTERED worktrees; a directory under WORKTREE_BASE absent
+# from the registry is invisible to every teardown path (the named path exits 1 on unknown
+# names; govern:resolve iterates the registry) and rots on disk forever. Sweep those directly,
+# through the harder-gated unregistered path. Exclusion is by name AND by path, so a registry
+# entry claiming either keeps its dir out of this loop. An EMPTY read aborts the pass: it can
+# only mean the registry could not be read, and an empty exclusion set would misjudge every
+# dir on disk as unknown.
+unreg_swept=0
+unreg_kept=0
+reg_names_paths="$(wt_registry_read | jq -r '.slots[] | "\(.name)\t\(.path)"' 2>/dev/null)"
+if [ -d "$WORKTREE_BASE" ] && [ -n "$reg_names_paths" ]; then
+  for wt in "$WORKTREE_BASE"/*/; do
+    [ -d "${wt%/}" ] || continue
+    wt="${wt%/}"
+    if printf '%s\n' "$reg_names_paths" | awk -F'\t' -v n="$(basename "$wt")" -v p="$wt" \
+        '$1 == n || $2 == p { found = 1; exit } END { exit !found }'; then
+      continue
+    fi
+    UNREG_REASON=""
+    if unregistered_candidate_ok "$wt" && unreg_remove "$wt"; then
+      echo "✓ swept unregistered dir '$wt'"
+      unreg_swept=$((unreg_swept + 1))
+    else
+      echo "  kept unregistered '$wt': ${UNREG_REASON:-removal refused}"
+      unreg_kept=$((unreg_kept + 1))
+    fi
+  done
+fi
+
+summary="✓ sweep done: $swept removed, $kept kept"
+if [ "$((unreg_swept + unreg_kept))" -gt 0 ]; then
+  summary="$summary; unregistered: $unreg_swept removed, $unreg_kept kept"
+fi
+echo "$summary"

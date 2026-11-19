@@ -26,7 +26,12 @@
 # so a crashed script can't wedge slot allocation forever.
 set -uo pipefail
 
-WT_ROOT="${WT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+# Derived UNCONDITIONALLY from this file's own location. An inherited WT_ROOT env var is
+# deliberately ignored: it is not a documented knob (no consumer reads it), and letting it
+# redirect WT_REGISTRY/WT_LOCK below would point every registry operation at a directory
+# of the caller's choosing instead of the main checkout — silently, since the guard only
+# catches the linked-worktree case (.git as a file).
+WT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 # Registry operations are MAIN-CHECKOUT-ONLY. WT_ROOT above is derived from THIS file's
 # location, and every dispatch worktree carries its own full copy of scripts/, so a script
