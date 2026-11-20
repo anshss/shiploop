@@ -234,7 +234,11 @@ pdc_gate_one() {
   # A non-blocking hint that some OTHER queued-but-unnamed ticket touches the files this one does, so
   # the operator can expect overlapping exploration if both get worked. It never changes the verdict
   # and never touches the queue. GOVERN_OVERLAP_NUDGE=0 silences it.
-  govern::overlap_nudge "$N" "$TICKETS_FILE" || true
+  # >&2 is load-bearing: govern::overlap_nudge echoes to STDOUT, and this function's stdout is
+  # captured as the verdict (`verdict="$(pdc_gate_one ...)"`) -- an unredirected nudge glues its text
+  # onto the verdict string, the `== "proceed"` comparison fails, and a proceeding member silently
+  # drops out of its plan batch.
+  govern::overlap_nudge "$N" "$TICKETS_FILE" >govern::overlap_nudge "$N" "$TICKETS_FILE" || true2 || true
 
   # ── 10. preserved-worktree note (informational only, stderr; never a verdict) ──────────────
   # A prior attempt's worktree survives on disk when that attempt failed or timed out
