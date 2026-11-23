@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.20.13 - 2026-11-24
+
+### Added
+
+**`tools/run-suite.sh`: one local runner with the suite's run order.** The shard
+semantics lived only inline in the CI workflow YAML: a local full-suite run was a
+hand-rolled sequential loop (CONTRIBUTING carried the loop verbatim), several
+minutes of wall clock, and nothing local could even state, let alone verify, the
+packing-order rule. The runner builds the order from `tools/slow-tests-first.txt`
+(stale entries skipped, every unlisted test completed in the alphabetical tail),
+asserts that order covers every `test-*.sh` exactly once, selects `--shard i/n`,
+and adds `--jobs N` concurrent mode with per-test logs captured to files and a
+fail summary at the end. `ci.yml` now invokes the runner instead of embedding the
+logic, so CI and a local full run share one definition of the order; a full local
+run with `--jobs 8` lands near CI's sharded wall clock. New hub-context test
+`test-run-suite.sh` covers the order build, the coverage assertion (negative
+controls: dropped and duplicated test file), shard-partition completeness, and
+`--jobs` reporting the same pass/fail set as sequential on a deliberately broken
+fixture test. CONTRIBUTING's dev loop now ends with `tools/run-suite.sh` and
+scopes negative controls to the new test file only, never the whole suite.
+
 ## 1.20.12 - 2026-11-24
 
 ### Fixed

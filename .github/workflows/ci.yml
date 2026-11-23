@@ -281,9 +281,12 @@ jobs:
             --verify \
             --yes
       - name: run all govern tests in the scaffolded workspace
-        # The suite is hub-only — scaffold.sh no longer installs it into a fleet
-        # workspace — so copy it in here, exactly like sync-port.sh does for its
-        # own scratch build.
+        # The suite is hub-only (scaffold.sh no longer installs it into a fleet
+        # workspace), so copy it in here, exactly like sync-port.sh does for its
+        # own scratch build. The run order (slow-tests-first hint + coverage
+        # assertion + shard selection + skip accounting) lives in
+        # tools/run-suite.sh, so CI and a local full run share ONE definition of
+        # the order; this step carries no shard logic of its own.
         run: |
           set -euo pipefail
           SHARD="${{ matrix.shard }}"
@@ -292,87 +295,10 @@ jobs:
           mkdir -p "$WS/scripts/govern/test"
           cp templates/govern/test/*.sh "$WS/scripts/govern/test/"
           chmod +x "$WS"/scripts/govern/test/*.sh
-          cd "$WS"
-          passed=0; failed=0; skipped=0; total=0
-          fails=()
-          skips=()
-          # Build the run order: known-expensive tests first (scheduling hint from
-          # tools/slow-tests-first.txt), then every remaining test alphabetically.
-          # Round-robin over THAT order then packs the shards near-evenly, because
-          # the cost is concentrated in a handful of tests. The hint can never drop
-          # a test: stale entries are skipped and unlisted tests land in the tail,
-          # so the built order is always the complete suite (asserted below).
-          hint="$GITHUB_WORKSPACE/tools/slow-tests-first.txt"
-          : > /tmp/order.txt
-          if [ -f "$hint" ]; then
-            while IFS= read -r n; do
-              case "$n" in ''|\#*) continue ;; esac
-              # NOT `[ -f x ] && printf`: under `set -e` a stale hint entry would
-              # make that statement return 1 and abort the whole step.
-              if [ -f "scripts/govern/test/$n.sh" ]; then
-                printf '%s\n' "$n" >> /tmp/order.txt
-              fi
-            done < "$hint"
-          fi
-          for t in scripts/govern/test/test-*.sh; do
-            n="$(basename "$t" .sh)"
-            grep -qxF "$n" /tmp/order.txt || printf '%s\n' "$n" >> /tmp/order.txt
-          done
-
-          # The order MUST cover every test file exactly once, or a shard split
-          # would silently drop coverage while CI stayed green.
-          n_files="$(ls scripts/govern/test/test-*.sh | wc -l | tr -d ' ')"
-          n_order="$(sort -u /tmp/order.txt | wc -l | tr -d ' ')"
-          n_lines="$(wc -l < /tmp/order.txt | tr -d ' ')"
-          if [ "$n_order" != "$n_files" ] || [ "$n_lines" != "$n_files" ]; then
-            echo "::error::shard order covers $n_order unique / $n_lines lines but there are $n_files test files"
-            exit 1
-          fi
-          echo "ok - shard order covers all $n_files tests"
-
-          idx=0
-          while IFS= read -r name; do
-            idx=$((idx+1))
-            [ "$(( (idx - 1) % SHARDS + 1 ))" -eq "$SHARD" ] || continue
-            t="scripts/govern/test/$name.sh"
-            total=$((total+1))
-            if bash "$t" >/tmp/testout.log 2>&1; then
-              passed=$((passed+1))
-              echo "ok   - $name"
-            else
-              rc=$?
-              if [ "$rc" -eq 77 ]; then
-                skipped=$((skipped+1))
-                skips+=("$name")
-                echo "skip - $name (env not applicable)"
-              else
-                failed=$((failed+1))
-                fails+=("$name")
-                echo "FAIL - $name"
-                sed 's/^/         /' /tmp/testout.log
-              fi
-            fi
-          done < /tmp/order.txt
-          echo ""
-          echo "shard=$SHARD/$SHARDS  passed=$passed  failed=$failed  skipped=$skipped  total=$total"
-          if [ "$failed" -gt 0 ]; then
-            for f in "${fails[@]}"; do echo "::error::govern test failed: $f"; done
-            exit 1
-          fi
-
-          # A test that skips HERE runs nowhere unless the hub-context-tests job picks it up.
-          # That is how five update-channel tests sat ungated while CI looked green. Every skip
-          # must be accounted for in tools/hub-context-tests.txt, or it is silently dead.
-          unaccounted=0
-          for s in ${skips[@]+"${skips[@]}"}; do
-            # `!name` (quarantined) still counts as listed — strip the marker before matching.
-            if ! sed 's/^!//' "$GITHUB_WORKSPACE/tools/hub-context-tests.txt" | grep -qxF "$s"; then
-              echo "::error::$s skipped here and is NOT in tools/hub-context-tests.txt — it runs in NO job. Add it there (and confirm it passes from a hub checkout)."
-              unaccounted=1
-            fi
-          done
-          [ "$unaccounted" -eq 0 ] || exit 1
-          echo "ok - all $skipped skip(s) are covered by the hub-context-tests job"
+          bash tools/run-suite.sh \
+            --suite-dir "$WS/scripts/govern/test" \
+            --shard "$SHARD/$SHARDS" \
+            --hub-context tools/hub-context-tests.txt
 
   release-parity:
     name: Release parity (VERSION <-> tag <-> release <-> CHANGELOG)
