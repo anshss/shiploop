@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.20.14 - 2026-11-24
+
+### Changed
+
+**Worker contract: never end a turn parked on a background task's completion notification.** A
+completed background task reaches a worker only while that worker is mid-turn; an idle worker is
+never re-invoked by its own completed task, and a `run_in_background` Bash call and a Monitor
+stall identically, so switching between them is not a fix. `templates/.claude/agents/worker.md`
+(new self-service delta) and the headless `templates/governor/worker-prompt.md` (capability
+posture bullet) now require any wait to be a foreground bounded poll (repeated short calls under
+a total-wait cap set before starting), or an ending that reports what shipped plus what is
+pending and stops.
+
 ## 1.20.13 - 2026-11-24
 
 ### Added
