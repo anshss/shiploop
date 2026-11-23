@@ -16,9 +16,9 @@ set -uo pipefail
 HUB="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$HUB" || { echo "cannot cd to $HUB" >&2; exit 1; }
 
-# History walked: the published main branch plus every tag, never every local ref, so the output is
-# the same on any clone. MAIN_REF is the first of origin/main (dev clones and CI checkouts), main
-# (bare or local-only clones), HEAD that resolves.
+# History walked: the published main branch plus every release tag (v<digit>*), never every local ref
+# or ad-hoc backup tag, so the output is the same on any clone. MAIN_REF is the first of origin/main
+# (dev clones and CI checkouts), main (bare or local-only clones), HEAD that resolves.
 MAIN_REF=HEAD
 for cand in origin/main main; do
   if git rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then MAIN_REF="$cand"; break; fi
@@ -45,7 +45,7 @@ bash "$HUB/scaffold.sh" --list-mechanism-files | cut -f1 | sort -u | while IFS= 
   path="templates/$rel"
   printf '# -- %s --\n' "$rel"
   {
-    git log --format='%H' "$MAIN_REF" --tags --follow -- "$path" 2>/dev/null \
+    git log --format='%H' "$MAIN_REF" --tags='v[0-9]*' --follow -- "$path" 2>/dev/null \
     | while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         git cat-file -e "$sha:$path" 2>/dev/null || continue
@@ -70,7 +70,7 @@ echo
 # retired_hashes <installed-path> <template-pathspec>: "<sha256>  <installed key>" lines.
 retired_hashes() {
   local inst="$1" spec="$2" tprefix="$3"
-  git log "$MAIN_REF" --tags --no-renames --raw --no-abbrev --format= -- "$spec" 2>/dev/null \
+  git log "$MAIN_REF" --tags='v[0-9]*' --no-renames --raw --no-abbrev --format= -- "$spec" 2>/dev/null \
   | awk '$5 != "D" { print $4 "\t" $6 }' | sort -u \
   | while IFS=$'\t' read -r blob path; do
       [ -n "$blob" ] || continue
