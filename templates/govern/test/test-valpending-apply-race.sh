@@ -100,6 +100,11 @@ race_trace_install() { # racer-name
   done
   rm() { race_log "rm $*"; command rm "$@"; }
   mv() { race_log "mv $*"; command mv "$@"; }
+  mkdir() {
+    local _rc=0; command mkdir "$@" || _rc=$?
+    race_log "mkdir $* rc=$_rc inode=$(stat -c %i "${@: -1}" 2>/dev/null || stat -f %i "${@: -1}" 2>/dev/null || echo none)"
+    return $_rc
+  }
 }
 race_dump() {
   local f
