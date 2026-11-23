@@ -40,7 +40,7 @@ git -C "$T" remote add origin "$T/origin-root.git"
 git -C "$T" push -q origin main; git -C "$T" fetch -q origin
 
 git -C "$T/alpha" init -q -b main
-git -C "$T/alpha" config user.email t@t; git -C "$T" config user.name t
+git -C "$T/alpha" config user.email t@t; git -C "$T/alpha" config user.name t
 echo x > "$T/alpha/file.txt"; git -C "$T/alpha" add -A; git -C "$T/alpha" commit -qm a   # A
 git -C "$T/alpha" init -q --bare "$T/origin-alpha.git"
 git -C "$T/alpha" remote add origin "$T/origin-alpha.git"
@@ -52,9 +52,6 @@ git -C "$T/alpha" branch t7
 git -C "$T/alpha" worktree add "$T/wt/t7/alpha" t7 >/dev/null 2>&1
 git -C "$T" worktree add --detach "$T/wt/t7" main >/dev/null 2>&1
 echo b > "$T/wt/t7/alpha/file.txt"; git -C "$T/wt/t7/alpha" add -A; git -C "$T/wt/t7/alpha" commit -qm b   # B (tree: file=b)
-git -C "$T/alpha" checkout -q --detach
-git -C "$T/alpha" checkout -q -b squasher t7
-git -C "$T/alpha" checkout -q main
 git -C "$T/alpha" rm -q file.txt >/dev/null 2>&1 || true
 echo b > "$T/alpha/file.txt"; git -C "$T/alpha" add -A; git -C "$T/alpha" commit -qm s   # S: same tree as B, different SHA, parent A
 git -C "$T/alpha" push -q origin main; git -C "$T/alpha" fetch -q origin
