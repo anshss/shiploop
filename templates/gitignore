@@ -5,6 +5,9 @@ __SUBREPO_IGNORES__
 node_modules/
 logs/
 
+# hub versions of mechanism scripts kept beside a locally-edited file by /shiploop:update
+*.shiploop-new
+
 # governor driver→relay escalation hand-off — regenerated every run-end, not source
 governor/pending-escalations.json
 

@@ -41,3 +41,4 @@ test-worktree-base-permissions
 # cross-check keeps seeing it; un-quarantine when the Linux failures are fixed.
 !test-wrap-in-place
 test-vocab-worker-pairing
+test-mechanism-local-edits
