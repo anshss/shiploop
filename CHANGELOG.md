@@ -13,7 +13,12 @@ calls `govern::queue_foreign_changes` after taking the bookkeep lock and before 
 on any uncommitted change lists it and exits `12` without stashing, discarding or committing.
 `resolve-ticket.sh` runs the same check before any merge, so a PR is never merged when its booking
 would be refused; a refusal after a merge says "PR merged; queue not booked" and the recovery is
-`resolve-ticket.sh <N> --no-merge`. `GOVERN_QUEUE_FOREIGN_GUARD=0` turns the check off.
+`resolve-ticket.sh <N> --no-merge`.
+
+**Behavior change on update (the guard is on by default).** Resolve and filing now refuse, with exit
+`12`, when `queue/tickets.md` has uncommitted edits they did not make, for example another session's
+unfinished hand edit in the main checkout. The refusal names the changes. To proceed: commit them if
+they are yours, discard them if not, then re-run. `GOVERN_QUEUE_FOREIGN_GUARD=0` turns the check off.
 
 **The allocator never reissues a number.** `govern::next_ticket_number` also takes the highest number
 named by a `file #N`, `resolve #N` or `delete #N` commit subject in the queue repo's history, so a
