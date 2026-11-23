@@ -238,7 +238,7 @@ pdc_gate_one() {
   # captured as the verdict (`verdict="$(pdc_gate_one ...)"`) -- an unredirected nudge glues its text
   # onto the verdict string, the `== "proceed"` comparison fails, and a proceeding member silently
   # drops out of its plan batch.
-  govern::overlap_nudge "$N" "$TICKETS_FILE" >govern::overlap_nudge "$N" "$TICKETS_FILE" || true2 || true
+  govern::overlap_nudge "$N" "$TICKETS_FILE" >&2 || true
 
   # ── 10. preserved-worktree note (informational only, stderr; never a verdict) ──────────────
   # A prior attempt's worktree survives on disk when that attempt failed or timed out

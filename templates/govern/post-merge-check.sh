@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# post-merge-check.sh — the merged-ref gate behind "landed" (ticket #52, fix direction 2).
+# post-merge-check.sh: the merged-ref gate behind "landed".
 #
 # Worktree-green is not merged-green when PRs stack: each PR's CI ran on ITS OWN branch base, so a
 # squash-merge can silently resolve a stacked conflict to the stale-base side and drop the other
-# PR's lines (the #33/#34 stacked-PR clobber). CI on the branches says nothing about the tree a merge
+# PR's lines (the stacked-PR clobber). CI on the branches says nothing about the tree a merge
 # PRODUCES. This script runs a configurable check command against the POST-MERGE ref (freshly
 # fetched origin/main, in a throwaway detached worktree) so the resolve path can refuse to bookkeep
 # "landed" on a merged-but-broken main.
@@ -15,7 +15,7 @@
 #   GOVERN_POST_MERGE_CMD    the check command, run with cwd = a fresh temp checkout of merged
 #                            origin/main. Empty (default) = gate ARMED but INERT — there is nothing
 #                            to run, so the gate passes with a note. Set it to turn the gate on
-#                            (workspace.sh seeds the value — note a fresh temp checkout has no
+#                            (workspace.sh seeds the value; note a fresh temp checkout has no
 #                            node_modules, so prefer a dependency-free command or have the command
 #                            install/point at deps).
 #   GOVERN_ECHO=1            print what would run, touch nothing, exit 0 (dry-run convention).

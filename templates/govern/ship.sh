@@ -69,11 +69,11 @@ done
 PRIMARY="${TICKET_NUMS[0]}"
 WORKTREE_PATH="$WS_ROOT"
 
-# ── wrong-tree guard (the PR-#36 misfire shape) ──────────────────────────────────────────────────
+# ── wrong-tree guard (the wrong-tree PR shape) ──────────────────────────────────────────────────
 # ship stages/commits/pushes the sub-repos under WS_ROOT. When it is invoked with the MAIN
 # checkout's scripts/ copy (e.g. `npm run govern:ship` from a stale cwd — agent shells reset cwd
 # between calls), WS_ROOT resolves to the main checkout and this script stages THE MAIN CHECKOUT's
-# sub-repo HEAD (its stale local main, unpushed commits included) onto origin/ticket-<N> and opens
+# sub-repo HEAD (its stale local main, unpushed commits included) onto the ticket branch on origin and opens
 # a PR containing none of the worker's work. A linked worktree's .git is a FILE; the primary
 # checkout's is a DIRECTORY — refuse the primary. The hermetic-test seam (explicit GOVERN_WS_ROOT,
 # which fakes a whole workspace of plain .git clones) is exempt, as is GOVERN_SHIP_PRIMARY_GUARD=0.

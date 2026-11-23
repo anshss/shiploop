@@ -283,8 +283,12 @@ unregistered_candidate_ok() { # <path>
   # one. Unreadable mtime = unmeasurable = keep.
   cap="${GOVERN_AGENT_WALLCLOCK:-3600}"
   now="$(date +%s)"
-  mtime="$(stat -f %m "$path" 2>/dev/null || stat -c %Y "$path" 2>/dev/null)"
-  if [ -z "$mtime" ] || [ "$((now - mtime))" -lt "$cap" ]; then
+  # GNU first: on GNU `stat -f` means filesystem status and prints a multi-line block to stdout
+  # while exiting 0 or non-zero, which would poison the arithmetic below. Strip non-digits and
+  # treat 0 as unreadable.
+  mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || echo 0)"
+  mtime="${mtime//[!0-9]/}"
+  if [ -z "$mtime" ] || [ "$mtime" -eq 0 ] || [ "$((now - mtime))" -lt "$cap" ]; then
     UNREG_REASON="unmeasurable or too young (${mtime:+$((now - mtime))s; }cap ${cap}s)"
     return 1
   fi
@@ -349,7 +353,7 @@ while IFS=$'\t' read -r _name _path; do
   fi
 done < <(wt_registry_read | jq -r '.slots[] | select(.name != "__main__") | "\(.name)\t\(.path)"' 2>/dev/null)
 
-# ── --sweep, second pass: registry-UNKNOWN dirs on disk (the .wt/t35 class) ──────────────────────
+# ── --sweep, second pass: registry-UNKNOWN dirs on disk (directories the registry never recorded) ──────────────────────
 # The loop above only ever sees REGISTERED worktrees; a directory under WORKTREE_BASE absent
 # from the registry is invisible to every teardown path (the named path exits 1 on unknown
 # names; govern:resolve iterates the registry) and rots on disk forever. Sweep those directly,

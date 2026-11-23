@@ -249,7 +249,7 @@ EOF
 ;;
     pr) cat <<'EOF'
 [RULES/pr] Touching a pull request:
-- **Never mutate an OPEN PR with `gh pr edit`.** Its GraphQL query pulls `projectCards`, which hard-fails where that field is unavailable, and `--base` is worse: it reports success while changing nothing. Patch an open PR body via `gh api repos/<owner>/<repo>/pulls/<N>` instead (works as of 2026-11-17).
+- **Never mutate an OPEN PR with `gh pr edit`.** Its GraphQL query pulls `projectCards`, which hard-fails where that field is unavailable, and `--base` is worse: it reports success while changing nothing. Patch an open PR body via `gh api repos/<owner>/<repo>/pulls/<N>` instead.
 - Use the REST API instead: `gh api -X PATCH repos/<org>/<repo>/pulls/<N> -F body=@body.md` (add `-F base=<branch>` for the base). No projectCards query, and it fails loudly.
 EOF
 ;;

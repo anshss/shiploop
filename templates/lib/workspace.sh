@@ -201,6 +201,17 @@ export WSP_LINT_FIX_CMD="${WSP_LINT_FIX_CMD:-}"
 # trailer only). Any value other than `off` (or an absent knob, for a workspace.sh predating it) = ON.
 export WSP_PR_FOOTER="${WSP_PR_FOOTER:-on}"   # on | off
 
+# ── Post-merge gate and local sync ───────────────────────────────────────────
+# GOVERN_POST_MERGE_CMD: after the governor merges a PR it runs this command in a fresh temp checkout
+# of the merged origin/main and refuses to book "landed" if it fails. Empty (default) = nothing to
+# run, the gate passes. A fresh checkout has no node_modules, so prefer a dependency-free command or
+# one that installs its own deps. GOVERN_POST_MERGE_GATE=0 is the kill switch (always pass).
+# GOVERN_POST_MERGE_SYNC=1 additionally fast-forwards the sub-repo's local checkout after a merge
+# whose check passed, only when that checkout is on its default branch. Default 0 = never touched.
+export GOVERN_POST_MERGE_GATE="${GOVERN_POST_MERGE_GATE:-1}"
+export GOVERN_POST_MERGE_CMD="${GOVERN_POST_MERGE_CMD:-}"
+export GOVERN_POST_MERGE_SYNC="${GOVERN_POST_MERGE_SYNC:-0}"
+
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
 #     Per-worktree setup AFTER the trees are laid out: install deps, codegen
