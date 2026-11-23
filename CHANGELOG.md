@@ -15,9 +15,10 @@ lock is retried with `mkdir` and never reclaimed. Covers both `govern::lock_acqu
 **A non-exclusive `mkdir` no longer lets two actors hold one lock.** The lock helpers trusted
 `mkdir`'s exit status as the only exclusion point. On a CI runner whose `mkdir` is a Rust coreutils
 build, two racers' `mkdir` of one path both exited 0, so both entered the critical section (a double
-apply of one validation result, a semaphore over its cap). A claim now also creates the lock's
+apply of one validation result). A claim now also creates the lock's
 `holder` file with noclobber (an `O_EXCL` open), which only one racer can do; the loser sees a held
 lock and waits or gives up.
+The install semaphore and the worktree registry lock still claim with `mkdir` alone.
 
 ## 1.20.3 - 2026-11-23
 
