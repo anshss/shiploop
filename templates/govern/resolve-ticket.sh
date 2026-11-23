@@ -55,6 +55,7 @@
 #      before the landing is bookkept; a failed or unverifiable check refuses the landing like any
 #      other refusal — the PR is already merged, so the disposition says merged-but-blocked, not
 #      landed.
+#      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
 #      or with --no-merge once they handled it by hand).
 #   6. If the report needs a prod migration, apply it via GOVERN_MIGRATE_CMD: refuse a destructive
@@ -262,11 +263,19 @@ elif [[ -n "$pr_lines" ]]; then
         else
           PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(merged)"
         fi
-        # Keep the local main checkout in step with the just-merged remote, so the
-        # driver's later reads/runs of this sub-repo are not silently stale. ff-only:
-        # a dirty or diverged local checkout is left untouched, with a note to sync.
-        if ! git -C "$(govern::repo_localdir "$_mrepo")" pull --ff-only origin main >/dev/null 2>&1; then
-          echo "resolve-ticket #$N: note: local $_mrepo checkout not fast-forwarded to origin/main; run 'npm run sync'" >&2
+        # Opt-in local sync (GOVERN_POST_MERGE_SYNC=1): fast-forward the sub-repo checkout to the
+        # just-merged remote so the driver's later reads of it are not stale. Only when the
+        # post-merge check passed and the checkout sits on its default branch; ff-only, so a dirty
+        # or diverged checkout is left untouched, with a note to sync by hand.
+        if [[ "${GOVERN_POST_MERGE_SYNC:-0}" == "1" && "$_pmrc" -eq 0 ]]; then
+          _ldir="$(govern::repo_localdir "$_mrepo")"
+          _defbr="$(govern::subrepo_default_branch "$_ldir")"
+          _curbr="$(git -C "$_ldir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+          if [[ "$_curbr" != "$_defbr" ]]; then
+            echo "resolve-ticket #$N: note: local $_mrepo checkout is on '${_curbr:-unknown}', not '$_defbr'; skipping post-merge sync" >&2
+          elif ! git -C "$_ldir" pull --ff-only origin "$_defbr" >/dev/null 2>&1; then
+            echo "resolve-ticket #$N: note: local $_mrepo checkout not fast-forwarded to origin/$_defbr; run 'npm run sync'" >&2
+          fi
         fi
         ;;
       2)

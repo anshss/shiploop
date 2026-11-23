@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.20.3 - 2026-11-23
+
+### Added
+
+**A post-merge check gates "landed".** After `resolve-ticket.sh` merges a PR, the new
+`post-merge-check.sh` runs `GOVERN_POST_MERGE_CMD` in a throwaway checkout of the freshly fetched
+merged `origin/main`. A failing check, or a merged ref that cannot be checked out, refuses to book the
+ticket as landed and reports the PR as merged but blocked. Worktree-green is not merged-green when PRs
+stack, because each PR's CI ran on its own branch base. The command is empty by default, which leaves
+the gate inert; `GOVERN_POST_MERGE_GATE=0` is the kill switch.
+
+**Opt-in local sync after a merge.** `GOVERN_POST_MERGE_SYNC=1` fast-forwards (ff-only) the sub-repo's
+local checkout after a merge, only when the post-merge check passed and the checkout is on its default
+branch; otherwise it skips and names the branch on stderr. Default `0`: the checkout is never touched.
+
+**`worktree:rm --sweep` also reclaims directories the registry never recorded.** A second pass walks
+the worktree base for unregistered directories and removes the ones that are real git worktrees, old
+enough, free of live sessions, clean and without commits beyond their base. `worktree:status` lists
+such directories too.
+
+**Rules-on-touch hook lines for tickets and PRs.** Touching the queue now delivers a numbering rule
+(next number is one plus the highest heading and git history), and touching a pull request delivers
+the REST recipe for patching an open PR body instead of `gh pr edit`.
+
+### Changed
+
+**Worktree creation fetches before it picks a base, and refuses when the fetch fails.** A base taken
+from an origin ref that was never refreshed is how a later merge drops an earlier PR's lines, so a
+repo with an origin whose fetch fails now aborts the worktree instead of branching off stale local
+main. `GOVERN_BASE_FETCH_GATE=0` restores the best-effort fallback; a repo with no origin keeps using
+local main. On by default.
+
+**`ship.sh` refuses to run from the primary checkout** (it would stage and push that checkout's stale
+sub-repo HEAD instead of the worker's work), and resolves ticket headings from the primary checkout's
+queue even when run from a worktree (`GOVERN_TICKETS_FILE` overrides). `GOVERN_SHIP_PRIMARY_GUARD=0`
+disables the guard. On by default.
+
+**`await-ci.sh` tells a PR with no checks from a failed `gh` call.** A genuinely checkless PR (empty
+status rollup) is reported as such after a verification pass; any other failure still fails closed.
+
+**The worktree registry library refuses to run inside a linked worktree and ignores an inherited
+`WT_ROOT`.** `wt_registry_write` also refuses any write that moves or drops the main-checkout slot.
+`doctor.sh`, `worktree:status` and `worktree:rm` read the registry only through the library, so a
+refusal is loud instead of rendering an empty list.
+
+### Fixed
+
+**`pre-dispatch-check.sh` no longer corrupts the verdict or writes a stray file.** The overlap nudge
+prints to stderr again; a mangled redirect had made it write a file named `govern::overlap_nudge` into
+the working directory. A nudge printed on stdout would also have glued onto the verdict and dropped a
+proceeding ticket from its batch.
+
+**A multi-batch plan no longer aborts between batches.** `plan.sh` counted measured files with
+`grep -c .`, which exits 1 on empty input and killed the run under `set -e` plus `pipefail`; a refusing
+batch could cost the next batch its verdict.
+
+**`worktree:rm --sweep` reads directory mtimes on GNU systems.** It tried the BSD `stat -f` form
+first, which on GNU prints a multi-line filesystem block and aborted the age arithmetic. It now reads
+GNU first, strips non-digits, and treats an unreadable mtime as unmeasurable (the directory is kept).
+
+**The post-merge local pull is no longer unconditional.** The merge path used to fast-forward the
+local checkout after every merge, even when the post-merge check had failed and on whatever branch was
+checked out. It now happens only under `GOVERN_POST_MERGE_SYNC=1` as described above.
+
+**`workspace.sh` seeds `GOVERN_POST_MERGE_GATE`, `GOVERN_POST_MERGE_CMD` and `GOVERN_POST_MERGE_SYNC`**,
+and `CONFIGURATION.md` documents them along with `GOVERN_BASE_FETCH_GATE` and
+`GOVERN_SHIP_PRIMARY_GUARD`. A doc comment in `resolve-ticket.sh` that an insertion had cut in half is
+whole again, and comments that carried provenance now state the mechanism.
+
+### Removed
+
+**`test-worktree-reopen.sh`.** It relied on overriding `WT_ROOT` from the environment, which the
+registry library no longer honors; `test-worktree-registry-guard.sh` and
+`test-worktree-unregistered-sweep.sh` replace it.
+
 ## 1.20.2 - 2026-10-08
 
 ### Fixed

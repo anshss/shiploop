@@ -151,4 +151,38 @@ rc="$( cd "$T" && printf '%s' "$(rpt resolved true null)" | STUB_PM_RC=7 bash "$
 assert_eq "$(landed_count)" "0" "5b. a failed post-merge check on a MERGED PR never books 'landed'"
 assert_contains "$out" "post-merge check FAILED" "5b. the merged-post-merge-check-failed refusal is classified on stderr"
 
+# ── 7. opt-in local sync after a merge (GOVERN_POST_MERGE_SYNC) ────────────────────────────────
+# The sub-repo checkout is fast-forwarded only when the knob is 1, the post-merge check passed, and
+# the checkout is on its default branch. Origin gets one commit the clone lacks; "synced" means the
+# clone's HEAD now equals origin's.
+git init -q --bare -b main "$T/origin.git"
+git clone -q "$T/origin.git" "$T/alpha" 2>/dev/null
+( cd "$T/alpha" && git config user.email t@t && git config user.name t \
+  && git checkout -q -b main 2>/dev/null; echo a > a.txt && git add a.txt && git commit -qm a && git push -q origin main \
+  && git remote set-head origin main >/dev/null 2>&1 )
+git clone -q "$T/origin.git" "$T/pusher" 2>/dev/null
+( cd "$T/pusher" && git config user.email t@t && git config user.name t && echo b > b.txt && git add b.txt && git commit -qm b && git push -q origin main )
+origin_head="$(git -C "$T/origin.git" rev-parse main)"
+alpha_head() { git -C "$T/alpha" rev-parse HEAD; }
+sync_rt() { # <pm-rc> [env assignments...]: run the green path with the post-merge stub's rc, return stderr
+  local pmrc="$1"; shift
+  ( cd "$T" && printf '%s' "$(rpt resolved true null)" | env STUB_PM_RC="$pmrc" "$@" bash "$T/bin/resolve-ticket.sh" 41 2>&1 >/dev/null )
+}
+
+: > "$LANDED"
+sync_rt 0 GOVERN_POST_MERGE_SYNC=0 >/dev/null
+assert_eq "$([[ "$(alpha_head)" == "$origin_head" ]] && echo synced || echo untouched)" "untouched" "7a. knob 0 leaves the checkout untouched"
+
+sync_rt 7 GOVERN_POST_MERGE_SYNC=1 >/dev/null
+assert_eq "$([[ "$(alpha_head)" == "$origin_head" ]] && echo synced || echo untouched)" "untouched" "7b. knob 1 with a failed post-merge check leaves the checkout untouched"
+
+( cd "$T/alpha" && git checkout -q -b feature )
+err="$(sync_rt 0 GOVERN_POST_MERGE_SYNC=1)"
+assert_eq "$([[ "$(alpha_head)" == "$origin_head" ]] && echo synced || echo untouched)" "untouched" "7c. knob 1 on a feature branch leaves the checkout untouched"
+assert_contains "$err" "is on 'feature', not 'main'" "7c. ...and prints the note naming the branch"
+( cd "$T/alpha" && git checkout -q main )
+
+sync_rt 0 GOVERN_POST_MERGE_SYNC=1 >/dev/null
+assert_eq "$([[ "$(alpha_head)" == "$origin_head" ]] && echo synced || echo untouched)" "synced" "7d. knob 1, passed check, default branch: fast-forwarded"
+
 assert_done
