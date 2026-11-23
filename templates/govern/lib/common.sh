@@ -617,8 +617,13 @@ govern::mtime() { # <path> -> epoch seconds, or 0 when unavailable
   m="${m//[!0-9]/}"; [[ -n "$m" ]] || m=0
   printf '%s' "$m"
 }
+# An unavailable mtime (govern::mtime prints 0: the lock was released between the caller's failed
+# mkdir and this check, or is unreadable) must read as age 0. "now minus 0" is decades, which would
+# judge a vanished lock stale and let the caller rm -rf a path another actor has just re-created.
 govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
-  echo $(( $(date +%s) - $(govern::mtime "$1") ))
+  local m; m="$(govern::mtime "$1")"
+  [[ "$m" -gt 0 ]] || { echo 0; return 0; }
+  echo $(( $(date +%s) - m ))
 }
 # Read the holder pid recorded inside a claim/bookkeep lock dir. Returns "" when absent
 # (a pre-#pid-liveness lock or a partial write from a killed acquire).
