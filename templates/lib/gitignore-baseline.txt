@@ -1,0 +1,31 @@
+# Template .gitignore patterns shipped before the update recorded which patterns it had offered.
+# Frozen: never edit. On the first update of a workspace with no record, an absent pattern listed
+# here is treated as deliberately removed; only a static pattern missing from this list is new.
+node_modules/
+logs/
+*.shiploop-new
+governor/pending-escalations.json
+governor/.govern.lock/
+governor/.bookkeep.lock/
+governor/.locks/
+governor/.pending-sync/
+governor/ticket-history.jsonl
+governor/.run-id
+governor/events.jsonl
+governor/claudemd-trim-proposals.md
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp
+*.swo
+.claude/transcript.md
+.claude/projects/
+.worktrees/*
+!.worktrees/.gitkeep
+.wt/
+worktree.env
+.governor-notes.md
+.dispatch-packet.md
+.plans/
+.specs/

@@ -11,6 +11,49 @@
 # GENERATED: do not hand-edit. Regenerate after any mechanism template change:
 #     bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt
 
+# -- .claude/agents/investigator.md --
+b59dcc3d342b389f7985c194e1a215cfede7f0050cf3b86120d17034496de384  .claude/agents/investigator.md
+f613f5b45ab53a2f1988be7d4a224afb0bc24feeb1f1a42a465b9e5c558da98e  .claude/agents/investigator.md
+
+# -- .claude/agents/lookup.md --
+5fe43600ec3c4212bd0cc0cc59590666547847544e44673c0fe1439f25ef8a39  .claude/agents/lookup.md
+aaa1c22be46574b7d811602454f41fba8c8d494146dc2b6853c7ee8a479fc816  .claude/agents/lookup.md
+
+# -- .claude/agents/worker.md --
+0524df2df49695ae9b5b8af3bda72473f2b8f7c9fbdac0f78420d003e8fe06e0  .claude/agents/worker.md
+135f0a8c3ede4c08b7a0d68208b62267654a86c5e519092fa7107d8b3134ef01  .claude/agents/worker.md
+156905cb5834945cd522057b8a602f3849823de806791a7296629d1bd747bd03  .claude/agents/worker.md
+1a05b35b279bc36c35c8b500ed633624866e03c9077a9e80c399455f352f575a  .claude/agents/worker.md
+2cc2d06cf2a51fcfc94cca9c4d2ffa7b28893e4948aedf45ee9d0f2578eee224  .claude/agents/worker.md
+3d3dc8a56d882cee9f270442a80c87ad423fa5c1764e4fd00d9b1ea579107679  .claude/agents/worker.md
+417c882eddb10bccb608169c7c647883228649db115affc73b41512854123f9d  .claude/agents/worker.md
+41bd8613b3af8cd3d92394b9ffaf09cbe3ad27c8d67a554acc7f5ef2ef10226f  .claude/agents/worker.md
+69d20099c8168d2448a3cd91599027e75bea2be692e5a889af33b5b1ee059ec5  .claude/agents/worker.md
+6b362d9d682be87d388832dbed064b5dd638ddfdfc0921254b8f7a840a2c1d2c  .claude/agents/worker.md
+86a440f7ff1a618a337022340c832d0809635bf7e860ef36673448205775d528  .claude/agents/worker.md
+9cf6d6cc26eed3464b1923ffe1e8f8fb9e9d0cc62b0a7887769e51c5ec7cde38  .claude/agents/worker.md
+dc98b43b8e35cb9f148133cd92069a96ed1eafa62397b5a55df5cfc963179d9e  .claude/agents/worker.md
+de408893f4ce5580c2d4fb55492809f4f5a5798ef54c2ab697c2c9e97650f4ef  .claude/agents/worker.md
+fe25f4d234e6137f4f7d4720249f83b63eb97b224b844218d14863acd42dbdc1  .claude/agents/worker.md
+
+# -- .claude/commands/flows.md --
+371231a7ad0a1bcebb0a899889d78f9f8c1bf37f11c32d19a36b7831a2d0aa3a  .claude/commands/flows.md
+707c868bf9e90fbf091c898ad15839b3ec84c1d7e0e374df5ac1c4cd57ddb4cb  .claude/commands/flows.md
+714942e97b9ae1daa3c33cc8b55d4af3da55729931d146f33d2f36a857cc3e4a  .claude/commands/flows.md
+86d328eb89eb6e19bff84f9579d8672bc65b91bfc41fee497b401d9ec2d816d2  .claude/commands/flows.md
+97bd854dd48711ffccaffbae78ae1bbebf3ec70ef9cb49015a2cbc876c2a5954  .claude/commands/flows.md
+a5914ffe717d7e39749c45b60e78a3ae9ed49fa1d51d537aa2a777f5129df702  .claude/commands/flows.md
+a85a38ffac7e130ed8dc6d04cd90e64112205d4d9359d3637c0b4d8e8dc8b133  .claude/commands/flows.md
+b23e9139b4dac595a6dd7ab2a3dc2d685e61d945043359952cab11c7c14bf5d6  .claude/commands/flows.md
+c0f9cabf6b6a4656b7639ac371718eefd900f4891e892da1468861ee2e01a7fc  .claude/commands/flows.md
+cd0306577f5e0145aea6c3f4db7532569115d716e2e054b97554e4aff87af77f  .claude/commands/flows.md
+d7b5aa44644f829c5b0767312600e2fb7b6416d190b745605e0ed7d19fe9ce75  .claude/commands/flows.md
+
+# -- .claude/commands/validated.md --
+6ca3f750ef8b3014f8163ab9c8415fc9cec7c361e9bef0c081447d5e7f89b78b  .claude/commands/validated.md
+700d1615608d98e194ff5db85e0afd0236eb9887540da2198ec76ced7fa70b1b  .claude/commands/validated.md
+99d747cda892b5aa8089ff4cd44eb45058683d3e999bf6b8b2dae22c055e0f41  .claude/commands/validated.md
+
 # -- dev.sh --
 a60a8934a0b1ccd3ac3ff2731a85951bae3009f24edcac4ae8705287cd286c31  dev.sh
 f10ec05eb6dd014bf82bc9f4a23237052b4aac5c27f97d6fd0279c82ab66f8c2  dev.sh
@@ -40,6 +83,20 @@ c86dffe0998ca7fc7f49a5a9b422a647c10d32e244a864d6dc7802c026ebef45  doctor.sh
 c9f176d4ff81d5f44f03aa580b1b1922a2bd9bffd40845d531c4e28a556d5380  doctor.sh
 d2a6dec176481da6464a965d743b93fe3e89f608a61270beded0c0d57ad4513b  doctor.sh
 d3cf17c246dd127e60bdbb43cf67f076f4ece79a8055fbe884b8bcdd5907a82e  doctor.sh
+
+# -- githooks/pre-commit --
+964d9027025b924258bf5cb94c0edbde8f8320ed868c8805859e9bce5e8ee5f4  githooks/pre-commit
+
+# -- githooks/pre-push --
+47b424779020acaabc95873676f6bbe4c59abe1f3d1fa0e7000eeacb08db3a1c  githooks/pre-push
+637a456603864afdad73d8b9e168283b838dc1ce86368ecac6a92517dd44e78f  githooks/pre-push
+9e9ab7fda9e4fa6830c43baa38f22261527477a5c6dc3efac8238049d4e0593b  githooks/pre-push
+c3673547246122ce267b18a12efe3b5efd5fb3df7c78009d9072e939e44022e6  githooks/pre-push
+f79bf6575fdd1c4ac3a2af5e1ba5779c0a9275c32c916d1c229d3c4de0f26054  githooks/pre-push
+
+# -- githooks/prepare-commit-msg --
+64c516ede8968f29caa1cf0cc5ac156fc62cc178c0ad08332958025c344eafe8  githooks/prepare-commit-msg
+b7fb20de32efadfd97f5f663ff2fd0b53d3d0d87963a9b3976c294d98ad72fd6  githooks/prepare-commit-msg
 
 # -- govern/advisor-consult.sh --
 05054f25b76e7d3fc0a29034e83f9ef9d75c35fbe845f6933a5b88d30438b03e  govern/advisor-consult.sh
@@ -779,6 +836,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 0b1c352a6acae047d0e128d5fe877e0a0e73fa3d41ad4634232796f984d80510  scripts/govern/test/test-events-emitter.sh
 0b4a9adbc4c7a2b108d88d10711e24ff80b74ff7152f19f3d4b6f144ea803743  scripts/govern/test/test-single-run-lock.sh
 0b909f5b7a12ec80a942f8bd1c7d2f029fab3c0280768f1f2136f1c5e0d963fb  scripts/govern/test/assert.sh
+0bc46ddcd6ef0c465dbb162fe33750685095f55336e39d022f35762578b82ebb  scripts/govern/test/test-externalize-gate.sh
 0c37d708aee88a03bd040f99cb91785659ffae81ff879d6c445d19d869e40ae8  scripts/govern/test/test-merge-pr.sh
 0ce5ba17ea9950cd10b35a459506494f518a789650741a9c673f11ec9d089679  scripts/govern/test/test-run-loop.sh
 0d723e270a81b3351fa10fb320b3f51ed6ff222e64649a3ae1b39390ba235cef  scripts/govern/test/test-bookkeep-overlap-autostash-pop.sh
@@ -815,6 +873,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 1a644e448665f20c6f2322bbe82fbc1dddc213fd7b924449b302917b4a2a5d53  scripts/govern/test/test-pending-waits.sh
 1a858ddeba2b040e4372ee74c3f254421bba95ecad11a03b4fe44fd155bf46bb  scripts/govern/test/test-named-dispatch.sh
 1abff6e1cf8ca41daea719a5f2b05c0f7b2ec1c8ade5d077b1d8de9942e39009  scripts/govern/test/test-spawn-warm-escalation.sh
+1b01e15930439b8c36a28c6602fc1d2f3ff553207dcbe34eed6b0ba7a3601361  scripts/govern/test/test-flows-command.sh
 1b63464c04ba96bbc9c21db5ee9210b3f87c907d5646c0802d2f709ec2ab2034  scripts/govern/test/test-progress-signal.sh
 1bf4bd3dbe1183662145c9d161bf11e0a4c759c06d7ebaeb79e01f16ab0b4363  scripts/govern/test/test-locality-batch-runloop.sh
 1c6e5f0828404103d472fad0a18ba699d665f40626c89d69f84dd2943877dabd  scripts/govern/test/test-ticket-block-parser.sh
@@ -1014,6 +1073,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 617dcc90d7ebd2cf82558a82d731ca526ce0cfd60320c166feb94da3a6ad483f  scripts/govern/test/test-automerge-guard.sh
 62822bf36921069d4c68d09cd75e5e2b3e1e996c33e6323e6a85a490987f33c6  scripts/govern/test/test-events-runloop.sh
 62e9ba7acec2a7a21c8fd6bc8b78e002e242e77c42f127cb32ed7dd694814609  scripts/govern/test/test-ticket-sweep.sh
+6393c9c316d6ead38bdbebf4bfd88211801c125a0b85d557c6e4b26f7d92a8f7  scripts/govern/test/test-post-merge-sync-probe.sh
 6489517bf514781d2c2a1a8faa6b8edb8d2e38f4fe0c8e28344359fe8560abfb  scripts/govern/test/test-bookkeep-missing-dir.sh
 6518eaf62d7ef3a8e1c071d7ac4304f66266e4150f467f1e071baf45abb47449  scripts/govern/test/test-worker-agent-doctrine.sh
 65542d76dcdf2dd3c353ff3ec3099ada5477f252c9cfdb5daa7c3d1806d3e84a  scripts/govern/test/test-ticket-sweep.sh
@@ -1040,6 +1100,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 6ddc0ea49a843ca7e67a10cfaf8e47ea0298c80aa18ea931d1544f26fa98fb05  scripts/govern/test/test-supervisor-selection.sh
 6e229c2071b6d2791406e4b5f173321c95dc59a1ac2d504e0dc1c2372d1bdc1c  scripts/govern/test/test-status-by-source.sh
 6e351b32d85253ca29bb9e4328b2a703cd3e614375207fd085358a11ec8dc94f  scripts/govern/test/test-flows-cas-edit.sh
+6e719829f8810e3c6baf1e462af6352f2eaf0e3429b2828611ba23d5c8bdcb98  scripts/govern/test/test-queue-foreign-guard.sh
 6e8374fa12e31ee760bce4fbe1d503aebbafa8d1220b0c18ace298560a19c661  scripts/govern/test/test-reconcile-update.sh
 6e97c2bd3de4a37a6dd4a5101b8de8532d988827ca9453ce03e2c4df2876c1c2  scripts/govern/test/test-merge-fail-park.sh
 6f7f5d2546404cf15235ea1f55f2b15d82906a24ecc14075f6326fdd894fd54b  scripts/govern/test/test-bookkeep-overlap-autostash-pop.sh
@@ -1069,6 +1130,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 77710bcaf59a9306bfe31c63c2b1934b36eac1892a99a667bf3a432f9d5607ae  scripts/govern/test/test-update-channel.sh
 778abb10177a5361c5f6f93221884caf6f079fc1785bae36435d22c272f87209  scripts/govern/test/test-sync-templates-upper-bound.sh
 7830ec3114acfd4a09a581f77fe0420e7551b7a11436f73e06ad8c7db5754d44  scripts/govern/test/test-claim-lock-dry.sh
+788cd559e91b62f9544e9360251a7277f4fe33b993c7238c85cde35da0350207  scripts/govern/test/test-sync-run-probe.sh
 789333c846c7c79bf08122d91fc64c0cb37f22603209abc6abc6f5a70f8d38f0  scripts/govern/test/test-greenfield.sh
 789a91f96c7e7d13825d74fb285544abd8ca236adaceff302ab22dd8e8d81f60  scripts/govern/test/test-validation-promote.sh
 797af63c00c33e19c8bf983e803bdd32d8e12127b9e9def2a5f0f99b3c5bea44  scripts/govern/test/test-disk-guard.sh
@@ -1249,6 +1311,7 @@ b8dbb52bfa1161b1bfb5ff38217952778fd33548fb8add49310988dcc5b6547f  scripts/govern
 b92f08d4e717e2cabc94b7dbcafe5f08c91815897ce583daee3a5d2c9d03d0d5  scripts/govern/test/test-spawn-worker.sh
 b96225ddf2bee4be07e36b8a45a1130208b14c5388f42608f6eb0630a1113f6e  scripts/govern/test/test-spawn-prompt-validation-fields.sh
 b9fab32225fcfa1cb0fed5bd94709a46b984b6d9962a8a74c85cc18333a9103f  scripts/govern/test/test-merge-pr-branch-cleanup.sh
+ba67669458966435d1456b3964359b15bbe7614c848363a25709c273f11cc306  scripts/govern/test/test-disposition-parse.sh
 bb49b260c70c1a06ddee358e333084f3e2b1e72e5e5b242194d439009840e70b  scripts/govern/test/test-ticket-sweep.sh
 bb94dd003b53195ed974bd4d63f4af64c6b806ea800ab3b4fea6146f9eadf7c1  scripts/govern/test/test-deterministic-apply.sh
 bbe60b437b85fd173969a897441b7eec167d9ad9ead7868f217533d940716268  scripts/govern/test/test-pre-dispatch-check.sh
@@ -1348,6 +1411,7 @@ dd25c5d42e96924541cf7be1348eda16d8d492f07a60e03aed4c8b4f655a5f73  scripts/govern
 dd5150af6aacb8f3fd87b5f105e02c75fd8505a1870a6318962881b6f5b72ae7  scripts/govern/test/test-history-sizing-fields.sh
 dde2ae7b00c0bdbd747cf7c29089b1d960260cd79a3f46d223e24fbaf0fbd65a  scripts/govern/test/test-update-channel.sh
 de25a6522665e938bb136a244d5762c95eae82af051455ff1a280c3ab1ea3151  scripts/govern/test/test-common-run-bounded.sh
+de4421339774966ad86b47724c35a54d7cdb3aef4d26473a2ff8481528e742eb  scripts/govern/test/test-escalations.sh
 de6bc34f5f2db1027e56c4278c7e130eee310c55087b41801b4e99dc804d1e92  scripts/govern/test/test-validation-ticket-recognizer.sh
 de978bd825c3e344f65e76b2a52130f4877bedd9a9a6202b721a905b98e3cf15  scripts/govern/test/test-await-ci.sh
 dfc5ef31253557c66e8b3e76af85f8bb976d8f1ce0cdb08dc81bc0c22613f197  scripts/govern/test/test-worker-event-emit.sh
@@ -1428,6 +1492,7 @@ f816853feba8b3b1635ee7d92ff9415b5fd03e83c25c5b1f62353e96fd5195e5  scripts/govern
 f84e54c4b7de85af5e27c348ec2330d06f7a00160b9b264b23a6bc5dbc82f5b9  scripts/govern/test/test-orphan-teardown.sh
 f856126b4199e5c162ffd74de54227d4bfc397b934125f5debf6eacfd15b9a5e  scripts/govern/test/test-router-posture-worker-spawn-deny.sh
 facde19872e17504d73c1ded380075ad6ddd426efed097f058628cf8f023facf  scripts/govern/test/test-flow-pipeline.sh
+fb4f7138778b312af94fa16d49fe2c2952496ec5e31bd3a3f3c37a2ec0c17e3b  scripts/govern/test/test-ticket-numbering-log.sh
 fb78f69045d0de81ba0311f40fa132b4d07d2f384b6380da61337eac3b5bcd7f  scripts/govern/test/test-scout-sizing.sh
 fb944e9ce8d0778905837bcff4598ca22b1f603af34f2aee89718dd6371a74b2  scripts/govern/test/test-flows-parser.sh
 fc1292f3929747b48c5374755c602b12632c77e845a316e8b83d49d1369b9e0f  scripts/govern/test/test-externalize-gate.sh
@@ -1443,6 +1508,7 @@ fe10a7ddf0b07c2b7fad0c48412dc2ea386f85577dc87b1a1f1c0dab3073fd89  scripts/govern
 fe12c50cc3410ba70c07d12cfa637ebf4b53a3bf72b414b0eb46d75980cd6296  scripts/govern/test/test-multi-pr-merge.sh
 fe44f627e792db9e2aaa3388105a380fa0efa7994ab699c53244bc99fadafebe  scripts/govern/test/test-auto-budgets.sh
 febd699561c3bc559ac63473fd6e9a064bb03448beab768e5f64755acb0dabfd  scripts/govern/test/test-flows-stamp-terminal.sh
+ffc73a11a59978c05d365fe54738ff1c72d2db914fb217971e0fc4a77d7765c5  scripts/govern/test/test-escalation-pr-reconcile.sh
 
 # -- scripts/lib/worktree-bootstrap.sh.example --
 72539543bed3dfd2c2fb6b17292e4ec4b7632611fec1c0fba1f0f6921cfd4801  scripts/lib/worktree-bootstrap.sh.example

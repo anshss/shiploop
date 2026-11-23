@@ -121,11 +121,12 @@ done
 bash "$SCAFFOLD" --workspace-dir "$(pwd)" --component config-merge --yes
 ```
 
-**Local edits to mechanism scripts are KEPT, never overwritten.** `core-scripts`, `worktrees` and
-`govern` install each file through `mechanism_install`: an absent file is copied, a byte-identical one
+**Local edits to mechanism scripts are KEPT, never overwritten.** `core-scripts`, `worktrees`, `govern`,
+`githooks` (`.githooks/`), `commands` (`.claude/commands/`) and `agents` (`.claude/agents/`) install each
+file through `mechanism_install_component`: an absent file is copied, a byte-identical one
 is skipped, and a file whose sha256 is a version shiploop shipped (`templates/lib/mechanism-hashes.txt`,
 every version of every such file) is provably unedited and upgraded. Anything else carries local edits,
-and the keep is **per component**: if ANY file of `core-scripts`, `worktrees` or `govern` carries local
+and the keep is **per component**: if ANY file of one of those components carries local
 edits, EVERY file of that component that differs from the hub is kept (a sibling that merely equals an
 older shipped version is kept with them, so the component never mixes hub and local versions). A
 component with no local edits upgrades as before. The kept workspace file is left exactly as it is, the hub's version is written beside it as
@@ -150,8 +151,15 @@ Every one is additive and idempotent: a second run is a byte-level no-op. What e
 | `workspace-sh-merge` | appends `GOVERN_*` knobs added to the hub seed since you scaffolded, each with its doc comment | touch an existing knob, your values, or the identity fields (`REPOS`, `GITHUB_ORG`, `ROOT_PM`, …) |
 | `settings-merge` | adds missing harness hooks **and repairs** a harness hook whose command string or timeout drifted from canonical | touch a hook whose command points outside this workspace (yours) |
 | `seeds` | fills an absent seed; upgrades one that is **byte-identical to a version shiploop shipped** (proof it was never edited) | modify a seed with even one byte of local content |
-| `gitignore` | appends missing patterns | remove or reorder your lines |
+| `gitignore` | appends template patterns it has not offered before (recorded in `scripts/lib/.gitignore-applied`) | remove or reorder your lines, or re-add a pattern you removed |
 | `readme` | writes `README.md` when absent, using the real PM + sub-repo list read from `workspace.sh` | overwrite an existing README |
+
+A template `.gitignore` pattern you removed on purpose stays removed: the record holds every pattern the
+update has offered, and a recorded pattern absent from `.gitignore` is skipped (one `left out` line
+names them). The first run on a workspace with no record treats an absent pattern that shipped earlier
+(`templates/lib/gitignore-baseline.txt`) or that comes from your repos and package manager as removed,
+so it can never bring a removal back; only a static pattern the baseline never listed is appended. To
+get a skipped pattern back, add it by hand.
 
 The seed rule is the load-bearing one. A hub seed trim (v1.14.0 cut `CLAUDE.md` 5,895 → 4,417 B) is
 worth propagating, but a real workspace's `CLAUDE.md` accumulates every promoted lesson — measured on

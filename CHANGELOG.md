@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.20.9 - 2026-11-24
+
+### Fixed
+
+**`/shiploop:update` keeps locally edited githooks, project commands and agent definitions.** The
+`githooks`, `commands` and `agents` components now install through the same keep machinery as the
+mechanism scripts: a file that differs from the hub and is not a version shiploop shipped is left
+alone, the hub copy lands beside it as `<file>.shiploop-new`, the run ends with the KEPT block, and
+the stamp is held. An unedited older shipped version still upgrades. Their files are in
+`--list-mechanism-files` and `templates/lib/mechanism-hashes.txt`. A `worker.md` that differs only in
+the operator's `maxTurns` is not treated as edited.
+
+**`/shiploop:update` no longer re-adds a template `.gitignore` line a workspace removed.** The update
+records the template patterns it has offered in `scripts/lib/.gitignore-applied` and appends only
+patterns not yet recorded; a recorded pattern missing from `.gitignore` is a deliberate removal. On the
+first run with no record, an absent pattern that shipped before the record existed
+(`templates/lib/gitignore-baseline.txt`, frozen) or that is derived from the workspace's repos and
+package manager counts as removed; only a static pattern the baseline never listed is appended. Skipped
+removals are reported in one line.
+
 ## 1.20.8 - 2026-11-24
 
 ### Docs
