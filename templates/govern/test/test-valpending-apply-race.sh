@@ -98,17 +98,8 @@ race_trace_install() { # racer-name
     eval "$(declare -f "govern::$f" | sed "1s/govern::$f/_traced_$f/")"
     eval "govern::$f() { race_log \"$f \$*\"; local _rc=0; _traced_$f \"\$@\" || _rc=\$?; race_log \"$f rc=\$_rc\"; return \$_rc; }"
   done
-  # Control probe: an atomic mkdir on a scratch path both racers target, to tell a filesystem that
-  # lets two mkdirs of one path both succeed from a flaw in the lock helpers themselves.
-  local _prc=0; command mkdir "$T/probe-dir" 2>/dev/null || _prc=$?
-  race_log "probe mkdir $T/probe-dir rc=$_prc"
   rm() { race_log "rm $*"; command rm "$@"; }
   mv() { race_log "mv $*"; command mv "$@"; }
-  mkdir() {
-    local _rc=0; command mkdir "$@" || _rc=$?
-    race_log "mkdir $* rc=$_rc inode=$(stat -c %i "${@: -1}" 2>/dev/null || stat -f %i "${@: -1}" 2>/dev/null || echo none)"
-    return $_rc
-  }
 }
 race_dump() {
   local f
