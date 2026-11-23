@@ -98,6 +98,17 @@ mk_fixture() {  # name  version  changelog_body  [burned_body]  [unreleased_body
 }
 tag_head() { ( cd "$1" && git tag "$2" ); }  # dir tag
 
+commit_file() {  # dir file content message: one commit on top, message verbatim
+  local dir="$1" file="$2" content="$3" msg="$4"
+  printf '%s' "$content" > "$dir/$file"
+  ( cd "$dir" && git add -A && git commit -q -m "$msg" )
+}
+
+commit_all() {  # dir message: stage every pending change in the fixture as one commit
+  local dir="$1" msg="$2"
+  ( cd "$dir" && git add -A && git commit -q -m "$msg" )
+}
+
 # RELEASE_PARITY_TAG_FLOOR is pinned to 0.0.0 for every scenario: unpinned, --post derives
 # the floor from the stub's own release list, so a fixture's expected offender could fall
 # below it and the scenario would pass for the wrong reason. Scenario 10 is the one that
@@ -272,6 +283,122 @@ if [ "$elapsed" -ge 3 ]; then
 else
   printf 'FAIL - 11b. gave up after %ss, before WAIT=3 elapsed\n' "$elapsed"; ASSERT_FAILS=$((ASSERT_FAILS + 1))
 fi
+
+# ── 12. Release-Train trailer on HEAD → --pre skips parity entirely ────────────────────────
+# Same shape as scenario 4 (VERSION below the highest published release, which fails), but
+# the HEAD commit carries the trailer, so the PR defers parity to the train-close release.
+d="$(mk_fixture f12-train-pre-skip 1.5.0 "$CHANGELOG_2AND1")"
+commit_file "$d" feature.txt "x" $'bare train PR\n\nRelease-Train: train-x'
+out="$(run_tool --pre "$d" stubbed STUB_RELEASE_LIST_JSON='[{"tagName":"v1.18.0","isDraft":false}]')"
+rc=$?
+assert_eq "$rc" "0" "12a. trailer on HEAD → --pre exit 0"
+assert_contains "$out" "skip" "12b. --pre prints a skip line"
+
+# ── 13. Release-Train trailer on HEAD → --post skips the same way ──────────────────────────
+# Same shape as scenario 2 (VERSION with no matching tag, which fails): the train is still
+# open, so the push run defers instead of demanding an instant release.
+d="$(mk_fixture f13-train-post-skip 3.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v1.0.0
+commit_file "$d" feature.txt "x" $'bare train PR\n\nRelease-Train: train-x'
+out="$(run_tool --post "$d" stubbed STUB_RELEASE_LIST_JSON='[{"tagName":"v1.0.0","isDraft":false}]')"
+rc=$?
+assert_eq "$rc" "0" "13a. trailer on HEAD → --post exit 0"
+assert_contains "$out" "skip" "13b. --post prints a skip line"
+
+# ── 14. pending train commits, HEAD neither trailer nor release → --post fails ─────────────
+# A train PR merged (trailer commit), then a solo push lands on top: the train is still
+# open, HEAD is not the covering release, so parity fails and says to close the train.
+d="$(mk_fixture f14-train-pending 2.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v2.0.0
+commit_file "$d" feature.txt "x" $'train PR one\n\nRelease-Train: train-a'
+commit_file "$d" other.txt "y" "solo push mid-train"
+out="$(run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n')"
+rc=$?
+assert_eq "$rc" "1" "14a. pending train with no covering release → exit 1"
+assert_contains "$out" "no covering release" "14b. error names the missing covering release"
+
+# ── 15. train close done right → full parity passes ────────────────────────────────────────
+# Two train PRs share one id; the close release moves VERSION, adds one CHANGELOG line per
+# train PR (each naming the id), and is tagged and released. Full-strength checks plus the
+# coverage check both pass.
+CHANGELOG_TRAIN_CLOSE='# Changelog
+
+## 3.0.0 — 2026-01-03
+
+train-a: feature one
+train-a: feature two
+
+## 2.0.0 — 2026-01-02
+
+content A
+'
+d="$(mk_fixture f15-train-close-good 2.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v2.0.0
+commit_file "$d" feature.txt "x" $'train PR one\n\nRelease-Train: train-a'
+commit_file "$d" feature2.txt "y" $'train PR two\n\nRelease-Train: train-a'
+printf 3.0.0 > "$d/VERSION"
+printf '%s' "$CHANGELOG_TRAIN_CLOSE" > "$d/CHANGELOG.md"
+commit_all "$d" "train close: release 3.0.0"
+tag_head "$d" v3.0.0
+out="$(run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false},{"tagName":"v3.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n' \
+  STUB_BODY_v3_0_0=$'train-a: feature one\ntrain-a: feature two\n')"
+rc=$?
+assert_eq "$rc" "0" "15a. correct train close → exit 0"
+assert_contains "$out" "covered by 2 CHANGELOG.md entr" "15b. reports the per-id coverage"
+
+# ── 16. train close missing a CHANGELOG line → --post fails ────────────────────────────────
+# Same train as 15, but the close release only wrote one of the two per-PR entries.
+CHANGELOG_TRAIN_SHORT='# Changelog
+
+## 3.0.0 — 2026-01-03
+
+train-a: feature one
+
+## 2.0.0 — 2026-01-02
+
+content A
+'
+d="$(mk_fixture f16-train-close-short 2.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v2.0.0
+commit_file "$d" feature.txt "x" $'train PR one\n\nRelease-Train: train-a'
+commit_file "$d" feature2.txt "y" $'train PR two\n\nRelease-Train: train-a'
+printf 3.0.0 > "$d/VERSION"
+printf '%s' "$CHANGELOG_TRAIN_SHORT" > "$d/CHANGELOG.md"
+commit_all "$d" "train close: release 3.0.0"
+tag_head "$d" v3.0.0
+out="$(run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false},{"tagName":"v3.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n' \
+  STUB_BODY_v3_0_0=$'train-a: feature one\n')"
+rc=$?
+assert_eq "$rc" "1" "16a. missing train CHANGELOG entry → exit 1"
+assert_contains "$out" "naming train id 'train-a', but 2 train commit(s)" "16b. error names the shortfall"
+
+# ── 17. no trailer anywhere behaves exactly as before ───────────────────────────────────────
+# Scenarios 1, 2 and 7b already cover this (no trailer commits in any of them); this one
+# pins a train-shaped history that carries NO trailer: identical to 15 minus the trailers,
+# and the close release passes plain full-strength parity with no coverage lines.
+d="$(mk_fixture f17-no-trailer 2.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v2.0.0
+commit_file "$d" feature.txt "x" "plain PR one"
+printf 3.0.0 > "$d/VERSION"
+printf '%s' "$CHANGELOG_TRAIN_CLOSE" > "$d/CHANGELOG.md"
+commit_all "$d" "plain release 3.0.0"
+tag_head "$d" v3.0.0
+out="$(run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false},{"tagName":"v3.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n' \
+  STUB_BODY_v3_0_0=$'train-a: feature one\ntrain-a: feature two\n')"
+rc=$?
+assert_eq "$rc" "0" "17a. trailer-free history unchanged → exit 0"
+case "$out" in
+  *"train id"*) printf 'FAIL - 17b. no-trailer run must print no coverage lines\n%s\n' "$out"; ASSERT_FAILS=$((ASSERT_FAILS + 1)) ;;
+  *) printf 'ok   - 17b. no coverage lines without trailer commits\n' ;;
+esac
 
 echo ""
 if [ "$ASSERT_FAILS" -eq 0 ]; then

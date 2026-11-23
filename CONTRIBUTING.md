@@ -123,6 +123,18 @@ Before opening a PR:
 
 CI must be fully green before merge. The `scaffold-and-test` job takes a couple of minutes; it is the load-bearing gate.
 
+## Release trains
+
+The default is one release per PR: bump `VERSION` and both manifest versions, add a `CHANGELOG.md` section, regenerate `templates/lib/mechanism-hashes.txt` if a mechanism template changed. That serializes independent PRs: two in flight always conflict on those files, and N small tickets cost N releases, N local suite runs and N CI runs.
+
+A **release train** batches that ceremony. A PR joins a train with a `Release-Train: <train-id>` line in its commit message: `tools/check-release-parity.sh` skips parity for that commit (both on the PR run and on the push-to-main run), and the PR merges with no release files touched. The train closes with one ordinary release commit that bumps `VERSION` and the manifests, adds one `CHANGELOG.md` entry per train PR (each naming the train id), regenerates mechanism hashes if needed, and is tagged and released as usual. Parity runs at full strength on that commit, and the coverage check applies to it: a train PR whose CHANGELOG entry never lands fails the train-close parity.
+
+When to train: several small, independent changes with no shared release-file churn. When never: anything that wants its own release-level revert (reverting a train-close merge undoes every ticket on the train, not one), or anything users must be able to pick up before the train closes. A per-ticket release bump is superseded for any PR riding a train.
+
+While a train is open (trailer commits merged, no covering release yet), a push-to-main parity run that is not the train close fails by design, with an error telling you to merge the train-close release: close the train promptly, and route urgent standalone fixes either onto the train or after it closes.
+
+One caveat: the trailer must survive into the commit that lands on `main`. A squash merge keeps only the PR title and the commit subjects by default, so put the trailer where your merge flow will keep it (a commit subject line, or the edited squash message).
+
 ## Dogfood + external contributions
 
 This repo is maintained partly by an autonomous governor running the same mechanism it distributes. That has two consequences for outside contributors:
