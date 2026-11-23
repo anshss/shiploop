@@ -92,12 +92,16 @@ esc_before="$(grep -c '^### #' "$T/governor/escalations.md" || true)"
 race_trace_install() { # racer-name
   RACE_TR="$T/trace-$1.log"; RACE_ME="$1"
   : > "$RACE_TR"
-  race_log() { printf '%s [%s pid=%s bash=%s] %s\n' "$(date +%s.%N)" "$RACE_ME" "$$" "$BASHPID" "$*" >> "$RACE_TR"; }
+  race_log() { printf '%s [%s pid=%s bash=%s] %s\n' "${EPOCHREALTIME:-$(date +%s.%N)}" "$RACE_ME" "$$" "$BASHPID" "$*" >> "$RACE_TR"; }
   local f
   for f in lock_acquire lock_release _lock_holder_dead _lock_age; do
     eval "$(declare -f "govern::$f" | sed "1s/govern::$f/_traced_$f/")"
     eval "govern::$f() { race_log \"$f \$*\"; local _rc=0; _traced_$f \"\$@\" || _rc=\$?; race_log \"$f rc=\$_rc\"; return \$_rc; }"
   done
+  # Control probe: an atomic mkdir on a scratch path both racers target, to tell a filesystem that
+  # lets two mkdirs of one path both succeed from a flaw in the lock helpers themselves.
+  local _prc=0; command mkdir "$T/probe-dir" 2>/dev/null || _prc=$?
+  race_log "probe mkdir $T/probe-dir rc=$_prc"
   rm() { race_log "rm $*"; command rm "$@"; }
   mv() { race_log "mv $*"; command mv "$@"; }
   mkdir() {
