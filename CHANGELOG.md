@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.20.4 - 2026-11-23
+
+### Fixed
+
+**Concurrent governors could lose a queue edit when a lock was released mid-check.** A waiter whose
+`mkdir` on a lock failed, and whose holder then released the lock before the staleness check, read no
+holder and an unavailable mtime (0), which `govern::_lock_age` turned into an age of decades. The
+waiter judged the lock stale and removed the path, which by then could be a fresh lock another actor
+had just taken: two holders, one lost update. An unavailable mtime now reads as age 0, so a vanished
+lock is retried with `mkdir` and never reclaimed. Covers both `govern::lock_acquire` and
+`govern::lock_try`.
+
+**A non-exclusive `mkdir` no longer lets two actors hold one lock.** The lock helpers trusted
+`mkdir`'s exit status as the only exclusion point. On a CI runner whose `mkdir` is a Rust coreutils
+build, two racers' `mkdir` of one path both exited 0, so both entered the critical section (a double
+apply of one validation result). A claim now also creates the lock's
+`holder` file with noclobber (an `O_EXCL` open), which only one racer can do; the loser sees a held
+lock and waits or gives up.
+The install semaphore and the worktree registry lock still claim with `mkdir` alone.
+
 ## 1.20.3 - 2026-11-23
 
 ### Added

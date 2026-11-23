@@ -86,6 +86,37 @@ esc_before="$(grep -c '^### #' "$T/governor/escalations.md" || true)"
 # subshell that re-sources common.sh/valpending.sh — mirroring two real readers (e.g. the
 # supervisor's pass and a SessionStart hook) racing one terminal job, not two calls sharing one
 # in-process lock state.
+# Failure-only diagnostics: each racer logs timestamped lock and file-replacement events to its own
+# trace file by shadowing the lock helpers, rm and mv inside its subshell (test-only; the product code
+# carries no hooks). The traces are dumped only when an assertion fails.
+race_trace_install() { # racer-name
+  RACE_TR="$T/trace-$1.log"; RACE_ME="$1"
+  : > "$RACE_TR"
+  race_log() { printf '%s [%s pid=%s bash=%s] %s\n' "${EPOCHREALTIME:-$(date +%s.%N)}" "$RACE_ME" "$$" "$BASHPID" "$*" >> "$RACE_TR"; }
+  local f
+  for f in lock_acquire lock_release _lock_holder_dead _lock_age; do
+    eval "$(declare -f "govern::$f" | sed "1s/govern::$f/_traced_$f/")"
+    eval "govern::$f() { race_log \"$f \$*\"; local _rc=0; _traced_$f \"\$@\" || _rc=\$?; race_log \"$f rc=\$_rc\"; return \$_rc; }"
+  done
+  rm() { race_log "rm $*"; command rm "$@"; }
+  mv() { race_log "mv $*"; command mv "$@"; }
+}
+race_dump() {
+  local f
+  echo "--- race diagnostics ---"
+  for f in "$T"/race-*.out "$T"/race-*.rc "$T"/trace-*.log; do echo "== $(basename "$f")"; cat "$f"; done
+  echo "== pending-result.json (raw bytes)"; od -c "$VDIR/val-deploy.example-3000/pending-result.json"
+  echo "== pending dir"; ls -la "$VDIR/val-deploy.example-3000"
+  echo "== lock dir"; ls -la "$T/governor"
+  echo "== escalations.md"; cat "$T/governor/escalations.md"
+  echo "== mkdir identity"; type -a mkdir; command mkdir --version 2>&1 | head -2; readlink -f "$(command -v mkdir)" 2>&1 || true
+  echo "== mkdir exclusivity stress (successes out of 40 racers on one path; 1 is correct)"
+  local i ok=0 sd="$T/stress-mkdir"
+  for i in $(seq 1 40); do ( command mkdir "$sd" 2>/dev/null && echo won > "$T/stress-win.$i" ) & done
+  wait
+  ls "$T"/stress-win.* 2>/dev/null | wc -l
+}
+
 race_one() {
   local rc=0
   ( export GOVERN_TICKETS_FILE="$T/queue/tickets.md" \
@@ -96,6 +127,7 @@ race_one() {
            GOVERN_NO_PUSH=1 GOVERN_WS_ROOT="$T"
     source "$DIR/../lib/common.sh"
     source "$DIR/../lib/valpending.sh"
+    race_trace_install "$1"
     govern::valpending_apply_one "$VDIR/val-deploy.example-3000" "$1"
   ) > "$T/race-$1.out" 2>&1 || rc=$?
   echo "$rc" > "$T/race-$1.rc"
@@ -120,4 +152,5 @@ assert_eq "$got" "ok" "consumedBy records exactly one winning racer ($consumed_b
 esc_after="$(grep -c '^### #' "$T/governor/escalations.md" || true)"
 assert_eq "$((esc_after - esc_before))" "1" "the race files EXACTLY ONE new escalation (no double-file)"
 
+[[ "$ASSERT_FAILS" -eq 0 ]] || race_dump
 assert_done
