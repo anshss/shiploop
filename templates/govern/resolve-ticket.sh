@@ -66,6 +66,10 @@
 #       before any bookkeeping, if a report claiming "resolved" produced no PR, no landed
 #       root-scope commit, no lessonPatch and no applied migration (GOVERN_ALLOW_EMPTY_RESOLVE=1
 #       overrides a genuinely deliberate no-op).
+#   6c. (before any merge, see step 5) Pre-flight: if queue/tickets.md has uncommitted changes this
+#       run did not make, refuse with exit 12 and merge nothing (GOVERN_QUEUE_FOREIGN_GUARD=0
+#       disables the check). A refusal after a merge ("PR merged; queue not booked") also exits 12;
+#       clear the file and re-run with --no-merge to book it.
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
@@ -216,6 +220,20 @@ rt_print_ci_excerpt() { # <repo> <pr>
   return 0
 }
 
+# ── 2b. Queue pre-flight: refuse BEFORE any merge when land-resolution.sh would refuse to book. A
+#    tickets file with uncommitted changes this run did not make cannot be committed (exit 12), and
+#    discovering that after the merge leaves a merged PR with an unbooked ticket. Nothing merges.
+#    --no-merge skips it: no merge is at stake, and land-resolution.sh makes the same check itself. ──
+if [[ "$NO_MERGE" -ne 1 ]]; then
+  _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
+  if [[ -n "$_foreign" ]]; then
+    govern::queue_foreign_refusal "resolve-ticket #$N" "$_foreign"
+    echo "resolve-ticket #$N: nothing was merged." >&2
+    rt_record_history parked "queue has uncommitted changes: refused before merge"
+    exit 12
+  fi
+fi
+
 # ── 3. Await CI + merge every PR the report names. merge-pr.sh calls await-ci.sh internally
 #    (never reimplemented here). ────────────────────────────────────────────────────────────────
 pr_lines="$(govern::collect_ticket_prs "$N" "$report")"
@@ -265,16 +283,29 @@ elif [[ -n "$pr_lines" ]]; then
         fi
         # Opt-in local sync (GOVERN_POST_MERGE_SYNC=1): fast-forward the sub-repo checkout to the
         # just-merged remote so the driver's later reads of it are not stale. Only when the
-        # post-merge check passed and the checkout sits on its default branch; ff-only, so a dirty
-        # or diverged checkout is left untouched, with a note to sync by hand.
+        # post-merge check passed, no product run is live in the checkout (GOVERN_RUN_PROBE), and the
+        # checkout sits on its default branch; ff-only, so a dirty or diverged checkout is left
+        # untouched, with a note to sync by hand. Every skip or failure leaves a pending-sync marker
+        # for the SessionStart hook, and a successful fast-forward clears it.
         if [[ "${GOVERN_POST_MERGE_SYNC:-0}" == "1" && "$_pmrc" -eq 0 ]]; then
           _ldir="$(govern::repo_localdir "$_mrepo")"
           _defbr="$(govern::subrepo_default_branch "$_ldir")"
           _curbr="$(git -C "$_ldir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-          if [[ "$_curbr" != "$_defbr" ]]; then
+          _pending=""
+          if govern::run_live "$_mrepo" "$_ldir"; then
+            echo "resolve-ticket #$N: note: LIVE RUN reported by the run probe in local $_mrepo checkout; skipping post-merge sync, run 'npm run sync' when it ends" >&2
+            _pending="live-run"
+          elif [[ "$_curbr" != "$_defbr" ]]; then
             echo "resolve-ticket #$N: note: local $_mrepo checkout is on '${_curbr:-unknown}', not '$_defbr'; skipping post-merge sync" >&2
+            _pending="ff-failed"
           elif ! git -C "$_ldir" pull --ff-only origin "$_defbr" >/dev/null 2>&1; then
             echo "resolve-ticket #$N: note: local $_mrepo checkout not fast-forwarded to origin/$_defbr; run 'npm run sync'" >&2
+            _pending="ff-failed"
+          fi
+          if [[ -n "$_pending" ]]; then
+            govern::pending_sync_mark "$_mrepo" "$_ldir" "$_defbr" "$_pending"
+          else
+            govern::pending_sync_clear "$_mrepo"
           fi
         fi
         ;;
@@ -495,7 +526,12 @@ if [[ "${_group_tickets_n:-0}" -gt 0 ]]; then
     esac
   done < <(jq -r '.tickets[].ticket // empty' <<<"$report" 2>/dev/null || true)
 else
-  if ! printf '%s' "$report" | "$DIR/land-resolution.sh" "$N"; then
+  _land_rc=0
+  printf '%s' "$report" | "$DIR/land-resolution.sh" "$N" || _land_rc=$?
+  if [[ "$_land_rc" -eq 12 ]]; then
+    echo "resolve-ticket #$N: PR merged; queue not booked: the tickets file gained uncommitted changes after the pre-flight. Clean it, then re-run resolve-ticket.sh $N --no-merge with the same report." >&2
+    exit 12
+  elif [[ "$_land_rc" -ne 0 ]]; then
     echo "resolve-ticket #$N: land-resolution.sh failed, ticket NOT bookkept. Check the error above and retry." >&2
     exit 8
   fi

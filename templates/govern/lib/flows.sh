@@ -215,6 +215,18 @@ govern::cas_edit() { # <file> <edit-fn> [commit-msg] [extra-repo-relpath ...]
   fi
   dir="$(cd "$(dirname "$file")" 2>/dev/null && pwd || true)"
   root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  # The commit below stages the whole file, so when the file is the tickets file it must not already
+  # carry uncommitted changes this function did not make. Refused before the sync and the edit.
+  local qdir="" foreign=""
+  [[ -n "${TICKETS_FILE:-}" ]] && qdir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"
+  if [[ -n "$dir" && "$dir" == "$qdir" && "$(basename "$file")" == "$(basename "$TICKETS_FILE")" ]]; then
+    foreign="$(govern::queue_foreign_changes "$file")"
+    if [[ -n "$foreign" ]]; then
+      govern::queue_foreign_refusal "cas_edit" "$foreign"
+      [[ "$held" == "1" ]] && govern::lock_release "$BK_LOCK"
+      return 12
+    fi
+  fi
   # Pre-edit sync onto the freshest origin/main so the edit + CAS-push replay cleanly.
   if [[ -n "$root" && "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$dir" remote get-url origin >/dev/null 2>&1; then
     git -C "$dir" pull --ff-only origin main >/dev/null 2>&1 \

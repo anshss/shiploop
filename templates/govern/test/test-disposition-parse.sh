@@ -95,6 +95,9 @@ cat > "$T/escalations.md" <<'EOF'
 EOF
 printf '# Governor preferences\n' > "$T/preferences.md"
 
+# The scripts under test refuse a queue file with uncommitted changes, so fixtures are committed first.
+commit_fixtures() { ( cd "$1" && git add -A >/dev/null 2>&1 && git commit -qm fixtures >/dev/null 2>&1 ) || true; }
+commit_fixtures "$T"
 out="$(env \
   GOVERN_TICKETS_FILE="$T/tickets.md" \
   GOVERN_TICKETS_PARKED_FILE="$T/tickets-parked.md" \

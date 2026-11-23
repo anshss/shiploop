@@ -45,6 +45,17 @@ if declare -F govern::lock_acquire >/dev/null 2>&1; then
   trap 'govern::lock_release "$BK_LOCK"' EXIT
 fi
 
+# The step-6 commit stages the whole tickets file, and the dispositions below edit it first, so a
+# file that already carries uncommitted changes must be refused BEFORE any of them runs. Exit 12;
+# nothing is stashed, discarded or committed.
+if declare -F govern::queue_foreign_changes >/dev/null 2>&1; then
+  _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
+  if [[ -n "$_foreign" ]]; then
+    govern::queue_foreign_refusal "apply-answers" "$_foreign"
+    exit 12
+  fi
+fi
+
 resolved_csv=","          # tickets to move Open → Resolved
 notes_file="$(mktemp)"    # tab-separated: ticket<TAB>resolution note
 acted=0; n_unpark=0; n_defer=0; n_mitigated=0; n_kill=0; n_rule=0; n_ext=0

@@ -82,6 +82,9 @@ EOF
   : > "$GH_CALLS"; : > "$GH_COUNT"
 }
 
+# The scripts under test refuse a queue file with uncommitted changes, so fixtures are committed first.
+commit_fixtures() { ( cd "$1" && git add -A >/dev/null 2>&1 && git commit -qm fixtures >/dev/null 2>&1 ) || true; }
+
 two_foo_tickets() { # writes #10 + #11 (Low foo, eligible)
   cat > "$1/tickets.md" <<'EOF'
 # Tickets
@@ -115,6 +118,7 @@ body twenty
 ---
 EOF
 # Stage the two Low foo tickets → questionnaire (anchor #10).
+commit_fixtures "$TA"
 env "${ENVA[@]}" bash "$STAGE" >/dev/null 2>&1
 assert_eq "$(grep -cE '^## #1[01] ' "$TA/review.md")" "2" "A: staging moved #10 + #11 into the review queue"
 assert_eq "$(grep -cF '**Kind:** externalize-review' "$TA/escalations.md")" "1" "A: one externalize-review questionnaire filed (anchor #10)"
@@ -140,6 +144,7 @@ assert_contains "$(awk '/^## Resolved/{f=1} f' "$TA/escalations.md")" "### #10" 
 TB="$(mktemp -d)"; trap 'rm -rf "$TA" "$TB"' EXIT
 setup_sandbox "$TB"; ENVB=("${ENVV[@]}")
 two_foo_tickets "$TB"
+commit_fixtures "$TB"
 env "${ENVB[@]}" bash "$STAGE" >/dev/null 2>&1
 record_answer "$TB/escalations.md" 10 "move these back: 10" "move-back:10"
 env "${ENVB[@]}" bash "$APPLY" >/dev/null 2>&1
@@ -157,6 +162,7 @@ assert_eq "$(awk '/^## Open/{f=1} /^## Resolved/{f=0} f' "$TB/escalations.md" | 
 TC="$(mktemp -d)"; trap 'rm -rf "$TA" "$TB" "$TC"' EXIT
 setup_sandbox "$TC"; ENVC=("${ENVV[@]}")
 two_foo_tickets "$TC"
+commit_fixtures "$TC"
 env "${ENVC[@]}" bash "$STAGE" >/dev/null 2>&1
 record_answer "$TC/escalations.md" 10 "not now" "decide-later"
 env "${ENVC[@]}" bash "$APPLY" >/dev/null 2>&1
