@@ -207,6 +207,8 @@ assert_eq "$foreign_timeout" "5" "7. same-named but OUT-OF-WORKSPACE operator ho
 # ── 8. gitignore merge: idempotent, exactly ONE banner ──────────────────────
 W8="$ROOT/ws8"; mkdir -p "$W8"
 echo "node_modules/" > "$W8/.gitignore"
+# An empty record: the update has offered nothing yet, so every template pattern is unrecorded.
+mkdir -p "$W8/scripts/lib"; : > "$W8/scripts/lib/.gitignore-applied"
 bash "$SCAFFOLD" --workspace-dir "$W8" --templates "$TEMPLATES" \
   --component gitignore --yes >/tmp/scaf-cfg-w8.log 2>&1
 first_gi="$(cat "$W8/.gitignore")"

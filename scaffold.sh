@@ -124,7 +124,7 @@ fi
 T="$TEMPLATES_DIR"
 
 # mechanism_map: component -> lines "template-relative-path<TAB>installed-path" for every
-# mechanism script component_core_scripts / component_worktrees / component_govern install.
+# mechanism script and shipped hook, command and agent file the components below install.
 # ONE list drives the installer, `--list-mechanism-files`, tools/gen-mechanism-hashes.sh and the
 # `mechanism-hashes-current` check, so a file can never be installed without being hash-tracked.
 mechanism_map() {
@@ -147,6 +147,18 @@ mechanism_map() {
       for s in registry base-ref; do
         printf 'worktree/lib/%s.sh\tscripts/worktree/lib/%s.sh\n' "$s" "$s"
       done ;;
+    githooks)
+      for s in pre-push prepare-commit-msg pre-commit; do
+        printf 'githooks/%s\t.githooks/%s\n' "$s" "$s"
+      done ;;
+    commands)
+      for f in "$T"/.claude/commands/*.md; do
+        [ -f "$f" ] && printf '.claude/commands/%s\t.claude/commands/%s\n' "$(basename "$f")" "$(basename "$f")"
+      done ;;
+    agents)
+      for f in "$T"/.claude/agents/*.md; do
+        [ -f "$f" ] && printf '.claude/agents/%s\t.claude/agents/%s\n' "$(basename "$f")" "$(basename "$f")"
+      done ;;
     govern)
       # incl. run-validation.sh (durable validation runner); lib = common.sh + flows.sh + valjob.sh
       # (job substrate) + the Node helpers (request-capture proxy + reporter). A glob that matches
@@ -164,7 +176,7 @@ mechanism_map() {
 # Maintainer introspection (tools/gen-mechanism-hashes.sh, check-manifests.sh): print
 # "template-path<TAB>installed-path" for every hash-tracked mechanism file, then exit.
 if [ "$LIST_MECH" -eq 1 ]; then
-  for _c in core-scripts worktrees govern; do mechanism_map "$_c"; done
+  for _c in core-scripts worktrees govern githooks commands agents; do mechanism_map "$_c"; done
   exit 0
 fi
 
@@ -389,12 +401,22 @@ KEPT_SUMMARY=""    # one pre-formatted line per component
 # mechanism_state <template> <dest> <rel>: absent | identical | pristine | local
 #   pristine = differs from the hub but is byte-identical to a version shiploop shipped.
 mechanism_state() {
-  local template="$1" dest="$2" rel="$3"
-  if [ ! -e "$dest" ]; then echo absent
-  elif cmp -s "$dest" "$template"; then echo identical
-  elif mechanism_pristine "$dest" "$rel"; then echo pristine
-  else echo local
+  local template="$1" dest="$2" rel="$3" probe="$2" norm="" st
+  if [ ! -e "$dest" ]; then echo absent; return 0; fi
+  # worker.md carries an operator-chosen maxTurns written by component_agents: compare it with
+  # that one line set to the template's value, so the rewrite alone never reads as a local edit.
+  if [ "$rel" = ".claude/agents/worker.md" ]; then
+    norm="$(mktemp)"
+    sed "s/^maxTurns: .*/$(grep -m1 '^maxTurns: ' "$template" || echo 'maxTurns: 150')/" "$dest" > "$norm"
+    probe="$norm"
   fi
+  if cmp -s "$probe" "$template"; then st=identical
+  elif mechanism_pristine "$probe" "$rel"; then st=pristine
+  else st=local
+  fi
+  [ -z "$norm" ] || rm -f "$norm"
+  echo "$st"
+  return 0
 }
 
 # mechanism_keep <template> <dest>: leave dest alone, write the hub copy beside it, record it.
@@ -513,7 +535,7 @@ component_govern() {
 
 component_githooks() {
   log "component: git-hooks enforcement"
-  cp "$T/githooks/pre-push" "$T/githooks/prepare-commit-msg" "$T/githooks/pre-commit" .githooks/
+  mechanism_install_component githooks
   chmod +x .githooks/pre-push .githooks/prepare-commit-msg .githooks/pre-commit
   # Activate hooks in the harness root (idempotent).
   if [ -d .git ]; then
@@ -526,7 +548,7 @@ component_githooks() {
 
 component_project_commands() {
   log "component: project-local slash commands"
-  cp "$T"/.claude/commands/*.md .claude/commands/ 2>/dev/null || true
+  mechanism_install_component commands
   info "installed .claude/commands/"
 }
 
@@ -536,12 +558,12 @@ component_project_commands() {
 # (router-posture hooks + CLAUDE.md) that already tells it to delegate:
 # without them "delegate this" had no pre-sized, cheap-model destination, so haiku
 # delegation stayed near zero in practice, and ticket-shaped work had nowhere to go but a
-# generic subagent. Copies by glob, so a new definition needs no edit here. Mirrors
-# component_project_commands: copy-only, no substitution.
+# generic subagent. Copies by glob, so a new definition needs no edit here. Installed through
+# mechanism_install_component like the mechanism scripts: a locally edited definition is kept.
 component_agents() {
   log "component: shipped subagent definitions (.claude/agents/)"
   mkdir -p .claude/agents
-  cp "$T"/.claude/agents/*.md .claude/agents/ 2>/dev/null || true
+  mechanism_install_component agents
   # worker.md's maxTurns is a plain frontmatter value, not a template placeholder -- rewrite it
   # in place only when the operator asked for something other than the shipped default, so a diff
   # against the template stays empty for every install that never touched the flag.
@@ -740,17 +762,41 @@ component_gitignore() {
     esac
   done < "$T/gitignore"
 
+  # State the update owns: every template pattern this workspace has been offered. A pattern in
+  # the record but absent from .gitignore was removed on purpose and is never re-added; only
+  # patterns the record has not seen are appended.
+  local rec="scripts/lib/.gitignore-applied" base="$T/lib/gitignore-baseline.txt"
+  local template_lines=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    template_lines+="$line"$'\n'
+  done <<<"$content"
+
   if [ -f .gitignore ]; then
-    # Collect the genuinely-missing lines FIRST. The previous version appended a
-    # "scaffolded additions" banner on every run whether or not anything followed it,
-    # so each /shiploop:update grew the file by one dead header and reported a change —
-    # which made the whole component read as non-idempotent.
-    local missing=""
+    local have_rec=0 known missing="" removed="" dyn
+    [ -f "$rec" ] && have_rec=1
+    dyn=$'\n'"$subrepo_lines"$'\n'"$lockfile_lines"$'\n'
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      case "$line" in \#*) continue ;; esac        # never re-append template comments
-      grep -Fxq "$line" .gitignore 2>/dev/null || missing+="$line"$'\n'
-    done <<<"$content"
+      if grep -Fxq -- "$line" .gitignore 2>/dev/null; then continue; fi
+      known=0
+      if [ "$have_rec" -eq 1 ]; then
+        if grep -Fxq -- "$line" "$rec" 2>/dev/null; then known=1; fi
+      else
+        # First run with no record: a pattern that shipped before the record existed, or one
+        # derived from this workspace's repos and package manager, and is absent here was
+        # either removed on purpose or never wanted, so it is recorded and left out. Only a
+        # static pattern the baseline has never listed is new and gets appended. Without the
+        # baseline nothing is known to be new, so nothing is appended.
+        case "$dyn" in *$'\n'"$line"$'\n'*) known=1 ;; esac
+        if [ "$known" -eq 0 ]; then
+          if [ ! -f "$base" ]; then known=1
+          elif grep -Fxq -- "$line" "$base" 2>/dev/null; then known=1; fi
+        fi
+      fi
+      if [ "$known" -eq 1 ]; then removed+="${removed:+, }$line"; else missing+="$line"$'\n'; fi
+    done <<<"$template_lines"
 
     if [ -z "$missing" ]; then
       info ".gitignore already covers every scaffolded pattern — no changes (idempotent)"
@@ -764,10 +810,16 @@ component_gitignore() {
       mv "$tmp" .gitignore
       info "appended $(printf '%s' "$missing" | grep -c '') missing .gitignore line(s)"
     fi
+    [ -z "$removed" ] || info ".gitignore: left out template line(s) this workspace removed: $removed"
   else
     printf '%s\n' "$content" > .gitignore
     info "wrote .gitignore"
   fi
+
+  mkdir -p scripts/lib
+  { [ -f "$rec" ] && cat "$rec"; printf '%s' "$template_lines"; } | sort -u > "$rec.tmp" \
+    && mv "$rec.tmp" "$rec"
+  return 0
 }
 
 component_package_json() {
