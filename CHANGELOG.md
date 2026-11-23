@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.20.7 - 2026-11-23
+
+### Fixed
+
+**The governor no longer commits queue edits it did not make.** `land-resolution.sh` and
+`file-ticket.sh` stage the whole on-disk `queue/tickets.md`, so an uncommitted block written by an
+operator or by a product's own runtime was published under a resolve or filing commit. Every script
+that commits the file (`land-resolution.sh`, `file-ticket.sh` in commit mode,
+`escalations-apply-answers.sh`, `externalize-low-tickets.sh`, `govern::cas_edit` on the queue) now
+calls `govern::queue_foreign_changes` after taking the bookkeep lock and before its pre-edit sync, and
+on any uncommitted change lists it and exits `12` without stashing, discarding or committing.
+`resolve-ticket.sh` runs the same check before any merge, so a PR is never merged when its booking
+would be refused; a refusal after a merge says "PR merged; queue not booked" and the recovery is
+`resolve-ticket.sh <N> --no-merge`. `GOVERN_QUEUE_FOREIGN_GUARD=0` turns the check off.
+
+**The allocator never reissues a number.** `govern::next_ticket_number` also takes the highest number
+named by a `file #N`, `resolve #N` or `delete #N` commit subject in the queue repo's history, so a
+ticket filed by hand and later resolved and deleted can no longer be handed out again. A PR
+reference such as `repo#12` never counts.
+
+### Added
+
+**An opt-in live-run probe with a durable deferral.** `GOVERN_RUN_PROBE` names an executable (relative
+to the workspace root, called as `<probe> <repo> <checkout-dir>`) whose exit 0 means a product run is
+live in that checkout. `wsp_run_live` in `lib/workspace.sh` wraps it with a 5s bound, and a probe that
+is missing, not executable or too slow counts as live. `npm run sync` skips a live checkout, and
+`resolve-ticket.sh`'s post-merge fast-forward (`GOVERN_POST_MERGE_SYNC=1`) does too. Every skip or
+failed fast-forward writes `governor/.pending-sync/<repo>` (now in the gitignore template), and a
+successful fast-forward by either path deletes it. The SessionStart hook `check-main-on-main.sh`
+prints one non-blocking line per marker, deleting silently one whose sha the checkout already contains.
+Unset by default, so nothing changes on bump. New tests: `test-queue-foreign-guard`,
+`test-ticket-numbering-log`, `test-post-merge-sync-probe`, `test-sync-run-probe`, `test-pending-sync-hook`.
+
 ## 1.20.6 - 2026-11-23
 
 ### Changed

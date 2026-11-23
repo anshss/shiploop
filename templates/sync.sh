@@ -60,6 +60,19 @@ repair_duplicate_upstream() {
   done
 }
 
+# 0 when GOVERN_RUN_PROBE reports a live product run in <dir>. No probe declared = never live. A probe
+# declared in a workspace.sh that has no wsp_run_live to call it counts as live (never move code under
+# a run because the probe machinery is missing).
+run_live() { # <repo> <dir>
+  [ -n "${GOVERN_RUN_PROBE:-}" ] || return 1
+  if declare -F wsp_run_live >/dev/null 2>&1; then wsp_run_live "$@"; return $?; fi
+  return 0
+}
+
+# Record or clear the pending-sync marker (no-ops when workspace.sh predates the helpers).
+pending_mark()  { declare -F wsp_pending_sync_mark  >/dev/null 2>&1 && wsp_pending_sync_mark "$@"; return 0; }
+pending_clear() { declare -F wsp_pending_sync_clear >/dev/null 2>&1 && wsp_pending_sync_clear "$@"; return 0; }
+
 sync_repo() {
   local sub="$1"
   local dir="$ROOT/$sub"
@@ -90,6 +103,14 @@ sync_repo() {
   local current
   current=$(git branch --show-current)
 
+  # 3b. a live product run in this checkout must not have its code moved under it: skip both HEAD
+  # moves below and leave a marker the SessionStart hook reports until a later sync catches up.
+  if run_live "$sub" "$dir"; then
+    warn "LIVE RUN reported by the run probe: skipped, run sync again when it ends"
+    pending_mark "$sub" "$dir" main live-run
+    return
+  fi
+
   # 4. update local main from origin/main without checkout if on a feature branch
   if [ "$current" = "main" ]; then
     if git pull --ff-only >/dev/null 2>&1; then
@@ -100,6 +121,7 @@ sync_repo() {
       else
         ok "main already up-to-date"
       fi
+      pending_clear "$sub"
     else
       warn "could not ff main from origin (diverged?) — inspect manually"
     fi
@@ -107,6 +129,7 @@ sync_repo() {
     # On feature branch — update local main in place
     if git fetch origin main:main >/dev/null 2>&1; then
       ok "local main updated (you're on $current)"
+      pending_clear "$sub"
     else
       dim "could not update main from here (likely no upstream change, OR local main diverged)"
     fi

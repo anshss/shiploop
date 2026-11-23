@@ -769,8 +769,27 @@ govern::ticket_filemax() { # [tickets-file] -> N
   echo "${m:-0}"
 }
 
+# govern::ticket_logmax: highest ticket number named by a `file #N`, `resolve #N` or `delete #N`
+# commit subject anywhere in the git history of the directory holding the tickets file (every ref),
+# or 0 when that directory is not a git repo or git fails. The three verbs are the ones the queue's
+# own commits use; matching is case-insensitive and the verb must start the line or follow a
+# non-alphanumeric character, so a `repo#230` PR reference in a subject never counts. A number whose
+# block was filed by hand and later resolved and deleted leaves no trace in the file or in
+# .ticket-seq, but its commit subjects still carry it.
+govern::ticket_logmax() { # [tickets-file] -> N (0 if none)
+  local f="${1:-$TICKETS_FILE}" dir n
+  dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
+  [[ -n "$dir" ]] || { printf '0\n'; return 0; }
+  n="$(git -C "$dir" log --all --format=%s 2>/dev/null \
+        | grep -ioE '(^|[^[:alnum:]])(file|resolve|delete) #[0-9]+' \
+        | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
+  printf '%s\n' "${n:-0}"
+  return 0
+}
+
 # govern::next_ticket_number — allocate the next number: max(highest `## #N` in tickets.md,
-# persisted high-water mark in governor/.ticket-seq) + 1, then bump .ticket-seq to it. A number is
+# persisted high-water mark in governor/.ticket-seq, highest number in the queue's commit subjects)
+# + 1, then bump .ticket-seq to it. A number is
 # therefore NEVER reused — not after the highest ticket is resolved+deleted, and not by a
 # manual filing that never read/bumped the seq. The read+bump is serialized under the bookkeep
 # lock so two concurrent filers (a govern driver and an operator sweep) can't read the same max and
@@ -793,16 +812,53 @@ govern::next_ticket_number() { # [tickets-file] -> N
     if govern::lock_acquire "$lock" 60 300; then got_lock=1
     else govern::log "next_ticket_number: bookkeep lock busy >60s — proceeding (degraded)"; fi
   fi
-  local hwm filemax maxn
+  local hwm filemax logmax maxn
   hwm="$( [[ -f "$seq_file" ]] && tr -dc '0-9' < "$seq_file" 2>/dev/null || echo 0)"; hwm="${hwm:-0}"
   filemax="$(govern::ticket_filemax "$tickets_file")"
   maxn=$(( hwm > filemax ? hwm : filemax ))
+  logmax="$(govern::ticket_logmax "$tickets_file")"
+  maxn=$(( maxn > logmax ? maxn : logmax ))
   maxn=$((maxn+1))
   if [[ "${GOVERN_SEQ_PEEK:-0}" != "1" ]]; then
     printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
   fi
   [[ "$got_lock" == "1" ]] && govern::lock_release "$lock"
   printf '%s\n' "$maxn"
+}
+
+# govern::queue_foreign_changes: print a human-readable list of the tickets file's UNCOMMITTED
+# changes (staged or not), empty when the file matches HEAD. A script that is about to commit that
+# file calls this first: whatever is uncommitted at that point was written by something other than
+# the script (an operator edit or a product's own runtime), and a whole-file commit would publish it
+# under the script's message. Lists the `git status --porcelain` line plus every `## #N` heading on
+# disk that HEAD does not have. Read-only: it never stashes, discards or commits anything.
+# GOVERN_QUEUE_FOREIGN_GUARD=0 turns the guard off (prints nothing). The default lives here and
+# nowhere else.
+govern::queue_foreign_changes() { # [tickets-file]
+  [[ "${GOVERN_QUEUE_FOREIGN_GUARD:-1}" == "0" ]] && return 0
+  local f="${1:-$TICKETS_FILE}" dir base st n
+  [[ -f "$f" ]] || return 0
+  dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
+  [[ -n "$dir" ]] || return 0
+  base="$(basename "$f")"
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  st="$(git -C "$dir" status --porcelain -- "$base" 2>/dev/null || true)"
+  [[ -n "$st" ]] || return 0
+  printf '  git status: %s\n' "$st"
+  while IFS= read -r n; do
+    [[ -n "$n" ]] || continue
+    printf '  uncommitted ticket heading: ## #%s\n' "$n"
+  done < <(comm -13 \
+      <(git -C "$dir" show "HEAD:./$base" 2>/dev/null | grep -oE '^## #[0-9]+' | grep -oE '[0-9]+' | sort -u || true) \
+      <(grep -oE '^## #[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+' | sort -u || true))
+  return 0
+}
+
+# govern::queue_foreign_refusal: the one refusal text every tickets-file committer prints (stderr)
+# when govern::queue_foreign_changes found something. $1 is the script label, $2 the change list.
+govern::queue_foreign_refusal() { # <label> <changes>
+  printf '%s: queue/tickets.md has uncommitted changes this script did not make. Commit them if they are yours, discard them if not, then re-run.\n%s\n' "$1" "$2" >&2
+  return 0
 }
 
 # govern::duplicate_ticket_headings — cheap collision detector: print each ticket number that
@@ -1582,6 +1638,28 @@ govern::is_local_first_repo() { command -v wsp_is_local_first_repo >/dev/null 2>
 # its lingering local ticket-<N> branch cleaned up.
 govern::repo_slug()     { wsp_repo_slug "$1"; }
 govern::repo_localdir() { wsp_repo_localdir "$1"; }
+
+# govern::run_live <repo> <dir>: 0 when the workspace's GOVERN_RUN_PROBE reports a live product run
+# in <dir>, 1 when it reports none or no probe is declared. A probe that is declared while this
+# workspace.sh has no wsp_run_live to call it counts as live: never move code under a run because the
+# probe machinery is missing.
+govern::run_live() {
+  [[ -n "${GOVERN_RUN_PROBE:-}" ]] || return 1
+  if declare -F wsp_run_live >/dev/null 2>&1; then wsp_run_live "$@"; return $?; fi
+  govern::log "GOVERN_RUN_PROBE is set but this workspace.sh has no wsp_run_live; treating $1 as LIVE"
+  return 0
+}
+
+# govern::pending_sync_mark / _clear: write or remove the pending-sync marker for <repo> (see
+# wsp_pending_sync_mark in workspace.sh). No-ops when this workspace.sh predates the helpers.
+govern::pending_sync_mark() { # <repo> <dir> <branch> <reason>
+  declare -F wsp_pending_sync_mark >/dev/null 2>&1 && wsp_pending_sync_mark "$@"
+  return 0
+}
+govern::pending_sync_clear() { # <repo>
+  declare -F wsp_pending_sync_clear >/dev/null 2>&1 && wsp_pending_sync_clear "$@"
+  return 0
+}
 
 # ── auto-merge safety guard (external-PR protection) ────────────────────────
 # Two independent, FAIL-CLOSED checks the auto-merge path (merge-pr.sh + every other `gh pr merge`

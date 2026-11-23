@@ -12,6 +12,8 @@
 #          {"repo":"alpha","number":42,"url":"https://github.com/acme/alpha/pull/42"} (`.repo`+
 #          `.number` required); or a bare INTEGER `42` (repo resolved from workspace config, see
 #          govern::resolve_pr_repo). Anything else present is a hard refusal, before ANY edit.
+# Exit 12: queue/tickets.md has uncommitted changes this script did not make (see
+#   govern::queue_foreign_changes; GOVERN_QUEUE_FOREIGN_GUARD=0 disables the check). Nothing is edited.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 govern::require jq
@@ -162,6 +164,18 @@ govern_bk::evict_entry() { # <file> <needle>
 BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "bookkeep lock busy >60s — proceeding (degraded)"
 trap 'govern::lock_release "$BK_LOCK"' EXIT
+
+# 0-pre. Refuse to commit a tickets file that already carries uncommitted changes: the commit below
+# stages the whole on-disk file, so a block something else wrote (an operator edit, a product's own
+# runtime) would be published under this resolve's message. Checked before the pre-edit sync because
+# the autostash pull would carry the foreign edit straight through. Exit 12; nothing is stashed,
+# discarded or committed. A caller that merged the PR first (resolve-ticket.sh) is told so here.
+_foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
+if [[ -n "$_foreign" ]]; then
+  govern::queue_foreign_refusal "land-resolution #$N" "$_foreign"
+  echo "land-resolution #$N: if the PR was already merged, the queue is NOT booked: once the file is clean, re-run resolve-ticket.sh <N> --no-merge with the same report." >&2
+  exit 12
+fi
 
 # 0. Sync the local checkout's main to origin/main BEFORE editing tickets.md, so the block-delete
 # (and any newTickets/lesson appends) are computed against the FRESHEST origin/main — never a stale

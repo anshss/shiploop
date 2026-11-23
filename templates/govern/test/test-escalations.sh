@@ -126,6 +126,9 @@ nf=no; [ -s "$noteflag" ] && nf=yes
 assert_eq "$nf" "yes" "GOVERN_NOTIFY_CMD fires when pending escalations exist"
 
 # ── apply-answers: act on the recorded answers ───────────────────────────────────────────
+# The scripts under test refuse a queue file with uncommitted changes, so fixtures are committed first.
+commit_fixtures() { ( cd "$1" && git add -A >/dev/null 2>&1 && git commit -qm fixtures >/dev/null 2>&1 ) || true; }
+commit_fixtures "$T"
 out="$(env "${env_common[@]}" bash "$APPLY" 2>/dev/null)"
 assert_contains "$out" "un-parked 1, deferred 1, mitigated 1, killed 0, rules added 1" "apply summary: 1 un-park (#7), 1 defer (#5), 1 mitigated (#6), 1 rule (#7)"
 

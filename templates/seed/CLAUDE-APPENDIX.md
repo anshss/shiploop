@@ -370,6 +370,12 @@ Recognized Disposition tokens (case-insensitive, tolerant of common synonyms and
 
 ---
 
+## A product built inside the workspace
+
+A product never writes `queue/tickets.md` from its runtime: it records its own events in its own state, and an operator decides what becomes a ticket and files it with `file-ticket.sh`.
+The governor refuses (exit 12) to commit a queue file it finds dirty, so a stray write blocks bookkeeping instead of riding along in a resolve commit.
+A sub-repo that runs long-lived processes from its main checkout declares `GOVERN_RUN_PROBE`, and turns on `GOVERN_POST_MERGE_SYNC` only together with a probe.
+
 ## Workspace-specific notes
 
 _(append your own architecture notes, provider gotchas, and rule rationale below)_

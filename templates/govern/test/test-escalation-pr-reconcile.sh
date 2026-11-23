@@ -128,6 +128,9 @@ env_common=(
   GOVERN_NO_PUSH=1
 )
 
+# The scripts under test refuse a queue file with uncommitted changes, so fixtures are committed first.
+commit_fixtures() { ( cd "$1" && git add -A >/dev/null 2>&1 && git commit -qm fixtures >/dev/null 2>&1 ) || true; }
+commit_fixtures "$T"
 out="$(env "${env_common[@]}" bash "$APPLY" 2>/dev/null)"
 assert_contains "$out" "reconciled 2" "reconcile count is 2 (A merged, B closed — F is answered, handled separately)"
 
@@ -185,6 +188,7 @@ cat >> "$T/tickets.md" <<'EOF'
 body of sixty
 ---
 EOF
+commit_fixtures "$T"
 out2="$(env "${env_common[@]}" GH_UNAVAILABLE=1 bash "$APPLY" 2>/dev/null)"
 # Nothing else is answered either, so a gh failure here means the reconcile pass acted on
 # NOTHING and the script takes the existing early-exit no-op path — never a false "reconciled".

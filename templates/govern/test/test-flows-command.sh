@@ -148,6 +148,8 @@ assert_contains "$out" "vastai-box" "file: group labelled by its Resource-group 
 assert_contains "$out" "2 flow(s): deploy.vastai comfyui.vastai" "file: both grouped flows in one plan row"
 
 # --yes actually files ONE grouped ticket carrying both ids as a comma-list Flow: field.
+# file-ticket.sh refuses a queue file with uncommitted changes, so commit the fixture first.
+git -C "$M" add -A >/dev/null 2>&1; git -C "$M" commit -qm fixtures >/dev/null 2>&1 || true
 "$DIR/../flows-file.sh" deploy.vastai comfyui.vastai --yes >/dev/null 2>&1
 assert_contains "$(cat "$GOVERN_TICKETS_FILE")" "**Flow:** deploy.vastai,comfyui.vastai" "file --yes: grouped ticket carries the comma-list Flow field"
 nfiled="$(grep -c '^## #' "$GOVERN_TICKETS_FILE" || true)"

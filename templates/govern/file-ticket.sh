@@ -35,6 +35,8 @@
 # run is active.
 # Honors GOVERN_NO_PUSH=1 (commit locally, skip the push) and no-ops the commit entirely outside a
 # git repo (tests / offline), in which case the append is left on disk like the legacy path.
+# Exit 12: in commit mode, queue/tickets.md already has uncommitted changes this script did not make
+# (govern::queue_foreign_changes; GOVERN_QUEUE_FOREIGN_GUARD=0 disables the check). Nothing is appended.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
 
@@ -122,6 +124,17 @@ fi
 # same as land-resolution.sh.
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "file-ticket: bookkeep lock busy >60s — proceeding (degraded)"
 trap 'govern::lock_release "$BK_LOCK"' EXIT
+
+# Refuse to commit a tickets file that already carries uncommitted changes: the pathspec commit below
+# takes the whole on-disk file, so a block something else wrote would be published as part of this
+# filing. Checked before the pre-edit sync (the pull would carry the foreign edit through). Exit 12;
+# nothing is appended, stashed, discarded or committed. The NO_COMMIT path above leaves the commit
+# (and this check) to its caller.
+_foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
+if [[ -n "$_foreign" ]]; then
+  govern::queue_foreign_refusal "file-ticket" "$_foreign"
+  exit 12
+fi
 
 # Informational: a live governor run holds the run lock. We commit+push atomically under the
 # bookkeep lock, so the filing is SAFE — but surface it so the operator knows a driver is active.

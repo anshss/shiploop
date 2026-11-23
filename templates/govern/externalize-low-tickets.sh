@@ -95,6 +95,16 @@ BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
 if [[ "${GOVERN_BOOKKEEP_LOCK_HELD:-0}" != "1" ]]; then
   govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "externalize-low-tickets: bookkeep lock busy >60s, proceeding (degraded)"
   trap 'govern::lock_release "$BK_LOCK"' EXIT
+  # This lane edits the tickets file and then commits it, so a file that already carries uncommitted
+  # changes is refused before any edit (exit 12). A dry run commits nothing, and a caller holding the
+  # lock (apply-answers) already ran the check before its own edits.
+  if [[ "$DRY" -ne 1 && "${GOVERN_EXTERNALIZE_NO_COMMIT:-0}" != "1" ]]; then
+    _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
+    if [[ -n "$_foreign" ]]; then
+      govern::queue_foreign_refusal "externalize-low-tickets" "$_foreign"
+      exit 12
+    fi
+  fi
 fi
 
 # ── shared: commit queue edits to main (CAS-with-retry, mirrors land-resolution.sh). A no-op in DRY mode,

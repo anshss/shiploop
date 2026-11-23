@@ -74,4 +74,23 @@ if [ "${#OFF[@]}" -gt 0 ]; then
   for o in "${OFF[@]}"; do echo "    $o"; done
   echo "  Restore: ${ROOT_PM:-npm} run switch -- <branch shown above>"
 fi
+
+# Pending-sync markers (governor/.pending-sync/<repo>, one line: `<origin sha> <ISO time> <reason>`):
+# a checkout that was deliberately not fast-forwarded (a live product run, or a failed fast-forward).
+# A marker whose recorded sha the checkout's HEAD already contains is stale and is deleted silently;
+# the rest each print one non-blocking line. Local git only, no network.
+PENDING_DIR="$MAIN_CHECKOUT/governor/.pending-sync"
+if [ -d "$PENDING_DIR" ]; then
+  for m in "$PENDING_DIR"/*; do
+    [ -f "$m" ] || continue
+    repo=$(basename "$m")
+    read -r psha ptime preason < "$m" || true
+    if [ -n "${psha:-}" ] && [ "$psha" != "-" ] \
+       && git -C "$MAIN_CHECKOUT/$repo" merge-base --is-ancestor "$psha" HEAD 2>/dev/null; then
+      rm -f "$m"
+      continue
+    fi
+    echo "$repo: local main is behind origin (${preason:-unknown} since ${ptime:-unknown}); run ${ROOT_PM:-npm} run sync once no run is live"
+  done
+fi
 exit 0
