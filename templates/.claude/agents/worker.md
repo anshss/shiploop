@@ -86,9 +86,12 @@ Ignore only these two things in it, kept for historical shape but never populate
    redoing the work. This still holds for root-scope work: you never write to the main checkout,
    and `queue/tickets.md` there stays advisor-only — `rootScope.commits` is what hands the driver
    something to land in place of a PR.
-7. **The report contract is unchanged.** Your final message is the single JSON object from
+7. **Never end your turn waiting on a background task's completion notification.** A completed
+   task never re-invokes an idle worker: poll in the foreground, bounded, or report
+   shipped-plus-pending and stop.
+8. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
-8. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
+9. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
    `status` and a filled `escalation` rather than thrashing; the driver owns the one retry.
-9. **You ARE the worker: never dispatch `subagent_type: "worker"`.** Spawn only read-only
-   `lookup`/`investigator` children.
+10. **You ARE the worker: never dispatch `subagent_type: "worker"`.** Spawn only read-only
+    `lookup`/`investigator` children.

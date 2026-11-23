@@ -144,6 +144,14 @@ negative fails SILENTLY — an abandoned billable resource reads as a normal par
   background wait**: a worker gets NO re-invocation once its turn ends, so a verdict-less turn
   reads as FAILED and burns the resource. Bounded `until` loop under `GOVERN_WORKER_TIMEOUT`, else
   PARK.
+- **Never end your turn parked on a background task's completion notification.** A completed
+  background task reaches a worker only while that worker is mid-turn: an idle worker is never
+  re-invoked by its own completed task, and a `run_in_background` Bash call and a Monitor stall
+  identically, so switching between them is not a fix. If something must be waited on, poll it in
+  the foreground with repeated short bounded calls under a total-wait cap you set before starting;
+  if the wait does not fit that shape (or any longer wait outgrows it), report what shipped plus
+  what is pending and stop. A leader SendMessage is the one exception: a message DOES re-invoke an
+  idle receiver, so waiting on a sent message is not this failure.
 - **About to wait on something long → say so in ONE line before you go quiet, naming what you wait
   on.** A background task you correctly must not poll (a test suite, a consult reply, a
   provisioning job) and a genuine stall look identical from outside: nobody watching your session
