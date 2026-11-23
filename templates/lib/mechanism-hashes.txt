@@ -318,6 +318,7 @@ d487a95beb0460a7c8f466eeb1b9e66dc0b4577069276459dee3ce4b3ef7c7b2  govern/land-re
 91f66a743b4220b15234b1d55f695c84ca2a75dc6c8401a24d6b1b2175ed0f5e  govern/lib/common.sh
 9254d4548bec338fef24105c5b74b1199ff70573c49f864c7c4a142c2784c695  govern/lib/common.sh
 9895ac5d91aeec5ed914ec735310114888c96194120d5e75811a0a3a7fb62e57  govern/lib/common.sh
+994baf15739f05b0277b31f0d605f7454ac23ff91beaad2cf17c81aea3cc929f  govern/lib/common.sh
 997ce6af2daaa14370803d7dfc5dc763d7d5aeb619567dfb767faf528eb80d7a  govern/lib/common.sh
 9a99e2645c15eff78893540951e1d4c0f54f5a6eff0502d0154881cfa57c9a09  govern/lib/common.sh
 9d6ca93c1e808e7c29e58d2d02df30d19c332e24a66b819dfe37b9e5b60dfc41  govern/lib/common.sh
@@ -682,6 +683,9 @@ cbb11549ebf7e1ee467947def4d0f6bbe303c173776f31a4309187109b68f5c7  lib/githooks.s
 # -- lib/preflight.sh --
 b3bff1e12dba403eacf5ae0f64ea0f737799fbed1fcb86006b76d9d8f99c85fb  lib/preflight.sh
 
+# -- lib/run-probe.sh --
+cc972ae2f48cb74d0511ef65d984abdebfe8290f8c0664ac1d0e9758d976723b  lib/run-probe.sh
+
 # -- lib/session-state.sh --
 826ff225d6417865eb6983f596e0517be70f3b5ef336da5e6496666878d88e1c  lib/session-state.sh
 a4455e4ec00e66bed24dc01e0f926918aa58de185e23ec1f573cbc6aa1b28bcd  lib/session-state.sh
@@ -690,6 +694,7 @@ a4455e4ec00e66bed24dc01e0f926918aa58de185e23ec1f573cbc6aa1b28bcd  lib/session-st
 28c880f6e8bcc2c02f1099dc76409a08afcb865b138d6721bf499d0898670607  sync.sh
 3509be96eadbea285942179ed50cac48194dead46e509665ee8f71e151dee0c8  sync.sh
 970e1f9b290040966051c8cddecafa94da4ecf21a604d72ffbcd30962ec5d730  sync.sh
+ac60f142e3428c6fa79a0d1580fa8381e56c5f8ade3213c20c3a5eeda119183f  sync.sh
 b92a2f4769649143f53fd0317ab395c3a1d92386fdfc1ee0c816503c36fab11e  sync.sh
 c015d8d391520b60be38b216f755f49e1caa63ee067a885f648132253d0029b9  sync.sh
 
@@ -1127,6 +1132,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 762f1b62680db78793e2557c51afc141b8fdc95a4eca6a6728b724e1fb94e512  scripts/govern/test/test-select-ticket.sh
 76467c0cf7f4342f73cc0e6cdfb057c7632e73aa316be88de5300bd7a50f2102  scripts/govern/test/test-concurrency.sh
 76592ffa650256a5eb1be7120b9d89a5c98c29225cd73c8dc4bfcc537e263216  scripts/govern/test/test-driver-model-stamp.sh
+775f95f2e40e6491292e1fcd7062286bdff29f966b9f707a2fb171d9fd8f7120  scripts/govern/test/test-update-keeps-local-hooks-and-ignores.sh
 77710bcaf59a9306bfe31c63c2b1934b36eac1892a99a667bf3a432f9d5607ae  scripts/govern/test/test-update-channel.sh
 778abb10177a5361c5f6f93221884caf6f079fc1785bae36435d22c272f87209  scripts/govern/test/test-sync-templates-upper-bound.sh
 7830ec3114acfd4a09a581f77fe0420e7551b7a11436f73e06ad8c7db5754d44  scripts/govern/test/test-claim-lock-dry.sh
@@ -1202,6 +1208,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 9627a1f6c6554d091114fa1dc4815ff46a812ce1086ca7d34d2e58df31faccce  scripts/govern/test/assert.sh
 96365094378ee314a8c83377240bf5a09c2c10ccc001d22d55bdc08cdffb1e71  scripts/govern/test/test-config-check.sh
 9697340937f35b4bc20eedd87638459e54c128ee541d6326bd81aa33455ece94  scripts/govern/test/test-events-monitor.sh
+982202900f4cbd35f65ad434456a3084beeaa9cc96d08ca1a59370db2c7ce644  scripts/govern/test/test-update-config-converge.sh
 98577d7bac01c0a1c4945428e29b582a265f68ef8a52d0fef5af551e4ab97677  scripts/govern/test/test-sync-port-merged-marker.sh
 989ff4bef6f649a42e9ccec62b64ffbf6eec06ff44dd06ddfce715443849c256  scripts/govern/test/test-supervisor-selection.sh
 99bf824d84f0ac6eb9d753bfc4f52bcea417c0f306d41a076f5e36a105ef9619  scripts/govern/test/test-externalize.sh

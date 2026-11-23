@@ -17,6 +17,11 @@ WS_ROOT="${GOVERN_WS_ROOT:-$(cd "$GOVERN_LIB_DIR/../../.." && pwd)}"
 export META_ROOT="$WS_ROOT"
 # shellcheck source=../../lib/workspace.sh
 source "$WS_ROOT/scripts/lib/workspace.sh"
+# Probe helpers (wsp_run_live and the pending-sync markers) are a mechanism lib the update installs
+# and refreshes, not part of workspace.sh. A missing lib degrades to the documented fail-safe in
+# govern::run_live and the pending-sync wrappers below: a declared probe counts as LIVE.
+# shellcheck source=../../lib/run-probe.sh
+[[ -f "$WS_ROOT/scripts/lib/run-probe.sh" ]] && source "$WS_ROOT/scripts/lib/run-probe.sh"
 
 # Flow-registry substrate (validations feature). Sourced here so every govern:: consumer
 # (land-resolution, file-ticket, lint) inherits the flow parser + cas_edit + lint helpers.
@@ -1640,18 +1645,18 @@ govern::repo_slug()     { wsp_repo_slug "$1"; }
 govern::repo_localdir() { wsp_repo_localdir "$1"; }
 
 # govern::run_live <repo> <dir>: 0 when the workspace's GOVERN_RUN_PROBE reports a live product run
-# in <dir>, 1 when it reports none or no probe is declared. A probe that is declared while this
-# workspace.sh has no wsp_run_live to call it counts as live: never move code under a run because the
-# probe machinery is missing.
+# in <dir>, 1 when it reports none or no probe is declared. A probe that is declared while
+# scripts/lib/run-probe.sh is somehow absent (no wsp_run_live defined) counts as live: never move
+# code under a run because the probe machinery is missing.
 govern::run_live() {
   [[ -n "${GOVERN_RUN_PROBE:-}" ]] || return 1
   if declare -F wsp_run_live >/dev/null 2>&1; then wsp_run_live "$@"; return $?; fi
-  govern::log "GOVERN_RUN_PROBE is set but this workspace.sh has no wsp_run_live; treating $1 as LIVE"
+  govern::log "GOVERN_RUN_PROBE is set but scripts/lib/run-probe.sh is missing; treating $1 as LIVE"
   return 0
 }
 
 # govern::pending_sync_mark / _clear: write or remove the pending-sync marker for <repo> (see
-# wsp_pending_sync_mark in workspace.sh). No-ops when this workspace.sh predates the helpers.
+# wsp_pending_sync_mark in scripts/lib/run-probe.sh). No-ops when the lib is somehow absent.
 govern::pending_sync_mark() { # <repo> <dir> <branch> <reason>
   declare -F wsp_pending_sync_mark >/dev/null 2>&1 && wsp_pending_sync_mark "$@"
   return 0

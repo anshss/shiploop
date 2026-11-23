@@ -7,26 +7,26 @@
 #   3. no probe declared: fast-forwards, writes no marker.
 #   4. a successful fast-forward deletes an existing marker, on main and from a feature branch.
 #   5. a probe that reports no live run behaves like no probe.
+# Negative control (the pre-1.20.7 shape): with the helpers' lib absent, a declared probe counts as
+# LIVE: the checkout is skipped forever and no marker is ever written.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYNC="$DIR/../../sync.sh"
-WSH="$DIR/../../lib/workspace.sh"
-[[ -f "$SYNC" && -f "$WSH" ]] || { echo "SKIP: sync.sh / workspace.sh template not found"; exit 77; }
+PROBE_LIB="$DIR/../../lib/run-probe.sh"
+[[ -f "$SYNC" && -f "$PROBE_LIB" ]] || { echo "SKIP: sync.sh / run-probe.sh template not found"; exit 77; }
 source "$DIR/assert.sh"
 set +e
 
 S="$(mktemp -d)"; trap 'rm -rf "$S"' EXIT
 mkdir -p "$S/scripts/lib" "$S/governor"
 cp "$SYNC" "$S/scripts/sync.sh"
+cp "$PROBE_LIB" "$S/scripts/lib/run-probe.sh"
 cat > "$S/scripts/lib/workspace.sh" <<EOF
 #!/usr/bin/env bash
 META_ROOT="\${META_ROOT:-$S}"
 ROOT_PM="npm"
 REPOS=(alpha)
 EOF
-for fn in wsp_run_live wsp_pending_sync_mark wsp_pending_sync_clear; do
-  sed -n "/^${fn}()/,/^}/p" "$WSH" >> "$S/scripts/lib/workspace.sh"
-done
 
 git init -q --bare -b main "$S/origin.git"
 git clone -q "$S/origin.git" "$S/alpha" 2>/dev/null
@@ -83,5 +83,34 @@ assert_eq "$(marker)" "(none)" "4. a successful fast-forward on main deletes an 
 out="$(run_sync A=1)"
 assert_not_contains "$out" "LIVE RUN" "3. an up-to-date repo with no probe is reported without probe output"
 assert_eq "$(marker)" "(none)" "3. ...and writes no marker"
+
+# ── 6. negative control (the pre-1.20.7 shape): helpers' lib absent ─────────────────────────────
+# A workspace whose scripts/lib/run-probe.sh never arrived (an update that has not run yet) keeps the
+# old fail-safe: a declared probe counts as LIVE forever and no marker is written.
+S2="$(mktemp -d)"
+mkdir -p "$S2/scripts/lib" "$S2/governor"
+cp "$SYNC" "$S2/scripts/sync.sh"
+cat > "$S2/scripts/lib/workspace.sh" <<EOF
+#!/usr/bin/env bash
+META_ROOT="\${META_ROOT:-$S2}"
+ROOT_PM="npm"
+REPOS=(alpha)
+EOF
+git init -q --bare -b main "$S2/origin.git"
+git clone -q "$S2/origin.git" "$S2/alpha" 2>/dev/null
+( cd "$S2/alpha" && git config user.email t@t && git config user.name t \
+  && echo a > a.txt && git add a.txt && git commit -qm a && git push -q origin main -u 2>/dev/null )
+git clone -q "$S2/origin.git" "$S2/pusher" 2>/dev/null
+( cd "$S2/pusher" && git config user.email t@t && git config user.name t \
+  && echo n > n.txt && git add . && git commit -qm n && git push -q origin main )
+origin2="$(git -C "$S2/origin.git" rev-parse main)"
+( cd "$S2" && GOVERN_RUN_PROBE=probe.sh bash "$S2/scripts/sync.sh" >/dev/null 2>&1 )
+h2="$(git -C "$S2/alpha" rev-parse main)"
+[ "$h2" != "$origin2" ] && lagged2=lagged || lagged2=synced
+assert_eq "$lagged2" "lagged" \
+  "6. negative control: no run-probe.sh lib, probe declared: the repo counts as LIVE and main is not moved"
+[ -f "$S2/governor/.pending-sync/alpha" ] && m2=yes || m2=no
+assert_eq "$m2" "no" "6. ...and the pre-1.20.7 bug shows: no pending-sync marker is written"
+rm -rf "$S2"
 
 assert_done

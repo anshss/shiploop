@@ -26,6 +26,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ── workspace config ──
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/workspace.sh"
+# Probe helpers (wsp_run_live and the pending-sync markers) are a mechanism lib the update
+# installs and refreshes, not part of workspace.sh. A missing lib degrades to the documented
+# fail-safe in run_live/pending_mark/pending_clear below: a declared probe counts as LIVE.
+# shellcheck source=/dev/null
+[ -f "$ROOT/scripts/lib/run-probe.sh" ] && source "$ROOT/scripts/lib/run-probe.sh" || true
 
 ANSI_RESET=$'\033[0m'
 ANSI_GREEN=$'\033[32m'
@@ -60,16 +65,16 @@ repair_duplicate_upstream() {
   done
 }
 
-# 0 when GOVERN_RUN_PROBE reports a live product run in <dir>. No probe declared = never live. A probe
-# declared in a workspace.sh that has no wsp_run_live to call it counts as live (never move code under
-# a run because the probe machinery is missing).
+# 0 when GOVERN_RUN_PROBE reports a live product run in <dir>. No probe declared = never live. A
+# declared probe with no wsp_run_live to call (scripts/lib/run-probe.sh somehow absent) counts as
+# live (never move code under a run because the probe machinery is missing).
 run_live() { # <repo> <dir>
   [ -n "${GOVERN_RUN_PROBE:-}" ] || return 1
   if declare -F wsp_run_live >/dev/null 2>&1; then wsp_run_live "$@"; return $?; fi
   return 0
 }
 
-# Record or clear the pending-sync marker (no-ops when workspace.sh predates the helpers).
+# Record or clear the pending-sync marker (no-ops when scripts/lib/run-probe.sh is somehow absent).
 pending_mark()  { declare -F wsp_pending_sync_mark  >/dev/null 2>&1 && wsp_pending_sync_mark "$@"; return 0; }
 pending_clear() { declare -F wsp_pending_sync_clear >/dev/null 2>&1 && wsp_pending_sync_clear "$@"; return 0; }
 

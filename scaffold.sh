@@ -137,7 +137,7 @@ mechanism_map() {
       for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit; do
         printf 'hooks/%s.sh\tscripts/%s.sh\n' "$s" "$s"
       done
-      for s in session-state preflight githooks install-semaphore; do
+      for s in session-state preflight githooks install-semaphore run-probe; do
         printf 'lib/%s.sh\tscripts/lib/%s.sh\n' "$s" "$s"
       done ;;
     worktrees)
@@ -1336,7 +1336,7 @@ probe_files() {
       for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in session-state preflight githooks install-semaphore; do
+      for s in session-state preflight githooks install-semaphore run-probe; do
         printf 'scripts/lib/%s.sh\t%s/lib/%s.sh\n' "$s" "$T" "$s"
       done ;;
     worktrees)

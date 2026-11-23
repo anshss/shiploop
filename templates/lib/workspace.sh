@@ -221,60 +221,15 @@ export GOVERN_POST_MERGE_SYNC="${GOVERN_POST_MERGE_SYNC:-0}"
 # that is declared but missing, not executable, or slower than 5s counts as LIVE. Empty (default) =
 # no probe, nothing is skipped. Turn GOVERN_POST_MERGE_SYNC on only together with a probe if a
 # sub-repo runs long-lived processes from its main checkout.
+# The probe machinery itself (wsp_run_live, wsp_pending_sync_mark, wsp_pending_sync_clear) is NOT
+# defined here: it lives in scripts/lib/run-probe.sh, a mechanism lib the update installs and
+# refreshes like every other mechanism script, so a workspace scaffolded before it shipped gets a
+# working probe on its next update. Callers degrade to the fail-safe (declared probe = LIVE) when
+# that lib is absent.
 export GOVERN_RUN_PROBE="${GOVERN_RUN_PROBE:-}"
 # GOVERN_QUEUE_FOREIGN_GUARD=0 turns off the refusal to commit queue/tickets.md while it holds
 # uncommitted changes the committing script did not make. Not exported here: the default (on) is
 # read where the check runs, so a workspace.sh that predates this knob behaves the same.
-
-# wsp_run_live <repo> <dir>: 0 when GOVERN_RUN_PROBE reports a live product run in <dir>, 1 when it
-# reports none or no probe is declared. A declared probe that is missing, not executable or over the
-# 5s bound is treated as live, with a warning on stderr: never move code under a run because the
-# probe itself broke. Bounded with a background pid and kill, so no `timeout` binary is needed.
-wsp_run_live() {
-  local probe="${GOVERN_RUN_PROBE:-}" path pid tenths=0 rc=0
-  [ -n "$probe" ] || return 1
-  case "$probe" in /*) path="$probe" ;; *) path="$META_ROOT/$probe" ;; esac
-  if [ ! -f "$path" ] || [ ! -x "$path" ]; then
-    echo "wsp_run_live: GOVERN_RUN_PROBE '$probe' is missing or not executable; treating $1 as LIVE" >&2
-    return 0
-  fi
-  "$path" "${1:-}" "${2:-}" >/dev/null 2>&1 &
-  pid=$!
-  while [ "$tenths" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do
-    sleep 0.1
-    tenths=$((tenths + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    sleep 0.1
-    kill -9 "$pid" 2>/dev/null || true
-    { wait "$pid"; } 2>/dev/null || true
-    echo "wsp_run_live: GOVERN_RUN_PROBE '$probe' did not answer within 5s; treating $1 as LIVE" >&2
-    return 0
-  fi
-  { wait "$pid"; } 2>/dev/null && rc=0 || rc=$?
-  [ "$rc" -eq 0 ]
-}
-
-# wsp_pending_sync_mark <repo> <dir> <branch> <reason>: record that <repo>'s local <branch> is behind
-# origin and was deliberately not fast-forwarded (reason: live-run | ff-failed), as one line
-# `<origin sha> <ISO time> <reason>` in governor/.pending-sync/<repo>. The sha is the freshly fetched
-# origin tip ("-" when it cannot be read). A later successful fast-forward clears it
-# (wsp_pending_sync_clear), and the SessionStart hook reports whatever is still pending.
-wsp_pending_sync_mark() {
-  local repo="$1" dir="$2" branch="$3" reason="$4" sha pdir
-  pdir="$META_ROOT/governor/.pending-sync"
-  git -C "$dir" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
-  sha="$(git -C "$dir" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
-  mkdir -p "$pdir" 2>/dev/null || return 0
-  printf '%s %s %s\n' "${sha:--}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason" > "$pdir/$repo" 2>/dev/null || true
-  return 0
-}
-
-wsp_pending_sync_clear() { # <repo>
-  rm -f "$META_ROOT/governor/.pending-sync/$1" 2>/dev/null || true
-  return 0
-}
 
 # ── Optional project hooks (create the file to enable; absent = skipped) ─────
 # scripts/lib/worktree-bootstrap.sh  <name> <slot> <worktree-path>
