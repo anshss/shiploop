@@ -135,7 +135,7 @@ sem_case() { # <backdate-reclaim 0|1> -> prints yes if a slot was acquired under
     ROOT="$T/semcase"; command rm -rf "$ROOT"; command mkdir -p "$ROOT/logs"
     source "$SEM"
     for i in 1 2; do command mkdir -p "$INSTALL_SEM_DIR/$i"; echo 999999 > "$INSTALL_SEM_DIR/$i/holder"; done
-    sem_claim "$INSTALL_SEM_DIR/.reclaim"
+    sem_claim "$INSTALL_SEM_DIR/.reclaim" && [ -f "$INSTALL_SEM_DIR/.reclaim/holder" ] || { echo setup-failed; return 0; }
     [ "$1" = 1 ] && touch -t 200001010000 "$INSTALL_SEM_DIR/.reclaim"
     sem_acquire "r"
     [ -n "$INSTALL_SEM_HELD" ] && echo yes || echo no
