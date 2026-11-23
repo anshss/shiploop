@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.20.15 - 2026-11-24
+
+### Added
+
+**Release trains: several bare PRs can share one version bump.** A PR that joins a train with a
+`Release-Train: <train-id>` line in its commit message skips release parity (`--pre` on the PR
+run, `--post` on the push-to-main run) and merges with no release files touched, so independent
+small changes stop conflicting on VERSION, manifests and CHANGELOG. The train closes with one
+ordinary release commit that bumps VERSION and the manifests, adds one CHANGELOG entry per train
+PR (each naming the train id), and passes full-strength parity including a coverage check: a
+train PR whose CHANGELOG entry never lands fails the train-close parity. With no trailer commits
+in play, parity behaves exactly as before. When to train and when never: `CONTRIBUTING.md`,
+"Release trains".
+
 ## 1.20.14 - 2026-11-24
 
 ### Changed

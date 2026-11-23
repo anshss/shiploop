@@ -53,6 +53,20 @@
 #           retry prints one `note -` line; only the final attempt's output and exit status
 #           count. WAIT=0 is a single shot.
 #
+#   Release trains (opt-in): a commit whose message carries a `Release-Train: <id>` trailer
+#   defers release parity to a later train-close release instead of carrying its own bump.
+#     --pre  (a pull request): the PR's HEAD commit carrying the trailer skips every check
+#            below (a "skip -" line, exit 0): the PR touches no release files, so there is
+#            nothing to guard here, and the train-close release guards it later.
+#     --post (push to main, and the daily schedule): a HEAD commit carrying the trailer
+#            skips the same way, because the train is still open by definition. Otherwise,
+#            when trailer-carrying commits exist since the last release commit (the closest
+#            first-parent ancestor that moved VERSION), HEAD must itself be a release commit
+#            covering each of them: VERSION moved in it, and CHANGELOG.md gained one added
+#            line per train commit, each naming its train id. A train PR whose CHANGELOG
+#            entry never lands fails the train-close parity here. With no trailer commits in
+#            that window, behavior is exactly as before.
+#
 # All GitHub reads go through `gh`, authenticated via the workflow's GITHUB_TOKEN
 # (`gh release list --json tagName,isDraft`, `gh release view <tag> --json body`). Never
 # auto-publishes anything: release notes stay hand-curated, and this only fails loudly. Exits 0
@@ -193,10 +207,37 @@ normalize_release_text() {
 }
 
 # ---------------------------------------------------------------------------
+# Release trains: the `Release-Train: <id>` commit-message trailer (see the mode comment
+# above and CONTRIBUTING's release-train section).
+# ---------------------------------------------------------------------------
+TRAIN_TRAILER_RE='^Release-Train: +[^[:space:]]+'
+
+head_has_train_trailer() {
+  git log -1 --format=%B 2>/dev/null | grep -Eq "$TRAIN_TRAILER_RE"
+}
+
+commit_train_ids() {  # sha -> the trailer ids that commit carries, one per line
+  git log -1 --format=%B "$1" 2>/dev/null | grep -E "$TRAIN_TRAILER_RE" | awk '{ print $2 }'
+}
+
+commit_moved_version() {  # sha -> true if the commit changed VERSION
+  git diff-tree --root --no-commit-id --name-only -r "$1" 2>/dev/null | grep -qx VERSION
+}
+
+changelog_lines_added_mentioning() {  # sha id -> lines the commit ADDED to CHANGELOG.md naming id
+  git diff-tree --root -p --no-commit-id "$1" -- CHANGELOG.md 2>/dev/null \
+    | grep '^+[^+]' | grep -cF -- "$2" || true
+}
+
+# ---------------------------------------------------------------------------
 # --pre
 # ---------------------------------------------------------------------------
 check_pre() {
   local fail=0 version
+  if head_has_train_trailer; then
+    echo "skip - HEAD commit carries a Release-Train trailer; release parity is deferred to the train-close release"
+    return 0
+  fi
   version="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
   if [ -z "$version" ]; then
     echo "::error::VERSION is empty or missing"
@@ -251,6 +292,11 @@ resolve_main_ref() {
 check_post() {
   local fail=0 main_ref version expect_tag found=0
   main_ref="$(resolve_main_ref)"
+
+  if head_has_train_trailer; then
+    echo "skip - HEAD commit carries a Release-Train trailer; release parity is deferred to the train-close release"
+    return 0
+  fi
 
   local merged_tags=() pub_tags=()
   mapfile -t merged_tags < <(git tag --merged "$main_ref" --list 'v*' 2>/dev/null | sort -V)
@@ -319,6 +365,51 @@ check_post() {
       fail=1
     else
       echo "ok - release $expect_tag's body equals CHANGELOG.md's $version section"
+    fi
+  fi
+
+  # Release trains: trailer commits merged since the previous release commit (the closest
+  # first-parent ancestor that moved VERSION) must be covered by a later release commit,
+  # HEAD itself, that moved VERSION and added one CHANGELOG.md line per train commit, each
+  # naming its train id. A solo push mid-train (HEAD neither trailer-carrying nor a release
+  # commit) fails here by design: the train is still open, and the error says so.
+  local train_commits=() train_count=0
+  local c idx=0 boundary=""
+  while IFS= read -r c; do
+    idx=$((idx + 1))
+    if [ "$idx" -eq 1 ]; then continue; fi
+    if commit_moved_version "$c"; then
+      boundary="$c"
+      break
+    fi
+    if git log -1 --format=%B "$c" 2>/dev/null | grep -Eq "$TRAIN_TRAILER_RE"; then
+      train_commits+=("$c")
+    fi
+  done < <(git rev-list --first-parent HEAD 2>/dev/null)
+  train_count="${#train_commits[@]}"
+  if [ "$train_count" -gt 0 ]; then
+    if ! commit_moved_version HEAD; then
+      echo "::error::$train_count Release-Train commit(s) since the last release have no covering release; merge the train-close release commit (bump VERSION, one CHANGELOG.md entry per train commit naming its train id)"
+      fail=1
+    else
+      local -A need=()
+      local id
+      for c in "${train_commits[@]}"; do
+        for id in $(commit_train_ids "$c"); do
+          need["$id"]=$(( ${need["$id"]:-0} + 1 ))
+        done
+      done
+      local want have
+      for id in "${!need[@]}" ; do
+        want="${need[$id]}"
+        have="$(changelog_lines_added_mentioning HEAD "$id")"
+        if [ "$have" -lt "$want" ]; then
+          echo "::error::the train-close release adds $have CHANGELOG.md line(s) naming train id '$id', but $want train commit(s) carry it; add one entry per train PR, each naming the train id"
+          fail=1
+        else
+          echo "ok - train id '$id': $want train commit(s) covered by $have CHANGELOG.md entr(ies)"
+        fi
+      done
     fi
   fi
 
