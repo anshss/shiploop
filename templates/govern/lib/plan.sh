@@ -141,7 +141,10 @@ _pdc_check_unrelated_precision() {
   local m prec nfiles
   for m in "$@"; do
     prec="$(govern::ticket_precision "$m" "$TICKETS_FILE")"
-    nfiles="$(_pdc_measured_paths "$m" | grep -c .)"
+    # `grep -c .` prints 0 and exits 1 on empty input: unguarded here, the caller's set -e
+    # (pre-dispatch-check.sh) plus this file's pipefail abort the whole multi-batch plan
+    # between batch 1's verdicts and batch 2's evaluation, silently.
+    nfiles="$(_pdc_measured_paths "$m" | grep -c . || true)"
     if [[ "$prec" == "stated" && "${nfiles:-0}" -ge 1 && "${nfiles:-0}" -le 2 ]]; then
       survivors="$survivors $m"
     else

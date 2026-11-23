@@ -617,8 +617,13 @@ govern::mtime() { # <path> -> epoch seconds, or 0 when unavailable
   m="${m//[!0-9]/}"; [[ -n "$m" ]] || m=0
   printf '%s' "$m"
 }
+# An unavailable mtime (govern::mtime prints 0: the lock was released between the caller's failed
+# mkdir and this check, or is unreadable) must read as age 0. "now minus 0" is decades, which would
+# judge a vanished lock stale and let the caller rm -rf a path another actor has just re-created.
 govern::_lock_age() { # lockdir -> seconds since mtime (0 if absent)
-  echo $(( $(date +%s) - $(govern::mtime "$1") ))
+  local m; m="$(govern::mtime "$1")"
+  [[ "$m" -gt 0 ]] || { echo 0; return 0; }
+  echo $(( $(date +%s) - m ))
 }
 # Read the holder pid recorded inside a claim/bookkeep lock dir. Returns "" when absent
 # (a pre-#pid-liveness lock or a partial write from a killed acquire).
@@ -626,10 +631,15 @@ govern::_lock_holder_read() { # lockdir -> pid|""
   [[ -f "$1/holder" ]] || return 0
   tr -dc '0-9' < "$1/holder" 2>/dev/null || true
 }
-# Stamp the current pid into the lock dir. Best-effort — mkdir succeeded so the dir exists;
-# a failed write just leaves the lock pid-less (falls back to the mtime stale window).
-govern::_lock_stamp_pid() { # lockdir
-  printf '%s\n' "$$" > "$1/holder" 2>/dev/null || true
+# Claim a lock: create the dir, then create its `holder` file with noclobber, which the shell opens
+# O_EXCL. mkdir alone is not trusted as the exclusion point: a mkdir that is not itself exclusive
+# (observed with a Rust coreutils mkdir on a CI runner) can exit 0 for two racers on one path, and
+# both would then hold the lock. Exactly one racer can create the holder file, so exactly one wins; a
+# loser leaves the dir alone (the winner owns it) and reports the lock as held. Returns 0 claimed.
+govern::_lock_claim() { # lockdir
+  mkdir "$1" 2>/dev/null || return 1
+  ( set -C; printf '%s\n' "$$" > "$1/holder" ) 2>/dev/null || return 1
+  return 0
 }
 # Is a lock reclaimable? Yes iff no holder pid is recorded (mtime fallback) OR the recorded
 # pid is dead. Callers gate an mtime-stale reclaim on this so a LIVE holder is never stolen.
@@ -637,6 +647,25 @@ govern::_lock_holder_dead() { # lockdir -> 0 (dead / no holder), 1 (alive)
   local hpid; hpid="$(govern::_lock_holder_read "$1")"
   [[ -n "$hpid" ]] || return 0
   kill -0 "$hpid" 2>/dev/null && return 1 || return 0
+}
+# Remove a stale lock. Two waiters that both judged one lock stale must not both remove it: the
+# second rm -rf would delete the fresh lock the first waiter's successor just claimed. So removal is
+# serialized behind a short-lived `<lock>.reclaim` claim (same exclusive primitive), and the
+# dead-holder and age checks are repeated INSIDE it, against whatever the lock is by then. A waiter
+# that cannot take the reclaim claim returns 1 and goes back to its normal retry. A `.reclaim` left
+# by a reclaimer that died is itself removed once its mtime is readable and older than 60s.
+# Returns 0 when this call removed the stale lock.
+govern::_lock_reclaim() { # lockdir stale_s
+  local lock="$1" stale="$2" rl="$1.reclaim" ret=1 m
+  m="$(govern::mtime "$rl")"
+  if [[ "$m" -gt 0 && $(( $(date +%s) - m )) -gt 60 ]]; then rm -rf "$rl" 2>/dev/null || true; fi
+  govern::_lock_claim "$rl" || return 1
+  if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
+    rm -rf "$lock" 2>/dev/null || true
+    ret=0
+  fi
+  rm -rf "$rl" 2>/dev/null || true
+  return "$ret"
 }
 # Parse a YYYY-MM-DD date into epoch seconds, portably across BSD (macOS) and GNU date.
 # Prints the epoch on success; returns 1 (prints nothing) on a malformed/empty date.
@@ -651,13 +680,12 @@ govern::date_to_epoch() { # YYYY-MM-DD -> epoch
 govern::lock_acquire() { # lockdir [timeout_s=60] [stale_s=300]
   local lock="$1" timeout="${2:-60}" stale="${3:-300}" waited=0
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
-  while ! mkdir "$lock" 2>/dev/null; do
+  while ! govern::_lock_claim "$lock"; do
     if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
-      rm -rf "$lock" 2>/dev/null && continue
+      govern::_lock_reclaim "$lock" "$stale" && continue
     fi
     sleep 1; waited=$((waited+1)); [[ "$waited" -ge "$timeout" ]] && return 1
   done
-  govern::_lock_stamp_pid "$lock"
   return 0
 }
 # Non-blocking try: claim once. Returns 0 claimed, 1 held by a live other holder.
@@ -666,10 +694,9 @@ govern::lock_acquire() { # lockdir [timeout_s=60] [stale_s=300]
 govern::lock_try() { # lockdir [stale_s=18000]
   local lock="$1" stale="${2:-18000}"
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
-  if mkdir "$lock" 2>/dev/null; then govern::_lock_stamp_pid "$lock"; return 0; fi
+  if govern::_lock_claim "$lock"; then return 0; fi
   if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
-    rm -rf "$lock" 2>/dev/null
-    if mkdir "$lock" 2>/dev/null; then govern::_lock_stamp_pid "$lock"; return 0; fi
+    if govern::_lock_reclaim "$lock" "$stale" && govern::_lock_claim "$lock"; then return 0; fi
   fi
   return 1
 }

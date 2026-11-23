@@ -176,7 +176,7 @@ assert_eq "$stamp5" "0.9.0" "9. partial run left stamp behind (govern still drif
 out="$(CLAUDE_PLUGIN_ROOT="$HUB" bash "$W5/scripts/doctor.sh" 2>&1 || true)"
 assert_contains "$out" "BEHIND" "9. doctor still reports BEHIND after the partial run"
 # Now converge the drift → the next bump stamps current. The drift is a local edit, which a plain
-# bump now KEEPS (#232, see test-mechanism-local-edits), so discard it explicitly.
+# bump now KEEPS (see test-mechanism-local-edits), so discard it explicitly.
 bash "$SCAFFOLD" --workspace-dir "$W5" --templates "$TEMPLATES" \
   --component govern --overwrite-local-edits --yes >/dev/null 2>&1
 stamp5b="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$W5/scripts/lib/.harness-version" 2>/dev/null)"

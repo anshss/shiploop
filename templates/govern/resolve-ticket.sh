@@ -50,6 +50,11 @@
 #      On rc 3, also print ci-log.sh's bounded excerpt of the failing run on stderr, alongside the
 #      refusal, so the reader gets the actual failure instead of re-dispatching blind to find
 #      it. ci-log.sh is fail-open, so this never changes the refusal itself.
+#      After a merge succeeds, the post-merge gate (post-merge-check.sh,
+#      GOVERN_POST_MERGE_GATE/GOVERN_POST_MERGE_CMD) re-checks the freshly fetched merged ref
+#      before the landing is bookkept; a failed or unverifiable check refuses the landing like any
+#      other refusal — the PR is already merged, so the disposition says merged-but-blocked, not
+#      landed.
 #      A refusal is not a failure of this script, it is information: the interactive session (or the
 #      operator) decides what to do next, then re-runs this script (plain, once the refusal clears,
 #      or with --no-merge once they handled it by hand).
@@ -240,8 +245,38 @@ elif [[ -n "$pr_lines" ]]; then
     case "$_mrc" in
       0)
         echo "resolve-ticket #$N: merged $_mrepo#$_mnum" >&2
-        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(merged)"
         govern::is_merge_repo "$_mrepo" && MERGE_REPO_MERGED=1
+        # POST-MERGE CHECK GATE: worktree-green is not merged-green when PRs stack — each PR's
+        # CI ran on its OWN branch base, so the squash-merge can silently resolve a stacked
+        # conflict to the stale-base side and drop the other PR's lines. Run the configured
+        # check against the freshly-fetched POST-MERGE ref; on failure (or on an unverifiable
+        # merged ref) do NOT bookkeep "landed" — the merge itself already happened, so surface
+        # the merged-PR-with-blocked-landing disposition and refuse like any other refusal.
+        set +e
+        "$DIR/post-merge-check.sh" "$_mrepo" "$_mnum"
+        _pmrc=$?
+        set -e
+        if [[ "$_pmrc" -ne 0 ]]; then
+          echo "resolve-ticket #$N: $_mrepo#$_mnum MERGED but the post-merge check FAILED on the merged ref (rc=$_pmrc) — NOT booking 'landed'. The merge already happened: investigate merged main NOW (later stacked merges land on it) before resolving anything else." >&2
+          PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(merged-post-merge-check-failed)"
+          ALL_MERGED=0
+        else
+          PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(merged)"
+        fi
+        # Opt-in local sync (GOVERN_POST_MERGE_SYNC=1): fast-forward the sub-repo checkout to the
+        # just-merged remote so the driver's later reads of it are not stale. Only when the
+        # post-merge check passed and the checkout sits on its default branch; ff-only, so a dirty
+        # or diverged checkout is left untouched, with a note to sync by hand.
+        if [[ "${GOVERN_POST_MERGE_SYNC:-0}" == "1" && "$_pmrc" -eq 0 ]]; then
+          _ldir="$(govern::repo_localdir "$_mrepo")"
+          _defbr="$(govern::subrepo_default_branch "$_ldir")"
+          _curbr="$(git -C "$_ldir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+          if [[ "$_curbr" != "$_defbr" ]]; then
+            echo "resolve-ticket #$N: note: local $_mrepo checkout is on '${_curbr:-unknown}', not '$_defbr'; skipping post-merge sync" >&2
+          elif ! git -C "$_ldir" pull --ff-only origin "$_defbr" >/dev/null 2>&1; then
+            echo "resolve-ticket #$N: note: local $_mrepo checkout not fast-forwarded to origin/$_defbr; run 'npm run sync'" >&2
+          fi
+        fi
         ;;
       2)
         echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only), surfaced, not merged; merge it yourself when ready." >&2

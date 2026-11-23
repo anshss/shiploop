@@ -9,7 +9,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/workspace.sh
 source "$ROOT/scripts/lib/workspace.sh"
 # shellcheck source=lib/registry.sh
-source "$ROOT/scripts/worktree/lib/registry.sh"
+# The library refuses to operate when this scripts/ copy resolves WT_ROOT into a linked
+# worktree (its guard prints the reason to stderr). There is no `set -e` here, so a bare
+# `source` that returns 1 continues: WT_REGISTRY and every wt_* helper stay undefined, the
+# table below silently renders EMPTY, and the script exits 0 — reporting nothing as if it
+# were healthy. Catch the refusal and exit loudly instead.
+if ! source "$ROOT/scripts/worktree/lib/registry.sh"; then
+  exit 1
+fi
 
 GC=0
 while [ $# -gt 0 ]; do
@@ -77,6 +84,39 @@ while IFS=$'\t' read -r slot name path; do
   # shellcheck disable=SC2059
   printf "$row_fmt" "${row_args[@]}"
 done < <(wt_registry_read | jq -r '.slots | to_entries[] | [.key, .value.name, .value.path] | @tsv' | sort -n)
+
+# Unregistered dirs on disk: present under WORKTREE_BASE but absent from the registry.
+# Every teardown path (worktree:rm's named path, --sweep's registry loop, govern:resolve)
+# iterates the REGISTRY only, so such a dir is invisible to all of them and rots on disk.
+# List it here so it cannot sit there silently; `worktree:rm --sweep` is the cleanup path.
+if [ -d "$WORKTREE_BASE" ]; then
+  UNREGISTERED=0
+  reg_paths="$(wt_registry_read | jq -r '.slots[].path')"
+  for wt in "$WORKTREE_BASE"/*/; do
+    [ -d "${wt%/}" ] || continue
+    wt="${wt%/}"
+    if printf '%s\n' "$reg_paths" | grep -Fxq -- "$wt"; then continue; fi
+    UNREGISTERED=$((UNREGISTERED + 1))
+    row_fmt="%-4s %-32s"
+    row_args=("—" "$(basename "$wt")")
+    col_count=0
+    for repo in ${PORT_REPOS[@]+"${PORT_REPOS[@]}"}; do
+      [ "$col_count" -lt 4 ] || break
+      row_fmt+=" %-5s"
+      row_args+=("—")
+      col_count=$((col_count + 1))
+    done
+    row_fmt+=" %s%s\n"
+    row_args+=("$wt" " (UNREGISTERED)")
+    # shellcheck disable=SC2059
+    printf "$row_fmt" "${row_args[@]}"
+  done
+  if [ "$UNREGISTERED" -gt 0 ]; then
+    echo ""
+    echo "→ $UNREGISTERED dir(s) under $WORKTREE_BASE are not in the registry"
+    echo "  (invisible to worktree:rm / govern:resolve teardown; 'worktree:rm --sweep' reclaims clean, expired ones)"
+  fi
+fi
 
 if [ "$GC" -eq 1 ] && [ "${#ORPHANS[@]}" -gt 0 ]; then
   echo ""

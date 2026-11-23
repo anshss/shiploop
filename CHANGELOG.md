@@ -1,13 +1,13 @@
 # Changelog
 
-## 1.21.0 - 2026-11-10
+## 1.20.6 - 2026-11-23
 
 ### Changed
 
-**`/shiploop:update` no longer silently overwrites a workspace-local fix to a mechanism script
-(#232).** `core-scripts`, `worktrees` and `govern` installed every script with a bare `cp`, so a
-converge replaced local edits with the hub's version and said nothing; one workspace lost fixes to
-about 37 scripts this way and found out weeks later from its own red tests. They now install through
+**`/shiploop:update` no longer silently overwrites a workspace-local fix to a mechanism script.**
+`core-scripts`, `worktrees` and `govern` installed every script with a bare `cp`, so a
+converge replaced local edits with the hub's version and said nothing; a workspace's own fixes to
+many scripts could vanish unnoticed. They now install through
 `mechanism_install_component`, the same idea seeds already used: an absent file is copied, a byte-identical one
 is skipped, and a file whose sha256 is a version shiploop ever shipped
 (`templates/lib/mechanism-hashes.txt`, built by `tools/gen-mechanism-hashes.sh` from git history) is
@@ -40,6 +40,127 @@ that went green to red, and does not leave the workspace stamped as converged if
 read), the `mechanism-hashes-current` check in `tools/check-manifests.sh` (every currently-shipped
 mechanism script's hash must be in the manifest; run `bash tools/gen-mechanism-hashes.sh >
 templates/lib/mechanism-hashes.txt` after changing one), and `test-mechanism-local-edits` (hub-context).
+
+## 1.20.5 - 2026-11-23
+
+### Fixed
+
+**The install semaphore and the worktree registry lock now claim exclusively.** Both still trusted
+`mkdir`'s exit status alone, so on a runner whose `mkdir` is a Rust coreutils build (two racers on one
+path both exit 0) the install semaphore admitted more concurrent installs than its cap, and two
+`worktree:new` calls could hold the slot-allocation lock together. Each slot, the semaphore's
+`.reclaim` mutex and the registry lock are now claimed the way the govern locks are: create the
+directory, then create its `holder` file with noclobber (an `O_EXCL` open), and a claimer whose
+holder create fails has not claimed. The idiom is mirrored in `install-semaphore.sh` and
+`worktree/lib/registry.sh` rather than sourced, because each installs under a different `scripts/`
+directory. The registry lock is now released with `rm -rf` since it holds a `holder` file.
+
+**Two waiters can no longer both reclaim one stale lock.** Each judged the lock stale independently,
+so the second waiter's removal could delete the fresh lock the first waiter's successor had just
+claimed. Reclaim in `govern::lock_acquire`, `govern::lock_try` and the registry lock is now
+serialized behind a short-lived `<lock>.reclaim` claim, with the dead-holder and age checks repeated
+inside it; a waiter that cannot take it returns to its normal retry. A `.reclaim` older than 60s (a
+reclaimer that died) is removed. The semaphore applies the same 60s rule to its `.reclaim` mutex.
+
+### Added
+
+`test-lock-exclusive-sites.sh` shims a `mkdir` that always exits 0 and asserts exactly one winner per
+claim primitive, the semaphore cap, single-holder registry sections, and the stale-reclaim ordering.
+
+## 1.20.4 - 2026-11-23
+
+### Fixed
+
+**Concurrent governors could lose a queue edit when a lock was released mid-check.** A waiter whose
+`mkdir` on a lock failed, and whose holder then released the lock before the staleness check, read no
+holder and an unavailable mtime (0), which `govern::_lock_age` turned into an age of decades. The
+waiter judged the lock stale and removed the path, which by then could be a fresh lock another actor
+had just taken: two holders, one lost update. An unavailable mtime now reads as age 0, so a vanished
+lock is retried with `mkdir` and never reclaimed. Covers both `govern::lock_acquire` and
+`govern::lock_try`.
+
+**A non-exclusive `mkdir` no longer lets two actors hold one lock.** The lock helpers trusted
+`mkdir`'s exit status as the only exclusion point. On a CI runner whose `mkdir` is a Rust coreutils
+build, two racers' `mkdir` of one path both exited 0, so both entered the critical section (a double
+apply of one validation result). A claim now also creates the lock's
+`holder` file with noclobber (an `O_EXCL` open), which only one racer can do; the loser sees a held
+lock and waits or gives up.
+The install semaphore and the worktree registry lock still claim with `mkdir` alone.
+
+## 1.20.3 - 2026-11-23
+
+### Added
+
+**A post-merge check gates "landed".** After `resolve-ticket.sh` merges a PR, the new
+`post-merge-check.sh` runs `GOVERN_POST_MERGE_CMD` in a throwaway checkout of the freshly fetched
+merged `origin/main`. A failing check, or a merged ref that cannot be checked out, refuses to book the
+ticket as landed and reports the PR as merged but blocked. Worktree-green is not merged-green when PRs
+stack, because each PR's CI ran on its own branch base. The command is empty by default, which leaves
+the gate inert; `GOVERN_POST_MERGE_GATE=0` is the kill switch.
+
+**Opt-in local sync after a merge.** `GOVERN_POST_MERGE_SYNC=1` fast-forwards (ff-only) the sub-repo's
+local checkout after a merge, only when the post-merge check passed and the checkout is on its default
+branch; otherwise it skips and names the branch on stderr. Default `0`: the checkout is never touched.
+
+**`worktree:rm --sweep` also reclaims directories the registry never recorded.** A second pass walks
+the worktree base for unregistered directories and removes the ones that are real git worktrees, old
+enough, free of live sessions, clean and without commits beyond their base. `worktree:status` lists
+such directories too.
+
+**Rules-on-touch hook lines for tickets and PRs.** Touching the queue now delivers a numbering rule
+(next number is one plus the highest heading and git history), and touching a pull request delivers
+the REST recipe for patching an open PR body instead of `gh pr edit`.
+
+### Changed
+
+**Worktree creation fetches before it picks a base, and refuses when the fetch fails.** A base taken
+from an origin ref that was never refreshed is how a later merge drops an earlier PR's lines, so a
+repo with an origin whose fetch fails now aborts the worktree instead of branching off stale local
+main. `GOVERN_BASE_FETCH_GATE=0` restores the best-effort fallback; a repo with no origin keeps using
+local main. On by default.
+
+**`ship.sh` refuses to run from the primary checkout** (it would stage and push that checkout's stale
+sub-repo HEAD instead of the worker's work), and resolves ticket headings from the primary checkout's
+queue even when run from a worktree (`GOVERN_TICKETS_FILE` overrides). `GOVERN_SHIP_PRIMARY_GUARD=0`
+disables the guard. On by default.
+
+**`await-ci.sh` tells a PR with no checks from a failed `gh` call.** A genuinely checkless PR (empty
+status rollup) is reported as such after a verification pass; any other failure still fails closed.
+
+**The worktree registry library refuses to run inside a linked worktree and ignores an inherited
+`WT_ROOT`.** `wt_registry_write` also refuses any write that moves or drops the main-checkout slot.
+`doctor.sh`, `worktree:status` and `worktree:rm` read the registry only through the library, so a
+refusal is loud instead of rendering an empty list.
+
+### Fixed
+
+**`pre-dispatch-check.sh` no longer corrupts the verdict or writes a stray file.** The overlap nudge
+prints to stderr again; a mangled redirect had made it write a file named `govern::overlap_nudge` into
+the working directory. A nudge printed on stdout would also have glued onto the verdict and dropped a
+proceeding ticket from its batch.
+
+**A multi-batch plan no longer aborts between batches.** `plan.sh` counted measured files with
+`grep -c .`, which exits 1 on empty input and killed the run under `set -e` plus `pipefail`; a refusing
+batch could cost the next batch its verdict.
+
+**`worktree:rm --sweep` reads directory mtimes on GNU systems.** It tried the BSD `stat -f` form
+first, which on GNU prints a multi-line filesystem block and aborted the age arithmetic. It now reads
+GNU first, strips non-digits, and treats an unreadable mtime as unmeasurable (the directory is kept).
+
+**The post-merge local pull is no longer unconditional.** The merge path used to fast-forward the
+local checkout after every merge, even when the post-merge check had failed and on whatever branch was
+checked out. It now happens only under `GOVERN_POST_MERGE_SYNC=1` as described above.
+
+**`workspace.sh` seeds `GOVERN_POST_MERGE_GATE`, `GOVERN_POST_MERGE_CMD` and `GOVERN_POST_MERGE_SYNC`**,
+and `CONFIGURATION.md` documents them along with `GOVERN_BASE_FETCH_GATE` and
+`GOVERN_SHIP_PRIMARY_GUARD`. A doc comment in `resolve-ticket.sh` that an insertion had cut in half is
+whole again, and comments that carried provenance now state the mechanism.
+
+### Removed
+
+**`test-worktree-reopen.sh`.** It relied on overriding `WT_ROOT` from the environment, which the
+registry library no longer honors; `test-worktree-registry-guard.sh` and
+`test-worktree-unregistered-sweep.sh` replace it.
 
 ## 1.20.2 - 2026-10-08
 

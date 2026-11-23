@@ -196,6 +196,31 @@ Done when: done.
 **Precision:** open
 
 Done when: done.
+
+---
+
+## #60 — stated precision, NO Files: the empty measured-paths input
+
+**Severity:** Low
+
+**Precision:** stated
+
+**Proposed solution:** do the thing.
+
+Done when: done.
+
+---
+
+## #61 — stated precision, NO Files: the empty measured-paths input
+
+**Severity:** Low
+
+**Precision:** stated
+
+**Proposed solution:** do the thing.
+
+Done when: done.
+
 TIX
 ( cd "$T" && git add -A && git commit -qm init )
 
@@ -283,5 +308,30 @@ out7="$(run_pdc 10 20,21)"
 assert_contains "$out7" "batch 1: proceed 10" "7. batch 1 (a lone ticket) proceeds"
 assert_contains "$out7" "batch 2: proceed 21" "7. batch 2 keeps only its surviving member"
 assert_contains "$out7" "plan: 10|21" "7. the final plan line is pipe-joined per batch, in order"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 8. multi-batch evaluation continues past a refusing batch (regression: an abort between batches)
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# The unrelated-precision composition check counted a ticket's measured files with
+# `... | grep -c .`: on EMPTY input grep prints 0 and exits 1, and under the caller's set -e
+# plus this file's pipefail that aborted the whole plan between batch 1's verdicts and batch
+# 2's evaluation, silently. A refusal in batch 1 must never cost batch 2 its verdict.
+out8="$(run_pdc 60,61 50,51)"
+rc8=$?
+assert_eq "0" "$rc8" "8. a refusing batch 1 does not abort the multi-batch run (rc 0)"
+assert_contains "$out8" "#60: dropped" "8. empty-measured-paths members dropped, not aborted"
+assert_contains "$out8" "#50: proceed" "8. the healthy batch is still evaluated after the drops"
+assert_contains "$out8" "plan: 50,51" "8. the plan line survives the dropped batch"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 9. the overlap nudge goes to stderr: stdout stays exactly the verdict, no stray file is written
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# The first fixture ticket shares alpha/shared.go with several queued ones, so the nudge prints for it.
+err9="$( cd "$T" && GOVERN_OVERLAP_NUDGE=1 bash "$PDC" 50 2>&1 >/dev/null )"
+out9="$( cd "$T" && GOVERN_OVERLAP_NUDGE=1 bash "$PDC" 50 2>/dev/null )"
+assert_contains "$err9" "[overlap]" "9. the nudge is printed (on stderr) for a ticket that shares a file with queued ones"
+assert_eq "$out9" "proceed" "9. with a nudge printed, stdout is exactly 'proceed'"
+if [[ -e "$T/govern::overlap_nudge" ]]; then f9=1; else f9=0; fi
+assert_eq "$f9" "0" "9. the nudge call leaves no stray file in the cwd"
 
 assert_done

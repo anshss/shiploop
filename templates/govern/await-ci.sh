@@ -40,8 +40,14 @@ EXIT_ERROR=3
 fetch_checks() {
   local out
   set +e; out="$(gh pr checks "$PR" --repo "$SLUG" --json bucket 2>/dev/null)"; set -e
-  jq -e . >/dev/null 2>&1 <<<"$out" || return 1
-  REPLY="$out"; return 0
+  if jq -e . >/dev/null 2>&1 <<<"$out"; then REPLY="$out"; return 0; fi
+  # Some gh versions (e.g. 2.65) exit non-zero with EMPTY stdout for a genuinely CHECKLESS PR,
+  # which is NOT a real gh failure. Distinguish it from an outage via the independent
+  # statusCheckRollup signal: a clean empty rollup -> synthesize an empty bucket array so the
+  # caller's none-path verifies and concludes 'none'. A non-empty or unparseable rollup stays a
+  # hard error (fail closed: a true gh outage fails this call too).
+  if [[ "$(verify_checkless)" == "empty" ]]; then REPLY="[]"; return 0; fi
+  return 1
 }
 
 # Second, independent confirmation that a PR is TRULY checkless. Prints:

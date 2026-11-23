@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for anshss/shiploop#232: /shiploop:update must never silently overwrite a
+# Regression: /shiploop:update must never silently overwrite a
 # workspace-local edit to a mechanism script (core-scripts, worktrees, govern).
 #
 # Contract (mechanism_install in scaffold.sh):

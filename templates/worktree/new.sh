@@ -216,7 +216,15 @@ for repo in "${REPOS[@]}"; do
       git -C "$src" worktree add "$dst" "$NAME" 2>&1 | sed "s/^/[$repo] /"
     else
       if [ -n "$BASE_OVERRIDE" ]; then
-        git -C "$src" fetch origin "$BASE_OVERRIDE" --quiet 2>/dev/null || true
+        # A failed fetch must not fall through to a possibly-stale origin/<base>: that ref
+        # silently becomes the branch base and produces the stacked-PR clobber shape (see
+        # base-ref.sh). Fail loud under the gate; no-origin stubs keep the local-ref path.
+        if git -C "$src" remote get-url origin >/dev/null 2>&1 \
+           && ! git -C "$src" fetch origin "$BASE_OVERRIDE" --quiet 2>/dev/null \
+           && [ "${GOVERN_BASE_FETCH_GATE:-1}" = "1" ]; then
+          echo "[$repo] fetch of --base '$BASE_OVERRIDE' from origin failed — refusing to derive the base from a possibly-stale origin ref (GOVERN_BASE_FETCH_GATE=0 restores best-effort)" >&2
+          exit 2
+        fi
         if git -C "$src" rev-parse --verify "origin/$BASE_OVERRIDE" >/dev/null 2>&1; then
           base="origin/$BASE_OVERRIDE"
         elif git -C "$src" rev-parse --verify "$BASE_OVERRIDE" >/dev/null 2>&1; then
@@ -225,7 +233,7 @@ for repo in "${REPOS[@]}"; do
           echo "[$repo] --base '$BASE_OVERRIDE' not found (tried origin/$BASE_OVERRIDE and $BASE_OVERRIDE)" >&2; exit 2
         fi
       else
-        base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main
+        base="$(wt_subrepo_base_ref "$src")" || exit 2   # origin/main when reachable; LOUD abort on fetch failure (see base-ref.sh)
       fi
       echo "[$repo] creating branch '$NAME' from $base"
       git -C "$src" worktree add -b "$NAME" "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
@@ -241,7 +249,7 @@ for repo in "${REPOS[@]}"; do
     # UI) whenever --only scopes to a subset of repos: the others end up empty. A
     # detached-at-main checkout is runnable and never collides — the same pattern the
     # meta worktree uses above at the `worktree add --detach` line.
-    base="$(wt_subrepo_base_ref "$src")"   # origin/main when reachable, else local main
+    base="$(wt_subrepo_base_ref "$src")" || exit 2   # origin/main when reachable; LOUD abort on fetch failure (see base-ref.sh)
     echo "[$repo] not in --only, detached worktree at $base (read-only)"
     git -C "$src" worktree add --detach "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
   fi

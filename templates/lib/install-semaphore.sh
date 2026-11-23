@@ -55,24 +55,41 @@ INSTALL_SEM_DIR="${WORKTREE_INSTALL_SEM_DIR:-$ROOT/logs/.install-slots}"
 INSTALL_SEM_TIMEOUT="${WORKTREE_INSTALL_WAIT_TIMEOUT:-600}"
 mkdir -p "$INSTALL_SEM_DIR"
 
-# Acquire one of INSTALL_PARALLEL slots. `mkdir` is the atomic primitive — bash 3.2 (the
-# system bash on macOS) has no flock, and this must work on a stock machine. Each slot
-# records its holder pid so a slot orphaned by a killed install is reclaimable; reclaim
-# is itself serialized behind .reclaim so two waiters cannot both tear down the same
-# slot while a third is legitimately taking it.
+# Exclusive claim of one lock dir: create the dir, then create its `holder` file with noclobber,
+# which bash opens O_EXCL. mkdir alone is not trusted: a mkdir that is not itself exclusive (a Rust
+# coreutils build was observed exiting 0 for two racers on one path) would let both racers hold the
+# slot. Exactly one racer can create the holder file; a loser leaves the dir alone (the winner owns
+# it) and reports not claimed. This is the same idiom as govern::_lock_claim, mirrored here because
+# this file is installed under scripts/lib and cannot assume scripts/govern/lib is sourceable.
+sem_claim() { # dir
+  mkdir "$1" 2>/dev/null || return 1
+  ( set -C; printf '%s\n' "$$" > "$1/holder" ) 2>/dev/null || return 1
+  return 0
+}
+
+# Acquire one of INSTALL_PARALLEL slots. Each slot is an exclusive claim (see sem_claim; bash
+# 3.2, the system bash on macOS, has no flock, and this must work on a stock machine). Each slot
+# records its holder pid so a slot orphaned by a killed install is reclaimable; reclaim is itself
+# serialized behind an exclusive .reclaim claim so two waiters cannot both tear down the same
+# slot while a third is legitimately taking it. A .reclaim left by a reclaimer that died is removed
+# once its mtime is older than 60s.
 INSTALL_SEM_HELD=""
 sem_acquire() {
-  local label="$1" waited=0 i h holder
+  local label="$1" waited=0 i h holder m
   while :; do
     for i in $(seq 1 "$INSTALL_PARALLEL"); do
-      if mkdir "$INSTALL_SEM_DIR/$i" 2>/dev/null; then
-        echo "$$" > "$INSTALL_SEM_DIR/$i/holder"
+      if sem_claim "$INSTALL_SEM_DIR/$i"; then
         INSTALL_SEM_HELD="$INSTALL_SEM_DIR/$i"
         [ "$waited" -gt 0 ] && log "[$label] install slot $i acquired after ${waited}s wait"
         return 0
       fi
     done
-    if mkdir "$INSTALL_SEM_DIR/.reclaim" 2>/dev/null; then
+    m="$(stat -c %Y "$INSTALL_SEM_DIR/.reclaim" 2>/dev/null || stat -f %m "$INSTALL_SEM_DIR/.reclaim" 2>/dev/null || echo 0)"
+    m="${m//[!0-9]/}"; [ -n "$m" ] || m=0
+    if [ "$m" -gt 0 ] && [ $(( $(date +%s) - m )) -gt 60 ]; then
+      rm -rf "${INSTALL_SEM_DIR:?}/.reclaim" 2>/dev/null || true
+    fi
+    if sem_claim "$INSTALL_SEM_DIR/.reclaim"; then
       for i in $(seq 1 "$INSTALL_PARALLEL"); do
         h="$INSTALL_SEM_DIR/$i/holder"; holder=""
         [ -f "$h" ] && holder="$(cat "$h" 2>/dev/null || true)"
@@ -81,7 +98,7 @@ sem_acquire() {
           rm -rf "${INSTALL_SEM_DIR:?}/${i:?}"
         fi
       done
-      rmdir "$INSTALL_SEM_DIR/.reclaim" 2>/dev/null || true
+      rm -rf "${INSTALL_SEM_DIR:?}/.reclaim" 2>/dev/null || true
     fi
     if [ "$waited" -eq 0 ]; then
       log "[$label] all $INSTALL_PARALLEL install slots busy — queued (this is the RAM cap, not a hang)"
