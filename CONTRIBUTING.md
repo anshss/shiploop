@@ -38,27 +38,20 @@ There is no dev server; everything is bash. The realistic dev loop:
      --git-init --verify --yes
    ```
 
-2. `scaffold.sh` deliberately does not install `scripts/govern/test/` into a workspace (the suite is hub-only), so copy it in yourself, exactly as the CI `scaffold-and-test` job does, then run it:
+2. `scaffold.sh` deliberately does not install `scripts/govern/test/` into a workspace (the suite is hub-only), so copy it in yourself, exactly as the CI `scaffold-and-test` job does, then run the whole thing with `tools/run-suite.sh`, the same runner CI's shard job calls, so a local run uses the ONE definition of the run order (slow-tests-first hint, coverage assertion, shard selection):
    ```bash
    mkdir -p "$WS/scripts/govern/test"
    cp templates/govern/test/*.sh "$WS/scripts/govern/test/"
    chmod +x "$WS"/scripts/govern/test/*.sh
-   cd "$WS"
-   for t in scripts/govern/test/test-*.sh; do
-     name=$(basename "$t" .sh)
-     if bash "$t" >/tmp/testout.log 2>&1; then
-       echo "ok   - $name"
-     else
-       echo "FAIL - $name"
-       sed 's/^/         /' /tmp/testout.log
-     fi
-   done
+   bash tools/run-suite.sh --suite-dir "$WS/scripts/govern/test" --jobs 8
    ```
-   This mirrors the CI `scaffold-and-test` job. If it is green locally against a fresh scaffold, CI will almost always be green too.
+   `--jobs 8` runs tests concurrently with each test's output captured to its own log file and a fail summary (log paths included) at the end; omit it for CI's exact sequential order. Other flags: `--shard i/n` runs one round-robin partition, `--hint FILE` overrides the scheduling hint, `--hub-context FILE` enables CI's skip accounting (off locally). If it is green locally against a fresh scaffold, CI will almost always be green too.
+
+   Negative controls (does a guard actually fire?) run against the NEW test file only: `bash templates/govern/test/test-<name>.sh` from this checkout. Never run negative controls against the whole suite: a deliberately broken fixture in a full run wastes the run and risks the broken copy leaking into a commit.
 
    Some of the copied tests skip (exit 77) here by design: they assert on the hub itself (`scaffold.sh`, `templates/`, `VERSION`, `purge.txt`, `seed-hashes.txt`) and resolve the hub as `$DIR/../../..`, which only resolves correctly from a hub checkout, not a scaffolded workspace. Those are listed in `tools/hub-context-tests.txt` and gated by the separate CI `hub-context-tests` job, which runs them straight from the checkout and treats a skip there as a failure. To exercise them locally, run them from this repo directly, e.g. `bash templates/govern/test/test-update-channel.sh`.
 
-3. Iterate on the template, re-run only the affected test (`bash scripts/govern/test/test-<name>.sh`), then re-run the full suite before pushing.
+3. Iterate on the template, re-run only the affected test (`bash scripts/govern/test/test-<name>.sh`), then finish with a full `tools/run-suite.sh` run (step 2) before pushing.
 
 ### The safe-redirect + wait test idiom
 

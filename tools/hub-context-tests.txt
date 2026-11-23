@@ -20,6 +20,7 @@
 # ticket, and it is a debt marker, not a parking space.
 
 test-update-channel
+test-run-suite
 test-update-config-converge
 test-purge-removed
 test-reconcile-update
