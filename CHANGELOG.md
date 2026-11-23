@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.20.12 - 2026-11-24
+
+### Fixed
+
+**`worktree:new` no longer prints a success banner over a half-built tree.** A sub-repo
+`git worktree add` piped through `sed` reported the FILTER's exit status, so a rejected add
+(branch already checked out elsewhere, `-b` refused) looked like success while the repo was
+never checked out and the ports banner still named it. Each add now runs through a `wt_add`
+helper that reports the real status: a failed checkout is a hard failure (exit 1, every
+failed repo named, the banner built only from repos actually confirmed checked out), and a
+`-b` rejection whose branch now exists (created concurrently or left by a prior partial run)
+is retried as a plain checkout instead of a hard failure. A commit-hook install failure
+(`install_subrepo_attribution_hook` / `install_subrepo_pre_commit_hook`) was swallowed by
+`|| true`, leaving a tree whose format guard silently never runs; failures are now
+accumulated and fatal (exit 4), both in the per-repo loop and in the post-bootstrap
+re-assert. A leftover branch that is behind origin/main with real diverged commits can
+still produce a plausible tree that only conflicts at PR time; healing that is a new
+BEHAVIOR, so it ships OFF behind `WORKTREE_DRIFT_GUARD=1` (documented in the `new.sh`
+header): enabled, a merely-stale branch is fast-forwarded and a diverged one refuses
+creation with exit 5; the default (`0`) keeps today's behavior exactly. New tests:
+`scripts/govern/test/test-worktree-new-exit-codes.sh`,
+`scripts/govern/test/test-worktree-new-drift-guard.sh`.
+
+**`worktree:rm` refuses to delete a worktree while a dev-stack process still runs inside
+it, and kills the processes the port pass cannot see.** The existing kill pass only sees a
+process that is LISTENING on a port `worktree.env` declares; a node child of a watcher
+outlives its parent holding nothing a port scan can find, and once the directory is removed
+the cwd string is the only identification left. A second kill pass sweeps by cwd, scoped to
+this worktree and to a generic dev-stack allowlist (`STACK_KILL_NAMES`, env-overridable), so
+the operator's shell sitting in the directory is never touched. After both passes the run
+re-measures and REFUSES the removal while an allowlisted process survives (a teardown that
+returns 0 under a live process produced exactly the ownerless port-squatting orphan this
+prevents); `--force-clean-fail` waives the gate, and it is a SEPARATE flag from `--force`
+because the governor's automated teardown always passes `--force` and must not silently
+waive a live-process gate. New test:
+`scripts/govern/test/test-worktree-rm-cwd-kill.sh`.
+
+**The worktree registry gc and the slot allocator's reclaim are one shared implementation,
+and the allocator reclaims orphaned slots instead of refusing on a wedged registry.**
+Orphan detection lived inline in `worktree:status --gc`, so the allocator's "no free slot"
+refusal could not reuse it and slot allocation stayed wedged until an operator ran gc by
+hand. `wt_registry_gc` (backed by `wt_registry_find_orphans`) is now the single gc: status
+`--gc` delegates to it, and the allocator calls it inside its existing critical section
+when the registry looks full, before refusing with the live/orphan split named instead of a
+bare threshold. The allocatable ceiling is a documented knob (`WT_MAX_SLOT`, default 99, no
+behavior change). New test: `scripts/govern/test/test-worktree-registry-gc.sh`.
+
+**The worktree reaper stops holding resolved-and-deleted tickets' worktrees forever.** A
+squash-merge severs SHA ancestry: the commit `worktree:new` branched off is never an
+ancestor of the squashed merge commit origin/main gains, so a resolved ticket's worktree
+reported "unmerged" against every repo it touched for as long as it existed. The unmerged
+blocker is now downgraded ONLY when both signals agree: the ticket named by the `t<N>` slug
+is gone from tickets.md, AND the repo's committed tree is byte-identical to origin/main
+(`git diff --quiet`), which together prove the content landed and the ahead commits are a
+squash-merge ancestry artifact, not unlanded work. Either signal alone, or a tree with real
+unlanded work, still blocks the reap. New test:
+`scripts/govern/test/test-worktree-reap-ticket-gone.sh`.
+
 ## 1.20.11 - 2026-11-24
 
 ### Fixed

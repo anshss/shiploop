@@ -2,11 +2,16 @@
 # Remove a worktree: clean up its deploys, then git-worktree-remove each sub-repo
 # and the meta-worktree, then free the registry slot.
 #
-# Usage:  <pm> run worktree:rm -- <name> [--force] [--keep-branch]
+# Usage:  <pm> run worktree:rm -- <name> [--force] [--keep-branch] [--force-clean-fail]
 #         <pm> run worktree:rm -- --sweep [--force]
 #
-# --force        skip the dirty-tree refusal
-# --keep-branch  don't delete the sub-repo branches after worktree removal
+# --force             skip the dirty-tree refusal
+# --keep-branch       don't delete the sub-repo branches after worktree removal
+# --force-clean-fail  tear down even if a dev-stack process is still running in the worktree
+#                     after the kill passes (accepts orphan risk; see the cwd-sweep gate
+#                     below). A SEPARATE flag from --force: the governor always passes
+#                     --force (to discard the merged worker branch), and that must not
+#                     silently also waive the live-process gate.
 # --sweep        remove every PACKET-CREATED worktree (a `.dispatch-packet.md` at its root,
 #                which govern:dispatch-packet writes) that is orphaned: the packet's own creation
 #                timestamp is older than GOVERN_AGENT_WALLCLOCK (default 3600s), AND every sub-repo
@@ -43,14 +48,16 @@ fi
 NAME=""
 FORCE=0
 KEEP_BRANCH=0
+FORCE_CLEAN_FAIL=0
 SWEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=1; shift ;;
     --keep-branch) KEEP_BRANCH=1; shift ;;
+    --force-clean-fail) FORCE_CLEAN_FAIL=1; shift ;;
     --sweep) SWEEP=1; shift ;;
     -h|--help)
-      echo "usage: $ROOT_PM run worktree:rm -- <name> [--force] [--keep-branch]"
+      echo "usage: $ROOT_PM run worktree:rm -- <name> [--force] [--keep-branch] [--force-clean-fail]"
       echo "       $ROOT_PM run worktree:rm -- --sweep [--force]"
       exit 0
       ;;
@@ -141,6 +148,85 @@ kill_worktree_stack() {
   return 0
 }
 
+# Second, CWD-scoped kill pass. The port pass above can only see a process that is
+# (a) listening, on (b) a port worktree.env happens to declare; and it is skipped
+# ENTIRELY when worktree.env is missing. Neither holds for the orphan shape this
+# targets: a node child of a watcher process outlives its parent, and once the
+# directory is removed the cwd string is the ONLY identification left. So sweep by
+# cwd too, which needs no worktree.env and no port. Same ownership scoping as the
+# port pass; a process is killed only when its cwd is under THIS worktree; plus a
+# command allowlist, because a cwd sweep also finds the operator's own shell sitting
+# in the directory. Generic dev-stack binaries only; override with STACK_KILL_NAMES.
+STACK_KILL_NAMES="${STACK_KILL_NAMES:-node tsx npm npx next go air esbuild vite}"
+
+# Print `<pid> <comm>` for every process whose cwd is under $1. `lsof -d cwd` reports
+# the recorded cwd string even for an unlinked directory, which is what makes the
+# post-removal check possible.
+procs_with_cwd_under() { # <root>
+  local root="$1" pid="" root_p
+  # lsof reports the PHYSICAL cwd; compare against the resolved path too, or a
+  # symlinked worktree root matches nothing and the check reports "clean" without
+  # ever having looked.
+  root_p="$(cd "$root" 2>/dev/null && pwd -P)" || root_p=""
+  [ -n "$root_p" ] || root_p="$root"
+  lsof -d cwd -Fpn 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+      p*) pid="${line#p}" ;;
+      n*) case "${line#n}" in
+            "$root"|"$root"/*|"$root_p"|"$root_p"/*)
+              [ -n "$pid" ] && [ "$pid" != "$$" ] \
+                && printf '%s %s\n' "$pid" "$(ps -o comm= -p "$pid" 2>/dev/null | awk '{n=split($1,a,"/"); print a[n]}')"
+              ;;
+          esac ;;
+    esac
+  done
+}
+
+kill_worktree_cwd_procs() { # <wt_root> → prints nothing; reports kills on stderr
+  local wt_root="$1" pid comm killed=0
+  while read -r pid comm; do
+    [ -n "$pid" ] || continue
+    case " $STACK_KILL_NAMES " in
+      *" $comm "*) kill -9 "$pid" 2>/dev/null && killed=$((killed + 1)) || true ;;
+      *) : ;;   # not a dev-stack binary (a shell, an editor); never ours to kill
+    esac
+  done < <(procs_with_cwd_under "$wt_root")
+  [ "$killed" -gt 0 ] && echo "  killed $killed process(es) whose cwd is under this worktree" >&2
+  return 0
+}
+
+# The survivor gate: after both kill passes, re-measure and REFUSE the removal while any
+# allowlisted dev-stack process still has its cwd inside the tree. Once the directory is
+# gone, cwd-based identification is all that is left and the session reaper is the only
+# thing that can clean up; so confirm here, while the path still exists, that nothing
+# survives. A survivor that is a dev-stack binary is a teardown FAILURE: removing the
+# worktree under it produces exactly the ownerless process (still holding its port, and
+# in some workspaces still pointed at prod) this gate exists to prevent.
+# --force-clean-fail accepts that risk. A survivor OFF the allowlist (the operator's own
+# shell) is reported but never blocks; killing it was never on the table.
+wt_survivor_gate() { # <wt_root> <name>; returns 1 when allowlisted survivors remain
+  local wt_root="$1" name="$2" spid scomm survivors=""
+  sleep 1   # let SIGKILLed processes actually leave the table before re-measuring
+  while read -r spid scomm; do
+    [ -n "$spid" ] || continue
+    case " $STACK_KILL_NAMES " in
+      *" $scomm "*) survivors="$survivors    ✗ pid $spid ($scomm)"$'\n' ;;
+      *) echo "  · pid $spid ($scomm) has its cwd in this worktree; not a dev-stack process, leaving it (cd out of the directory)" >&2 ;;
+    esac
+  done < <(procs_with_cwd_under "$wt_root")
+  if [ -n "$survivors" ]; then
+    echo "✗ processes are STILL running with a cwd under $wt_root after the teardown kill:" >&2
+    printf '%s' "$survivors" >&2
+    if [ "$FORCE_CLEAN_FAIL" -ne 1 ]; then
+      echo "  Refusing to remove the worktree; deleting the directory under a live process orphans it (it keeps its port, and may keep a prod credential/env it booted with)." >&2
+      echo "  Kill them and re-run 'worktree:rm -- $name', or pass --force-clean-fail to tear down anyway (accepts orphan risk)." >&2
+      return 1
+    fi
+    echo "  (continuing anyway per --force-clean-fail)" >&2
+  fi
+  return 0
+}
+
 # ── the actual removal, factored out so both the direct CLI path and --sweep call ONE
 # implementation. Reads NAME/WORKTREE_PATH/FORCE/KEEP_BRANCH from the caller's scope. ────────────
 wt_remove_one() {
@@ -168,7 +254,17 @@ wt_remove_one() {
   fi
 
   echo "→ killing this worktree's dev stack (ownership-scoped)"
-  kill_worktree_stack "$WORKTREE_PATH"
+  # WT_RM_SKIP_STACK_KILL is a TEST SEAM: it skips the killing passes so the survivor
+  # gate below can be exercised. Without it the gate is nearly unreachable by
+  # construction (SIGKILL almost always works), and an unreachable gate is one nobody
+  # has ever seen go red.
+  if [ "${WT_RM_SKIP_STACK_KILL:-0}" != "1" ]; then
+    kill_worktree_stack "$WORKTREE_PATH"
+    kill_worktree_cwd_procs "$WORKTREE_PATH"
+  else
+    echo "  (WT_RM_SKIP_STACK_KILL=1; skipping the kill passes; exercising the survivor gate)" >&2
+  fi
+  wt_survivor_gate "$WORKTREE_PATH" "$NAME" || return 1
 
   # Remove each sub-repo worktree
   for repo in "${REPOS[@]}"; do
