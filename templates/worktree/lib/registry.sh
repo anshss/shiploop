@@ -20,6 +20,12 @@
 #   wt_registry_remove NAME                    — drop slot entry by name, print its slot
 #   wt_registry_path_for NAME                  — print path of named slot, exit 1 if missing
 #   wt_registry_slot_for NAME                  — print slot number of named slot, exit 1 if missing
+#   wt_registry_find_orphans                  ; print slot/name/path of entries whose path is
+#                                                gone from disk (shared orphan detector)
+#   wt_registry_gc                            ; remove every orphaned entry (wrap in with_lock).
+#                                                The SINGLE gc implementation: status --gc and
+#                                                the allocator's inline reclaim both call it
+#                                                rather than reimplementing orphan detection.
 #
 # Locking: a claimed directory (mkdir, then an exclusive holder-file create; see wt_lock_claim).
 # Works on macOS + Linux with zero extra binaries (flock is Linux-only). Locks older than 30s whose
@@ -55,6 +61,13 @@ fi
 
 WT_REGISTRY="$WT_ROOT/.worktrees/registry.json"
 WT_LOCK="$WT_ROOT/.worktrees/slot-alloc.lock.d"
+
+# Highest allocatable slot. Each slot owns a SLOT_PORT_STEP-wide port band
+# (slot * step + base), so raising the ceiling only widens the port space; it does
+# not overlap an existing slot. The hub's slots step by SLOT_PORT_STEP=10, so the
+# stock ceiling of 99 covers ports up to base+990; raise it (env override) only
+# when a workspace genuinely runs that many concurrent worktrees.
+WT_MAX_SLOT="${WT_MAX_SLOT:-99}"
 
 wt_registry_read() {
   if [ ! -f "$WT_REGISTRY" ]; then
@@ -167,14 +180,38 @@ wt_registry_alloc_slot() {
   local reg used i
   reg=$(wt_registry_read)
   used=$(printf '%s' "$reg" | jq -r '.slots | keys[]' | sort -n)
-  for i in $(seq 1 99); do
+  for i in $(seq 1 "$WT_MAX_SLOT"); do
     if ! grep -qx "$i" <<<"$used"; then
       echo "$i"
       return 0
     fi
   done
-  echo "no free slot ≤ 99" >&2
+  echo "no free slot ≤ $WT_MAX_SLOT" >&2
   return 1
+}
+
+# Orphan = a registered entry whose path no longer exists on disk: the worktree was
+# removed by hand (or by a git worktree remove outside worktree:rm) and the registry
+# entry outlived it. Shared detector; wt_registry_gc is the ONLY remover.
+wt_registry_find_orphans() {
+  wt_registry_read | jq -r '.slots | to_entries[] | select(.key != "0") | [.key, .value.name, .value.path] | @tsv' | \
+    while IFS=$'\t' read -r slot name path; do
+      [ -d "$path" ] || printf '%s\t%s\t%s\n' "$slot" "$name" "$path"
+    done
+}
+
+# Drop every orphaned entry. Wrap in wt_registry_with_lock (status --gc) or call from
+# inside an existing critical section (the allocator's inline reclaim, which must not
+# take a second lock; the lock helpers are not reentrant). Prints one line per freed slot.
+wt_registry_gc() {
+  local orphans slot name path
+  orphans="$(wt_registry_find_orphans)"
+  [ -n "$orphans" ] || return 0
+  while IFS=$'\t' read -r slot name path; do
+    wt_registry_remove "$name" >/dev/null
+    echo "freed slot $slot ($name)"
+  done <<<"$orphans"
+  return 0
 }
 
 wt_registry_add() {
@@ -216,14 +253,43 @@ wt_registry_alloc_and_register() {
   fi
   used=$(printf '%s' "$reg" | jq -r '.slots | keys[]' | sort -n)
   slot=""
-  for i in $(seq 1 99); do
+  for i in $(seq 1 "$WT_MAX_SLOT"); do
     if ! grep -qx "$i" <<<"$used"; then
       slot="$i"
       break
     fi
   done
   if [ -z "$slot" ]; then
-    echo "no free slot ≤ 99" >&2
+    # The registry LOOKS full, but an entry whose directory no longer exists on disk is
+    # an orphan, not a real occupant: reclaim inline before refusing. A headless caller
+    # (a govern worker) has no operator around to run `worktree:status -- --gc` itself.
+    # This calls the same gc implementation status --gc uses (wt_registry_gc, above)
+    # rather than reimplementing orphan detection here. No separate lock is taken: we
+    # are already inside the caller's wt_registry_with_lock critical section.
+    local gc_out
+    gc_out="$(wt_registry_gc)"
+    if [ -n "$gc_out" ]; then
+      echo "$gc_out" >&2
+      reg=$(wt_registry_read)
+      used=$(printf '%s' "$reg" | jq -r '.slots | keys[]' | sort -n)
+      for i in $(seq 1 "$WT_MAX_SLOT"); do
+        if ! grep -qx "$i" <<<"$used"; then
+          slot="$i"
+          break
+        fi
+      done
+    fi
+  fi
+  if [ -z "$slot" ]; then
+    # Still nothing free after reclaiming every orphan: a genuine refusal. Name the
+    # live/orphan split (orphaned is necessarily 0 here, everything reclaimable has
+    # already been reclaimed) and the exact command, instead of a bare threshold.
+    local total orphaned live
+    total=$(printf '%s' "$used" | grep -vx '0' | grep -c . || true)
+    orphaned=$(wt_registry_find_orphans | grep -c . || true)
+    live=$((total - orphaned))
+    echo "no free slot ≤ $WT_MAX_SLOT ($live live, $orphaned orphaned; all reclaimable slots already reclaimed)" >&2
+    echo "run: ${ROOT_PM:-npm} run worktree:status -- --gc" >&2
     return 1
   fi
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

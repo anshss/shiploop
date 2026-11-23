@@ -121,10 +121,10 @@ fi
 if [ "$GC" -eq 1 ] && [ "${#ORPHANS[@]}" -gt 0 ]; then
   echo ""
   echo "→ gc: removing ${#ORPHANS[@]} orphaned entries"
-  for name in "${ORPHANS[@]}"; do
-    slot=$(wt_registry_with_lock wt_registry_remove "$name")
-    echo "  freed slot $slot ($name)"
-  done
+  # Shared implementation with the allocator's inline reclaim; wt_registry_gc in
+  # lib/registry.sh is the single gc implementation; orphan detection is never
+  # reimplemented at a second call site.
+  wt_registry_with_lock wt_registry_gc | sed 's/^/  /'
 elif [ "$GC" -eq 1 ]; then
   echo ""
   echo "→ gc: no orphans to clean"

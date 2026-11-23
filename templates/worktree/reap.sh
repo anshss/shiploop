@@ -51,7 +51,10 @@ usage: $ROOT_PM run worktree:reap [-- --yes] [--strip]
 A worktree is reapable only when ALL of:
   · no live process has its cwd inside it
   · no repo has uncommitted changes
-  · no repo has commits absent from origin/main
+  · no repo has commits absent from origin/main; EXCEPT the squash-merge shape: the
+    ticket named by the worktree's t<N> slug is gone from tickets.md AND that repo's
+    committed tree is byte-identical to origin/main, which together prove a squash-merge
+    severed the ancestry link rather than leaving real unlanded work
 Anything unanswerable (missing checkout, failed fetch) blocks the reap.
 USAGE
       exit 0 ;;
@@ -95,6 +98,26 @@ for wt in "$WORKTREE_BASE"/*/; do
   livepids="$(lsof -a +D "$wt" -d cwd 2>/dev/null | tail -n +2 | awk '{print $2}' | sort -u | tr '\n' ' ')"
   [ -n "$livepids" ] && blockers="$blockers live-session(pids: ${livepids% })"
 
+  # tickets.md awareness: a squash-merge severs SHA ancestry forever; the commit
+  # `worktree:new` branched off is never an ancestor of the squashed merge commit
+  # origin/main gains, even though its CONTENT landed byte-for-byte. Without this, a
+  # resolved-and-deleted ticket's worktree keeps showing "unmerged" against every sub-repo
+  # it touched, for as long as the worktree exists. Extract the ticket number the
+  # worker-prompt.md `t<N>`/`t<N>-<slug>` naming convention encodes, once per worktree; the
+  # per-repo loop below only downgrades an "unmerged" blocker when BOTH signals agree; the
+  # ticket is gone from tickets.md (deleted = merged, per the workspace's own ticket
+  # lifecycle) AND this repo's committed tree is identical to origin/main (proves the ahead
+  # commit's content really did land, not just a slug that happens to start with t<N> for an
+  # unrelated reason, or a ticket resolved without this repo's half actually merging).
+  ticket_num=""
+  case "$slug" in
+    t[0-9]*) ticket_num="${slug#t}"; ticket_num="${ticket_num%%-*}" ;;
+  esac
+  ticket_gone=0
+  if [ -n "$ticket_num" ] && ! grep -qE "^## #${ticket_num}([^0-9]|$)" "$ROOT/queue/tickets.md" 2>/dev/null; then
+    ticket_gone=1
+  fi
+
   # 2/3. Per repo: uncommitted work, and commits not on origin/main. The list is REPOS
   #      *plus the meta worktree root itself* — sizing this loop by the sub-repo name
   #      list alone lets an unpushed meta commit read as clean, and nothing fails.
@@ -123,7 +146,12 @@ for wt in "$WORKTREE_BASE"/*/; do
     if [ -z "$ahead" ]; then
       blockers="$blockers ancestry-unknown($label)"
     elif [ "$ahead" -gt 0 ]; then
-      blockers="$blockers unmerged($label:$ahead)"
+      if [ "$ticket_gone" -eq 1 ] && git -C "$d" diff --quiet origin/main HEAD -- 2>/dev/null; then
+        : # ticket resolved+deleted and this repo's tree matches origin/main exactly ;
+          # a squash-merge ancestry artifact, not real unlanded work
+      else
+        blockers="$blockers unmerged($label:$ahead)"
+      fi
     fi
   done
 

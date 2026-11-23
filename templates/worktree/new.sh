@@ -10,6 +10,13 @@
 # reachable, else the local ref) instead of the sub-repo's default base — use it to
 # stack a worktree on an open PR's branch, typically together with --only <repo>.
 #
+# Exit codes: 0 created/adopted · 1 path exists, or a sub-repo failed to check out ·
+# 2 usage/bad name/base error · 3 no TTY to confirm the low-disk guard · 4 a commit-hook
+# install failed · 5 (only with WORKTREE_DRIFT_GUARD=1, off by default) a sub-repo branch
+# was behind origin/main with diverged commits and could not be fast-forwarded. A non-zero
+# exit means the worktree may be PARTIALLY built (left on disk for inspection); never read
+# a failure as success.
+#
 # --adopt hands back an EXISTING path at $WORKTREE_BASE/<name> instead of erroring, for a retry
 # that wants the worktree a prior attempt on the same ticket left behind (worker-prompt.md has a
 # worker preserve that tree on failure/timeout and append findings to .governor-notes.md in it, so
@@ -193,8 +200,34 @@ mkdir -p "$(dirname "$WORKTREE_PATH")"
 # detached is the only way to mirror main here.)
 git -C "$ROOT" worktree add --detach "$WORKTREE_PATH" main 2>&1 | sed 's/^/[meta] /'
 
+# Run a `git worktree add ...` and report its REAL exit code, not the exit code of a pipe
+# to sed (a pipe reports the FILTER's status). `git worktree add -b "$NAME" ...` swallowed
+# through `| sed` used to look like success even when -b rejected an already-existing
+# branch, leaving the repo never checked out while this script printed a clean success
+# banner. Capture output into a var first, print it prefixed, THEN branch on the real
+# status; no pipe involved in the status check at all.
+wt_add() { # <repo-label> <src-repo-dir> <git worktree add ...args>
+  local label="$1" src="$2"; shift 2
+  local out rc
+  out=$(git -C "$src" worktree add "$@" 2>&1); rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out" | sed "s/^/[$label] /"
+  return "$rc"
+}
+
 # For each sub-repo, create a worktree at <meta-worktree>/<repo>/.
 # Sub-repos in ONLY: branch <name>. Others: detached at the base ref (read-only convention).
+# Accumulates every hook-install failure across the loop so one exit reports every
+# offender, not just the first.
+HOOK_INSTALL_FAILURES=()
+# Accumulates every sub-repo whose branch is behind origin/main AND could not be
+# fast-forwarded (real diverged commits of its own, not just staleness). Only recorded
+# under WORKTREE_DRIFT_GUARD=1; see the drift block inside the loop.
+DRIFT_REFUSALS=()
+# Repos actually confirmed checked out below; the closing port-summary banner is built
+# from THIS, not from the static REPOS list, so a repo that failed to check out no longer
+# appears in the banner as though it exists.
+CREATED_REPOS=()
+CHECKOUT_FAILED=0
 for repo in "${REPOS[@]}"; do
   src="$ROOT/$repo"
   dst="$WORKTREE_PATH/$repo"
@@ -209,11 +242,12 @@ for repo in "${REPOS[@]}"; do
   # paths are gitignored at workspace root, but rm -rf is defensive.)
   rm -rf "$dst"
 
+  repo_rc=0
   if [[ ",$ONLY," == *",$repo,"* ]]; then
     # Branch <name>: create if missing, check out if existing
     if git -C "$src" rev-parse --verify "$NAME" >/dev/null 2>&1; then
       echo "[$repo] branch '$NAME' exists, checking out"
-      git -C "$src" worktree add "$dst" "$NAME" 2>&1 | sed "s/^/[$repo] /"
+      wt_add "$repo" "$src" "$dst" "$NAME"; repo_rc=$?
     else
       if [ -n "$BASE_OVERRIDE" ]; then
         # A failed fetch must not fall through to a possibly-stale origin/<base>: that ref
@@ -236,7 +270,14 @@ for repo in "${REPOS[@]}"; do
         base="$(wt_subrepo_base_ref "$src")" || exit 2   # origin/main when reachable; LOUD abort on fetch failure (see base-ref.sh)
       fi
       echo "[$repo] creating branch '$NAME' from $base"
-      git -C "$src" worktree add -b "$NAME" "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
+      wt_add "$repo" "$src" -b "$NAME" "$dst" "$base"; repo_rc=$?
+      if [ "$repo_rc" -ne 0 ] && git -C "$src" rev-parse --verify "$NAME" >/dev/null 2>&1; then
+        # -b rejected because the branch now exists (created concurrently since the
+        # rev-parse check above, or left behind by a prior partial run); reuse it
+        # instead of a hard failure, same as the "branch exists" branch above.
+        echo "[$repo] -b '$NAME' failed but the branch now exists; reusing it instead of -b"
+        wt_add "$repo" "$src" "$dst" "$NAME"; repo_rc=$?
+      fi
     fi
   else
     # Not in --only: a DETACHED checkout at main (read-only convention). Must be
@@ -251,7 +292,47 @@ for repo in "${REPOS[@]}"; do
     # meta worktree uses above at the `worktree add --detach` line.
     base="$(wt_subrepo_base_ref "$src")" || exit 2   # origin/main when reachable; LOUD abort on fetch failure (see base-ref.sh)
     echo "[$repo] not in --only, detached worktree at $base (read-only)"
-    git -C "$src" worktree add --detach "$dst" "$base" 2>&1 | sed "s/^/[$repo] /"
+    wt_add "$repo" "$src" --detach "$dst" "$base"; repo_rc=$?
+  fi
+
+  # A repo present in the main checkout that failed to check out is a hard failure, not a
+  # skip-and-continue: bootstrap can't install deps for a repo that was never checked out,
+  # hook install below would fail against a nonexistent .git and mask the real cause behind
+  # an unrelated "hook install failed" message, and letting the run reach the success banner
+  # is exactly what made this failure read as a product/bootstrap issue instead of the
+  # checkout swallow it actually was.
+  if [ "$repo_rc" -ne 0 ] || { [ ! -d "$dst/.git" ] && [ ! -f "$dst/.git" ]; }; then
+    echo "[$repo] FAILED: git worktree add did not produce a checkout at $dst (exit $repo_rc)" >&2
+    CHECKOUT_FAILED=1
+    continue
+  fi
+  CREATED_REPOS+=("$repo")
+
+  # ── Drift guard: self-heal-or-refuse against origin/main ──
+  # The "branch <name> already exists → check it out as-is" fast path above NEVER touches
+  # origin/main at all. A repo that still holds a local branch named <name> left over from
+  # an earlier session can come out many commits behind origin/main while its siblings take
+  # the fresh `worktree add -b` path (which bases off a freshly-fetched origin/main) and
+  # were never stale. The result is a PLAUSIBLE tree: it parses, type-checks, and only
+  # conflicts at PR time. BEHAVIOR KNOB, OFF BY DEFAULT (WORKTREE_DRIFT_GUARD=1 enables):
+  # enabling mutates a freshly checked-out branch (fast-forward) and can refuse creation
+  # (exit 5) for a branch with real diverged commits, which changes what an existing
+  # install does. When enabled, the heal/refuse is checked unconditionally; not just on
+  # the branch-exists path; because a base-ref fetch failure falling back to local main
+  # produces the same staleness from the other direction.
+  if [ "${WORKTREE_DRIFT_GUARD:-0}" = "1" ] \
+     && git -C "$dst" fetch origin --quiet 2>/dev/null \
+     && git -C "$dst" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    behind="$(git -C "$dst" rev-list --count HEAD..origin/main 2>/dev/null)"
+    if [ -n "$behind" ] && [ "$behind" -gt 0 ]; then
+      if git -C "$dst" merge --ff-only origin/main >/dev/null 2>&1; then
+        echo "[$repo] was $behind commit(s) behind origin/main; fast-forwarded"
+      else
+        DRIFT_REFUSALS+=("$repo:$behind")
+      fi
+    else
+      echo "[$repo] up to date with origin/main"
+    fi
   fi
 
   # Copy sub-repo .env-style files from the main checkout. Only copy when the
@@ -273,17 +354,50 @@ for repo in "${REPOS[@]}"; do
 
   # Propagate the commit-attribution hook into this sub-repo worktree so agent commits made
   # from inside the worktree carry the Co-Authored-By trailer too (husky repos use a per-worktree
-  # core.hooksPath, so a main-checkout install doesn't always cover the worktree). Best-effort.
+  # core.hooksPath, so a main-checkout install doesn't always cover the worktree).
+  # FATAL, not best-effort: a `cp` failure here (observed cause: a full disk) used to be
+  # swallowed by `|| true`, so `worktree:new` printed a clean success banner over a
+  # half-built tree that never got a pre-commit hook; the format guard silently never
+  # runs, and the gap surfaces later as an unrelated review finding with no trace back to
+  # the cause. Failures are accumulated and reported once below (exit 4).
   if command -v install_subrepo_attribution_hook >/dev/null 2>&1; then
-    install_subrepo_attribution_hook "$ROOT" "$dst" || true
+    install_subrepo_attribution_hook "$ROOT" "$dst" || HOOK_INSTALL_FAILURES+=("$repo:prepare-commit-msg")
   fi
-  # Propagate the workspace pre-commit lint-fix hook too. It's a no-op unless workspace.sh sets
-  # WSP_LINT_FIX_CMD, and chain-safe with any pre-existing pre-commit (husky, lefthook) — so this
-  # is safe to run unconditionally alongside the attribution hook.
+  # Propagate the workspace pre-commit lint-fix hook too. Same fatality. A chain-safe skip
+  # (an existing FOREIGN pre-commit, e.g. husky's) returns 0 and is never a failure; only a
+  # genuine install error (missing shared source, unresolvable hooks dir, failed cp) returns
+  # non-zero.
   if command -v install_subrepo_pre_commit_hook >/dev/null 2>&1; then
-    install_subrepo_pre_commit_hook "$ROOT" "$dst" || true
+    install_subrepo_pre_commit_hook "$ROOT" "$dst" || HOOK_INSTALL_FAILURES+=("$repo:pre-commit")
   fi
 done
+
+# Checked first: a repo that never checked out has no hooks to install and no drift to
+# check, and reporting THIS as the failure (rather than the hook-install/drift noise a
+# missing checkout produces downstream) is the whole point of the fix.
+if [ "$CHECKOUT_FAILED" -eq 1 ]; then
+  echo "" >&2
+  echo "✗ worktree '$NAME' NOT fully created: one or more sub-repos failed to check out (see [repo] FAILED lines above)." >&2
+  echo "  Checked out OK: ${CREATED_REPOS[*]:-<none>}" >&2
+  exit 1
+fi
+
+if [ "${#HOOK_INSTALL_FAILURES[@]}" -gt 0 ]; then
+  echo "✗ worktree hook install failed for: ${HOOK_INSTALL_FAILURES[*]}" >&2
+  echo "  The worktree at $WORKTREE_PATH is left on disk for inspection (a common cause is disk" >&2
+  echo "  space; see 'df -h'. Any cp/mkdir failure lands here). Free space or fix the" >&2
+  echo "  cause, then re-run: $ROOT_PM run worktree:new -- $NAME --adopt" >&2
+  exit 4
+fi
+
+if [ "${#DRIFT_REFUSALS[@]}" -gt 0 ]; then
+  echo "✗ sub-repo branch(es) behind origin/main with real commits of their own; could not" >&2
+  echo "  fast-forward (not a plain staleness): ${DRIFT_REFUSALS[*]}" >&2
+  echo "  This worktree would build against a stale contract and only surface it as a PR-time" >&2
+  echo "  conflict. The worktree at $WORKTREE_PATH is left on disk for inspection; resolve the" >&2
+  echo "  divergence in the named repo(s) by hand, then re-run: $ROOT_PM run worktree:new -- $NAME --adopt" >&2
+  exit 5
+fi
 
 # Copy workspace-root .env into the worktree. Scripts that resolve $ROOT/.env
 # (test creds, workspace secrets, wallet refs, etc.) need this — sub-Claude
@@ -345,23 +459,34 @@ if [ "$SKIP_BOOTSTRAP" -eq 0 ]; then
   # RE-ASSERT the commit hooks AFTER bootstrap. The bootstrap step commonly runs `npm install`,
   # which triggers husky's `prepare` and regenerates `.husky/_/*` UNCONDITIONALLY — wiping the
   # attribution/pre-commit hooks installed in the per-repo loop above (which ran BEFORE bootstrap).
-  # Re-installing here is idempotent and makes the hooks survive the reinstall. Best-effort. (N6)
+  # Re-installing here is idempotent and makes the hooks survive the reinstall. Failures are
+  # fatal (exit 4) for the same reason the per-repo installs above are: a swallowed failure
+  # here would print a success banner over a tree whose hooks were just wiped and never
+  # restored.
   if command -v install_subrepo_attribution_hook >/dev/null 2>&1; then
     echo "[worktree] re-asserting sub-repo commit hooks post-bootstrap ..."
     for repo in "${REPOS[@]}"; do
       dst="$WORKTREE_PATH/$repo"
       { [ -d "$dst/.git" ] || [ -f "$dst/.git" ]; } || continue
-      install_subrepo_attribution_hook "$ROOT" "$dst" || true
+      install_subrepo_attribution_hook "$ROOT" "$dst" || HOOK_INSTALL_FAILURES+=("$repo:prepare-commit-msg")
       if command -v install_subrepo_pre_commit_hook >/dev/null 2>&1; then
-        install_subrepo_pre_commit_hook "$ROOT" "$dst" || true
+        install_subrepo_pre_commit_hook "$ROOT" "$dst" || HOOK_INSTALL_FAILURES+=("$repo:pre-commit")
       fi
     done
+    if [ "${#HOOK_INSTALL_FAILURES[@]}" -gt 0 ]; then
+      echo "✗ worktree hook install failed for: ${HOOK_INSTALL_FAILURES[*]}" >&2
+      echo "  The worktree at $WORKTREE_PATH is left on disk for inspection. Fix the" >&2
+      echo "  cause, then re-run: $ROOT_PM run worktree:new -- $NAME --adopt" >&2
+      exit 4
+    fi
   fi
 fi
 
-# Build a human-readable summary of the ports this worktree will use.
+# Build a human-readable summary of the ports this worktree will use; from the repos
+# actually confirmed checked out, never the static REPOS list: a repo that failed to
+# check out must not appear in the banner as though it exists.
 port_summary=""
-for repo in "${REPOS[@]}"; do
+for repo in ${CREATED_REPOS[@]+"${CREATED_REPOS[@]}"}; do
   port=$(wsp_repo_port "$repo" "$SLOT")
   [ -n "$port" ] || continue
   port_summary="${port_summary}  ${repo}: http://localhost:${port}"$'\n'
