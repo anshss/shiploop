@@ -20,7 +20,7 @@
 #                             a retired file whose bytes are not a shipped version). Every currently-shipped mechanism script (the files core-scripts,
 #                             worktrees and govern install, listed by
 #                             `scaffold.sh --list-mechanism-files`) must have its sha256 in
-#                             templates/lib/mechanism-hashes.txt — otherwise mechanism_install
+#                             templates/lib/mechanism-hashes.txt: otherwise mechanism_install
 #                             cannot tell an unedited old copy from a locally-edited one and
 #                             /shiploop:update would keep (never upgrade) it forever.
 #

@@ -123,7 +123,7 @@ fi
 [ -d "$TEMPLATES_DIR" ] || die "templates dir does not exist: $TEMPLATES_DIR"
 T="$TEMPLATES_DIR"
 
-# mechanism_map — component -> lines "template-relative-path<TAB>installed-path" for every
+# mechanism_map: component -> lines "template-relative-path<TAB>installed-path" for every
 # mechanism script component_core_scripts / component_worktrees / component_govern install.
 # ONE list drives the installer, `--list-mechanism-files`, tools/gen-mechanism-hashes.sh and the
 # `mechanism-hashes-current` check, so a file can never be installed without being hash-tracked.
@@ -366,7 +366,7 @@ component_workspace_sh() {
 
 }
 
-# mechanism_pristine — is $1 (an installed mechanism script) byte-identical to SOME version of
+# mechanism_pristine: is $1 (an installed mechanism script) byte-identical to SOME version of
 # template path $2 that shiploop has shipped? Consults templates/lib/mechanism-hashes.txt.
 # Same contract as seed_pristine: a hit proves the file was never edited, so replacing it is
 # lossless; a miss (or no manifest) means "assume locally edited" and is always safe.
@@ -386,7 +386,7 @@ KEPT_COUNT=0
 KEPT_LIST=""       # one "<dest>" per line
 KEPT_SUMMARY=""    # one pre-formatted line per component
 
-# mechanism_state <template> <dest> <rel> — absent | identical | pristine | local
+# mechanism_state <template> <dest> <rel>: absent | identical | pristine | local
 #   pristine = differs from the hub but is byte-identical to a version shiploop shipped.
 mechanism_state() {
   local template="$1" dest="$2" rel="$3"
@@ -397,7 +397,7 @@ mechanism_state() {
   fi
 }
 
-# mechanism_keep <template> <dest> — leave dest alone, write the hub copy beside it, record it.
+# mechanism_keep <template> <dest>: leave dest alone, write the hub copy beside it, record it.
 mechanism_keep() {
   local template="$1" dest="$2"
   cp "$template" "$dest.shiploop-new"
@@ -406,7 +406,7 @@ mechanism_keep() {
   KEPT_LIST="${KEPT_LIST}${dest}"$'\n'
 }
 
-# mechanism_install_component <component> — the keep decision is PER COMPONENT, not per file.
+# mechanism_install_component <component>: the keep decision is PER COMPONENT, not per file.
 #   Classify every file first. If ANY file carries local edits (not identical, not a shipped
 #   version), KEEP every file of the component that differs from the hub, each with its
 #   <dest>.shiploop-new: upgrading only the pristine ones would leave a half-hub, half-local
@@ -450,7 +450,7 @@ mechanism_install_component() {
   return 0
 }
 
-# mechanism_kept_summary — one loud block naming every kept component and file. Called at the end of every run.
+# mechanism_kept_summary: one loud block naming every kept component and file. Called at the end of every run.
 mechanism_kept_summary() {
   [ "$KEPT_COUNT" -gt 0 ] || return 0
   {
@@ -1365,7 +1365,7 @@ workspace_converged() {
 # zero drift and DO stamp.
 component_stamp() {
   if [ "$KEPT_COUNT" -gt 0 ]; then
-    [ "$VERBOSE" -eq 1 ] && info "not stamping .harness-version — $KEPT_COUNT mechanism file(s) kept with local edits"
+    [ "$VERBOSE" -eq 1 ] && info "not stamping .harness-version: $KEPT_COUNT mechanism file(s) kept with local edits"
     return 0
   fi
   if ! workspace_converged; then
@@ -1446,7 +1446,7 @@ purge_removed() {
   return 0
 }
 
-# purge_pristine <installed-path> — is the file byte-identical to a version shiploop shipped?
+# purge_pristine <installed-path>: is the file byte-identical to a version shiploop shipped?
 # Consults templates/lib/mechanism-hashes.txt (entries keyed by the installed path). A symlink,
 # a missing manifest or a miss all mean "not provably unedited".
 purge_pristine() {

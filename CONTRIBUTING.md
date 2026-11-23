@@ -7,11 +7,11 @@ Thanks for looking. This repo is unusual: it is the template source for an auton
 - `scaffold.sh` — deterministic scaffolder. Every mechanical file operation is here. Idempotent, non-interactive with `--yes`, component-scoped with `--component <name>`.
 - `commands/*.md` — the slash commands (`setup`, `update`, `flows`, `push`). Judgment only; mechanical work belongs in `scaffold.sh` or a template script.
 - `templates/lib/workspace.sh` — the one config file every mechanism script sources. Mechanism scripts are byte-identical across installs; per-workspace values live here.
-- `templates/lib/mechanism-hashes.txt` — every shipped version of every mechanism script; `bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt` after changing one (the `mechanism-hashes-current` check fails otherwise).
+- `templates/lib/mechanism-hashes.txt`: every shipped version of every mechanism script; `bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt` after changing one (the `mechanism-hashes-current` check fails otherwise).
 - `templates/govern/` — governor driver, ticket selector, merge-PR, escalations.
-- `templates/govern/test/` — 159 hermetic bash tests locking governor invariants.
+- `templates/govern/test/`: 159 hermetic bash tests locking governor invariants.
 - `templates/githooks/`, `templates/hooks/` — enforced git hooks and Claude Code hooks.
-- `.github/workflows/ci.yml` — lint, manifest validation, and the scaffold-and-test job that runs the govern tests against a freshly-scaffolded workspace on every PR (the 15 hub-context tests listed in `tools/hub-context-tests.txt` skip there and run in their own job).
+- `.github/workflows/ci.yml`: lint, manifest validation, and the scaffold-and-test job that runs the govern tests against a freshly-scaffolded workspace on every PR (the 15 hub-context tests listed in `tools/hub-context-tests.txt` skip there and run in their own job).
 
 If you are changing a mechanism, put per-workspace values in `workspace.sh` (or add a new opt-in variable there). Never inline them into a mechanism script.
 

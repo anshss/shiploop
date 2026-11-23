@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gen-mechanism-hashes.sh — regenerate templates/lib/mechanism-hashes.txt from git history.
+# gen-mechanism-hashes.sh: regenerate templates/lib/mechanism-hashes.txt from git history.
 #
 # Hub-only maintenance tool (never installed into a workspace). Emits every content hash each
 # mechanism script (the files component_core_scripts / component_worktrees / component_govern
@@ -16,8 +16,16 @@ set -uo pipefail
 HUB="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$HUB" || { echo "cannot cd to $HUB" >&2; exit 1; }
 
+# History walked: the published main branch plus every tag, never every local ref, so the output is
+# the same on any clone. MAIN_REF is the first of origin/main (dev clones and CI checkouts), main
+# (bare or local-only clones), HEAD that resolves.
+MAIN_REF=HEAD
+for cand in origin/main main; do
+  if git rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then MAIN_REF="$cand"; break; fi
+done
+
 cat <<'HEADER'
-# Mechanism-script content-hash manifest — every version of each hash-tracked mechanism script
+# Mechanism-script content-hash manifest: every version of each hash-tracked mechanism script
 # shiploop has ever shipped.
 #
 # Format: <sha256>  <template-relative path>
@@ -27,7 +35,7 @@ cat <<'HEADER'
 # here (provably an unedited shipped version). Any other hash = locally edited = kept, with the hub
 # version written beside it as <file>.shiploop-new. Byte-identity is the whole safety argument.
 #
-# GENERATED — do not hand-edit. Regenerate after any mechanism template change:
+# GENERATED: do not hand-edit. Regenerate after any mechanism template change:
 #     bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt
 HEADER
 echo
@@ -37,7 +45,7 @@ bash "$HUB/scaffold.sh" --list-mechanism-files | cut -f1 | sort -u | while IFS= 
   path="templates/$rel"
   printf '# -- %s --\n' "$rel"
   {
-    git log --format='%H' --all --follow -- "$path" 2>/dev/null \
+    git log --format='%H' "$MAIN_REF" --tags --follow -- "$path" 2>/dev/null \
     | while IFS= read -r sha; do
         [ -n "$sha" ] || continue
         git cat-file -e "$sha:$path" 2>/dev/null || continue
@@ -59,10 +67,10 @@ done
 echo "# ---- retired paths (purge.txt), keyed by installed path ----"
 echo
 
-# retired_hashes <installed-path> <template-pathspec> — "<sha256>  <installed key>" lines.
+# retired_hashes <installed-path> <template-pathspec>: "<sha256>  <installed key>" lines.
 retired_hashes() {
   local inst="$1" spec="$2" tprefix="$3"
-  git log --all --no-renames --raw --no-abbrev --format= -- "$spec" 2>/dev/null \
+  git log "$MAIN_REF" --tags --no-renames --raw --no-abbrev --format= -- "$spec" 2>/dev/null \
   | awk '$5 != "D" { print $4 "\t" $6 }' | sort -u \
   | while IFS=$'\t' read -r blob path; do
       [ -n "$blob" ] || continue
