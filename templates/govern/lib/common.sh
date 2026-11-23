@@ -641,9 +641,22 @@ govern::_lock_holder_read() { # lockdir -> pid|""
 # (observed with a Rust coreutils mkdir on a CI runner) can exit 0 for two racers on one path, and
 # both would then hold the lock. Exactly one racer can create the holder file, so exactly one wins; a
 # loser leaves the dir alone (the winner owns it) and reports the lock as held. Returns 0 claimed.
+# The holder file is stamped with the pid of the shell that is claiming, never `$$`: `$$` keeps
+# the top-level ancestor's pid even inside a subshell, so a claim taken by a subshell recorded its
+# still-living ancestor and govern::_lock_holder_dead saw the lock as alive for as long as the
+# ancestor ran. The noclobber-create subshell execs sh, so the recorded pid is that of the process
+# which launched it: the claiming shell's own pid, visible even inside a subshell where `$$`
+# cannot see it. `sh` is used rather than `$BASHPID` because bash 3.2, the system bash on macOS,
+# predates BASHPID and this must run on a stock machine. Consume only by redirection: a command
+# substitution would fork its own transient subshell and stamp that pid, which is dead before the
+# claim is ever checked.
+govern::_lock_stamp_holder() { # lockdir
+  ( set -C; exec sh -c 'echo "$PPID"' > "$1/holder" ) 2>/dev/null || return 1
+  return 0
+}
 govern::_lock_claim() { # lockdir
   mkdir "$1" 2>/dev/null || return 1
-  ( set -C; printf '%s\n' "$$" > "$1/holder" ) 2>/dev/null || return 1
+  govern::_lock_stamp_holder "$1" || return 1
   return 0
 }
 # Is a lock reclaimable? Yes iff no holder pid is recorded (mtime fallback) OR the recorded
