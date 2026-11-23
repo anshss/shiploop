@@ -118,6 +118,12 @@ race_dump() {
   echo "== pending dir"; ls -la "$VDIR/val-deploy.example-3000"
   echo "== lock dir"; ls -la "$T/governor"
   echo "== escalations.md"; cat "$T/governor/escalations.md"
+  echo "== mkdir identity"; type -a mkdir; command mkdir --version 2>&1 | head -2; readlink -f "$(command -v mkdir)" 2>&1 || true
+  echo "== mkdir exclusivity stress (successes out of 40 racers on one path; 1 is correct)"
+  local i ok=0 sd="$T/stress-mkdir"
+  for i in $(seq 1 40); do ( command mkdir "$sd" 2>/dev/null && echo won > "$T/stress-win.$i" ) & done
+  wait
+  ls "$T"/stress-win.* 2>/dev/null | wc -l
 }
 
 race_one() {
