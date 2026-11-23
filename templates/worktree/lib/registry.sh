@@ -94,9 +94,23 @@ wt_registry_write() {
 # lock. Exactly one racer can create the holder file; a loser leaves the dir alone (the winner owns
 # it) and reports not claimed. Same idiom as govern::_lock_claim, mirrored here because this file is
 # installed under scripts/worktree/lib and cannot assume scripts/govern/lib is sourceable.
+# Stamp the holder file with the pid of the shell that is claiming, never `$$`: `$$` keeps the
+# top-level ancestor's pid even inside a subshell, so a claim taken by a subshell recorded its
+# still-living ancestor and pid-liveness reclaim saw the lock as alive for as long as the ancestor
+# ran. The noclobber-create subshell execs sh, so the recorded pid is that of the process which
+# launched it: the claiming shell's own pid, visible even inside a subshell where `$$` cannot see
+# it. `sh` is used rather than `$BASHPID` because bash 3.2, the system bash on macOS, predates
+# BASHPID and this must run on a stock machine. Consume only by redirection: a command
+# substitution would fork its own transient subshell and stamp that pid, which is dead before the
+# claim is ever checked.
+_wt_lock_stamp_holder() { # claimdir
+  ( set -C; exec sh -c 'echo "$PPID"' > "$1/holder" ) 2>/dev/null || return 1
+  return 0
+}
+
 wt_lock_claim() { # dir
   mkdir "$1" 2>/dev/null || return 1
-  ( set -C; printf '%s\n' "$$" > "$1/holder" ) 2>/dev/null || return 1
+  _wt_lock_stamp_holder "$1" || return 1
   return 0
 }
 

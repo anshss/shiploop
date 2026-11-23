@@ -351,6 +351,7 @@ df6220e156ad8c17204cdd75918ac2157d810dbab3e24ba0ecb4c8ccddd1cf3f  govern/lib/com
 e020df701489847e2953f04151daedea98075f44a0b783c90247f6f18121ac6a  govern/lib/common.sh
 e0cb305fd6798550f475f7cf4d2fa12d8293a46d39e62449718d7bf87261b014  govern/lib/common.sh
 e0fc750ef41303188ade47c6487ca29c0b18d89cd3b984c2cb79cc8b90230616  govern/lib/common.sh
+e65c52099aa4a2619572843bd0070b41ed1801a975387c84efc95411952be910  govern/lib/common.sh
 e6ba2cab98f735011ce172ec8a6f64246da0150f9b8229bc57c999b3c7e7b1bb  govern/lib/common.sh
 e7887bc257ccaad679bfb0ceff879b95d4ba328c82114938beac0f1843766fad  govern/lib/common.sh
 ec96797109b554ae5816a748cfbf86da9d6c9c3092f7202122fcace985102515  govern/lib/common.sh
@@ -676,6 +677,7 @@ c1a24a9207ae1856cb935a4659ef13130995d01e977bf567b9fbf067dd90ba52  hooks/worker-e
 cbb11549ebf7e1ee467947def4d0f6bbe303c173776f31a4309187109b68f5c7  lib/githooks.sh
 
 # -- lib/install-semaphore.sh --
+18c245a84129b1b6e7cbc7c5a2b419c14e2c941b97a21f86bfbb12a0f2ccf12c  lib/install-semaphore.sh
 4345e9b4b154c85f74a5bb5a82bdeedb210636bee98be8b025a28e7c27cab05f  lib/install-semaphore.sh
 602b50964b664e25de985ab87202e96f564b9a6ab2097cf63aa363b3d01b8433  lib/install-semaphore.sh
 69c67af298c6d6738d404edd81abfdd107830c943c35798abab6ab0a11f97064  lib/install-semaphore.sh
@@ -713,6 +715,7 @@ e5747bce185bb48dfbdc7ebf380a7b9b2b79ff5b34b0c4baab3a17ebd3a12e17  worktree/lib/b
 # -- worktree/lib/registry.sh --
 35c6a9d741591bba2b2ab3d21c94dc0e49617933dd37714b829458699bc59ee3  worktree/lib/registry.sh
 3ecc88cc968f0c0db2ccb6692f44fcc8f4b77f785b1c1902bab4951b6c550e1a  worktree/lib/registry.sh
+51eded5df5a7689aec0e8f018c17e542f3f307f97a366702b08cce167839bc9f  worktree/lib/registry.sh
 5b7f53fa0856155e6159983fdbdf78904cca844748ef62436ed04be32c85e977  worktree/lib/registry.sh
 63918a209fac8f297899ff3c4e11f3ba26e3fb72d9c92e6dba5077c2493c9e02  worktree/lib/registry.sh
 747ac2c7bf3c81f401e3e65fab974807167903c7dc4be3355735c0e67dc810cb  worktree/lib/registry.sh
@@ -817,6 +820,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 01f7f786ea39252dd0f37a25d4b44041712d07e919e94ebb5c09ac3b54c6b3a0  scripts/govern/test/test-detect-inputs.sh
 021b2ede7a233433ffe034f019eefd8d212f5eae2624b41a2a2e96c50094c235  scripts/govern/test/assert.sh
 0229d887dc998965f407dd67a42edacb3b5cba78d1a96f4dcb1a21352f8544a9  scripts/govern/test/test-validation-gate-heading-variants.sh
+02d9cee987a7e628ee5fbb27664d47b6efadda8cc7e6eb73cfdde8c6687ff2fc  scripts/govern/test/test-post-merge-sync-probe.sh
 02da4a710268c89d4f4595e8d696ed381ec4e08c0295b8a7f9481ec3815b584e  scripts/govern/test/test-events-emitter.sh
 02de662ed8820288eda96b8eb7b2b052244dba0a9466af8d3143e78fef45fcf9  scripts/govern/test/test-budget-exceeded-classification.sh
 031278b09a5b8afde8bdd02024f4e97394e41f8a5b58448afa17726e45370252  scripts/govern/test/test-agent-watchdog-guard.sh
@@ -966,6 +970,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 37aad9aec76ee4e7e8c89b1f554e58b38bb98065fc6f4915c5b27aa3b433074c  scripts/govern/test/test-spawn-prompt-segmented.sh
 37fb1d4c1aaf360cf41666ae06805087ebc6dd47f63db4bf3a4b448f09ff040b  scripts/govern/test/test-record-escalation-answer.sh
 3875f1f2e8bb099bdad0c0466d6bc793287b6b1a187172c0197ffa61486e680f  scripts/govern/test/test-run-loop-multi-target.sh
+39098945e35e7b971770b3a8d46f8ee8eecb9cfc538827fa79ba1166bc394648  scripts/govern/test/test-sync-run-probe.sh
 392b376c7737acaff20de72322690876db0042b8e1371b50af2f0e6e6578a6df  scripts/govern/test/test-pr-hygiene-api.sh
 3944d166b5a0ea3fb6802e677e9fa9349f5be01815e4f5a93a601f1ce7b4ff42  scripts/govern/test/test-retry-signal-source.sh
 39593c6583591e6403dadd16af4f46ab5ed44eb622a963fa84e173e88f621ac0  scripts/govern/test/test-dual-lane-race.sh
@@ -1498,6 +1503,7 @@ f7a1ec733f2cb33deef11f6a52cc168152b064289c33a91b78cc86db06c1e32f  scripts/govern
 f816853feba8b3b1635ee7d92ff9415b5fd03e83c25c5b1f62353e96fd5195e5  scripts/govern/test/test-resolve-ticket.sh
 f84e54c4b7de85af5e27c348ec2330d06f7a00160b9b264b23a6bc5dbc82f5b9  scripts/govern/test/test-orphan-teardown.sh
 f856126b4199e5c162ffd74de54227d4bfc397b934125f5debf6eacfd15b9a5e  scripts/govern/test/test-router-posture-worker-spawn-deny.sh
+f95354f8fe17e802094d6c1b12f32b83716fbe8f3c7ce1e0707d2a2e6de79a58  scripts/govern/test/test-update-run-probe.sh
 facde19872e17504d73c1ded380075ad6ddd426efed097f058628cf8f023facf  scripts/govern/test/test-flow-pipeline.sh
 fb4f7138778b312af94fa16d49fe2c2952496ec5e31bd3a3f3c37a2ec0c17e3b  scripts/govern/test/test-ticket-numbering-log.sh
 fb78f69045d0de81ba0311f40fa132b4d07d2f384b6380da61337eac3b5bcd7f  scripts/govern/test/test-scout-sizing.sh

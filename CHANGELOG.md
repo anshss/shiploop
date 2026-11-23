@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.20.11 - 2026-11-24
+
+### Fixed
+
+**A lock or install slot held by a subshell is now reclaimable when that subshell dies.** All three
+claim primitives (`govern::_lock_claim`, `sem_claim`, `wt_lock_claim`) stamped the holder file with
+`$$`, which keeps the top-level ancestor's pid inside a subshell, so a claim taken by a subshell (a
+backgrounded install under the concurrency cap, a killed worker) recorded its still-living ancestor;
+pid-liveness reclaim then saw the slot as alive for as long as the ancestor ran, and the slot could
+never be reclaimed. The holder file now records the claiming shell's own pid via the noclobber
+subshell exec'ing `sh -c 'echo $PPID'` (bash 3.2, the system bash on macOS, has no `$BASHPID`).
+A claim taken in a parent and released in the same parent stamps the same pid as before and behaves
+identically; every current caller acquires and releases inside the same shell, so no existing
+behavior changes except that a dead subshell's slot becomes reclaimable, which is the defect. The
+reclaimable stamp is a defect fix, so it ships ON with no opt-in knob. New test:
+`scripts/govern/test/test-lock-holder-pid.sh`.
+
 ## 1.20.10 - 2026-11-24
 
 ### Fixed
