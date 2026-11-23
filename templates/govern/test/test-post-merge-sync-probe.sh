@@ -15,16 +15,15 @@ source "$DIR/assert.sh"
 set +e
 
 RT="$DIR/../resolve-ticket.sh"
-WSH="$DIR/../../lib/workspace.sh"
+PROBE_LIB="$DIR/../../lib/run-probe.sh"
 [[ -f "$RT" ]] || { echo "SKIP: resolve-ticket.sh not found"; exit 77; }
-[[ -f "$WSH" ]] || { echo "SKIP: workspace.sh template not found"; exit 77; }
+[[ -f "$PROBE_LIB" ]] || { echo "SKIP: run-probe.sh template not found"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
-# The stub workspace.sh has no probe helpers, so graft the real ones in from the shipped template.
-for fn in wsp_run_live wsp_pending_sync_mark wsp_pending_sync_clear; do
-  sed -n "/^${fn}()/,/^}/p" "$WSH" >> "$T/scripts/lib/workspace.sh"
-done
+# The stub workspace.sh has no probe helpers: common.sh sources them from the shipped
+# scripts/lib/run-probe.sh mechanism lib, exactly as a real workspace does.
+cp "$PROBE_LIB" "$T/scripts/lib/run-probe.sh"
 export GOVERN_QUEUE_DIR="$T/queue"
 mkdir -p "$T/bin/lib" "$T/queue" "$T/governor"
 ( cd "$T" && git init -q && git config user.email t@t && git config user.name t )

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.20.10 - 2026-11-24
+
+### Fixed
+
+**The live-run probe now works in existing workspaces, not only fresh installs.** The probe helpers
+(`wsp_run_live`, `wsp_pending_sync_mark`, `wsp_pending_sync_clear`) shipped inside the `workspace.sh`
+template, the one file `/shiploop:update` never regenerates, so every workspace scaffolded before
+1.20.7 kept treating a declared `GOVERN_RUN_PROBE` as live forever: `npm run sync` and the
+post-merge sync skipped the checkout, and no pending-sync marker was ever written or shown. They now
+live in `scripts/lib/run-probe.sh`, a mechanism lib the update installs and refreshes through the
+same keep machinery as every other mechanism script; `workspace.sh` keeps only the knob values. A
+workspace whose `workspace.sh` predates the helpers gets a working probe on its next update, with no
+configuration change; a workspace whose update has not run yet keeps the documented fail-safe
+(declared probe counts as live).
+
 ## 1.20.9 - 2026-11-24
 
 ### Fixed
