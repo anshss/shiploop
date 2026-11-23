@@ -9,9 +9,9 @@ Thanks for looking. This repo is unusual: it is the template source for an auton
 - `templates/lib/workspace.sh` — the one config file every mechanism script sources. Mechanism scripts are byte-identical across installs; per-workspace values live here.
 - `templates/lib/mechanism-hashes.txt` — every shipped version of every mechanism script; `bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt` after changing one (the `mechanism-hashes-current` check fails otherwise).
 - `templates/govern/` — governor driver, ticket selector, merge-PR, escalations.
-- `templates/govern/test/` — 154 hermetic bash tests locking governor invariants.
+- `templates/govern/test/` — 159 hermetic bash tests locking governor invariants.
 - `templates/githooks/`, `templates/hooks/` — enforced git hooks and Claude Code hooks.
-- `.github/workflows/ci.yml` — lint, manifest validation, and the scaffold-and-test job that runs all 60 govern tests against a freshly-scaffolded workspace on every PR.
+- `.github/workflows/ci.yml` — lint, manifest validation, and the scaffold-and-test job that runs the govern tests against a freshly-scaffolded workspace on every PR (the 15 hub-context tests listed in `tools/hub-context-tests.txt` skip there and run in their own job).
 
 If you are changing a mechanism, put per-workspace values in `workspace.sh` (or add a new opt-in variable there). Never inline them into a mechanism script.
 
@@ -121,7 +121,7 @@ Before opening a PR:
 - No leftover conflict markers (CI enforces this).
 - Manifests still parse (`jq empty .claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`).
 - No workspace-identity strings in the diff (see above).
-- Template-only features preserved: a mechanism you touched must still be OFF by default for a fresh install, and its opt-in variable must still be documented in `README.md` under "Opt-in knobs" (or added there).
+- Template-only features preserved: a mechanism you touched must still be OFF by default for a fresh install, and its opt-in variable must still be documented in `CONFIGURATION.md` (or added there).
 - `CHANGELOG.md` updated for anything a user of the harness would see — a new opt-in variable, a behavior change under an existing flag, a new template file, a new test. Internal refactors that leave user-visible behavior identical do not need a changelog line.
 
 CI must be fully green before merge. The `scaffold-and-test` job takes a couple of minutes; it is the load-bearing gate.
