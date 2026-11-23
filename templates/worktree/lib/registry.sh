@@ -21,9 +21,10 @@
 #   wt_registry_path_for NAME                  — print path of named slot, exit 1 if missing
 #   wt_registry_slot_for NAME                  — print slot number of named slot, exit 1 if missing
 #
-# Locking: mkdir is atomic on POSIX filesystems. Works on macOS + Linux with zero
-# extra binaries (flock is Linux-only). Stale locks older than 30s are auto-broken
-# so a crashed script can't wedge slot allocation forever.
+# Locking: a claimed directory (mkdir, then an exclusive holder-file create; see wt_lock_claim).
+# Works on macOS + Linux with zero extra binaries (flock is Linux-only). Locks older than 30s whose
+# holder is gone are auto-broken, one reclaimer at a time, so a crashed script can't wedge slot
+# allocation forever.
 set -uo pipefail
 
 # Derived UNCONDITIONALLY from this file's own location. An inherited WT_ROOT env var is
@@ -87,20 +88,53 @@ wt_registry_write() {
   mv -f "$tmp" "$WT_REGISTRY"
 }
 
+# Exclusive claim of one lock dir: create the dir, then create its `holder` file with noclobber,
+# which bash opens O_EXCL. mkdir alone is not trusted: a mkdir that is not itself exclusive (a Rust
+# coreutils build was observed exiting 0 for two racers on one path) would let both racers hold the
+# lock. Exactly one racer can create the holder file; a loser leaves the dir alone (the winner owns
+# it) and reports not claimed. Same idiom as govern::_lock_claim, mirrored here because this file is
+# installed under scripts/worktree/lib and cannot assume scripts/govern/lib is sourceable.
+wt_lock_claim() { # dir
+  mkdir "$1" 2>/dev/null || return 1
+  ( set -C; printf '%s\n' "$$" > "$1/holder" ) 2>/dev/null || return 1
+  return 0
+}
+
+# mtime age of a path in seconds; 0 when it is absent or unreadable, so a lock released mid-check
+# never reads as stale. GNU stat first (Linux), then BSD (macOS); see govern::_lock_age for the
+# trap this dodges.
+wt_lock_age() { # path
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0)"
+  m="${m//[!0-9]/}"; [ -n "$m" ] || m=0
+  if [ "$m" -gt 0 ]; then echo $(( $(date +%s) - m )); else echo 0; fi
+}
+
+# Remove a stale lock without letting two waiters both remove it: serialized behind a short-lived
+# exclusive `<lock>.reclaim` claim, with the holder-dead and age checks repeated inside it. A
+# waiter that cannot take the claim returns 1 and goes back to its normal retry. A `.reclaim` left
+# by a reclaimer that died is removed once it is older than 60s. Returns 0 when it removed the lock.
+wt_lock_reclaim() { # dir stale_s
+  local lock="$1" stale="$2" rl="$1.reclaim" ret=1 hpid=""
+  if [ "$(wt_lock_age "$rl")" -gt 60 ]; then rm -rf "$rl" 2>/dev/null || true; fi
+  wt_lock_claim "$rl" || return 1
+  if [ -f "$lock/holder" ]; then hpid="$(tr -dc '0-9' < "$lock/holder" 2>/dev/null || true)"; fi
+  if { [ -z "$hpid" ] || ! kill -0 "$hpid" 2>/dev/null; } && [ "$(wt_lock_age "$lock")" -gt "$stale" ]; then
+    rm -rf "$lock" 2>/dev/null || true
+    ret=0
+  fi
+  rm -rf "$rl" 2>/dev/null || true
+  return "$ret"
+}
+
 wt_registry_with_lock() {
   mkdir -p "$(dirname "$WT_LOCK")"
   local tries=0
-  # 100 × 100ms = 10s. Stale locks (>30s old) get reaped so a crashed caller
-  # doesn't permanently block slot allocation.
-  while ! mkdir "$WT_LOCK" 2>/dev/null; do
-    if [ -d "$WT_LOCK" ]; then
-      local age
-      # GNU stat first (Linux), then BSD (macOS); see govern::_lock_age for the trap this dodges.
-      age=$(($(date +%s) - $(stat -c %Y "$WT_LOCK" 2>/dev/null || stat -f %m "$WT_LOCK" 2>/dev/null || date +%s)))
-      if [ "$age" -gt 30 ]; then
-        rmdir "$WT_LOCK" 2>/dev/null
-        continue
-      fi
+  # 100 x 100ms = 10s. A lock whose holder is gone and that is >30s old gets reaped so a crashed
+  # caller doesn't permanently block slot allocation.
+  while ! wt_lock_claim "$WT_LOCK"; do
+    if [ -d "$WT_LOCK" ] && [ "$(wt_lock_age "$WT_LOCK")" -gt 30 ]; then
+      wt_lock_reclaim "$WT_LOCK" 30 && continue
     fi
     tries=$((tries + 1))
     if [ "$tries" -ge 100 ]; then
@@ -111,7 +145,7 @@ wt_registry_with_lock() {
   done
   local ret=0
   "$@" || ret=$?
-  rmdir "$WT_LOCK" 2>/dev/null || true
+  rm -rf "$WT_LOCK" 2>/dev/null || true
   return $ret
 }
 

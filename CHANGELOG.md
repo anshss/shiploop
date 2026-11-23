@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.20.5 - 2026-11-23
+
+### Fixed
+
+**The install semaphore and the worktree registry lock now claim exclusively.** Both still trusted
+`mkdir`'s exit status alone, so on a runner whose `mkdir` is a Rust coreutils build (two racers on one
+path both exit 0) the install semaphore admitted more concurrent installs than its cap, and two
+`worktree:new` calls could hold the slot-allocation lock together. Each slot, the semaphore's
+`.reclaim` mutex and the registry lock are now claimed the way the govern locks are: create the
+directory, then create its `holder` file with noclobber (an `O_EXCL` open), and a claimer whose
+holder create fails has not claimed. The idiom is mirrored in `install-semaphore.sh` and
+`worktree/lib/registry.sh` rather than sourced, because each installs under a different `scripts/`
+directory. The registry lock is now released with `rm -rf` since it holds a `holder` file.
+
+**Two waiters can no longer both reclaim one stale lock.** Each judged the lock stale independently,
+so the second waiter's removal could delete the fresh lock the first waiter's successor had just
+claimed. Reclaim in `govern::lock_acquire`, `govern::lock_try` and the registry lock is now
+serialized behind a short-lived `<lock>.reclaim` claim, with the dead-holder and age checks repeated
+inside it; a waiter that cannot take it returns to its normal retry. A `.reclaim` older than 60s (a
+reclaimer that died) is removed. The semaphore applies the same 60s rule to its `.reclaim` mutex.
+
+### Added
+
+`test-lock-exclusive-sites.sh` shims a `mkdir` that always exits 0 and asserts exactly one winner per
+claim primitive, the semaphore cap, single-holder registry sections, and the stale-reclaim ordering.
+
 ## 1.20.4 - 2026-11-23
 
 ### Fixed

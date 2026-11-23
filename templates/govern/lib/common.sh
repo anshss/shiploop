@@ -648,6 +648,25 @@ govern::_lock_holder_dead() { # lockdir -> 0 (dead / no holder), 1 (alive)
   [[ -n "$hpid" ]] || return 0
   kill -0 "$hpid" 2>/dev/null && return 1 || return 0
 }
+# Remove a stale lock. Two waiters that both judged one lock stale must not both remove it: the
+# second rm -rf would delete the fresh lock the first waiter's successor just claimed. So removal is
+# serialized behind a short-lived `<lock>.reclaim` claim (same exclusive primitive), and the
+# dead-holder and age checks are repeated INSIDE it, against whatever the lock is by then. A waiter
+# that cannot take the reclaim claim returns 1 and goes back to its normal retry. A `.reclaim` left
+# by a reclaimer that died is itself removed once its mtime is readable and older than 60s.
+# Returns 0 when this call removed the stale lock.
+govern::_lock_reclaim() { # lockdir stale_s
+  local lock="$1" stale="$2" rl="$1.reclaim" ret=1 m
+  m="$(govern::mtime "$rl")"
+  if [[ "$m" -gt 0 && $(( $(date +%s) - m )) -gt 60 ]]; then rm -rf "$rl" 2>/dev/null || true; fi
+  govern::_lock_claim "$rl" || return 1
+  if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
+    rm -rf "$lock" 2>/dev/null || true
+    ret=0
+  fi
+  rm -rf "$rl" 2>/dev/null || true
+  return "$ret"
+}
 # Parse a YYYY-MM-DD date into epoch seconds, portably across BSD (macOS) and GNU date.
 # Prints the epoch on success; returns 1 (prints nothing) on a malformed/empty date.
 govern::date_to_epoch() { # YYYY-MM-DD -> epoch
@@ -663,7 +682,7 @@ govern::lock_acquire() { # lockdir [timeout_s=60] [stale_s=300]
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
   while ! govern::_lock_claim "$lock"; do
     if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
-      rm -rf "$lock" 2>/dev/null && continue
+      govern::_lock_reclaim "$lock" "$stale" && continue
     fi
     sleep 1; waited=$((waited+1)); [[ "$waited" -ge "$timeout" ]] && return 1
   done
@@ -677,8 +696,7 @@ govern::lock_try() { # lockdir [stale_s=18000]
   mkdir -p "$(dirname "$lock")" 2>/dev/null || true
   if govern::_lock_claim "$lock"; then return 0; fi
   if govern::_lock_holder_dead "$lock" && [[ "$(govern::_lock_age "$lock")" -gt "$stale" ]]; then
-    rm -rf "$lock" 2>/dev/null
-    if govern::_lock_claim "$lock"; then return 0; fi
+    if govern::_lock_reclaim "$lock" "$stale" && govern::_lock_claim "$lock"; then return 0; fi
   fi
   return 1
 }
