@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.20.8 - 2026-11-24
+
+### Docs
+
+**CONTRIBUTING: never treat `mkdir`'s exit status as a lock.** Some coreutils builds let two racers both succeed, so new locks claim through the existing helpers (or the same `O_EXCL` holder-file idiom).
+
 ## 1.20.7 - 2026-11-23
 
 ### Fixed

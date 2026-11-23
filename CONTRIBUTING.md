@@ -104,6 +104,10 @@ The same corollary applies to paths. Every test file executes twice: as `templat
 
 **The inverse failure is silent, and it bit us.** A test asserting on the *hub itself* — `scaffold.sh`, `templates/`, `VERSION`, `purge.txt`, `seed-hashes.txt` — resolves `HUB="$DIR/../../.."` and exits `77` ("skip") when that is not a hub checkout. Inside `scaffold-and-test` that path is the throwaway workspace root, so the test always skips, and `77` is counted as a skip rather than a failure. Result: seven tests — `test-update-channel`, `test-purge-removed`, `test-reconcile-update`, `test-scaffold-verify-standalone`, `test-detect-inputs`, `test-wrap-in-place`, `test-update-config-converge` — ran green locally and **never executed in CI at all** — the entire mechanism behind `/shiploop:update` was ungated while looking gated. Hub-context tests belong in the `hub-context-tests` job, which runs them from the checkout and treats a `77` as a hard failure. The list lives in `tools/hub-context-tests.txt`, and `scaffold-and-test` fails if a test skips there without being listed — so a new hub-context test cannot silently run nowhere.
 
+### Never treat `mkdir`'s exit status as a lock
+
+Some coreutils builds (observed: uutils on ubuntu-26.04 runners) let two racing `mkdir` calls both succeed, so a bare `mkdir lockdir` claims nothing. Claim through the existing helpers: `govern::_lock_claim` (`templates/govern/lib/common.sh`), `sem_claim` (`templates/lib/install-semaphore.sh`), `wt_lock_claim` (`templates/worktree/lib/registry.sh`). Each follows `mkdir` with an `O_EXCL` noclobber create of a holder file. A new lock uses one of them or the same idiom.
+
 ## Porting discipline (for changes coming FROM a production fleet)
 
 Most fixes here originated on a production workspace and were ported back. The three rules that keep the templates re-installable everywhere:
