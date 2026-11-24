@@ -238,4 +238,97 @@ echo "ok - order check passes an order-independent suite"
 
 unset ORDERCHECK_MARKER_DIR
 
+# ── 7. GOVERN_LABS_FILE subset mode ──────────────────────────────────────────
+# post-merge-check.sh hands its CMD a labs file: the run covers ONLY the listed
+# test files (over-selection is the caller's contract), a literal FULL line
+# forces the whole set, and an empty or all-unknown list falls back to the full
+# suite (failing toward MORE validation). Unset behaves as before.
+printf 'test-aa-pass\ntest-dd-slow-pass\n' > "$T/labs-two.txt"
+printf 'FULL\n'                             > "$T/labs-full.txt"
+printf ''                                   > "$T/labs-empty.txt"
+printf 'test-zz-gone\ntest-yy-also-gone\n'  > "$T/labs-unknown.txt"
+
+run_labs_case() { # <labs_file> <log_dir> <out_file> <extra flags...>; -> runner exit code
+  local lf="$1" ld="$2" out="$3" rc=0
+  shift 3
+  GOVERN_LABS_FILE="$lf" main --suite-dir "$FX" --hint "$T/hint.txt" --log-dir "$ld" \
+    "$@" > "$out" 2>&1 || rc=$?
+  return "$rc"
+}
+
+set +e
+run_labs_case "$T/labs-two.txt" "$LOGS-labs-two" "$T/labs-two.out" --order-check 0; rc_labs=$?
+set -e
+if [ "$rc_labs" -ne 0 ]; then
+  echo "FAIL: two-test labs subset exit=$rc_labs, want 0"; cat "$T/labs-two.out"; exit 1
+fi
+assert_eq "$(grep -cE '^(ok   - |FAIL - |skip - )' "$T/labs-two.out")" "2" "labs subset runs ONLY the listed files (count)"
+grep -q '^ok   - test-aa-pass$' "$T/labs-two.out" \
+  || { echo "FAIL: labs subset lost the listed passing test"; cat "$T/labs-two.out"; exit 1; }
+[ -f "$LOGS-labs-two/test-dd-slow-pass.rc" ] || { echo "FAIL: labs subset did not run the second listed test"; exit 1; }
+[ -f "$LOGS-labs-two/test-bb-broken.rc" ] \
+  && { echo "FAIL: labs subset ran an UNLISTED test (test-bb-broken)"; exit 1; }
+[ -f "$LOGS-labs-two/test-cc-skips.rc" ] \
+  && { echo "FAIL: labs subset ran an UNLISTED test (test-cc-skips)"; exit 1; }
+grep -q '^labs subset: 2 test(s)' "$T/labs-two.out" \
+  || { echo "FAIL: labs subset did not report its size"; cat "$T/labs-two.out"; exit 1; }
+grep -q 'order covers all' "$T/labs-two.out" \
+  && { echo "FAIL: labs subset ran the full-run coverage assertion"; exit 1; }
+echo "ok - labs subset: exactly the listed files, subset-sized report, no full-coverage assertion"
+
+set +e
+run_labs_case "$T/labs-full.txt" "$LOGS-labs-full" "$T/labs-full.out" --order-check 0; rc_full=$?
+run_labs_case "$T/labs-empty.txt" "$LOGS-labs-empty" "$T/labs-empty.out" --order-check 0; rc_empty=$?
+run_labs_case "$T/labs-unknown.txt" "$LOGS-labs-unknown" "$T/labs-unknown.out" --order-check 0; rc_unknown=$?
+set -e
+if [ "$rc_full" -ne 1 ] || [ "$rc_empty" -ne 1 ] || [ "$rc_unknown" -ne 1 ]; then
+  echo "FAIL: FULL/empty/unknown labs runs exit=$rc_full/$rc_empty/$rc_unknown, want 1/1/1 (bb is broken)"
+  exit 1
+fi
+grep -q '^labs file: FULL line, running the whole suite' "$T/labs-full.out" \
+  || { echo "FAIL: FULL line not reported"; cat "$T/labs-full.out"; exit 1; }
+assert_eq "$(grep -cE '^(ok   - |FAIL - |skip - )' "$T/labs-empty.out")" "4" "an EMPTY labs file falls back to the full suite"
+grep -q '^labs file: no test named test-zz-gone' "$T/labs-unknown.out" \
+  || { echo "FAIL: unknown labs names not skipped with a note"; cat "$T/labs-unknown.out"; exit 1; }
+assert_eq "$(grep -cE '^(ok   - |FAIL - |skip - )' "$T/labs-unknown.out")" "4" "an all-unknown labs file falls back to the full suite"
+echo "ok - labs file FULL/empty/unknown all select the whole suite"
+
+# Shard semantics survive a subset: the split applies to the listed names, in
+# the listed order, with the order check defaulted OFF like any shard run.
+printf 'test-aa-pass\ntest-bb-broken\ntest-dd-slow-pass\n' > "$T/labs-three.txt"
+set +e
+run_labs_case "$T/labs-three.txt" "$LOGS-labs-shard" "$T/labs-shard.out" --shard 2/2; rc_shard=$?
+set -e
+if [ "$rc_shard" -ne 1 ]; then
+  echo "FAIL: labs+shard run exit=$rc_shard, want 1"; cat "$T/labs-shard.out"; exit 1
+fi
+grep -q '^shard 2/2: 1 test(s)' "$T/labs-shard.out" \
+  || { echo "FAIL: shard split of a labs subset reported the wrong size"; cat "$T/labs-shard.out"; exit 1; }
+grep -q '^ok   - test-bb-broken$' "$T/labs-shard.out" \
+  && { echo "FAIL: broken test unexpectedly passed in labs+shard run"; exit 1; }
+grep -q '^order-check reversed pass:' "$T/labs-shard.out" \
+  && { echo "FAIL: labs shard run defaulted the order check ON"; exit 1; }
+echo "ok - labs subset + --shard: partition of the listed names, order check defaulted OFF"
+
+# The no-orphans guard still fires on a subset: a listed test that leaks a
+# background fixture fails the SUBSET run, named.
+FXL="$T/suite-leak"
+mkdir -p "$FXL"
+printf '#!/usr/bin/env bash\nsleep 300 &\necho leaked\nexit 0\n' > "$FXL/test-la-leak.sh"
+printf 'test-la-leak\n' > "$T/labs-leak.txt"
+set +e
+GOVERN_LABS_FILE="$T/labs-leak.txt" main --suite-dir "$FXL" --log-dir "$T/logs-leak" \
+  > "$T/labs-leak.out" 2>&1 || rc_leak=$?
+set -e
+if [ "$rc_leak" -eq 0 ]; then
+  echo "FAIL: no-orphans guard did not fail a labs subset with a leaked fixture"; cat "$T/labs-leak.out"; exit 1
+fi
+grep -q '^::error::test-la-leak leaked background fixture' "$T/labs-leak.out" \
+  || { echo "FAIL: orphan leak not named in the labs subset summary"; cat "$T/labs-leak.out"; exit 1; }
+[ -f "$T/logs-leak/test-la-leak.orphans" ] \
+  || { echo "FAIL: no .orphans record beside the rc file"; exit 1; }
+echo "ok - no-orphans guard fires on a labs subset, named and recorded"
+
+unset GOVERN_LABS_FILE
+
 assert_done
