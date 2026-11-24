@@ -400,6 +400,35 @@ case "$out" in
   *) printf 'ok   - 17b. no coverage lines without trailer commits\n' ;;
 esac
 
+# ── 18. a squash commit repeating the trailer counts as one train commit ────────────────────
+# A squash merge copies each branch commit message into its body, so one train commit can
+# carry the same trailer several times. One CHANGELOG line naming the id covers it; scenario
+# 16 stays the negative control (two distinct train commits, one line, fails).
+CHANGELOG_TRAIN_CLOSE_ONE='# Changelog
+
+## 3.0.0 — 2026-01-03
+
+train-a: feature one
+
+## 2.0.0 — 2026-01-02
+
+content A
+'
+d="$(mk_fixture f18-train-squash-repeat 2.0.0 "$CHANGELOG_2AND1")"
+tag_head "$d" v2.0.0
+commit_file "$d" feature.txt "x" $'squash of three\n\n* one\n\nRelease-Train: train-a\n\n* two\n\nRelease-Train: train-a\n\n* three\n\nRelease-Train: train-a'
+printf 3.0.0 > "$d/VERSION"
+printf '%s' "$CHANGELOG_TRAIN_CLOSE_ONE" > "$d/CHANGELOG.md"
+commit_all "$d" "train close: release 3.0.0"
+tag_head "$d" v3.0.0
+out="$(run_tool --post "$d" stubbed \
+  STUB_RELEASE_LIST_JSON='[{"tagName":"v2.0.0","isDraft":false},{"tagName":"v3.0.0","isDraft":false}]' \
+  STUB_BODY_v2_0_0=$'content A\n' \
+  STUB_BODY_v3_0_0=$'train-a: feature one\n')"
+rc=$?
+assert_eq "$rc" "0" "18a. repeated trailer in one squash commit, one CHANGELOG line → exit 0"
+assert_contains "$out" "1 train commit(s) covered by 1 CHANGELOG.md entr" "18b. counts the squash commit once"
+
 echo ""
 if [ "$ASSERT_FAILS" -eq 0 ]; then
   echo "ok - all test-release-parity.sh assertions passed"

@@ -216,8 +216,10 @@ head_has_train_trailer() {
   git log -1 --format=%B 2>/dev/null | grep -Eq "$TRAIN_TRAILER_RE"
 }
 
-commit_train_ids() {  # sha -> the trailer ids that commit carries, one per line
-  git log -1 --format=%B "$1" 2>/dev/null | grep -E "$TRAIN_TRAILER_RE" | awk '{ print $2 }'
+commit_train_ids() {  # sha -> the distinct trailer ids that commit carries, one per line
+  # A squash merge copies every branch commit message into its body, so one train commit can
+  # repeat the same trailer; the id counts once per commit.
+  git log -1 --format=%B "$1" 2>/dev/null | grep -E "$TRAIN_TRAILER_RE" | awk '{ print $2 }' | sort -u
 }
 
 commit_moved_version() {  # sha -> true if the commit changed VERSION

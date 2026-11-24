@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.20.18 - 2026-11-24
+
+### Fixed
+
+**A train-close release no longer fails parity when a squash commit repeats the train trailer.**
+A squash merge copies every branch commit message into the squash body, so one train commit can
+carry the same `Release-Train:` trailer several times. The coverage check counted each trailer line
+as a train commit and demanded that many CHANGELOG.md lines naming the id. It now counts each id once
+per commit, matching one entry per train PR.
+
 ## 1.20.17 - 2026-11-24
 
 ### Changed
