@@ -332,6 +332,11 @@ jobs:
         # fixture repos with a fake `gh` earlier on PATH, so a checker that has stopped
         # detecting anything fails here rather than passing the real checks vacuously.
         run: bash tools/test/test-release-parity.sh
+      - name: test the release-maker against a local origin and a stubbed gh
+        # Same shape: tools/make-release.sh runs end to end inside fixture repos whose origin
+        # is a local bare clone and whose `gh` is the stateful stub, so a landing step that has
+        # stopped working (or stopped refusing) fails here, not on the next real release.
+        run: bash tools/test/test-make-release.sh
       - name: pre-merge (VERSION not below any published release, and above every burned one)
         if: github.event_name == 'pull_request'
         env:
