@@ -73,6 +73,30 @@ deny() { # <reason text> -> emits the PreToolUse deny JSON and exits 0
   exit 0
 }
 
+# 0 when this call lands finished work: Bash running govern:ship, or Write/Edit under governor/reports/.
+landing_call() {
+  local tool cmd path
+  tool="$(get tool_name)"
+  case "$tool" in
+    Bash)
+      if command -v jq >/dev/null 2>&1; then
+        cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"
+      else
+        cmd="$(get command)"
+      fi
+      case "$cmd" in *govern:ship*|*govern/ship.sh*) return 0 ;; esac ;;
+    Write|Edit)
+      if command -v jq >/dev/null 2>&1; then
+        path="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)"
+      else
+        path="$(get file_path)"
+      fi
+      case "$path" in *..*) return 1 ;; esac
+      case "$path" in governor/reports/*|*/governor/reports/*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
 # ── wall-clock ───────────────────────────────────────────────────────────────────────────────
 # Keyed on agent_id, first-seen time recorded in a state file — same ${TMPDIR:-/tmp} per-key
 # state-file idiom router-posture-guard.sh already uses for its per-session warn/fanout counters.
@@ -92,7 +116,15 @@ if [ "$wallclock_cap" != "0" ]; then
   fi
   elapsed=$(( now - first ))
   if [ "$elapsed" -ge "$wallclock_cap" ] 2>/dev/null; then
-    deny "[AGENT WATCHDOG] wall-clock: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has been running ~${elapsed}s, past the ${wallclock_cap}s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_WALLCLOCK if this task genuinely needs longer."
+    # Past the cap, LANDING still passes: a `govern:ship` call (npm run govern:ship, or
+    # scripts/govern/ship.sh directly) and a Write/Edit of a file under governor/reports/. A worker
+    # that finished its work just before the cap would otherwise be unable to open its PR or leave its
+    # report, and the work it already did is lost. This is an allowance for finishing, not a security
+    # boundary: everything else is denied exactly as before.
+    if landing_call; then
+      exit 0
+    fi
+    deny "[AGENT WATCHDOG] wall-clock: this child (agent_id=${agent_id}, agent_type=${agent_type:-unknown}) has been running ~${elapsed}s, past the ${wallclock_cap}s cap (GOVERN_AGENT_WALLCLOCK). Do not start another tool call, except to land work you already finished: a govern:ship call and a Write under governor/reports/ still pass. Stop now and return your final response as your structured report: an honest status, and if you cannot finish, a filled escalation naming what is left and why. Raise GOVERN_AGENT_WALLCLOCK if this task genuinely needs longer."
   fi
 fi
 

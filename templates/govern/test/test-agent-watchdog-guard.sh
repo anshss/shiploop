@@ -68,4 +68,24 @@ out8="$(printf '{"agent_id":"wc-nopath","agent_type":"worker","hook_event_name":
   | env bash "$GUARD")"
 assert_eq "$out8" "" "no transcript_path/session_id on stdin → silent no-op, never a crash"
 
+# ── 9. Past the cap, landing still passes; everything else is denied ─────────────────────────
+call() { # <tool> <tool_input-json>
+  printf '{"agent_id":"wc-stale","agent_type":"worker","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":%s}' "$1" "$2" \
+    | env bash "$GUARD"
+}
+assert_eq "$(call Bash '{"command":"cd /w && npm run govern:ship -- --add \"shiploop/a b\" 207"}')" "" \
+  "past the cap: npm run govern:ship passes"
+assert_eq "$(call Bash '{"command":"bash scripts/govern/ship.sh 207"}')" "" "past the cap: scripts/govern/ship.sh passes"
+assert_eq "$(call Write '{"file_path":"/w/governor/reports/207.json","content":"{}"}')" "" \
+  "past the cap: a Write under governor/reports/ passes"
+assert_contains "$(call Bash '{"command":"npm test"}')" '"permissionDecision":"deny"' "past the cap: any other Bash is denied"
+assert_contains "$(call Write '{"file_path":"/w/src/a.ts","content":"x"}')" '"permissionDecision":"deny"' \
+  "past the cap: a Write elsewhere is denied"
+assert_contains "$(call Write '{"file_path":"/w/governor/reports/../../src/a.ts","content":"x"}')" '"permissionDecision":"deny"' \
+  "past the cap: a path that climbs out of governor/reports/ is denied"
+assert_contains "$(call Read '{"file_path":"/w/governor/reports/207.json"}')" '"permissionDecision":"deny"' \
+  "past the cap: only writes count as landing, a Read is denied"
+assert_eq "$(printf '{"agent_id":"wc-under","agent_type":"worker","tool_name":"Bash","tool_input":{"command":"npm test"}}' | env bash "$GUARD")" "" \
+  "under the cap: an ordinary call passes (negative control for the allowance)"
+
 assert_done

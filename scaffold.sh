@@ -134,7 +134,7 @@ mechanism_map() {
       for s in doctor dev sync tail; do
         printf '%s.sh\tscripts/%s.sh\n' "$s" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit bg-task-ledger worker-report-capture; do
         printf 'hooks/%s.sh\tscripts/%s.sh\n' "$s" "$s"
       done
       for s in session-state preflight githooks install-semaphore run-probe; do
@@ -1044,6 +1044,11 @@ component_settings() {
   local content
   content=$(cat <<EOF
 {
+  "env": {
+    "BASH_DEFAULT_TIMEOUT_MS": "1800000",
+    "BASH_MAX_TIMEOUT_MS": "3600000",
+    "GOVERN_BG_WAIT_GUARD": "1"
+  },
   "hooks": {
     "SessionStart": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 },
@@ -1054,6 +1059,9 @@ component_settings() {
     ]}],
     "UserPromptSubmit": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-reminder.sh 2>/dev/null || true", "timeout": 10 }
+    ]}],
+    "PostToolUse": [{ "matcher": "Bash|Monitor", "hooks": [
+      { "type": "command", "command": "bash $root/scripts/bg-task-ledger.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
     "PreToolUse": [{ "matcher": "Read|Bash|Agent", "hooks": [
       { "type": "command", "command": "bash $root/scripts/router-posture-guard.sh 2>/dev/null || true", "timeout": 10 }
@@ -1071,11 +1079,12 @@ component_settings() {
       { "type": "command", "command": "bash $root/scripts/worker-event-emit.sh 2>/dev/null || true", "timeout": 10 }
     ]}],
     "SubagentStop": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 },
-      { "type": "command", "command": "bash $root/scripts/worker-event-emit.sh 2>/dev/null || true", "timeout": 10 }
+      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 1800 },
+      { "type": "command", "command": "bash $root/scripts/worker-event-emit.sh 2>/dev/null || true", "timeout": 10 },
+      { "type": "command", "command": "bash $root/scripts/worker-report-capture.sh 2>/dev/null || true", "timeout": 30 }
     ]}],
     "TeammateIdle": [{ "matcher": "*", "hooks": [
-      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
+      { "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh", "timeout": 1800 }
     ]}],
     "SessionEnd": [{ "matcher": "*", "hooks": [
       { "type": "command", "command": "bash $root/scripts/worktree/session-end-cleanup.sh 2>/dev/null || true", "timeout": 90 }
@@ -1119,6 +1128,7 @@ component_settings_merge() {
   # session-snapshot.sh) never got appended to an existing settings.json. Per-hook checking fixes that:
   # a hook lands iff its own marker is absent, and re-running is idempotent (all markers then present).
   local ss_snap ss_learn ss_main ss_val ss_reconcile up_reminder pt_guard pt_rules pt_watchdog stop_hook agent_guard se_cleanup we_emit
+  local post_ledger agent_guard_idle report_capture
   ss_snap=$(cat <<EOF
 { "type": "command", "command": "bash $root/scripts/session-snapshot.sh 2>/dev/null || true", "timeout": 15 }
 EOF
@@ -1170,8 +1180,24 @@ EOF
 { "type": "command", "command": "bash $root/scripts/ticket-sweep-reminder.sh", "timeout": 15 }
 EOF
 )
+  # 1800s: the guard may hold a stop while it waits for a child's background task to finish (its
+  # own budget, GOVERN_BG_WAIT_MAX_S, stays under this so it always answers first). Its other checks
+  # return in well under a second. On TeammateIdle the command keeps stderr and the exit status,
+  # because exit 2 with the reason on stderr is the only answer that keeps a teammate working.
   agent_guard=$(cat <<EOF
-{ "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 15 }
+{ "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh 2>/dev/null || true", "timeout": 1800 }
+EOF
+)
+  agent_guard_idle=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/agent-progress-guard.sh", "timeout": 1800 }
+EOF
+)
+  post_ledger=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/bg-task-ledger.sh 2>/dev/null || true", "timeout": 10 }
+EOF
+)
+  report_capture=$(cat <<EOF
+{ "type": "command", "command": "bash $root/scripts/worker-report-capture.sh 2>/dev/null || true", "timeout": 30 }
 EOF
 )
   se_cleanup=$(cat <<EOF
@@ -1189,6 +1215,7 @@ EOF
     --argjson up "$up_reminder" --argjson pt "$pt_guard" --argjson ptr "$pt_rules" \
     --argjson ptw "$pt_watchdog" --argjson pts "$pt_steer" --argjson we "$we_emit" \
     --argjson sp "$stop_hook" --argjson ag "$agent_guard" --argjson se "$se_cleanup" \
+    --argjson agi "$agent_guard_idle" --argjson pl "$post_ledger" --argjson rc "$report_capture" \
     '[
       {event:"SessionStart", matcher:"*", items:[
         {marker:"session-snapshot\\.sh",         hook:$ss_snap},
@@ -1206,8 +1233,10 @@ EOF
       {event:"Stop",             matcher:"*",         items:[{marker:"ticket-sweep-reminder\\.sh",   hook:$sp}]},
       {event:"SubagentStart",    matcher:"*",         items:[{marker:"worker-event-emit\\.sh",       hook:$we}]},
       {event:"SubagentStop",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag},
-                                                        {marker:"worker-event-emit\\.sh",       hook:$we}]},
-      {event:"TeammateIdle",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$ag}]},
+                                                        {marker:"worker-event-emit\\.sh",       hook:$we},
+                                                        {marker:"worker-report-capture\\.sh",   hook:$rc}]},
+      {event:"TeammateIdle",     matcher:"*",         items:[{marker:"agent-progress-guard\\.sh",    hook:$agi}]},
+      {event:"PostToolUse",      matcher:"Bash|Monitor", items:[{marker:"bg-task-ledger\\.sh",      hook:$pl}]},
       {event:"SessionEnd",       matcher:"*",         items:[{marker:"session-end-cleanup\\.sh",     hook:$se}]}
     ]') || die "settings-merge: failed to build hook spec (jq error)"
   local jq_prog
@@ -1241,7 +1270,8 @@ def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
     else . end )
 # REPAIR (in place): a hook already wired under this event but whose command string no
 # longer matches what the hub ships — the workspace path moved, a redirect/flag changed,
-# or the timeout was retuned. Marker-presence alone would call that "already installed"
+# or the timeout was retuned. A timeout BELOW the hub's is raised to it too (one above it is an
+# operator's choice and stays): a hook killed at its timeout loses its answer. Marker-presence alone would call that "already installed"
 # and leave the stale invocation running forever, so match on the marker and rewrite the
 # command + timeout to the canonical pair. Only harness-owned hooks (ones whose command
 # references OUR script path under the workspace root) are ever touched.
@@ -1254,7 +1284,8 @@ def event_cmds($ev): [ (.hooks[$ev] // [])[]?.hooks[]?.command ] | join("\n");
       if .hooks then
         .hooks |= map(
           if (((.command? // "") | test($it.marker))
-              and ((.command? // "") != ($it.hook.command))
+              and (((.command? // "") != ($it.hook.command))
+                   or (((.timeout? // 0) | tonumber? // 0) < $it.hook.timeout))
               and ((.command? // "") | contains($root)))
           then (.command = $it.hook.command | .timeout = $it.hook.timeout)
           else . end)
@@ -1286,6 +1317,29 @@ JQ
   else
     rm -f "$tmp"
     die "jq failed to merge into $target (invalid JSON?)"
+  fi
+
+  # ── env: the keys the background-task wait depends on, added only where absent ── A value the
+  # operator already set (for the same key) is never touched. BASH_DEFAULT_TIMEOUT_MS sets how long a
+  # foreground Bash runs before Claude Code moves it to the background, and BASH_MAX_TIMEOUT_MS the
+  # ceiling an explicit `timeout` may ask for; together they keep a long command in the foreground,
+  # where its result cannot be stranded. GOVERN_BG_WAIT_GUARD=1 states the stop guard's default.
+  local tmp_env; tmp_env="$(mktemp)"
+  if jq '
+    (.env //= {})
+    | reduce (["BASH_DEFAULT_TIMEOUT_MS", "1800000"], ["BASH_MAX_TIMEOUT_MS", "3600000"],
+              ["GOVERN_BG_WAIT_GUARD", "1"]) as $kv
+        (.; if (.env | has($kv[0])) then . else .env[$kv[0]] = $kv[1] end)
+  ' "$target" > "$tmp_env"; then
+    if ! diff -q "$target" "$tmp_env" >/dev/null 2>&1; then
+      mv "$tmp_env" "$target"
+      info "merged missing env keys into $target"
+    else
+      rm -f "$tmp_env"
+    fi
+  else
+    rm -f "$tmp_env"
+    die "jq failed to merge env keys into $target"
   fi
 
   # ── worktree base: additionalDirectories (outside the workspace root only) +
@@ -1335,7 +1389,7 @@ probe_files() {
       for s in doctor dev sync tail; do
         printf 'scripts/%s.sh\t%s/%s.sh\n' "$s" "$T" "$s"
       done
-      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit; do
+      for s in check-main-on-main ticket-sweep-reminder session-snapshot router-posture-reminder router-posture-guard rules-on-touch validations-pending-hook learnings-digest session-reconcile agent-progress-guard agent-watchdog-guard advisor-steer-guard worker-event-emit bg-task-ledger worker-report-capture; do
         printf 'scripts/%s.sh\t%s/hooks/%s.sh\n' "$s" "$T" "$s"
       done
       for s in session-state preflight githooks install-semaphore run-probe; do

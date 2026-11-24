@@ -322,11 +322,13 @@ e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-re
 67de00766e256bcb7eb1ab0a5a68ee59c35a57700387ee947bbabeb9b35d2404  govern/lib/common.sh
 68d0637351ad245af4bc1432a3158c444ac9e07c0e88f5875e9ab450fc7762be  govern/lib/common.sh
 6995796fa220a8a3a5d9a536a0c8f82ded4046a3ed270b46c7d17e2e0ff88987  govern/lib/common.sh
+6c7bd2f21a3854af4ce6c14dfb87fb033a441563c27a9e2401185fdcb30f9778  govern/lib/common.sh
 703c85a725bbcdd6778e55c1c335cf65a059fbb5d4317b65b7fcd2f1d03b9058  govern/lib/common.sh
 7336487902e1859e529b4152a06e16642de905bf41b945349bc5aadb9ddaf244  govern/lib/common.sh
 778cee697960ca64cbe0f8b38a7ef9ec17c4060570193f739f2ab26c2c1acf6b  govern/lib/common.sh
 7bb084f7251d624aab4e04f235af9aa670c09609758f5b80beabd4b8ffd41e93  govern/lib/common.sh
 7c2a41ccc38faf31d61d954d0a7d14bb9e1b630c8037ff5695cae44a114c18c3  govern/lib/common.sh
+7e486db4a8bc0328968bc92e3e05edb14c4450fd9a9694c1b6e3aaf82bfd83db  govern/lib/common.sh
 7ea15a919806e327ff70eb777ac3b39626105761748798b9003f0815ec532c58  govern/lib/common.sh
 7fa65624b205cd42b5f337f89087707f11be37a98330013d351b58c1dc2fd24a  govern/lib/common.sh
 8038f820694372bc726bd7f3a4bd9aa2c21fa451d9273b6f12a311c758b4182a  govern/lib/common.sh
@@ -377,7 +379,6 @@ e6ba2cab98f735011ce172ec8a6f64246da0150f9b8229bc57c999b3c7e7b1bb  govern/lib/com
 e7887bc257ccaad679bfb0ceff879b95d4ba328c82114938beac0f1843766fad  govern/lib/common.sh
 ec96797109b554ae5816a748cfbf86da9d6c9c3092f7202122fcace985102515  govern/lib/common.sh
 edb5ebab90de21860a705cd581e72499d1dcf155e65fef7f42534a02cf567614  govern/lib/common.sh
-edf1cc8cecec5a98d6ba3221e85141418b859df2c91a10b09f830c875022b85a  govern/lib/common.sh
 f51ce29bb529bcb2fd9d4cd6a05b451bb09c0df8a6c205b25f59fa0378f6c075  govern/lib/common.sh
 f634057ae05b3417f5d4492e9095b16a05b8668a934faadb7b5b555ba7cdf5af  govern/lib/common.sh
 f884cbaaa3cdcfe39e784ca28ab85c5d9d33bf8f101daadc1fd3695acfdb3884  govern/lib/common.sh
@@ -599,6 +600,7 @@ dbbb57e0ec91e67131c6299543ccba460bcd7e83d0214fe8a58f2267ef925d53  govern/validat
 2c2e0a71af2c215f99535fa42a925119e17fc087589107e02504c0aa2359f68c  hooks/agent-progress-guard.sh
 45368384fe871a9c48f26dae0cc633ad957bf9b347979ebe67b1456693b39659  hooks/agent-progress-guard.sh
 658b2f787aed695483a90b9c5fe6a46eaa7af26038ce130de945ec29c5da2c52  hooks/agent-progress-guard.sh
+77581326349665b6422caac8870e45a23418019c53e5e2231349ce9a21655d03  hooks/agent-progress-guard.sh
 7792da9507ee630680b03263f4cb640a17b6d52884486090c5e98402acac4b5d  hooks/agent-progress-guard.sh
 b2a235d52001e3e624b274e5196d3e1e889fba3cc16d977768151e5ef8ad4a88  hooks/agent-progress-guard.sh
 
@@ -606,6 +608,7 @@ b2a235d52001e3e624b274e5196d3e1e889fba3cc16d977768151e5ef8ad4a88  hooks/agent-pr
 112348fc160be8cc588e1d7ebbbeee07d8a1d06b1b0f254fd117e37746ec004a  hooks/agent-watchdog-guard.sh
 3f45a520e2285f44068761c7e45b8aa37f5e9e65458e49221042a165de82bd0e  hooks/agent-watchdog-guard.sh
 465866bc9ff40f6e8f73212fb1f41ac620c108c86738c9a9314d6f7b0f3550f3  hooks/agent-watchdog-guard.sh
+46712e280047b401150007b7d0e4c5d55a82dfe2b985c060ce8a369982236212  hooks/agent-watchdog-guard.sh
 4821cd409607c92c83fbe47395b231f7cc3100012077574600746e12b327290d  hooks/agent-watchdog-guard.sh
 a16618e3f0ef0f91a2ce3cc790ccb49e75ca04043850edf6d3b19cc5f32cb16b  hooks/agent-watchdog-guard.sh
 aedb1b87e48ea58cf8942ed85364d2228a5a58c7c8713ccaa29e194c18a12e3c  hooks/agent-watchdog-guard.sh
@@ -613,6 +616,9 @@ b662aad7c57b80f2e0f5d5e347531120e49cd58c190f05fe8e83689d4dce6646  hooks/agent-wa
 cd7344569974d40b84c8b9e6804b1cbb64162cb0053422aa21dd7cd9e16fc2c5  hooks/agent-watchdog-guard.sh
 cff8a77ffb35565da0ecea4083aecbc06656d15ca8640cceb6ac107f1b2acce9  hooks/agent-watchdog-guard.sh
 ed5ca982f78312c1b674eace5b45c43838d8cc94117ceda9e94996542cdf35d7  hooks/agent-watchdog-guard.sh
+
+# -- hooks/bg-task-ledger.sh --
+1e657ae9e9865c69dc3d2c09803e32a9d03b790566827cc6e093fe64f20472d3  hooks/bg-task-ledger.sh
 
 # -- hooks/check-main-on-main.sh --
 27ec6f6db42afa4d212e8ebb96e74aa8386f9568fe1579dc9ccdb2cd06faa276  hooks/check-main-on-main.sh
@@ -670,6 +676,7 @@ a11c56c1e472deda9466a9740483473193240b41dc274d5b57cd234467955267  hooks/router-p
 d4ed8d9485753ef9555ae7f760077b3ba726e3ffeba4071ba81234dff962e109  hooks/router-posture-reminder.sh
 df5be6867855e4b1295b554f8f5c5d490a5935df58b50cc288e348dd7be49b57  hooks/router-posture-reminder.sh
 e69846829bb412dc52fe5fc36ddc880ff2484a45659e8fdba6afb6acd0caf7d7  hooks/router-posture-reminder.sh
+f6dcd99017140455c6dbd769993bed95a880e8bca773f48e1a98b0dbc0d9aea0  hooks/router-posture-reminder.sh
 
 # -- hooks/rules-on-touch.sh --
 091b6c578aaa4c655b2b0cfbd20ae87d2728d75cb152094348aa93706013299f  hooks/rules-on-touch.sh
@@ -695,6 +702,7 @@ d1606478b0886a32b3ab4b8c8f3bc4a698e14d7c0f13ba49cebf0f7153e1d684  hooks/session-
 310395530287aa08802c8cf13693b7eeccb07409dc4b5a7a58abaad3812c1717  hooks/ticket-sweep-reminder.sh
 32c06cc07ea0db819c8bf6206cfc5e88fda64062fd782c04be046293797b1be7  hooks/ticket-sweep-reminder.sh
 398d6cb00cd5ab4ff8980471a0f816b7ba4d28ce2c70a3f8ff7b2a9fbfd752ae  hooks/ticket-sweep-reminder.sh
+39bf35ec0ec954dda102822181f91c8778756430195ff2d34c7cd39532f01b9c  hooks/ticket-sweep-reminder.sh
 3a568c5b4c0edbed067bbf07de1bd37231cbb8512fc65d925bf1b3fbd1b640ea  hooks/ticket-sweep-reminder.sh
 3ad29608d83a06469728188a0a778f8be69f3499c03501898d370c48a9e5b8cb  hooks/ticket-sweep-reminder.sh
 454997086378444efb55016df3e0b558b84db1dacda75929caf4651798561557  hooks/ticket-sweep-reminder.sh
@@ -722,6 +730,9 @@ edc97a2c2c0f2779f87710ec846d008d6be455e461fd08a6a676324d648f75f4  hooks/validati
 616070046ca61df53547bdac0e22fa13fe3d1f8ae2128737e1030d5fee0bb1c4  hooks/worker-event-emit.sh
 c1a24a9207ae1856cb935a4659ef13130995d01e977bf567b9fbf067dd90ba52  hooks/worker-event-emit.sh
 
+# -- hooks/worker-report-capture.sh --
+0d2c460c94509649ab0304f541f5ad87a1822c96acf2e4bc518ebb8ec9be80c1  hooks/worker-report-capture.sh
+
 # -- lib/githooks.sh --
 1075eae87a2382824772009a05bc42044961c6d73978e69eaedc45591fa34947  lib/githooks.sh
 33a3ae4c8f1fbd5048f8ea2b57a847760efd3fdfa6e6c2ec437f374c82d53cb6  lib/githooks.sh
@@ -744,6 +755,7 @@ f86b53cc034e61075f3dcef538235adfb2894773b11fad6e3119bfb2b9f5af65  lib/run-probe.
 a4455e4ec00e66bed24dc01e0f926918aa58de185e23ec1f573cbc6aa1b28bcd  lib/session-state.sh
 
 # -- sync.sh --
+1eadf785675afc560fd3de2dda7a610076595d08d37c6b5c14c7166b88515676  sync.sh
 28c880f6e8bcc2c02f1099dc76409a08afcb865b138d6721bf499d0898670607  sync.sh
 3509be96eadbea285942179ed50cac48194dead46e509665ee8f71e151dee0c8  sync.sh
 970e1f9b290040966051c8cddecafa94da4ecf21a604d72ffbcd30962ec5d730  sync.sh
@@ -1001,11 +1013,15 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 2bd859b182f3a29bd4c1e477b496cf507b70e5a9808842fc015fae7795b2bcec  scripts/govern/test/test-file-ticket-dup-flag.sh
 2c14cbcfe6fd7f7904964ebdb5fc8e77f88fa25e46d1137bc0c1e047a0a2f5a9  scripts/govern/test/test-concurrency.sh
 2c182d10e4e41f50ab7ec145b95b1e4eac8004be03e2c7e8d6e2591928f6f607  scripts/govern/test/test-agent-progress-guard.sh
+2c4ca4a5569356e56a231aab996f2bf586610f971e7e60785a8e39ba6454e9df  scripts/govern/test/test-scaffold-teammate-idle-hook.sh
 2c6317dab201d7dd183575fb803db87bd5b5ee9687fd63ee3221f6201d883076  scripts/govern/test/test-spawn-effort-routing.sh
 2cfc86b7ac2ef35e45308df4469290629b3e1dc4e96894c556923cc2b5807f88  scripts/govern/test/test-lock-exclusive-sites.sh
 2d7cc570600b5e3bd85dbfb29a0a720cc63014afb39ef8df2c828b909b5f2f1e  scripts/govern/test/assert.sh
+2e05394d3b2032697680d29a8e1febbf8ffd185e9a0f478e672d64fd852396be  scripts/govern/test/test-worker-report-capture.sh
 2e11ce2c2d5422851e31691d8d66ef44e8029fa129435a6d9f9f289e258b655e  scripts/govern/test/test-autonomy-gate.sh
 2e257b2fc7ff9f3ffe7abfa0c44b31a6753a8a79effecf1b5f3d9534adff75d4  scripts/govern/test/assert.sh
+2ed262d7bc4692e2271a798c68e72a5f5a946f5f3412518296a178e2144c50fc  scripts/govern/test/test-agent-watchdog-guard.sh
+2efcf77c9521e0ec86667bbf949ec8cd6a1263a81858f09cffcb59aa27811c83  scripts/govern/test/test-agent-progress-finished.sh
 2f415809f76ca8dc8726165f9a2de6746e6896823d8def7c6e0b5340f578ba98  scripts/govern/test/test-spawn-warm-escalation.sh
 2fc3f743e1d19b144669854e6c724b24d79731086063b3ee345abfb654b8047e  scripts/govern/test/test-ticket-deps-prose.sh
 2fe84e28bf3e0227bb2ab0b216b917c5c56c98ca1198ee8ccb5f829e1b3b4ca4  scripts/govern/test/test-wrap-in-place.sh
@@ -1094,6 +1110,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 4b1ec404d09df42d7d51675849ae9b17cc8f38d501044c869e2cd2a0ac4cbc49  scripts/govern/test/test-validation-gate.sh
 4b22ea80b8787d30f1b82ce93352caa5c7571983a83a7b29b486ab7f2d75a73d  scripts/govern/test/test-flows-spawn-stale-note.sh
 4b303635e861afac8be5c3a4a33f3de3580f02ba567bfed361d80c19127fdc4a  scripts/govern/test/test-flows-command.sh
+4b31b6473430aa119f5102048cacb92953b7a0c5b8da0f523a78fa04a5328cb4  scripts/govern/test/test-bg-wait-guard.sh
 4b8797ab5e98eed62a8cb15540b8b5c7f95be8aa2e5981b7d0f6e3d9ebf5b3dc  scripts/govern/test/test-history-sizing-fields.sh
 4bbd6a121528e1ca5e887052e5a77223ba471848da47280bc91659c73eb09c8f  scripts/govern/test/test-sync-port-fork-funnel.sh
 4c7d841e07b3544bdae4d1582cd4322bc547fe356b2a5f74dbb340a3b6c671ed  scripts/govern/test/test-automerge-guard.sh
@@ -1489,7 +1506,9 @@ d3b9361c75797f8494c3ce5be76fa49e7ff9882be8caf1ee47a43cc04f3a1546  scripts/govern
 d3edfa54d82d5ad821fdf9c93dbc78580365015e212309c5b038c1f58145ee75  scripts/govern/test/test-interrupted-classification.sh
 d48c65b96503e59879411e9822577cfa3d4829913229d85924989eb07d6919b5  scripts/govern/test/test-govern-health.sh
 d4afb11583c3661347dbcfd54d920a9713f98444a9ba476ad023cae8b2face1d  scripts/govern/test/test-claim-lock-dry.sh
+d4b540126e8753ff162073dfe886e93b3efd2138392c4566a1d2b1e66a599c03  scripts/govern/test/assert.sh
 d79260416377855c92065b42ee782a9bd372db8d2e901e3219a5a99a8479fff6  scripts/govern/test/test-worktree-registry-gc.sh
+d7a7304d373936e960de25c881915cb887e8ece11ad994ed2ca8c13dc7f6d710  scripts/govern/test/test-pending-bg-tasks.sh
 d81ef2e0180e3ce4bb191f0c065c550b723b1cbd2d28ed6a3a809e4c02b19ffc  scripts/govern/test/test-router-posture-vf-deny.sh
 d8853035b618e3e3d49b84b19fdc8bb8190e026c97529352045240d55b51ffe5  scripts/govern/test/assert.sh
 d8a03083084158e34156b096ad5ce1c3d58147d7161febc02e39d8a4756b1806  scripts/govern/test/test-budget-exceeded-classification.sh
@@ -1539,6 +1558,7 @@ e3db249f04c690874ea3e198e300f4e81b72d2c3b15a2886ee5c8963de54042a  scripts/govern
 e4458ca6431bed5927563d2ac3877bc50b0d0cee9ead67b726a6b07cea95d580  scripts/govern/test/test-timeout-classification.sh
 e5769b6219200bef87a7485172a5efb88398520cf09e8fc2c33c04d7dbf6c013  scripts/govern/test/test-escalations.sh
 e5e1c898b648e029186ee836c26d9e70d02366319ec9b2017968130f0d838153  scripts/govern/test/test-validation-record.sh
+e63bd759675daf3b0cb464388d0340e516c87764ce6fe117a703aff81c834e14  scripts/govern/test/test-session-optout-push-ahead.sh
 e65039d9a2708dd570c3473777431d541af86c698aee99fab9ef7b6289e0d312  scripts/govern/test/test-spawn-tools-trim.sh
 e6b650473aedd9b9b712fe564a1d11acdd28a9210888ab171ecc57402d97c8d8  scripts/govern/test/test-canonical-repo-name.sh
 e6c45b26658ce1fdad61a6c54bf6dc28dbfc7d6180cea00055089c985a7b8977  scripts/govern/test/test-history-sizing-fields.sh
@@ -1565,6 +1585,7 @@ edc6231ad162d533cbcded967d7b19cdb2a43c155c14a2b2823ab1180cf3dca9  scripts/govern
 ede78689a826017a43ffa6157f11fd08378986ef584da6b822d887963145b2da  scripts/govern/test/test-verify-filter.sh
 ee0db4557629187f3889c896f849dd76eff808cd8875ebba093cd47e8f42563c  scripts/govern/test/test-parallel-run-start-reconcile.sh
 ee38e26a3dfa89462b7630a7d1784f6cf3b6e32501b256272c39709647e61a92  scripts/govern/test/test-config-check.sh
+ee8074fd63c1e1636a84d494cfd4dfff1569b159103eb9146cecc62798229b95  scripts/govern/test/test-scaffold-bg-wait-settings.sh
 ee98fd08b707dce26884ff50772e7e3cd1b6beab1c6863d3401f417cb16a98f2  scripts/govern/test/test-model-family.sh
 eeaeea3deeb0d400790579965ba2c87134e00b4c45ece66ea0d0d8b823534fd3  scripts/govern/test/test-unpark-own-pr-merge.sh
 eef4b598aeee79c131b8d763c290b06d272cd5ece0ce7e820ea9e11255aab491  scripts/govern/test/test-ticket-route-guard.sh
