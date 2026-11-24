@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.20.20 - 2026-11-24
+
+### Fixed
+
+**`npm run sync` pushes a dirty workspace root's committed work (release train t2026-11-24-d).**
+`sync_root` skipped a root with any uncommitted change before reaching its push, so commits already
+on the root's `main` stayed local whenever coordination files were left modified. A dirty root on
+`main` with an `origin` now fetches and, when ahead and not behind, pushes `main` without touching
+the working tree; behind or diverged prints both counts and moves nothing. A clean root is
+unchanged, and no origin, a root off `main`, or `GOVERN_NO_PUSH=1` stay silent skips.
+
+### Changed
+
+**Ported from the fleet: keep a pr-only ticket until its PR merges, and two queue diagnostics (release train t2026-11-24-d).**
+`GOVERN_KEEP_BLOCK_UNTIL_MERGE=1` (off by default, so behavior is unchanged) makes resolve report a
+PR that `pr-only` or `observe` autonomy left open as still unmerged and land nothing, so the ticket
+block stays until a resolve after the merge. The duplicate-heading check ignores `## #N` headings
+inside fenced code blocks, so a ticket that quotes another ticket is not reported as a number
+collision, and resolve warns on stderr when a PR row names a repo that is neither a configured
+sub-repo nor a known harness slug, instead of leaving it out of the merge set silently.
+
 ## 1.20.19 - 2026-11-24
 
 ### Fixed
