@@ -90,4 +90,39 @@ unrelated="$(printf 'Where: x\nObserved: totally different area\nDone when: z\n'
   | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "unrelated layout regression in a panel" Low 2>&1)"
 assert_not_contains "$unrelated" "possible duplicate" "an unrelated title files clean over the same ledger"
 
+# 8. Bullet de-normalization: a body filed with `- **Proposed solution:**` / `* **Precision:**`
+#    stores the canonical line-anchored form, so govern::ticket_proposal / ticket_precision read
+#    it back (before this, the marker was invisible to both and the proposal gate refused a fully
+#    specified ticket). A bullet list item WITHOUT the field-marker colon placement is untouched.
+source "$DIR/../lib/common.sh"
+n8="$(printf '%s\n' \
+  '- Where: x' \
+  '* **Proposed solution:** De-bullet the marker at file time.' \
+  '- **Precision:** stated' \
+  '- **a bold list item with no colon stays** a list item' \
+  | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "bullet-prefixed field markers normalize at file time" Low)"
+blk8="$(block_of "$n8" "$L/queue/tickets.md")"
+assert_contains "$blk8" "**Proposed solution:** De-bullet the marker at file time." "the de-bulleted marker is stored (the filer appends its own placeholder proposal too, so counts are >= 1)"
+bullets_left="$(printf '%s\n' "$blk8" | grep -cE "$GOVERN_FIELD_MARKER_BULLET_RE" || true)"
+assert_eq "$bullets_left" "0" "no bullet-prefixed field marker survives in the stored block"
+plain_item="$(printf '%s\n' "$blk8" | grep -cE '^- \*\*a bold list item with no colon stays\*\* a list item' || true)"
+assert_eq "$plain_item" "1" "a bold list item without the colon placement is NOT de-bulleted"
+prose_bullet="$(printf '%s\n' "$blk8" | grep -cE '^- Where: x' || true)"
+assert_eq "$prose_bullet" "1" "a plain prose bullet stays a bullet"
+prop8="$(govern::ticket_proposal "$n8" "$L/queue/tickets.md")"
+assert_eq "$prop8" "De-bullet the marker at file time." "the de-bulleted proposal reads back through govern::ticket_proposal"
+prec8="$(govern::ticket_precision "$n8" "$L/queue/tickets.md")"
+assert_eq "$prec8" "stated" "the de-bulleted precision reads back through govern::ticket_precision"
+sev8="$(printf '%s\n' "$blk8" | grep -cE '^[[:space:]]*(-[[:space:]]+)?\*\*Severity' || true)"
+assert_eq "$sev8" "1" "exactly one Severity field survives (the emitter's)"
+
+# 9. Negative control for 8: no de-bullet log on a body with no bullet-prefixed field marker.
+stderr9="$(printf 'Where: x\nObserved: plain body\nDone when: z\n' \
+  | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "no bullet fields control" Low 2>&1 >/dev/null)"
+if printf '%s' "$stderr9" | grep -q "de-bulleted"; then
+  echo "FAIL - de-bullet log fired on a body with no bullet-prefixed field marker"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - no de-bullet log on a clean body"
+fi
+
 assert_done

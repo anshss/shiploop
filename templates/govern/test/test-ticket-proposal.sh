@@ -15,6 +15,9 @@
 #   7. ticket-proposal.sh (the interactive lane's own entry point, gotchas-for-paths.sh's sibling)
 #      prints nothing for a ticket with no real proposal, and prints both fields, formatted, when
 #      one exists.
+#   8. The extractors stay STRICT against a STORED bullet-prefixed marker: file-ticket.sh
+#      normalizes the bullet away at file time, lint-tickets.sh flags anything still stored, and
+#      the extractor itself reads it as absent rather than growing lenient.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -65,6 +68,16 @@ Observed: something.
 **Precision:** urgent
 
 ---
+
+## #74 — a bullet-prefixed field marker stored by a hand-edit or an older filer
+
+**Severity:** Low
+Observed: something.
+
+- **Proposed solution:** Do the thing.
+- **Precision:** stated
+
+---
 TIX
 
 # ── 1 & 2: multi-paragraph extraction, Precision does not leak in ──────────────────────────────
@@ -92,6 +105,15 @@ prec71="$(govern::ticket_precision 71 "$F")"
 assert_eq "$prec71" "" "6a. the filing-time Precision placeholder -> empty, not a value"
 prec73="$(govern::ticket_precision 73 "$F")"
 assert_eq "$prec73" "" "6b. an unrecognized Precision value ('urgent') -> empty, never guessed"
+
+# ── 8: the extractors stay STRICT against a stored bullet-prefixed marker ───────────────────────
+# The bullet is normalized away at file time (file-ticket.sh); anything still bullet-prefixed in a
+# stored file arrived by hand-edit or an older filer, and lint-tickets.sh flags it. The extractor
+# itself must never grow lenient enough to guess at a stored file's shape.
+p74="$(govern::ticket_proposal 74 "$F")"
+assert_eq "$p74" "" "8a. a bullet-prefixed **Proposed solution:** in a STORED file reads as absent (extractors stay strict; lint flags the line)"
+prec74="$(govern::ticket_precision 74 "$F")"
+assert_eq "$prec74" "" "8b. a bullet-prefixed **Precision:** likewise reads as absent"
 
 # ── 7: the CLI wrapper ──────────────────────────────────────────────────────────────────────────
 CLI="$DIR/../ticket-proposal.sh"

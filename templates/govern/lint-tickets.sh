@@ -4,8 +4,11 @@
 # at the source; this is the cheap backstop that CATCHES one that still slipped through (a
 # hand-edit, a pre-helper filing, an unserialized append). ALSO fails on a ticket block carrying
 # two `**Severity:**` fields (whatever renders the ticket reads the FIRST; a second copy is
-# invisible dead text that can disagree with it). Each fault's stdout lines are TAGGED
-# `HEADING #N ×count` / `SEVERITY #N ×count` so the Stop hook routes them to the right remedy.
+# invisible dead text that can disagree with it), and on a bullet-prefixed field marker
+# (`- **Proposed solution:**`), which is invisible to the strict line-anchored extractors, since
+# file-ticket.sh de-bullets at file time and anything still stored arrived by hand-edit or an
+# older filer. Each fault's stdout lines are TAGGED `HEADING #N ×count` / `SEVERITY #N ×count` /
+# `FIELD #N line <n>: ...` so the Stop hook routes them to the right remedy.
 # Prints the offending numbers to stderr and exits 1 if any duplicate exists; silent + exit 0
 # when clean. Wire into the Stop hook (scripts/hooks/ticket-sweep-reminder).
 #
@@ -40,8 +43,9 @@ if dangling="$(govern::dangling_dep_refs "$file")" && [[ -n "$dangling" ]]; then
   printf '  → the blocker is resolved or was never filed. Re-check and update the ticket, do not just delete the ref.\n' >&2
 fi
 
-# Two INDEPENDENT faults fail this lint, and each is TAGGED on its stdout lines — `HEADING #N
-# ×count` or `SEVERITY #N ×count` — so the Stop hook can route them separately instead of reporting
+# Three INDEPENDENT faults fail this lint, and each is TAGGED on its stdout lines (`HEADING #N
+# ×count`, `SEVERITY #N ×count` or `FIELD #N line <n>: ...`) so the Stop hook can route them
+# separately instead of reporting
 # every non-zero exit as a heading collision (whose remedy — renumbering — silently corrupts a live
 # ticket's `**Ref:**`/`depends on #N` pointers if followed for the WRONG fault). An untagged line
 # (a future check) surfaces verbatim as "read the lint's own output".
@@ -58,6 +62,13 @@ if sevdups="$(govern::duplicate_severity_fields "$file")"; then
 else
   printf 'Ticket(s) carrying two **Severity:** fields in %s — only the FIRST is read:\n' "$file" >&2
   printf '%s\n' "$sevdups" | sed 's/^/SEVERITY /'
+  rc=1
+fi
+if bulletfields="$(govern::bullet_prefixed_fields "$file")"; then
+  :
+else
+  printf 'Bullet-prefixed field marker(s) in %s (invisible to the line-anchored extractors): strip the leading bullet so the line starts with the bold marker:\n' "$file" >&2
+  printf '%s\n' "$bulletfields" | sed 's/^/FIELD /'
   rc=1
 fi
 if [[ "$rc" -eq 0 ]]; then
