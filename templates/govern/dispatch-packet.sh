@@ -141,7 +141,7 @@ PACKET="$WORKTREE_PATH/.dispatch-packet.md"
     else
       printf '(ticket #%s not found in %s)\n\n' "$_n" "$TICKETS_FILE"
     fi
-    _prec="$(govern::ticket_precision "$_n" "$TICKETS_FILE")"
+    _prec="$(govern::ticket_precision "$_n" "$TICKETS_FILE" || true)" # rc 3 stale / rc 2 ambiguous degrade to the scoped default
     printf 'Advisor-consult budget for #%s: %s (grade: %s)\n\n' "$_n" "$(budget_for_grade "$_prec")" "${_prec:-scoped (default)}"
     _tc="$(ticket_test_cmd "$_n")"
     if [[ -n "$_tc" ]]; then
