@@ -390,6 +390,7 @@ e0cb305fd6798550f475f7cf4d2fa12d8293a46d39e62449718d7bf87261b014  govern/lib/com
 e0fc750ef41303188ade47c6487ca29c0b18d89cd3b984c2cb79cc8b90230616  govern/lib/common.sh
 e5e3f4c263fffeb7d4fdfe0250b2ae812299f1c990ec33cbb44ed81c25270071  govern/lib/common.sh
 e65c52099aa4a2619572843bd0070b41ed1801a975387c84efc95411952be910  govern/lib/common.sh
+e69bf0a8b5fa2eabe241e7087728c715e6999ef836298da0bb04c6d8676bd107  govern/lib/common.sh
 e6ba2cab98f735011ce172ec8a6f64246da0150f9b8229bc57c999b3c7e7b1bb  govern/lib/common.sh
 e7887bc257ccaad679bfb0ceff879b95d4ba328c82114938beac0f1843766fad  govern/lib/common.sh
 ec96797109b554ae5816a748cfbf86da9d6c9c3092f7202122fcace985102515  govern/lib/common.sh
@@ -478,6 +479,7 @@ f25ff7d1dbdf577e91db929b872899e5fd0378db41aff3b53b0e6b1d79c75242  govern/merge-p
 f28183edda940a1a8f962f9a6e130eb6086025e377a7da1c5bf847184ef172ba  govern/post-merge-check.sh
 
 # -- govern/pre-dispatch-check.sh --
+031827b0f06b563a6b8446c80e39f3d9ab5d2b105c63d14a0a79474ebd424bf9  govern/pre-dispatch-check.sh
 06eece39f6cce7778981fb8817ec3dfbaa36cda2b4dbaad1791429d70abb00d5  govern/pre-dispatch-check.sh
 26e3ab8eb474637c97fc409cf62d1459913d41f24dc4566e9eef6b418e0c2197  govern/pre-dispatch-check.sh
 3dd077a248c39b99d4171f216acb1775f1f2779b3b97685579ccf257f079f41f  govern/pre-dispatch-check.sh
@@ -714,6 +716,7 @@ f6dcd99017140455c6dbd769993bed95a880e8bca773f48e1a98b0dbc0d9aea0  hooks/router-p
 # -- hooks/rules-on-touch.sh --
 091b6c578aaa4c655b2b0cfbd20ae87d2728d75cb152094348aa93706013299f  hooks/rules-on-touch.sh
 18ddb58f7f999390d170f97af8e52ff9dff3d3a677fbf09a6452b1b4e795c158  hooks/rules-on-touch.sh
+2051fa84a4695052b7d6428a146149ba0c25fd8bb64ad55969d0e98df7908860  hooks/rules-on-touch.sh
 b3c8bd8c9adcb1df65d464bfd797bcb6b4c58e14f252e7f326b7d09127492fad  hooks/rules-on-touch.sh
 
 # -- hooks/session-reconcile.sh --

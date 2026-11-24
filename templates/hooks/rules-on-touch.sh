@@ -236,6 +236,7 @@ EOF
 - Work items only, one `## #N` each. Scope: this workspace's sub-repos and the harness, nothing external.
 - **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
 - **Numbering:** blocks are NOT number-ordered and resolved numbers are never reused. Before filing, compute next = 1 + max(N) over (a) every `## #N` heading in the whole current file and (b) every `file #N` / `resolve #N` subject in `git log --all`. The file's tail is not the ceiling. Re-verify uniqueness right before committing.
+- **`**Fix-Files-Contain:** <repo>:<fixed-string>[, <repo>:<fixed-string>...]`** on tickets whose fix leaves a greppable signature (a distinctive function name, string, or constant): each is a sub-repo folder under the meta root (`.` = the meta repo itself) plus a short string that will EXIST on trunk only once the fix lands. Pre-dispatch greps these against the trunk so a block gone from origin/main skips as resolved instead of bare-skipping unimplemented work as "resolved+pushed"; omit it only when the fix has no greppable signature.
 - Editing ONE ticket: bound its region by the `## #N` heading FIRST. Anchors like `**Done when:**` repeat across tickets, so a bare index-of can slice backwards and a scripted replace then rewrites the whole file. Verify the line count after any scripted edit, BEFORE committing.
 EOF
 ;;
@@ -262,6 +263,8 @@ EOF
     govern) cat <<'EOF'
 [RULES/govern] Editing a governor script:
 - **Never add a new `claude` flag to the dispatch path unguarded.** Gate it on a CACHED `--help` probe, never on a version compare (a version reports what shipped, not what this binary supports), give it an env kill switch, and expose a `_GOVERN_<X>_SUPPORTED` pre-seed seam so tests can skip the probe. An unbounded probe on the dispatch path is also a hang risk: bound it.
+- **`local x` (declared, unset) + `$x` under `set -u` is "unbound variable", and if it dies inside a `$(...)` feeding an assignment the WHOLE script exits silently.** Pre-initialize every flag-like local (`local seen=""`).
+- **BSD `tr -s '[:space:]' ' '` EATS the trailing newline**, so a `while read` fed by such a stage runs its body ZERO times, silently. Trim with `sed -E 's/^[[:space:]]+|[[:space:]]+$//g'` instead.
 - **Diff the workspace copy against the hub template before fixing a govern-script defect** (`bash scripts/govern/sync-templates.sh --check`). The bug is often already fixed upstream, and a local-only fix silently forks the fleet.
 EOF
 ;;

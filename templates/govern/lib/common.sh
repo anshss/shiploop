@@ -2957,6 +2957,76 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   return 1
 }
 
+# govern::ticket_fix_on_trunk — the positive half of the resolved-skip: a block gone from
+# origin/main is only "resolved" if the fix itself is observable on the trunk. Reads the block's
+# `**Fix-Files-Contain:**` fingerprints out of the LOCAL tickets file (the block still says open
+# there even when origin already dropped it) and greps each against the named repo's trunk
+# (origin/main, HEAD as fallback). Any hit is positive evidence the fix landed; the caller may
+# skip the ticket as resolved. Everything else — no field, unknown repo, offline, grep miss —
+# returns 1, so the caller prints resolved-UNVERIFIED instead of trusting the skip. This probe
+# exists because both misfire shapes observed (hunt #125; this workspace's 2026-11-24 dispatch
+# wave) burned real work: unimplemented tickets bare-skipped as "resolved+pushed". Each
+# fingerprint is `<repo>:<fixed-string>` — repo is a sub-repo folder under the meta root, or `.`
+# for the meta repo itself (the pattern part may itself contain colons; the FIRST colon splits).
+govern::ticket_fix_on_trunk() { # <N> <tickets-file> <meta-dir>
+  local n="$1" tix="$2" meta="$3" block sig repo pattern dir ref
+  [[ -f "$tix" ]] || return 1
+  block="$(awk -v n="$n" '
+    $0 ~ ("^##[[:space:]]+#" n "([^0-9]|$)") { inb=1; print; next }
+    /^## / && inb { exit }
+    inb { print }
+  ' "$tix")"
+  [[ -n "$block" ]] || return 1
+  # One line may carry several comma-separated fingerprints; several lines accumulate.
+  while IFS= read -r sig; do
+    [[ -n "$sig" ]] || continue
+    repo="${sig%%:*}"
+    pattern="${sig#*:}"
+    [[ -n "$repo" && -n "$pattern" && "$pattern" != "$sig" ]] || continue
+    if [[ "$repo" == "." ]]; then dir="$meta"; else dir="$meta/$repo"; fi
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || continue
+    [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git -C "$dir" fetch -q origin main 2>/dev/null || true
+    ref=origin/main
+    git -C "$dir" rev-parse -q --verify "$ref" >/dev/null 2>&1 || ref=HEAD
+    git -C "$dir" grep -qF -- "$pattern" "$ref" 2>/dev/null && return 0
+  done < <(printf '%s\n' "$block" | sed -n 's/^[[:space:]]*\*\*Fix-Files-Contain:\*\*[[:space:]]*//p' | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+  return 1
+}
+
+# govern::ticket_merged_pr — the mirror probe: a PR for ticket N already MERGED on origin while
+# its queue block is still open (the PR was merged from OUTSIDE govern:resolve, so no bookkeeping
+# ever deleted the block). Discovers PRs by head branch (`ticket-<N>`, plus the neutral `sl-<hex>`
+# scheme govern::ticket_branch computes for public repos), then confirms each discovered ref with
+# one `gh pr view --json state`. Emits one `<repo>#<num> <url>` line per MERGED ref; EMPTY output
+# when none found or the probe is inconclusive (no gh, gh/network error) — fail-open, so an
+# environment that cannot verify never blocks a dispatch.
+govern::ticket_merged_pr() { # <N>
+  local n="$1" repo slug nb seen="" seen_prs="" key num url state
+  command -v gh >/dev/null 2>&1 || return 0
+  nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
+  while IFS= read -r repo; do
+    [[ -n "$repo" ]] || continue
+    slug="$(govern::repo_slug "$repo")"
+    [[ -n "$slug" ]] || continue
+    for b in "ticket-$n" "$nb"; do
+      [[ -n "$b" ]] || continue
+      [[ "$b" == "$seen" ]] && continue
+      seen="$b"
+      while IFS=$'\t' read -r num url; do
+        [[ -n "$num" ]] || continue
+        key="$repo#$num"
+        [[ "$seen_prs" == *"$key"* ]] && continue
+        seen_prs+="$key "
+        state="$(gh pr view "$num" --repo "$slug" --json state --jq '.state' 2>/dev/null || true)"
+        [[ "$state" == "MERGED" ]] || continue
+        printf '%s#%s %s\n' "$repo" "$num" "$url"
+      done < <(gh pr list --repo "$slug" --state merged --head "$b" --limit 3 --json number,url \
+               --jq '.[] | "\(.number)\t\(.url // "")"' 2>/dev/null || true)
+    done
+  done < <(govern::_repos_merge_first)
+  return 0
+}
+
 # ── autostash-pop-safe `pull --rebase` for the shared main checkout ──────────────────────
 # Three call sites run `git -c rebase.autoStash=true pull --rebase origin main` in the SHARED main
 # checkout: land-resolution.sh's pre-edit origin sync (step 0) and its push-CAS retry loop (step 4),
