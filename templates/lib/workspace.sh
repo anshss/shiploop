@@ -211,6 +211,16 @@ export WSP_PR_FOOTER="${WSP_PR_FOOTER:-on}"   # on | off
 export GOVERN_POST_MERGE_GATE="${GOVERN_POST_MERGE_GATE:-1}"
 export GOVERN_POST_MERGE_CMD="${GOVERN_POST_MERGE_CMD:-}"
 export GOVERN_POST_MERGE_SYNC="${GOVERN_POST_MERGE_SYNC:-0}"
+# Seed examples, COMMENTED on purpose: arming the gate is a per-workspace decision and convergence
+# must never append an activation here. GOVERN_POST_MERGE_CMD runs in a fresh temp checkout of the
+# merged ref (dependency-free commands only). GOVERN_POST_MERGE_LABS_SELECT overrides the
+# conventional eval/labs/select.js selector with any shell command run in that same checkout, with
+# `--changed <file>` appended to the command string; it prints the selected test names on stdout.
+# The shiploop hub's own selector is tools/resolve-labs-select.sh, and tools/run-suite.sh consumes
+# its output through GOVERN_LABS_FILE (a subset run of the listed test files; a FULL line, an empty
+# file, or unrecognized names falls back to the whole suite).
+# export GOVERN_POST_MERGE_CMD="bash tools/run-suite.sh --suite-dir templates/govern/test --jobs 8"
+# export GOVERN_POST_MERGE_LABS_SELECT="bash tools/resolve-labs-select.sh"
 
 # ── Live-run probe and queue integrity ───────────────────────────────────────
 # GOVERN_RUN_PROBE: a path, relative to the workspace root, to an executable this workspace provides,

@@ -28,6 +28,15 @@
 #                            missing or failing selector falls back to the full suite: failing
 #                            toward MORE labs is the safe direction. A $CMD that never reads the
 #                            variable is unaffected.
+#   GOVERN_POST_MERGE_LABS_SELECT  selector override: a shell command REPLACING the conventional
+#                            eval/labs/select.js lookup, for repos that select labs without node.
+#                            It runs in the temp checkout with cwd = checkout root, with
+#                            `--changed <changed-files.txt>` APPENDED to the command string (so a
+#                            bare `bash tools/resolve-labs-select.sh` works as-is), and its stdout
+#                            (selected lab/test names, one per line) is what the CMD receives.
+#                            Unset (default) = the node path above, byte-for-byte. A failing
+#                            override falls back to the full suite (the safe direction), exactly
+#                            like a failing node selector.
 #   GOVERN_ECHO=1            print what would run, touch nothing, exit 0 (dry-run convention).
 #
 # Exit codes:
@@ -89,10 +98,22 @@ fi
 
 # Lab selection (see GOVERN_LABS_FILE above): select the lab set from the merged sha's
 # FIRST-PARENT diff (the PR branch does not exist at gate time; first-parent survives squash and
-# fast-forward merges). Selector missing or failing leaves the file empty = full suite: failing
-# toward MORE labs is the safe direction.
+# fast-forward merges). GOVERN_POST_MERGE_LABS_SELECT replaces the conventional node selector with
+# any shell command; unset, the eval/labs/select.js lookup applies unchanged (a fleet with neither
+# selector configured sees no selection at all). Selector missing or failing leaves the file empty
+# = full suite: failing toward MORE labs is the safe direction.
 labsfile=""
-if [ -f "$tmp/check/eval/labs/select.js" ]; then
+SEL="${GOVERN_POST_MERGE_LABS_SELECT:-}"
+if [ -n "$SEL" ]; then
+  git -C "$tmp/check" diff --name-only "${sha}^1" "$sha" > "$tmp/changed.txt" 2>/dev/null || true
+  if ( cd "$tmp/check" && eval "$SEL" --changed "$tmp/changed.txt" \
+       > "$tmp/labs.txt" 2> "$tmp/select.log" ); then
+    labsfile="$tmp/labs.txt"
+    govern::log "post-merge-check: lab selection: $(tr '\n' ' ' < "$tmp/labs.txt")"
+  else
+    govern::log "post-merge-check: selector failed; falling back to the full lab suite"
+  fi
+elif [ -f "$tmp/check/eval/labs/select.js" ]; then
   git -C "$tmp/check" diff --name-only "${sha}^1" "$sha" > "$tmp/changed.txt" 2>/dev/null || true
   if ( cd "$tmp/check" && node eval/labs/select.js --changed "$tmp/changed.txt" \
        > "$tmp/labs.txt" 2> "$tmp/select.log" ); then

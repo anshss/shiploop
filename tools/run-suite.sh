@@ -30,6 +30,15 @@
 #     run (no --shard), OFF for a shard run (CI's shard job, where each partition
 #     runs in its own job and the doubling would bill every PR).
 #
+# GOVERN_LABS_FILE (env, set by post-merge-check.sh): when it names an existing
+# file, the run covers ONLY the listed test files (one name per line, no .sh
+# suffix; over-selection is the caller's contract). A literal FULL line forces
+# the whole set. Unknown names are skipped with a note; a file naming nothing
+# that exists, or an empty file, falls back to the full suite (failing toward
+# MORE validation). Unset/empty behaves as before. The coverage assertion is a
+# full-run invariant and is skipped for a subset; the shard split, the order
+# check and the no-orphans guard apply to a subset unchanged.
+#
 # Exit 0 = every selected test passed or skipped; exit 1 = one or more failures
 # (each named, with its log path), a leaked background fixture (see the
 # no-orphans guard below), a broken order/skip-accounting, or (order check on)
@@ -127,8 +136,38 @@ main() {
   order="$tmp/order.txt"
   selected="$tmp/selected.txt"
 
-  build_order "$suite_dir" "$hint" "$order" || return 1
-  assert_coverage "$suite_dir" "$order" || return 1
+  # GOVERN_LABS_FILE subset mode (see the header): narrow the run to the listed
+  # test files. The result is written into the same $order file every downstream
+  # step (shard split, order check, summary) already consumes.
+  local labs_file="${GOVERN_LABS_FILE:-}" subset=0 lab
+  if [ -n "$labs_file" ] && [ -f "$labs_file" ]; then
+    if grep -qx 'FULL' "$labs_file"; then
+      echo "labs file: FULL line, running the whole suite"
+    else
+      grep -v '^[[:space:]]*$' "$labs_file" > "$tmp/labs-raw.txt"
+      [ -s "$tmp/labs-raw.txt" ] && subset=1
+    fi
+  fi
+  if [ "$subset" -eq 1 ]; then
+    : > "$order"
+    while IFS= read -r lab; do
+      if [ -f "$suite_dir/$lab.sh" ]; then
+        printf '%s\n' "$lab" >> "$order"
+      else
+        echo "labs file: no test named $lab in $suite_dir, skipped" >&2
+      fi
+    done < "$tmp/labs-raw.txt"
+    if [ -s "$order" ]; then
+      echo "labs subset: $(wc -l < "$order" | tr -d ' ') test(s) from GOVERN_LABS_FILE"
+    else
+      echo "labs file named no test in $suite_dir, falling back to the full suite"
+      subset=0
+    fi
+  fi
+  if [ "$subset" -eq 0 ]; then
+    build_order "$suite_dir" "$hint" "$order" || return 1
+    assert_coverage "$suite_dir" "$order" || return 1
+  fi
 
   if [ -n "$shard" ]; then
     case "$shard" in ''|*[!0-9]*) echo "::error::bad shard index: $shard" >&2; return 2 ;; esac

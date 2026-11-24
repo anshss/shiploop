@@ -8,6 +8,10 @@
 #      squash and fast-forward merges both select correctly).
 #   d. a selector that succeeds but selects nothing -> GOVERN_LABS_FILE is set to an existing,
 #      EMPTY file (the consuming harness's cheap sections skip).
+#   e. GOVERN_POST_MERGE_LABS_SELECT set -> it REPLACES the node selector (which is present but
+#      must not be consulted), runs in the merged checkout with --changed <file> appended to the
+#      command string, and its stdout is what the CMD receives.
+#   f. a failing override selector -> empty GOVERN_LABS_FILE, with the fallback note on stderr.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -98,5 +102,48 @@ assert_eq "$GATE_RC" "0" "d. a zero-selection merge: the gate passes"
 labsline="$(grep '^labsfile=' "$LABLOG" | tail -1)"
 assert_contains "$labsline" "govern-post-merge-check." "d. ...and GOVERN_LABS_FILE is SET to a file"
 assert_contains "$(cat "$LABLOG")" "size=0" "d. ...and that file exists and is EMPTY (cheap sections skip)"
+
+# ── e. the override selector replaces the node selector ──────────────────────────────────────────
+# GOVERN_POST_MERGE_LABS_SELECT set with eval/labs/select.js ALSO present: the override wins, runs
+# in the merged checkout with the changed-file path as $2 after --changed, and its stdout is what
+# the CMD receives. The override emits the changed list's own entries EXCEPT tools/ (the node
+# selector's output would not be consulted at all).
+cat > "$T/pusher/eval/labs/select.js" <<'SELECTOR'
+const fs = require('fs');
+console.log('node-selector-was-NOT-consulted');
+SELECTOR
+SELLOG="$T/sellog.txt"; export SELLOG
+# A bare script path is the common override shape: the gate APPENDS --changed <file> to the
+# command string, so the selector is invoked as `bash <script> --changed <path>` in the checkout.
+cat > "$T/selwrap.sh" <<'WRAP'
+#!/usr/bin/env bash
+{ printf 'args=%s\n' "$*"; printf 'cwd=%s/markers/override.txt\n' "$PWD"; } >> "$SELLOG"
+[ "${1:-}" = "--changed" ] || exit 3
+cat "$2"
+WRAP
+export GOVERN_POST_MERGE_LABS_SELECT="bash $T/selwrap.sh"
+mkdir -p "$T/pusher/markers"
+printf x > "$T/pusher/markers/override.txt"
+( cd "$T/pusher" && mkdir -p src tools && echo C > src/c.js && echo T > tools/t.txt \
+  && git add -A && git commit -qm mixed && git push -q origin main )
+rungate
+assert_eq "$GATE_RC" "0" "e. the override selector: the gate passes"
+assert_contains "$GATE_ERR" "lab selection:" "e. ...and logs the override's selection"
+assert_contains "$GATE_ERR" "src/c.js" "e. ...naming the changed files the override picked"
+econtent="$(grep '^content=' "$LABLOG" | tail -1)"
+assert_contains "$econtent" "src/c.js" "e. ...and the CMD got the OVERRIDE's output"
+assert_not_contains "$(cat "$LABLOG")" "node-selector-was-NOT-consulted" "e. ...and NOT the node selector's (override wins)"
+assert_contains "$(cat "$SELLOG")" "args=--changed" "e. ...and the override got the --changed argv contract"
+assert_contains "$(cat "$SELLOG")" "govern-post-merge-check." "e. ...pointing at the gate's changed-file list"
+assert_contains "$(cat "$SELLOG")" "check/markers/override.txt" "e. ...and ran with the temp checkout as cwd"
+
+# ── f. a failing override selector: fallback to the full suite ───────────────────────────────────
+export GOVERN_POST_MERGE_LABS_SELECT='exit 4'
+: > "$LABLOG"
+rungate
+assert_eq "$GATE_RC" "0" "f. a failing override: the gate still passes"
+assert_contains "$GATE_ERR" "selector failed; falling back to the full lab suite" "f. ...with the fallback note"
+assert_contains "$(cat "$LABLOG")" "labsfile=" "f. ...and the CMD got an EMPTY GOVERN_LABS_FILE"
+unset GOVERN_POST_MERGE_LABS_SELECT SELLOG
 
 assert_done

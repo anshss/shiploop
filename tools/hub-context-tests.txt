@@ -39,3 +39,4 @@ test-mechanism-local-edits
 test-update-keeps-local-hooks-and-ignores
 test-update-run-probe
 test-pipefail-shape-guard
+test-resolve-labs-select

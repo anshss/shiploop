@@ -92,8 +92,12 @@ print(d.get("prompt") or "")
       [ -f "$prop_sh" ] || prop_sh="$SELF_ROOT/govern/ticket-proposal.sh"
       source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null \
         || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
-      tickets_file="${META_ROOT:-}/queue/tickets.md"
-      if [ -f "$prop_sh" ] && [ -n "${META_ROOT:-}" ] && [ -f "$tickets_file" ]; then
+      # Queue root: the GOVERN_WS_ROOT test seam wins when exported (mk_ws_stub always sets
+      # it), so a test stub resolves its own queue instead of an inherited META_ROOT -- the
+      # same pin lib/common.sh applies. Production sets no GOVERN_WS_ROOT and lands on META_ROOT.
+      tickets_root="${GOVERN_WS_ROOT:-${META_ROOT:-}}"
+      tickets_file="$tickets_root/queue/tickets.md"
+      if [ -f "$prop_sh" ] && [ -n "$tickets_root" ] && [ -f "$tickets_file" ]; then
         prop_out="$(bash "$prop_sh" "$tnum" "$tickets_file" 2>/dev/null || true)"
         if [ -z "$prop_out" ]; then
           ticket_clause="Ticket-shaped, #${tnum} has no \`**Proposed solution:**\` yet → write one first; with one → a WORKER, one per ticket:"

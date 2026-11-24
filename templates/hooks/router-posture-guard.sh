@@ -316,7 +316,11 @@ if [ "$tool_name" = "Agent" ]; then
   [ -f "$prop_sh" ] || prop_sh="$SELF_ROOT/govern/ticket-proposal.sh"
   source "$SELF_ROOT/scripts/lib/workspace.sh" 2>/dev/null \
     || source "$SELF_ROOT/lib/workspace.sh" 2>/dev/null || true
-  tickets_file="${META_ROOT:-}/queue/tickets.md"
+  # Queue root: the GOVERN_WS_ROOT test seam wins when exported (mk_ws_stub always sets
+  # it), so a test stub resolves its own queue instead of an inherited META_ROOT -- the
+  # same pin lib/common.sh applies. Production sets no GOVERN_WS_ROOT and lands on META_ROOT.
+  tickets_root="${GOVERN_WS_ROOT:-${META_ROOT:-}}"
+  tickets_file="$tickets_root/queue/tickets.md"
   # ticket_block_exists: the ONE fact the ticket-route deny path below needs that prose can't
   # supply -- is this a REAL ticket, not a stale reference, a typo, or a bare "ticket" mention?
   # Degrades to "no" (never a hard fail) when the file isn't resolvable, same posture as the
@@ -349,7 +353,7 @@ if [ "$tool_name" = "Agent" ]; then
     # not just the first -- a batch worker with one proposed and one bare ticket must still refuse.
     if [ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]; then
       gate_tnums="$(resolve_tnum)"
-      if [ -n "$gate_tnums" ] && [ -f "$prop_sh" ] && [ -n "${META_ROOT:-}" ] && [ -f "$tickets_file" ]; then
+      if [ -n "$gate_tnums" ] && [ -f "$prop_sh" ] && [ -n "$tickets_root" ] && [ -f "$tickets_file" ]; then
         # ticket-proposal.sh is the thin CLI over govern::ticket_proposal -- the ONE
         # implementation that knows what a proposal is (placeholder text reads as absent);
         # this hook never re-parses the ticket file itself.
