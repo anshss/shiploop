@@ -238,4 +238,31 @@ out="$(GOVERN_CLAUDE_SCRIPT_IGNORE="ghost" bash "$TOOL" 2>&1)"; rc=$?
 assert_eq "$rc" "1" "22. GOVERN_CLAUDE_SCRIPT_IGNORE does not exempt a wired-but-missing package.json script"
 assert_contains "$out" "package.json script 'ghost'" "22. still hard-fails on the wired-but-missing script"
 
+# ── 23. bare run (GOVERN_RUN_DIR unset) leaves nothing untracked under governor/ ────────────
+# The runtime caches a govern script can write outside a governor run (repo-visibility and the
+# claude --help capability probes, which fall back to governor/ without a run dir) are listed in
+# the hub templates/gitignore governor block, so they never dirty git status for the NEXT
+# update's Phase 1 dirty-tree precondition.
+cat > "$ROOT/package.json" <<'PJEOF'
+{"scripts": {"dev": "bash scripts/dev.sh"}}
+PJEOF
+git init -q "$ROOT"
+cp "$(cd "$DIR/../.." && pwd)/gitignore" "$ROOT/.gitignore"
+mkdir -p "$ROOT/governor"
+for f in .repo-visibility .claude-edp-support .claude-tools-support; do
+  printf 'acme/web public\n' > "$ROOT/governor/$f"
+done
+# governor/.ticket-seq is the tracked ticket high-water mark (not a runtime cache): commit it the
+# way a real workspace has it, so only genuinely untracked runtime files can dirty the status.
+if [ -f "$ROOT/governor/.ticket-seq" ]; then
+  git -C "$ROOT" add governor/.ticket-seq
+  git -C "$ROOT" config user.email t@t
+  git -C "$ROOT" config user.name t
+  git -C "$ROOT" commit -qm "fixture: ticket-seq"
+fi
+out="$(env -u GOVERN_RUN_DIR -u GOVERN_VIS_CACHE -u GOVERN_TOOLS_PROBE_CACHE bash "$TOOL" 2>&1)"; rc=$?
+assert_eq "$rc" "0" "23. bare run (no GOVERN_RUN_DIR) exits 0"
+assert_eq "$(git -C "$ROOT" status --porcelain -- governor/ | wc -l | tr -d ' ')" "0" \
+  "23. nothing untracked under governor/ after a bare run"
+
 assert_done

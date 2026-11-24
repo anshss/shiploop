@@ -120,4 +120,44 @@ assert_eq "$(grep -cxF '.brand-new-dir/' "$We/.gitignore")" "1" "d. first run ap
 grep -qxF '.specs/' "$We/.gitignore" && r=readded || r=removed
 assert_eq "$r" "removed" "d. and still leaves the removed line out"
 
+# ── e. first run tells "removed" from "never received" by the workspace stamp ────────────────
+# governor/.pending-sync/ first shipped in 1.20.7 (templates/lib/gitignore-baseline-versions.txt):
+# a workspace stamped BEFORE that release never received it, so it is appended; one stamped at or
+# after it was offered and deleted, so it stays out. An uncomparable stamp keeps the removed side.
+late='governor/.pending-sync/'
+pend_v="$(awk -F'\t' -v p="$late" '$1 == p {print $2; exit}' "$TEMPLATES/lib/gitignore-baseline-versions.txt")"
+assert_contains "$pend_v" "." "e. fixture sanity: the pattern has a dated row in the versions table"
+Wf="$ROOT/wsf"; cp -R "$W" "$Wf"
+grep -vxF "$late" "$Wf/.gitignore" > "$ROOT/gi" && cp "$ROOT/gi" "$Wf/.gitignore"
+rm -f "$Wf/scripts/lib/.gitignore-applied"
+printf '0.0.1\n' > "$Wf/scripts/lib/.harness-version"
+run_scaffold "$Wf" "$TEMPLATES" --component gitignore
+assert_eq "$(grep -cxF "$late" "$Wf/.gitignore")" "1" "e. stamp predates the first release: never received, appended"
+Wg="$ROOT/wsg"; cp -R "$W" "$Wg"
+grep -vxF "$late" "$Wg/.gitignore" > "$ROOT/gi" && cp "$ROOT/gi" "$Wg/.gitignore"
+rm -f "$Wg/scripts/lib/.gitignore-applied"
+printf '%s\n' "$pend_v" > "$Wg/scripts/lib/.harness-version"
+run_scaffold "$Wg" "$TEMPLATES" --component gitignore
+grep -qxF "$late" "$Wg/.gitignore" && r=readded || r=removed
+assert_eq "$r" "removed" "e. stamped exactly at the first release: offered before, left out"
+# The governor runtime caches config-check and the capability probes write outside a governor run
+# propagate to every workspace on update. The fixture's record also predates them, the way a
+# workspace last updated before the lines shipped looks.
+Wh="$ROOT/wsh"; cp -R "$W" "$Wh"
+grep -vxE 'governor/\.repo-visibility|governor/\.claude-edp-support|governor/\.claude-tools-support' \
+  "$Wh/.gitignore" > "$ROOT/gi" && cp "$ROOT/gi" "$Wh/.gitignore"
+grep -vxE 'governor/\.repo-visibility|governor/\.claude-edp-support|governor/\.claude-tools-support' \
+  "$Wh/scripts/lib/.gitignore-applied" > "$ROOT/rec" && cp "$ROOT/rec" "$Wh/scripts/lib/.gitignore-applied"
+run_scaffold "$Wh" "$TEMPLATES" --component gitignore
+for p in 'governor/.repo-visibility' 'governor/.claude-edp-support' 'governor/.claude-tools-support'; do
+  assert_eq "$(grep -cxF "$p" "$Wh/.gitignore")" "1" "e. $p lands on update"
+done
+# And an existing record keeps holding them out when the workspace deletes one (record branch untouched).
+Wi="$ROOT/wsi"; cp -R "$W" "$Wi"
+grep -vxF 'governor/.repo-visibility' "$Wi/.gitignore" > "$ROOT/gi" && cp "$ROOT/gi" "$Wi/.gitignore"
+[ -f "$Wi/scripts/lib/.gitignore-applied" ] || : # record exists from the fresh scaffold's config-merge
+run_scaffold "$Wi" "$TEMPLATES" --component gitignore
+grep -qxF 'governor/.repo-visibility' "$Wi/.gitignore" && r=readded || r=removed
+assert_eq "$r" "removed" "e. a recorded pattern stays out even though it is a runtime cache"
+
 assert_done

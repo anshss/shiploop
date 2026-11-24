@@ -156,10 +156,12 @@ Every one is additive and idempotent: a second run is a byte-level no-op. What e
 
 A template `.gitignore` pattern you removed on purpose stays removed: the record holds every pattern the
 update has offered, and a recorded pattern absent from `.gitignore` is skipped (one `left out` line
-names them). The first run on a workspace with no record treats an absent pattern that shipped earlier
-(`templates/lib/gitignore-baseline.txt`) or that comes from your repos and package manager as removed,
-so it can never bring a removal back; only a static pattern the baseline never listed is appended. To
-get a skipped pattern back, add it by hand.
+names them). The first run on a workspace with no record compares each absent baseline pattern
+(`templates/lib/gitignore-baseline.txt`) against your previous update stamp (`scripts/lib/.harness-version`):
+one first shipped in a release at or before that stamp is treated as removed by you and stays out, one
+that first shipped after it was never delivered to you and is appended. A pattern with no comparable
+stamp or version, or one that comes from your repos and package manager, is treated as removed, so the
+merge can never bring a removal back on a guess. To get a skipped pattern back, add it by hand.
 
 The seed rule is the load-bearing one. A hub seed trim (v1.14.0 cut `CLAUDE.md` 5,895 → 4,417 B) is
 worth propagating, but a real workspace's `CLAUDE.md` accumulates every promoted lesson — measured on

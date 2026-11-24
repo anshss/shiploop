@@ -730,6 +730,22 @@ EOF
   info "wrote README.md"
 }
 
+# version_ge A B — true when dotted version A is >= B (absent components are 0). A non-numeric
+# component returns false: the caller treats that as "cannot compare" and keeps the conservative
+# branch. Pure bash, no subshells per component.
+version_ge() {
+  local a="$1" b="$2" ra rb
+  while [ -n "$a" ] || [ -n "$b" ]; do
+    ra=${a%%.*}; rb=${b%%.*}
+    ra=${ra:-0}; rb=${rb:-0}
+    case "${ra}${rb}" in *[!0-9]*) return 1 ;; esac
+    if [ "$ra" -ne "$rb" ]; then [ "$ra" -gt "$rb" ] && return 0 || return 1; fi
+    case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+    case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+  done
+  return 0
+}
+
 component_gitignore() {
   log "component: .gitignore"
   # Same reason as component_readme: an update-driven run knows the repos + PM only
@@ -766,6 +782,14 @@ component_gitignore() {
   # the record but absent from .gitignore was removed on purpose and is never re-added; only
   # patterns the record has not seen are appended.
   local rec="scripts/lib/.gitignore-applied" base="$T/lib/gitignore-baseline.txt"
+  local basev="$T/lib/gitignore-baseline-versions.txt"
+  # The workspace's previous stamp: a baseline-listed pattern that first shipped after it was
+  # never received (append); one offered at or before it that is now absent was removed on
+  # purpose (leave out). Empty when the workspace has never been stamped.
+  local ws_stamp=""
+  if [ -f scripts/lib/.harness-version ]; then
+    ws_stamp="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' scripts/lib/.harness-version)"
+  fi
   local template_lines=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -786,13 +810,28 @@ component_gitignore() {
       else
         # First run with no record: a pattern that shipped before the record existed, or one
         # derived from this workspace's repos and package manager, and is absent here was
-        # either removed on purpose or never wanted, so it is recorded and left out. Only a
-        # static pattern the baseline has never listed is new and gets appended. Without the
-        # baseline nothing is known to be new, so nothing is appended.
+        # either removed on purpose or never wanted, so it is recorded and left out. A
+        # baseline-listed pattern absent here is told apart by the workspace's previous stamp
+        # against the pattern's first-shipped version: stamped after it (offered and deleted)
+        # it stays out; stamped before it (never received) it is appended. A pattern the
+        # baseline never listed, or one whose version or stamp cannot be compared, keeps the
+        # removed treatment: never resurrect a removal on a guess.
         case "$dyn" in *$'\n'"$line"$'\n'*) known=1 ;; esac
         if [ "$known" -eq 0 ]; then
           if [ ! -f "$base" ]; then known=1
-          elif grep -Fxq -- "$line" "$base" 2>/dev/null; then known=1; fi
+          elif grep -Fxq -- "$line" "$base" 2>/dev/null; then
+            local shipped=""
+            if [ -f "$basev" ]; then
+              shipped="$(awk -F'\t' -v p="$line" '$1 == p {print $2; exit}' "$basev")"
+            fi
+            if [ -z "$ws_stamp" ] || [ -z "$shipped" ]; then known=1
+            else
+              case "${ws_stamp}${shipped}" in
+                *[!0-9.]*) known=1 ;;
+                *) if version_ge "$ws_stamp" "$shipped"; then known=1; fi ;;
+              esac
+            fi
+          fi
         fi
       fi
       if [ "$known" -eq 1 ]; then removed+="${removed:+, }$line"; else missing+="$line"$'\n'; fi
