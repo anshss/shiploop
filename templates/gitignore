@@ -31,6 +31,11 @@ governor/claudemd-trim-proposals.md
 # per-agent background-task ledger the stop guard waits on. Per-machine runtime state, never source.
 governor/reports/
 governor/.bg-ledger/
+# caches a govern script writes even outside a governor run (GOVERN_RUN_DIR unset falls back to
+# governor/): per-repo visibility lookups and the claude --help capability probes. Runtime state.
+governor/.repo-visibility
+governor/.claude-edp-support
+governor/.claude-tools-support
 # Root lockfile policy — the ROOT uses ONE package manager (ROOT_PM in
 # scripts/lib/workspace.sh). The off-PM root lockfiles are ignored so a stray
 # `npm install` / `pnpm install` in the wrong PM can't commit a divergent root

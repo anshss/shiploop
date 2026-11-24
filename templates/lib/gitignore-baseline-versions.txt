@@ -1,0 +1,45 @@
+# First hub release that shipped each static pattern in templates/gitignore, one
+# "<pattern><TAB>version" row per pattern. Consumed by scaffold.sh's gitignore merge on a
+# workspace's FIRST update that has no scripts/lib/.gitignore-applied record: a
+# baseline-listed pattern (templates/lib/gitignore-baseline.txt, frozen) absent from the
+# workspace's .gitignore counts as "removed on purpose" only when its version here is at or
+# before the workspace's recorded stamp (scripts/lib/.harness-version); a pattern that first
+# shipped AFTER that stamp was never received, so it is appended. A row marked "unknown", or
+# a missing stamp, keeps the removed treatment (conservative: never resurrect a removal).
+# Regeneration duty: whenever a static pattern is added to (or removed from)
+# templates/gitignore, add (or drop) its row here. Derive the version from the pattern's
+# introducing commit:
+#   git log --format=%H --reverse -S'<pattern>' -- templates/gitignore
+# then take the VERSION of the first release commit at or after it (the introducing commit's
+# own VERSION when it is itself a "release: <version>" commit). A stale row re-adds a pattern
+# the workspace removed, or leaves a never-received one out, so keep it current.
+node_modules/	1.6.0
+logs/	1.6.0
+*.shiploop-new	1.20.7
+governor/pending-escalations.json	1.6.0
+governor/.govern.lock/	1.6.0
+governor/.bookkeep.lock/	1.6.0
+governor/.locks/	1.6.0
+governor/.pending-sync/	1.20.7
+governor/ticket-history.jsonl	1.6.0
+governor/.run-id	1.6.0
+governor/events.jsonl	1.18.0
+governor/claudemd-trim-proposals.md	1.18.0
+governor/reports/	1.20.17
+governor/.bg-ledger/	1.20.17
+.env	1.6.0
+.env.*	1.6.0
+!.env.example	1.6.0
+.DS_Store	1.6.0
+*.swp	1.6.0
+*.swo	1.6.0
+.claude/transcript.md	1.6.0
+.claude/projects/	1.6.0
+.worktrees/*	1.6.0
+!.worktrees/.gitkeep	1.6.0
+.wt/	1.19.13
+worktree.env	1.6.0
+.governor-notes.md	1.13.2
+.dispatch-packet.md	1.19.13
+.plans/	1.6.0
+.specs/	1.6.0
