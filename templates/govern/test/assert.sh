@@ -3,6 +3,15 @@
 set -euo pipefail
 ASSERT_FAILS=0
 
+# Ambient GOVERN_* names as they arrived from the PARENT environment, snapshotted
+# before this file exports anything of its own. The sweep at the bottom of the file
+# unsets the ones this file does not pin itself, so a run is identical inside and
+# outside a live governor session. Guarded on GOVERN_SANDBOX_SWEPT so a second
+# source never re-sweeps away a knob the test opted back in after the first source.
+if [[ -z "${GOVERN_SANDBOX_SWEPT:-}" ]]; then
+  GOVERN_SANDBOX_AMBIENT="$(env | sed -n 's/^\(GOVERN_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u)"
+fi
+
 # ── Layout resolver ──────────────────────────────────────────────────────────
 # These tests run in TWO layouts: a live workspace (govern at scripts/govern/, prompt
 # files at <root>/governor/, hooks at <root>/scripts/) and the template repo itself
@@ -276,4 +285,197 @@ assert_not_contains() { # haystack needle message
     printf 'FAIL - %s\n       [%s] unexpectedly PRESENT in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1))
   else printf 'ok   - %s\n' "$3"; fi
 }
-assert_done() { [[ "$ASSERT_FAILS" -eq 0 ]] || { printf '\n%d assertion(s) failed\n' "$ASSERT_FAILS"; exit 1; }; printf '\nall assertions passed\n'; }
+# ── Per-test sandbox ─────────────────────────────────────────────────────────
+# Every test on this host shares one $HOME, one temp dir and one git config, so
+# an earlier test's leftovers sit invisible-green in isolation and redden a
+# different test hours later in full-run order. The harness, not each test, owns
+# the environment: sourcing this file installs a per-test sandbox BEFORE the test
+# body runs: a private HOME holding the canary dotfile, a private TMPDIR, and
+# git config pointed inside the sandbox with the system config disabled, and
+# assert_done verifies it after. A fixture that reads the canary dotfile sees the
+# sandbox's copy, so reaching past the sandbox produces a loud failure instead of
+# a silent pass; a fixture that writes the escape marker outside the sandbox is
+# named by the verification. A test that genuinely needs host behavior opts out
+# explicitly with a named one-line reason:
+#   govern_sandbox_off  # reason: this test drives the real host X
+# The sandbox is additive: tests that never think about it keep passing, they
+# just stop seeing each other's residue.
+GOVERN_SANDBOX_REAL_HOME="${HOME}"
+GOVERN_SANDBOX_REAL_TMPDIR="${TMPDIR:-}"
+GOVERN_SANDBOX_REAL_GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-}"
+GOVERN_SANDBOX_REAL_GIT_CONFIG_SYSTEM="${GIT_CONFIG_SYSTEM:-}"
+GOVERN_SANDBOX_REAL_GIT_CONFIG_NOSYSTEM="${GIT_CONFIG_NOSYSTEM:-}"
+GOVERN_SANDBOX_ROOT=""
+if [[ "${GOVERN_SANDBOX:-1}" != "0" && -z "${GOVERN_SANDBOX_ROOT:-}" ]]; then
+  # Normalize the trailing slash (macOS's TMPDIR ends in one): a doubled slash in
+  # the sandbox root leaks into every path a mechanism resolves from TMPDIR, and
+  # mechanisms that canonicalize then disagree with tests that compare verbatim.
+  _sbx_tmpbase="${GOVERN_SANDBOX_REAL_TMPDIR:-/tmp}"
+  GOVERN_SANDBOX_ROOT="$(mktemp -d "${_sbx_tmpbase%/}/govern-sandbox.XXXXXXXX")"
+  unset _sbx_tmpbase
+  mkdir -p "$GOVERN_SANDBOX_ROOT/home" "$GOVERN_SANDBOX_ROOT/tmp"
+  # The canary: a dotfile inside the private HOME whose ONLY copy carries the
+  # sandbox root as its token. Reading it anywhere proves which HOME answered.
+  printf '%s\n' "$GOVERN_SANDBOX_ROOT" > "$GOVERN_SANDBOX_ROOT/home/.govern-sandbox-canary"
+  # Pin the branch name every fixture in this suite assumes: the host operator's
+  # global gitconfig may or may not set init.defaultBranch, and a fixture inited
+  # on master while its assertions say main is exactly the class of hidden host
+  # dependency the sandbox exists to remove.
+  printf '[init]\n\tdefaultBranch = main\n' > "$GOVERN_SANDBOX_ROOT/home/.gitconfig"
+  HOME="$GOVERN_SANDBOX_ROOT/home"; export HOME
+  TMPDIR="$GOVERN_SANDBOX_ROOT/tmp"; export TMPDIR
+  GIT_CONFIG_GLOBAL="$GOVERN_SANDBOX_ROOT/home/.gitconfig"; export GIT_CONFIG_GLOBAL
+  GIT_CONFIG_SYSTEM="$GOVERN_SANDBOX_ROOT/home/.gitconfig-system"; export GIT_CONFIG_SYSTEM
+  GIT_CONFIG_NOSYSTEM=1; export GIT_CONFIG_NOSYSTEM
+  # BSD mktemp (macOS) ignores TMPDIR entirely and always lands in the shared
+  # per-user temp dir, so a bare `mktemp` inside a mechanism script would write
+  # cross-test residue the private TMPDIR cannot contain. Shim it: a no-template
+  # call gets a template inside the sandbox TMPDIR, everything else passes
+  # through verbatim. Tests that prepend their own stub dirs keep winning.
+  GOVERN_SANDBOX_REAL_PATH="$PATH"
+  GOVERN_SANDBOX_REAL_MKTEMP="$(command -v mktemp || command -v /usr/bin/mktemp)"
+  mkdir -p "$GOVERN_SANDBOX_ROOT/bin"
+  # Quoted heredoc on purpose: every $ below must reach the shim literally, and
+  # the real mktemp path is spliced in by sed (a placeholder, not an unquoted
+  # heredoc, so no expansion surprises in the shim's own array arithmetic).
+  cat > "$GOVERN_SANDBOX_ROOT/bin/mktemp" <<'EOF'
+#!/usr/bin/env bash
+# Sandbox mktemp shim: BSD mktemp ignores the TMPDIR variable, so a bare call
+# would land in the shared per-user temp dir instead of this test's sandbox. A
+# call with no template argument gets one inside TMPDIR; a call WITH a template
+# passes that template through verbatim: it carries its own directory (mktemp
+# honors the directory portion of a template even when it ignores TMPDIR), so
+# dropping it would silently redirect the caller's files out of the sandbox and
+# erase any distinctive name a downstream assertion matches on.
+tpl=""; args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -t) args+=("$1" "$2"); shift 2 ;;
+    -*) args+=("$1"); shift ;;
+    *) tpl="$1"; args+=("$1"); shift ;;
+  esac
+done
+if [ -z "$tpl" ]; then args+=("${TMPDIR:-/tmp}/tmp.XXXXXXXXXX"); fi
+exec __GOVERN_REAL_MKTEMP__ ${args[@]+"${args[@]}"}
+EOF
+  sed "s|__GOVERN_REAL_MKTEMP__|$GOVERN_SANDBOX_REAL_MKTEMP|" \
+    "$GOVERN_SANDBOX_ROOT/bin/mktemp" > "$GOVERN_SANDBOX_ROOT/bin/mktemp.2"
+  mv "$GOVERN_SANDBOX_ROOT/bin/mktemp.2" "$GOVERN_SANDBOX_ROOT/bin/mktemp"
+  chmod +x "$GOVERN_SANDBOX_ROOT/bin/mktemp"
+  PATH="$GOVERN_SANDBOX_ROOT/bin:$PATH"; export PATH
+  # Drop the sandbox tree on ANY exit path, not just assert_done: a test that
+  # exits 77 (hub-context skip) or dies mid-body must not leave the tree behind.
+  # assert_done re-arms this as a chain that runs AFTER the test's own cleanup.
+  trap 'govern_sandbox_drop' EXIT
+fi
+
+govern_sandbox_verify() { # -> FAIL lines for any breach; nonzero when breached
+  local bad=0 hit tok
+  tok="$(cat "$GOVERN_SANDBOX_ROOT/home/.govern-sandbox-canary" 2>/dev/null || true)"
+  if [[ "$tok" != "$GOVERN_SANDBOX_ROOT" ]]; then
+    printf 'FAIL - sandbox canary missing or rewritten in the private HOME (%s)\n' \
+      "$GOVERN_SANDBOX_ROOT/home/.govern-sandbox-canary"
+    bad=1
+  fi
+  # An escape is any file the test dropped OUTSIDE its sandbox carrying the
+  # harness's distinctive escape marker. Tests name their fixtures, so residue
+  # written past the sandbox carries the marker with it; arbitrary host writes
+  # are out of scope for the same reason a snapshot diff would be (the host
+  # writes to its own HOME concurrently with the run).
+  while IFS= read -r hit; do
+    [[ -n "$hit" ]] || continue
+    printf 'FAIL - test escaped its sandbox: wrote %s outside it\n' "$hit"
+    bad=1
+  done < <(find "$GOVERN_SANDBOX_REAL_HOME" /private/tmp /tmp \
+             ${GOVERN_SANDBOX_REAL_TMPDIR:+"$GOVERN_SANDBOX_REAL_TMPDIR"} \
+             -maxdepth 1 -name 'govern-sandbox-escape-*' 2>/dev/null)
+  return "$bad"
+}
+
+govern_sandbox_drop() { # remove the sandbox tree. Deliberately does NOT touch the
+  # environment: tests clean their own fixtures and reap their background fixtures
+  # in their own EXIT traps, and that late code still reads sandbox paths, so a
+  # mid-test restore of $TMPDIR here turned a test's own `rm -rf "$TMPDIR"` trap
+  # into a wipe of the HOST temp dir. Restoration is the opt-out's job only.
+  [[ -n "${GOVERN_SANDBOX_ROOT:-}" ]] || return 0
+  # `command rm`: a test may shadow rm with a logging wrapper (test-lock-vanished
+  # does); the drop must never route through it.
+  command rm -rf "$GOVERN_SANDBOX_ROOT"
+  GOVERN_SANDBOX_ROOT=""
+  return 0
+}
+
+govern_sandbox_off() { # opt out: drop the sandbox and restore host behavior. Call
+  # right after sourcing assert.sh with a named one-line reason in the comment.
+  govern_sandbox_drop
+  PATH="$GOVERN_SANDBOX_REAL_PATH"; export PATH
+  HOME="$GOVERN_SANDBOX_REAL_HOME"; export HOME
+  if [[ -n "$GOVERN_SANDBOX_REAL_TMPDIR" ]]; then TMPDIR="$GOVERN_SANDBOX_REAL_TMPDIR"; export TMPDIR; else unset TMPDIR; fi
+  if [[ -n "$GOVERN_SANDBOX_REAL_GIT_CONFIG_GLOBAL" ]]; then GIT_CONFIG_GLOBAL="$GOVERN_SANDBOX_REAL_GIT_CONFIG_GLOBAL"; export GIT_CONFIG_GLOBAL; else unset GIT_CONFIG_GLOBAL 2>/dev/null || true; fi
+  if [[ -n "$GOVERN_SANDBOX_REAL_GIT_CONFIG_SYSTEM" ]]; then GIT_CONFIG_SYSTEM="$GOVERN_SANDBOX_REAL_GIT_CONFIG_SYSTEM"; export GIT_CONFIG_SYSTEM; else unset GIT_CONFIG_SYSTEM 2>/dev/null || true; fi
+  if [[ -n "$GOVERN_SANDBOX_REAL_GIT_CONFIG_NOSYSTEM" ]]; then GIT_CONFIG_NOSYSTEM="$GOVERN_SANDBOX_REAL_GIT_CONFIG_NOSYSTEM"; export GIT_CONFIG_NOSYSTEM; else unset GIT_CONFIG_NOSYSTEM 2>/dev/null || true; fi
+  return 0
+}
+
+# Final EXIT chain: run whatever EXIT trap the test had in place (its own fixture
+# cleanup, the bg-reap chain), THEN drop the sandbox. Same peel bg_reap uses.
+govern_sandbox_exit() {
+  if [[ -n "${GOVERN_SANDBOX_PREV_EXIT_CMD:-}" ]]; then eval "$GOVERN_SANDBOX_PREV_EXIT_CMD"; fi
+  govern_sandbox_drop
+}
+
+assert_done() {
+  if [[ -n "${GOVERN_SANDBOX_ROOT:-}" ]] && ! govern_sandbox_verify; then
+    ASSERT_FAILS=$((ASSERT_FAILS + 1))
+  fi
+  # Wrap the current EXIT trap so the sandbox drops AFTER the test's own cleanup
+  # (which still reads sandbox paths), not before it. The source-armed
+  # govern_sandbox_drop trap is replaced by this chain; a test that later swaps
+  # the trap for its own simply loses the drop and leaks the (small) tree.
+  if [[ -n "${GOVERN_SANDBOX_ROOT:-}" ]]; then
+    local __spec
+    __spec="$(trap -p EXIT)"
+    GOVERN_SANDBOX_PREV_EXIT_CMD=""
+    if [[ "$__spec" == trap\ --\ * ]]; then
+      GOVERN_SANDBOX_PREV_EXIT_CMD="${__spec#trap -- }"
+      GOVERN_SANDBOX_PREV_EXIT_CMD="${GOVERN_SANDBOX_PREV_EXIT_CMD% EXIT}"
+      GOVERN_SANDBOX_PREV_EXIT_CMD="${GOVERN_SANDBOX_PREV_EXIT_CMD#\'}"
+      GOVERN_SANDBOX_PREV_EXIT_CMD="${GOVERN_SANDBOX_PREV_EXIT_CMD%\'}"
+    fi
+    trap 'govern_sandbox_exit' EXIT
+  fi
+  [[ "$ASSERT_FAILS" -eq 0 ]] || { printf '\n%d assertion(s) failed\n' "$ASSERT_FAILS"; exit 1; }
+  printf '\nall assertions passed\n'
+}
+
+# Sweep ambient GOVERN_* knobs this file does not pin: the pins above are the
+# suite defaults, and a live governor session's exported knobs (GOVERN_ALLOW_CONCURRENT,
+# GOVERN_WORKER_TIMEOUT, GOVERN_ADVISOR_BUDGET, ...) must not perturb a run from
+# inside one. The sandbox control knob is excluded so a caller may still pass
+# GOVERN_SANDBOX=0 through the environment. Runs once per process, first source only.
+if [[ -z "${GOVERN_SANDBOX_SWEPT:-}" ]]; then
+  if [[ -n "${GOVERN_SANDBOX_AMBIENT:-}" ]]; then
+    # The pinned set is derived from THIS file's own column-0 `export GOVERN_*`
+    # lines, never from the current environment: a knob the test process itself
+    # was launched with must stay unsettable-by-inheritance, while a pin this
+    # file sets stays even when the parent exported a different value. (The
+    # mk_ws_stub exports are indented, so they are not pinned here: an ambient
+    # GOVERN_WS_ROOT from a live session is residue and gets swept.) Column 0
+    # keeps this robust: new pins added at the top of the file are picked up
+    # automatically; nothing to maintain twice.
+    _gov_pinned="$(sed -n 's/^export \(.*\)$/\1/p' "${BASH_SOURCE[0]}" \
+      | grep -oE 'GOVERN_[A-Za-z0-9_]+' | sort -u || true)"
+    GOVERN_SANDBOX_PINNED=" $(printf '%s\n' "$_gov_pinned" | tr '\n' ' ') GOVERN_FIX_CI "
+    unset _gov_pinned
+    for _g in ${GOVERN_SANDBOX_AMBIENT}; do
+      # The sandbox's own control knobs are never swept (a caller may pass
+      # GOVERN_SANDBOX=0 through the environment to skip arming).
+      case "$_g" in GOVERN_SANDBOX|GOVERN_SANDBOX_SWEPT) continue ;; esac
+      case "$GOVERN_SANDBOX_PINNED" in *" $_g "*) continue ;; esac
+      unset "$_g"
+    done
+    unset GOVERN_SANDBOX_PINNED
+  fi
+  unset GOVERN_SANDBOX_AMBIENT
+  GOVERN_SANDBOX_SWEPT=1
+fi

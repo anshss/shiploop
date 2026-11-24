@@ -61,9 +61,13 @@ set -e
 assert_eq "$rc6" "7" "kill switch preserves a failing exit code"
 
 # ── hygiene: no temp files left behind, and zero model invocations in the script ─────────────────
-before="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'govern-verify-filter.*' 2>/dev/null | wc -l | tr -d ' ')"
-"$VF" -- true >/dev/null 2>&1
-after="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'govern-verify-filter.*' 2>/dev/null | wc -l | tr -d ' ')"
+# The capture file is created under TMPDIR, so BOTH the producer run and the scan
+# are scoped to this test's own tree: sibling tests invoke the filter concurrently
+# in the shared temp dir, and counting it raced them under --jobs (the count moved
+# between the two finds through no act of this test).
+before="$(find "$TMP" -maxdepth 1 -name 'govern-verify-filter.*' 2>/dev/null | wc -l | tr -d ' ')"
+TMPDIR="$TMP" "$VF" -- true >/dev/null 2>&1
+after="$(find "$TMP" -maxdepth 1 -name 'govern-verify-filter.*' 2>/dev/null | wc -l | tr -d ' ')"
 assert_eq "$after" "$before" "temp capture file is cleaned up on exit"
 
 # The three new mechanisms are deterministic BY DESIGN — a `claude` invocation here would be a

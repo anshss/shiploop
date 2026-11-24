@@ -641,7 +641,10 @@ do_move() {
   [ "${WRAP_TEST_FAIL_AT:-}" = "pre-rename" ] && abort "test-injected failure before rename"
   if [ "${WRAP_TEST_HANG_BEFORE_RENAME:-0}" = "1" ]; then
     info "TEST: hanging before rename (awaiting signal)"
-    sleep 10
+    # Long enough that the injecting test observes the staging window even under
+    # a loaded parallel suite runner; the injected INT (to the whole job group)
+    # kills the sleep directly, so this never delays a signaled rollback.
+    sleep 60
   fi
 
   mv -- "$STAGING" "$NAME" || abort "could not rename staging to $NAME"
