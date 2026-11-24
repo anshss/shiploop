@@ -3559,7 +3559,7 @@ govern::extract_report() {
 # check off (prints nothing). The default lives here and nowhere else.
 govern::queue_stale_copy() { # [tickets-file]
   [[ "${GOVERN_QUEUE_STALE_GUARD:-1}" == "0" ]] && return 0
-  local f="${1:-$TICKETS_FILE}" dir base n added subjects found=0 out=""
+  local f="${1:-$TICKETS_FILE}" dir base n added subjects diff_head found=0 out=""
   [[ -f "$f" ]] || return 0
   dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
   [[ -n "$dir" ]] || return 0
@@ -3590,7 +3590,8 @@ govern::queue_stale_copy() { # [tickets-file]
   done < <(comm -13 <(printf '%s\n' "$head_nums") <(printf '%s\n' "$work_nums"))
   [[ "$found" == "1" ]] || return 0
   printf '%s' "$out"
-  git -C "$dir" diff --no-color -U0 -- "$base" 2>/dev/null | head -40 || true
+  diff_head="$(git -C "$dir" diff --no-color -U0 -- "$base" 2>/dev/null || true)"
+  sed -n '1,40p' <<<"$diff_head"
   return 0
 }
 

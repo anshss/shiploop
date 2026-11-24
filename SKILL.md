@@ -1,6 +1,6 @@
 ---
 name: shiploop
-description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to worker subagents (sonnet by default, raised per dispatch by the advisor), promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
+description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to workers, each a single-ticket session run as a subagent (sonnet by default, raised per dispatch by the advisor), promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
 ---
 
 # shiploop — self-improving multi-agent harness
