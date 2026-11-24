@@ -25,6 +25,11 @@ HOOK_SRC="$DIR/../../hooks/ticket-sweep-reminder.sh"
 [[ -f "$HOOK_SRC" ]] || { echo "SKIP: ticket-sweep-reminder.sh not found"; exit 77; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# The hook under test keeps its per-session sweep markers and baselines under ${TMPDIR:-/tmp}
+# keyed on session ids that are fixed strings here, so two parallel runs of this test would
+# share state and flake. Pin TMPDIR to this run's own mktemp tree so the markers land (and
+# die) inside it.
+TMPDIR="$T"; export TMPDIR
 mk_ws_stub "$T"
 mkdir -p "$T/scripts/govern/lib" "$T/queue" "$T/.claude/shiploop/validation"
 cp "$HOOK_SRC" "$T/scripts/ticket-sweep-reminder.sh"

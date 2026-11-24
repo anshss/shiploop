@@ -74,6 +74,10 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 required by the hook
   { echo "SKIP: router-posture-guard.sh not resolvable in this layout"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# The guard writes its per-session counters under ${TMPDIR:-/tmp}; session ids here are fixed
+# strings, so two parallel runs of this test would share counter state and flake. Pin TMPDIR
+# to this run's own mktemp tree so every counter lands (and dies) inside it.
+TMPDIR="$T"; export TMPDIR
 mk_ws_stub "$T"   # scripts/lib/workspace.sh -> META_ROOT="$T", so tickets_file resolves to $T/queue/tickets.md
 
 # Sandbox: copy the real guard under a controlled SELF_ROOT (dirname(guard)/..) so the
