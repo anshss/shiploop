@@ -15,12 +15,12 @@
 #
 # Design constraints, shared with the once-per-session reminder this hook extends:
 #   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
-#     advises via additionalContext. Four deliberate exceptions elsewhere in
+#     advises via additionalContext. Five deliberate exceptions elsewhere in
 #     this file return permissionDecision "deny": the verify-filter lever (a
 #     Bash call, only when it can't safely rewrite instead), the ticket-route
 #     guard (an Agent call, and only once a referenced ticket number is
-#     confirmed to exist), the proposed-solution gate (an Agent call, worker
-#     dispatches only), and the worker-spawns-worker guard (an Agent call
+#     confirmed to exist), the proposed-solution gate and the dispatch preparer
+#     (Agent calls, worker dispatches only; the preparer denies only a pre-dispatch skip/refuse), and the worker-spawns-worker guard (an Agent call
 #     whose CALLER is itself a worker). Either way the script always exits 0.
 #   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
@@ -189,6 +189,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
   IFS= read -r agent_name
   IFS= read -r agent_type
   IFS= read -r permission_mode
+  IFS= read -r agent_model
 } < <(printf '%s' "$payload" | python3 -c '
 import sys, json
 try:
@@ -212,6 +213,7 @@ fields = [
     g("name"),
     d.get("agent_type") or "",
     d.get("permission_mode") or "",
+    g("model"),
 ]
 for f in fields:
     print(f.replace("\t", " ").replace("\n", " "))
@@ -224,6 +226,7 @@ agent_desc="${agent_desc:-}"
 agent_name="${agent_name:-}"
 agent_type="${agent_type:-}"
 permission_mode="${permission_mode:-}"
+agent_model="${agent_model:-}"
 [ -n "$tool_name" ] || exit 0
 
 # --- worker-spawns-worker: fires even for a worker caller (see header SIXTH behavior) -------
@@ -382,6 +385,84 @@ print(json.dumps({
         fi
       fi
     fi
+    # ── EIGHTH behavior: the dispatch preparer ──────────────────────────────────────────────────
+    # pre-dispatch-check.sh (dependency, failure-streak and drift gates) and dispatch-packet.sh
+    # (worktree, packet, model) only run when the advisor remembers to run them, so this hook runs
+    # them. If no packet named in the prompt exists, lists every ticket in the call and is fresher
+    # than GOVERN_DISPATCH_FRESH_HOURS (default 6), the hook cuts one the way govern:dispatch does:
+    # the pre-dispatch gates first, then dispatch-packet.sh. A skip or refuse verdict is the one
+    # deny left, and it carries the verdict line. The `model` the call passed (none means sonnet) is
+    # written into the packet's `Model:` line, never denied. Every allowed spawn returns the
+    # tickets' Proposed solution and Done when blocks plus the packet path as additionalContext, so
+    # the advisor sees the ticket at spawn time. Anything the hook cannot prepare (no govern scripts
+    # on this install, no ticket number in the call, a packet that fails to write) degrades to a
+    # plain allow. GOVERN_DISPATCH_GATE=0 turns it off.
+    dp_ctx=""
+    if [ "${GOVERN_DISPATCH_GATE:-1}" != "0" ]; then
+      dp_nums="$(resolve_tnum | tr '\n' ' ' | sed -E 's/ +$//')"
+      dp_csv="$(printf '%s' "$dp_nums" | tr ' ' ',')"
+      dp_gdir="$SELF_ROOT/scripts/govern"
+      [ -f "$dp_gdir/dispatch-packet.sh" ] || dp_gdir="$SELF_ROOT/govern"
+      if [ -n "$dp_csv" ] && [ -f "$dp_gdir/dispatch-packet.sh" ] && [ -f "$dp_gdir/pre-dispatch-check.sh" ]; then
+        dp_call_lc="$(printf '%s' "${agent_model:-sonnet}" | tr '[:upper:]' '[:lower:]')"
+        case "$dp_call_lc" in
+          *haiku*) dp_alias="haiku" ;;
+          *opus*) dp_alias="opus" ;;
+          *) dp_alias="sonnet" ;;
+        esac
+        dp_packet="$(printf '%s' "$agent_prompt" | grep -oE '[^[:space:]]*\.dispatch-packet\.md' | sed -n '1p' || true)"
+        dp_fresh=0
+        if [ -n "$dp_packet" ] && [ -f "$dp_packet" ]; then
+          dp_fresh=1
+          dp_head="$(sed -n -E 's/^# Dispatch packet for (.*)$/\1/p' "$dp_packet" | sed -n '1p')"
+          for dp_n in $dp_nums; do
+            case ", ${dp_head}," in *", #${dp_n},"*) ;; *) dp_fresh=0 ;; esac
+          done
+          dp_created="$(sed -n -E '1s/^<!-- GOVERN:PACKET-CREATED ([0-9]+) -->$/\1/p' "$dp_packet")"
+          [ -n "$dp_created" ] || dp_created="$(stat -c %Y "$dp_packet" 2>/dev/null || stat -f %m "$dp_packet" 2>/dev/null || echo 0)"
+          dp_hours="${GOVERN_DISPATCH_FRESH_HOURS:-6}"
+          case "$dp_hours" in (''|*[!0-9]*) dp_hours=6 ;; esac
+          [ $(( $(date +%s) - dp_created )) -gt $(( dp_hours * 3600 )) ] && dp_fresh=0
+        fi
+        if [ "$dp_fresh" = "1" ]; then
+          # A fresh packet is reused as is; only its Model line follows the call.
+          if grep -q '^Model: ' "$dp_packet"; then
+            dp_tmp="$(sed -E "s/^Model: .*/Model: ${dp_alias}/" "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+          else
+            dp_tmp="$(awk -v m="Model: ${dp_alias}" '{print} /^Worktree: /&&!d{print m; d=1}' "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+          fi
+        else
+          dp_verdict="$(bash "$dp_gdir/pre-dispatch-check.sh" "$dp_csv" 2>/dev/null || true)"
+          dp_plan="$(printf '%s\n' "$dp_verdict" | grep -E '^plan: ' | tail -n 1 || true)"
+          dp_ok=0
+          if [ -n "$dp_plan" ]; then
+            [ "${dp_plan#plan: }" = "$dp_csv" ] && dp_ok=1
+          else
+            [ "$dp_verdict" = "proceed" ] && dp_ok=1
+          fi
+          if [ -n "$dp_verdict" ] && [ "$dp_ok" = "0" ]; then
+            python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "[DISPATCH GATE] Denied by the pre-dispatch gates for " + sys.argv[1] + ":\n" + sys.argv[2] + "\nResolve that (merge the dependency, clear the failure streak, port the hub diff) or pick another ticket. Set GOVERN_DISPATCH_GATE=0 to turn this off for the session.",
+  }
+}))
+' "$dp_csv" "$dp_verdict" 2>/dev/null || true
+            exit 0
+          fi
+          dp_out="$(bash "$dp_gdir/dispatch-packet.sh" "$dp_csv" --model "$dp_alias" 2>/dev/null || true)"
+          dp_packet="$(printf '%s\n' "$dp_out" | sed -n '1p')"
+        fi
+        if [ -n "$dp_packet" ] && [ -f "$dp_packet" ]; then
+          dp_blocks="$(bash "$dp_gdir/dispatch.sh" --print-blocks "$dp_csv" 2>/dev/null || true)"
+          dp_ctx="[DISPATCH] Worker spawn prepared. Packet: ${dp_packet} (Model: ${dp_alias}). The tickets as the worker will implement them:
+${dp_blocks}"
+        fi
+      fi
+    fi
     # The fan-out cap (see header FIFTH behavior): count this dispatch, and once a
     # session crosses MAX_WORKERS_PER_SESSION, emit ONE advisory per subsequent
     # dispatch -- never a deny; the deny path above is reserved for ticket-shaped
@@ -396,7 +477,14 @@ print(json.dumps({
       fanout_count=$((fanout_count + 1))
       printf '%s' "$fanout_count" > "$fanout_counter" 2>/dev/null || true
       if [ "$fanout_count" -gt "$MAX_WORKERS_PER_SESSION" ] 2>/dev/null; then
-        python3 -c '
+        # Folded into the one additionalContext object below: two JSON objects on stdout would not parse.
+        dp_ctx="${dp_ctx:+${dp_ctx}
+
+}[ROUTER POSTURE] This session has now dispatched ${fanout_count} workers. Each is a separate PR needing its own review and merge -- if this is one investigation spawning parallel units rather than ${fanout_count} genuinely independent tickets, prefer an investigator/sweep instead; independent tickets can keep dispatching adjacently, own worktree each. Set GOVERN_WORKER_FANOUT_NUDGE=0 to silence this for the session."
+      fi
+    fi
+    if [ -n "$dp_ctx" ]; then
+      python3 -c '
 import json, sys
 print(json.dumps({
   "hookSpecificOutput": {
@@ -404,8 +492,7 @@ print(json.dumps({
     "additionalContext": sys.argv[1],
   }
 }))
-' "[ROUTER POSTURE] This session has now dispatched ${fanout_count} workers. Each is a separate PR needing its own review and merge -- if this is one investigation spawning parallel units rather than ${fanout_count} genuinely independent tickets, prefer an investigator/sweep instead; independent tickets can keep dispatching adjacently, own worktree each. Set GOVERN_WORKER_FANOUT_NUDGE=0 to silence this for the session." 2>/dev/null || true
-      fi
+' "$dp_ctx" 2>/dev/null || true
     fi
     exit 0
   fi

@@ -84,6 +84,11 @@ export GOVERN_PROPOSAL_GATE=0        # unlike the knobs
                                       # pre-existing pre-dispatch-check.sh fixture (none of which
                                       # carry a **Proposed solution:** section) keeps testing what it
                                       # was written to test. Its own tests opt back in explicitly.
+export GOVERN_DISPATCH_GATE=0        # router-posture-guard.sh's dispatch-packet gate ships ON (same
+                                      # divergence as GOVERN_PROPOSAL_GATE above): it denies any worker
+                                      # spawn that names no fresh packet, which would deny every
+                                      # pre-existing worker-dispatch fixture. Its own test
+                                      # (test-dispatch-gate.sh) opts back in explicitly.
 export GOVERN_VF_DENY=0              # same shape of divergence: router-posture-guard.sh's
                                       # verify-filter denial ships ON by default (per CLAUDE.md
                                       # rule 12, a new blocking mechanism defaults off in THIS

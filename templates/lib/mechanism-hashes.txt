@@ -172,6 +172,9 @@ e532e30c0f1621d93f1683596727b3ef4704ba5dac84f0ac3c5916a78a70de20  govern/determi
 d144ae491b4d4b0955e8aa8797544067236c02e3e831587ecd26c96a41aacfbd  govern/dispatch-packet.sh
 efbb3aae5b0405304da1bff0a168ab8be14e632e9d4a44ac47fe015806df8f53  govern/dispatch-packet.sh
 
+# -- govern/dispatch.sh --
+0a3e92a462da093be437f6d2c81fd4a5a6b6c674565b6af0b2ac9d7f7dd2070e  govern/dispatch.sh
+
 # -- govern/dry-run.sh --
 689761372db04ffd04a9b0d433c54164e3528d092ab0069f3c631b23df4e103b  govern/dry-run.sh
 700f76a959b44bb44ffc7610a65d1682a41855140b3071c2679675edebe2bef2  govern/dry-run.sh

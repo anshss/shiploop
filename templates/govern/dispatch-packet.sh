@@ -19,14 +19,31 @@
 # The `#N` stays in the prompt because the PROPOSAL GATE reads the ticket number out of it
 # (resolve_tnum) -- that gate is unchanged by this script.
 #
-# Usage: dispatch-packet.sh <N>[,<N>...]
+# The packet records the model alias the worker is dispatched on as a `Model: <alias>` line (default
+# sonnet; --model haiku|sonnet|opus). router-posture-guard.sh compares the Agent call's `model`
+# param against that line, so the choice is made once, here, and enforced at spawn.
+#
+# Usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 govern::require git
 
-TICKETS_ARG="${1:-}"
-[[ -n "$TICKETS_ARG" ]] || govern::die "usage: dispatch-packet.sh <N>[,<N>...]"
+TICKETS_ARG=""
+MODEL_ALIAS="sonnet"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) [[ $# -ge 2 ]] || govern::die "--model needs a value (haiku|sonnet|opus)"; MODEL_ALIAS="$2"; shift 2 ;;
+    --model=*) MODEL_ALIAS="${1#--model=}"; shift ;;
+    *) [[ -z "$TICKETS_ARG" ]] || govern::die "usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]"
+       TICKETS_ARG="$1"; shift ;;
+  esac
+done
+[[ -n "$TICKETS_ARG" ]] || govern::die "usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]"
+case "$MODEL_ALIAS" in
+  haiku|sonnet|opus) ;;
+  *) govern::die "not a model alias: '$MODEL_ALIAS' (use haiku, sonnet or opus)" ;;
+esac
 IFS=',' read -r -a TICKET_NUMS <<< "$TICKETS_ARG"
 for _t in "${TICKET_NUMS[@]}"; do
   [[ "$_t" =~ ^[0-9]+$ ]] || govern::die "not a ticket number: '$_t'"
@@ -103,6 +120,7 @@ PACKET="$WORKTREE_PATH/.dispatch-packet.md"
   printf '# Dispatch packet for %s\n\n' "$(printf '#%s, ' "${TICKET_NUMS[@]}" | sed 's/, $//')"
   printf 'Created: %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   printf 'Worktree: %s\n' "$WORKTREE_PATH"
+  printf 'Model: %s\n' "$MODEL_ALIAS"
   if [[ -n "$TOUCHED_REPOS" ]]; then
     for _r in $TOUCHED_REPOS; do
       if [[ -f "$WORKTREE_PATH/$_r/CLAUDE.md" ]]; then

@@ -31,6 +31,7 @@ bad() { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export TMPDIR="$T"
 unset GOVERN_RUN GOVERN_PROPOSAL_GATE GOVERN_TICKET_ROUTE_GUARD 2>/dev/null || true
+export GOVERN_DISPATCH_GATE=0   # these cases carry no packet; the packet gate has its own test
 
 # ── build the fake scaffolded workspace ──────────────────────────────────────────────────────────
 FAKE="$T/fakews"
