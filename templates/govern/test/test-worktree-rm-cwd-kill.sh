@@ -127,7 +127,11 @@ assert_eq "$([ -e "$T/wt/t99/alpha/.git" ] && echo y || echo n)" "y" "setup: wor
 # skips the kill passes (the shipped test seam) so the gate is exercised deterministically.
 start_named "$T/wt/t99"; gate_pid="$LAST_PID"
 wait_cwd() { local i=0; while [ "$i" -lt 50 ]; do
-  lsof -d cwd -Fpn 2>/dev/null | grep -qF "$T/wt/t99" && return 0; sleep 0.1; i=$((i+1)); done; return 1; }
+  # Here-string, never `lsof | grep -qF`: under pipefail, grep -q exits on the first match,
+  # lsof takes SIGPIPE on output larger than the pipe buffer, and a FOUND cwd reads as 141
+  # ("never showed"). The here-string hands grep the whole snapshot with no live pipe.
+  grep -qF "$T/wt/t99" <<<"$(lsof -d cwd -Fpn 2>/dev/null)" && return 0
+  sleep 0.1; i=$((i+1)); done; return 1; }
 wait_cwd || { printf 'FAIL - setup: the gate process never showed a cwd in the worktree\n'; exit 1; }
 
 out_r="$(cd "$T" && WT_RM_SKIP_STACK_KILL=1 bash "$T/scripts/worktree/rm.sh" t99 2>&1)"; rc_r=$?

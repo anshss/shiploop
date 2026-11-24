@@ -691,7 +691,11 @@ govern::_lock_reclaim() { # lockdir stale_s
 govern::date_to_epoch() { # YYYY-MM-DD -> epoch
   local d="${1:-}"
   [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
-  date -j -f "%Y-%m-%d" "$d" +%s 2>/dev/null || date -d "$d" +%s 2>/dev/null
+  # Pin midnight explicitly: BSD date fills input fields the format omits from the CURRENT
+  # clock, so a bare %Y-%m-%d parse returns "that date at the current wall-clock instant"
+  # and any downstream age-in-days floors one low when the parse lands >=1s after the
+  # caller's now-capture (slow under load). GNU date already parses to midnight.
+  date -j -f "%Y-%m-%d %H:%M:%S" "$d 00:00:00" +%s 2>/dev/null || date -d "$d" +%s 2>/dev/null
 }
 # Blocking acquire: spin up to timeout_s. Returns 0 acquired, 1 timed out. Caller releases.
 # Reclaims a stale lock ONLY when the recorded holder pid is dead (or missing) AND mtime is
@@ -906,6 +910,14 @@ govern::duplicate_ticket_headings() { # [tickets-file]
 # processes escape sequences in a -v assignment, so `\*` would reach the regex engine as a bare `*`.
 GOVERN_SEVERITY_FIELD_RE='^[[:space:]]*(-[[:space:]]+)?[*][*]Severity([*][*]:|:[*][*])'
 
+# The bullet-prefixed shape of ANY bold field marker (`- **Label:**` / `* **Label**:`): what a
+# caller hands file-ticket.sh that must be de-bulleted to the canonical line-anchored form before
+# filing. Bracketed `[*]` for the same awk -v reason as the severity regex above. A line matching
+# this is invisible to every STRICT line-anchored extractor (govern::ticket_proposal,
+# govern::ticket_precision, the Flow:/Model: latches); severity is the one field whose reader
+# deliberately tolerates the bullet, so checks built on this regex exempt it.
+GOVERN_FIELD_MARKER_BULLET_RE='^[[:space:]]*[-*][[:space:]]+[*][*][A-Za-z][^*]*([*][*]:|:[*][*])'
+
 # govern::severity_rank <field-line> — print the numeric rank of the field's VALUE:
 # 1=Severe 2=High 3=Medium 4=Low 5=unknown.
 # Parses the VALUE, never the whole line: a substring `case` over the whole lowercased line
@@ -943,6 +955,34 @@ govern::duplicate_severity_fields() { # [tickets-file]
     }
     cur != "" && $0 ~ re { c++ }
     END { if (cur != "" && c > 1) printf "#%s \303\227%d\n", cur, c }
+  ' "$f")"
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out"
+  return 1
+}
+
+# govern::bullet_prefixed_fields [tickets-file]: print one line per ticket-body line carrying a
+# bullet-prefixed bold field marker (`- **Label:**`), as `#N line <n>: <raw> -> <canonical>`.
+# Returns 0 (silent) when clean, 1 when any exists. Such a marker is invisible to every STRICT
+# line-anchored extractor: a ticket filed with `- **Proposed solution:**` read back as "no
+# proposed solution" through a pre-dispatch gate that had no way to say why. `**Severity:**` lines
+# are EXEMPT: GOVERN_SEVERITY_FIELD_RE deliberately tolerates the leading list marker, so that
+# field still reads. The canonical form is the raw line minus the bullet, which is exactly what
+# file-ticket.sh files since it de-bullets at file time; anything still in a stored file arrived
+# by hand-edit or an older filer, and this is the backstop that names it.
+govern::bullet_prefixed_fields() { # [tickets-file]
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  local out
+  out="$(awk -v re="$GOVERN_FIELD_MARKER_BULLET_RE" -v sev="$GOVERN_SEVERITY_FIELD_RE" '
+    /^##[[:space:]]+#[0-9]+/ {
+      cur = $0; sub(/^##[[:space:]]+#/, "", cur); sub(/[^0-9].*$/, "", cur)
+    }
+    $0 ~ sev { next }
+    $0 ~ re {
+      canon = $0; sub(/^[[:space:]]*[-*][[:space:]]+/, "", canon)
+      printf "#%s line %d: %s -> %s\n", cur, NR, $0, canon
+    }
   ' "$f")"
   [[ -n "$out" ]] || return 0
   printf '%s\n' "$out"

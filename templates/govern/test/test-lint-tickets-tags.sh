@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# lint-tickets.sh fails on TWO independent faults and TAGS each stdout line (`HEADING #N ×count`
-# / `SEVERITY #N ×count`) so ticket-sweep-reminder.sh can route them: before this, ANY non-zero
+# lint-tickets.sh fails on THREE independent faults and TAGS each stdout line (`HEADING #N ×count`
+# / `SEVERITY #N ×count` / `FIELD #N line <n>: ...`) so ticket-sweep-reminder.sh can route them:
+# before this, ANY non-zero
 # exit was reported as a duplicate heading, and the remedy that came with it (renumber the LATER
 # duplicate) silently corrupts a live ticket's `**Ref:**`/`depends on #N` pointers if followed for
 # a severity-dup fault that never had a duplicate heading at all.
@@ -35,6 +36,29 @@ else
   echo "ok   - a severity-only fault produces no HEADING line"
 fi
 
+# FIELD fault only: a bullet-prefixed field marker (what a hand-edit or an older filer leaves
+# behind) is invisible to the strict line-anchored extractors; the lint tags it FIELD and names
+# the canonical (de-bulleted) form.
+printf '## #11 — bullet field\n**Severity:** Low\nObserved: x.\n\n- **Proposed solution:** Do the thing.\n**Precision:** scoped\n\n---\n' > "$T/field.md"
+out="$(bash "$LINT" "$T/field.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "1" "a bullet-prefixed field marker fails the lint"
+assert_contains "$out" "FIELD #11" "the field fault is tagged FIELD"
+field_line="$(printf '%s\n' "$out" | sed -n 's/^FIELD //p')"
+assert_eq "$field_line" "#11 line 5: - **Proposed solution:** Do the thing. -> **Proposed solution:** Do the thing." \
+  "the FIELD line names the raw line AND the canonical de-bulleted form"
+if grep -q '^SEVERITY ' <<<"$out"; then
+  echo "FAIL - a field-only fault produced a SEVERITY line"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - a field-only fault produces no SEVERITY line"
+fi
+
+# Negative control for the FIELD check: a bulleted **Severity:** is EXEMPT (its reader
+# deliberately tolerates a leading list marker) and a bold bullet WITHOUT the colon placement is
+# not a field marker at all.
+printf '## #12 — bulleted severity is canonical\n- **Severity:** Low\n- **a bold bullet with no colon** stays\n---\n' > "$T/sevbullet.md"
+out="$(bash "$LINT" "$T/sevbullet.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "0" "a bulleted **Severity:** and a colonless bold bullet pass the lint"
+
 # clean file: silent, exit 0 (negative control).
 printf '## #8 — clean\n**Severity:** Low\n---\n## #9 — also clean\n**Severity:** High\n---\n' > "$T/clean.md"
 out="$(bash "$LINT" "$T/clean.md" 2>/dev/null)"; rc=$?
@@ -59,5 +83,16 @@ cp "$T/head.md" "$T/queue/tickets.md"
 hook_out="$(printf '{"session_id":"hrout","stop_hook_active":false,"cwd":"%s"}' "$T" \
   | META_ROOT="$T" bash "$SWEEP" 2>/dev/null)"
 assert_contains "$hook_out" "Renumber the LATER duplicate" "the sweep hook routes a heading fault under the renumber remedy"
+
+# And a FIELD fault gets the de-bullet remedy, never the untagged fallback.
+cp "$T/field.md" "$T/queue/tickets.md"
+hook_out="$(printf '{"session_id":"frout","stop_hook_active":false,"cwd":"%s"}' "$T" \
+  | META_ROOT="$T" bash "$SWEEP" 2>/dev/null)"
+assert_contains "$hook_out" "bullet-prefixed field marker" "the sweep hook routes a field fault under the de-bullet remedy"
+if grep -q "untagged fault" <<<"$hook_out"; then
+  echo "FAIL - sweep hook called a FIELD fault untagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - sweep hook does NOT report a FIELD fault as untagged"
+fi
 
 assert_done
