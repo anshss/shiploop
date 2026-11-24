@@ -239,7 +239,7 @@ was_shipped_version() { # <blob-sha256> <template-path>
   [[ -f "$m" ]] && grep -Fxq "$h  $rel" "$m" && return 0
   m="$TEMPLATES_ROOT/lib/seed-hashes.txt"
   [[ "$seedrel" != "$rel" && -f "$m" ]] && grep -Fxq "$h  $seedrel" "$m" && return 0
-  hub_history_hashes "$tpl" | grep -Fxq "$h" && return 0
+  grep -Fxq "$h" <<<"$(hub_history_hashes "$tpl")" && return 0
   return 1
 }
 

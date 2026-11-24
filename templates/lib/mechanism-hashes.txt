@@ -566,10 +566,10 @@ fb7ad49f63736505d550609235ff28eb0ac396e36938eedcef13a22cc9ca00b5  govern/sync-po
 
 # -- govern/sync-templates.sh --
 1cda5eeda231fd4af26c0784c06869d4292b815faf4f9072e482ab418b20616c  govern/sync-templates.sh
+408f38acad0c41b324e4e0c4a44e7f0ab7e8269fa5db6339f49f206f93725ef7  govern/sync-templates.sh
 518dd0cbf374be6bedec0de98ba65439449c78797588848c74f93b782bc0c13d  govern/sync-templates.sh
 b7a9415d8cd86f2f992a701eb33746d408e3820b0cd862b7889d6e39b332f020  govern/sync-templates.sh
 d47b23701e868d0d04ed99a6d05ed7b991cf2e989b04bf3895ecd60307b0482e  govern/sync-templates.sh
-f6f2e523c25a49fd323171e774d90a499762300ca6ba2909da32988b1de62887  govern/sync-templates.sh
 
 # -- govern/ticket-proposal.sh --
 45dbf2f8a554ee64ebcdc9f5def1e57498056305889960bb8fa19b22f69e9660  govern/ticket-proposal.sh
