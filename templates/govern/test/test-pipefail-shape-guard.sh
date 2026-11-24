@@ -120,11 +120,14 @@ else
 fi
 
 # 4. the mechanism, live: >64KB payload, match in the first bytes, under pipefail.
-big="$(printf 'NEEDLE\n%*s' 2000000 '')"
+# The negative control needs a producer that OUTLIVES the consumer, so SIGPIPE is deterministic:
+# a bounded payload can be drained entirely by the consumer before it exits (runner-dependent),
+# which would turn the control green without proving anything. An endless `yes` always hits EPIPE.
 rc_old=0
-( set -o pipefail; printf '%s' "$big" | grep -q NEEDLE ) || rc_old=$?
-assert_eq "$rc_old" "141" "OLD shape (printf | grep -q) reproduces SIGPIPE 141 on a >64KB payload (negative control)"
+( set -o pipefail; yes NEEDLE | grep -q NEEDLE ) || rc_old=$?
+assert_eq "$rc_old" "141" "OLD shape (yes | grep -q) reproduces SIGPIPE 141 (negative control, unbounded producer)"
 rc_new=0
+big="$(printf 'NEEDLE\n%*s' 2000000 '')"
 ( set -o pipefail; grep -q NEEDLE <<< "$big" ) || rc_new=$?
 assert_eq "$rc_new" "0" "fixed shape (grep -q on a here-string) matches cleanly on the same payload"
 rc_drain=0
