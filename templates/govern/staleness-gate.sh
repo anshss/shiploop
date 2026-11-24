@@ -214,7 +214,7 @@ while IFS= read -r line; do
     *) continue ;;
   esac
   # The command must be backticked; a prose sentence is not runnable.
-  cand="$(printf '%s\n' "$line" | sed -nE 's/.*`([^`]+)`.*/\1/p' | head -n1)"
+  cand="$(printf '%s\n' "$line" | sed -nE 's/.*`([^`]+)`.*/\1/p' | sed -n '1p')"
   if [[ -n "$cand" ]]; then TEST_CMD="$cand"; break; fi
 done <<< "$BLOCK"
 

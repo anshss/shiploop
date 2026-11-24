@@ -74,7 +74,9 @@ for repo in "${REPOS[@]}"; do
   port=$(wsp_repo_port "$repo" "$SLOT")
   [ -n "$port" ] || continue
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t | head -1)
+    # sed slice instead of `| head -1`: sed drains the pipe fully, so lsof can never
+    # get SIGPIPEd by an early-exit consumer under pipefail.
+    pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sed -n '1p')
     cmd=$(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || echo "?")
     ok "$repo port $port in use by $cmd (pid $pid)"
   else
@@ -286,7 +288,9 @@ if [ "${GOVERN_DOCTOR_BASE_CI:-1}" != "0" ] && [ -f "$ROOT/scripts/govern/prefli
   # preflight-base-ci.sh's own fail-open contract, and must never itself break doctor on a flake.
   if [ "$_bci_rc" -eq 2 ]; then
     section "base branch CI"
-    _bci_line="$(printf '%s\n' "$_bci_out" | grep -m1 'CI-RED' || printf '%s' "$_bci_out" | tail -1)"
+    # Here-strings, not `printf | grep -m1`/`printf | tail`: $_bci_out is already fully
+    # collected, so no live producer remains for an early-exit consumer to SIGPIPE.
+    _bci_line="$(grep -m1 'CI-RED' <<< "$_bci_out" || tail -1 <<< "$_bci_out")"
     _bci_line="${_bci_line#*preflight: }"
     warn "$_bci_line (building on it now would inherit the break)"
   fi

@@ -382,7 +382,8 @@ $hit"
   [[ -n "${out//[[:space:]]/}" ]] || return 0
   local max_bytes="${GOVERN_GOTCHA_MAX_BYTES:-3000}"
   if [[ "$(printf '%s' "$out" | wc -c | tr -d '[:space:]')" -gt "$max_bytes" ]]; then
-    out="$(printf '%s' "$out" | head -c "$max_bytes")
+    # Bash substring instead of `printf | head -c`: no live pipe for head to close early.
+    out="${out:0:max_bytes}
 [… truncated at ${max_bytes} bytes — read the file(s) directly in your worktree for the rest]"
   fi
   local block
@@ -487,7 +488,7 @@ govern::has_open_escalation() { # ticket -> 0 if an open ### #N entry exists
   local t="$1" hit
   [[ "$t" =~ ^[0-9]+$ ]] || return 1
   hit="$(govern::escalations_open_ndjson 2>/dev/null \
-         | jq -r --argjson t "$t" 'select(.ticket == $t) | .ticket' 2>/dev/null | head -1)"
+         | jq -r --argjson t "$t" 'select(.ticket == $t) | .ticket' 2>/dev/null | sed -n '1p')"
   [[ -n "$hit" ]]
 }
 
@@ -500,7 +501,7 @@ govern::has_open_escalation_kind() { # kind -> prints anchor #N; rc 0 if an open
   [[ -n "$kind" ]] || return 1
   command -v jq >/dev/null 2>&1 || return 1
   hit="$(govern::escalations_open_ndjson 2>/dev/null \
-         | jq -r --arg k "$kind" 'select(.kind == $k) | .ticket' 2>/dev/null | head -1)"
+         | jq -r --arg k "$kind" 'select(.kind == $k) | .ticket' 2>/dev/null | sed -n '1p')"
   [[ -n "$hit" ]] && { printf '%s' "$hit"; return 0; }
   return 1
 }
@@ -1295,7 +1296,7 @@ GOVERN_LABEL_PERM_ERROR_RE='addLabelsToLabelable|could not add label|fail(ed)? t
 govern::label_apply_rejected() { # gh-create-stderr -> 0 if a label-permission rejection is present
   local err="${1:-}"
   [[ -n "$err" ]] || return 1
-  printf '%s' "$err" | grep -qiE "$GOVERN_LABEL_PERM_ERROR_RE"
+  grep -qiE "$GOVERN_LABEL_PERM_ERROR_RE" <<< "$err"
 }
 
 # ── pre-run: tickets that already exist as a PUBLIC GitHub issue (reserved for outside contributors) ──
@@ -1385,9 +1386,10 @@ govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
   local -a path_hits=() name_hits=()
   for r in "${REPOS[@]}"; do
     [[ -n "$r" ]] || continue
-    if printf '%s\n' "$text" | grep -qE "(^|[^A-Za-z0-9_.-])${r}/[A-Za-z0-9_./-]+"; then
+    # Here-strings instead of `printf | grep -q`: no live producer to SIGPIPE under pipefail.
+    if grep -qE "(^|[^A-Za-z0-9_.-])${r}/[A-Za-z0-9_./-]+" <<< "$text"; then
       path_hits+=("$r")
-    elif printf '%s\n' "$text" | grep -qE "(^|[^A-Za-z0-9_-])${r}([^A-Za-z0-9_-]|$)"; then
+    elif grep -qE "(^|[^A-Za-z0-9_-])${r}([^A-Za-z0-9_-]|$)" <<< "$text"; then
       name_hits+=("$r")   # mentioned by bare name only, no path — still "referenced" for signal (2)
     fi
   done
@@ -1413,7 +1415,7 @@ govern::lesson_placement() { # <lesson-text> -> "<repo-or-empty>\t<reason>"
   local lower_text scrubbed
   lower_text="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   scrubbed="$(printf '%s\n' "$lower_text" | sed "s#${path_hits[0]}/claude\\.md##g")"
-  if printf '%s\n' "$scrubbed" | grep -qE "$GOVERN_LESSON_CROSSCUT_RE"; then
+  if grep -qE "$GOVERN_LESSON_CROSSCUT_RE" <<< "$scrubbed"; then
     printf '\tcross-cutting signal word present alongside %s — staying at root\n' "${path_hits[0]}"
     return 0
   fi
@@ -1489,7 +1491,7 @@ govern::validation_gate_action() { # report-json -> park-no-evidence | park-gate
 # a false negative accepts an unproven "resolved" (silent, and exactly the bug). When in doubt, match.
 GOVERN_VALIDATION_TICKET_RE='^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)|[Ll]ive-verif|[Aa]ctually work|PASS/FAIL'
 govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/spike ticket
-  printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_TICKET_RE" 2>/dev/null
+  grep -qE "$GOVERN_VALIDATION_TICKET_RE" <<< "${1:-}" 2>/dev/null
 }
 
 # ── the STRICT half: structured fields only, no prose ───────────────────────────────────────────
@@ -1505,7 +1507,7 @@ govern::is_validation_ticket() { # ticket-block -> rc 0 if it is a validation/sp
 # nudge (govern::tickets_missing_validation_doc), which costs nothing when wrong.
 GOVERN_VALIDATION_STRICT_RE='^##[[:space:]]+#[0-9]+[[:space:]]*[—-]?.*(VALIDATION|SPIKE)|^\*\*Type:\*\*.*([Vv]alidation|[Ss]pike)'
 govern::is_validation_ticket_strict() { # ticket-block -> rc 0 only on the heading/Type markers
-  printf '%s' "${1:-}" | grep -qE "$GOVERN_VALIDATION_STRICT_RE" 2>/dev/null
+  grep -qE "$GOVERN_VALIDATION_STRICT_RE" <<< "${1:-}" 2>/dev/null
 }
 
 # Which currently-OPEN tickets are validation-shaped (govern::is_validation_ticket) but have no
@@ -1938,7 +1940,7 @@ govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
   _GOVERN_EDP_TIMED_OUT=0
   out="$(govern::run_bounded "$secs" "$bin" --help 2>/dev/null)" || rc=$?
   [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
-  printf '%s' "$out" | grep -q -- "$needle"
+  grep -q -- "$needle" <<< "$out"
 }
 
 # Run <cmd...> under a wall-clock bound, portably. Prefers the system `timeout` (always present on
@@ -2569,7 +2571,7 @@ govern::ticket_paths() { # N [tickets-file] -> measured repo-relative paths, one
   if [[ -f "$f" ]]; then
     block="$(govern::ticket_block "$n" "$f" | tail -n +2)"   # drop the heading (its title may say "files")
     if [[ -n "$block" ]]; then
-      line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | head -1)"
+      line="$(printf '%s\n' "$block" | sed -n -E 's/^[[:space:]]*(-[[:space:]]+)?\*{0,2}[Ff]iles(:\*{0,2}|\*{0,2}:)[[:space:]]*//p' | sed -n '1p')"
       if [[ -n "$line" ]]; then
         out="$(printf '%s\n' "$line" | awk '
           {
@@ -2765,7 +2767,7 @@ govern::overlap_nudge() { # named-csv [tickets-file]
           nn="${nn//[^0-9]/}"; [[ -n "$nn" ]] || continue
           np="${named_p[$idx]:-}"; idx=$((idx+1))
           [[ -n "$np" ]] || continue
-          if printf '%s\n' "$np" | grep -qxF "$nline"; then
+          if grep -qxF "$nline" <<< "$np"; then
             match_path="$nline"; tn="$nn"; tier="exact"; break
           fi
         done
@@ -2820,7 +2822,7 @@ govern::ticket_present_on_origin() { # <repo-dir> <N>
   git -C "$d" fetch -q origin main 2>/dev/null || return 0
   rel="$(govern::tickets_relpath)"
   content="$(git -C "$d" show "origin/main:$rel" 2>/dev/null)" || return 0
-  printf '%s\n' "$content" | grep -qE "^##[[:space:]]+#$n([^0-9]|\$)" && return 0
+  grep -qE "^##[[:space:]]+#$n([^0-9]|\$)" <<< "$content" && return 0
   return 1
 }
 
@@ -2868,7 +2870,7 @@ govern::pull_rebase_autostash() { # <repo-dir> -> 0 synced/recovered | 1 genuine
   fi
   # rc 0. The rebase completed — but a conflicted autostash pop is only a warning (still rc 0), so
   # inspect the index directly. No unmerged entries → clean pop (or nothing was stashed) → synced.
-  unmerged="$(git -C "$d" ls-files --unmerged 2>/dev/null | head -1)"
+  unmerged="$(git -C "$d" ls-files --unmerged 2>/dev/null)"
   [[ -z "$unmerged" ]] && return 0
   # Unmerged after a SUCCESSFUL rebase ⟹ the autostash pop conflicted. Confirm a freshly-preserved
   # stash holds the co-tenant delta before touching the tree — only then is the reset non-destructive.
@@ -3056,7 +3058,7 @@ govern::interrupted_error_signature() { # worker-jsonl -> signature|""
   # Authoritative: the LAST result event, only when it ended in an error.
   msg="$(govern::stream_grep "$jsonl" '"type":"result"' | tail -1 \
         | jq -r 'select(.is_error==true) | .result // empty' 2>/dev/null || true)"
-  if [[ -n "$msg" ]] && printf '%s' "$msg" | grep -qiE "$GOVERN_INTERRUPTED_ERROR_RE"; then
+  if [[ -n "$msg" ]] && grep -qiE "$GOVERN_INTERRUPTED_ERROR_RE" <<< "$msg"; then
     printf '%s' "$msg" | tr -d '\r' | tr '\n' ' ' | cut -c1-160; return 0
   fi
   # Fallback: the CLI prints "API Error: ..." lines into the stream even without a clean result.
@@ -3243,7 +3245,7 @@ govern::tree_probe() { # <start-dir> -> "<fingerprint>\n<0|1>" | empty when unre
     [[ -n "$p" && -d "$p" ]] || continue
     st="$(git -C "$p" status --porcelain --untracked-files=all -b 2>/dev/null)" || return 1
     raw+="$p"$'\n'"$st"$'\n'"$(git -C "$p" rev-parse HEAD 2>/dev/null || true)"$'\n'
-    if printf '%s\n' "$st" | grep -qv '^## '; then dirty=1; fi
+    if grep -qv '^## ' <<< "$st"; then dirty=1; fi
     case "$st" in *'[ahead '*) dirty=1 ;; esac
   done <<< "$trees"
   [[ -n "$raw" ]] || return 1
@@ -3278,8 +3280,11 @@ govern::watchdog_denied() { # <jsonl> -> 0 = the child was denied by the wall-cl
   [[ "$n" == "0" ]] && return 1
   # tr -d NULs for the same reason govern::stream_grep exists: a NUL-holed stream must not read as
   # "no marker" by accident of grep treating the file as binary.
-  tail -n "$n" "$f" 2>/dev/null | LC_ALL=C tr -d '\000' \
-    | grep '"type":"user"' 2>/dev/null | grep -qF '[AGENT WATCHDOG]' 2>/dev/null
+  # Collect each stage before the next filter runs: an early-exit `-q` consumer at the end of a
+  # long live pipe can SIGPIPE upstream producers under pipefail.
+  _tail_out="$(tail -n "$n" "$f" 2>/dev/null | LC_ALL=C tr -d '\000')" || return 1
+  _users="$(grep '"type":"user"' <<< "$_tail_out" 2>/dev/null || true)"
+  grep -qF '[AGENT WATCHDOG]' <<< "$_users" 2>/dev/null
 }
 
 # A CHILD CANNOT WAIT ON ITS OWN BACKGROUND TASK ACROSS A STOP. A background Agent/Bash task or a

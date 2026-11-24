@@ -394,11 +394,11 @@ elif [[ "$mneeded" == "true" && "$MERGE_REPO_MERGED" == "1" ]]; then
   if [[ "$vrc" -ne 0 ]]; then
     mverify="$vout"$'\n'"$mout"
     esc_reason=""
-    if printf '%s' "$mverify" | grep -qiE 'FAILED / half-applied|failed state|migrate resolve'; then
+    if grep -qiE 'FAILED / half-applied|failed state|migrate resolve' <<< "$mverify"; then
       esc_reason='prod migration is in a FAILED / half-applied state after merge — needs a `migrate resolve` (do NOT re-run the migrate step); inspect migration status on prod'
-    elif printf '%s' "$mverify" | grep -qiE 'ff-pull FAILED|BEHIND origin/main|STALE on-disk'; then
+    elif grep -qiE 'ff-pull FAILED|BEHIND origin/main|STALE on-disk' <<< "$mverify"; then
       esc_reason='could not fast-forward the merged checkout to origin/main before applying the migration — reconcile the checkout, then re-run'
-    elif printf '%s' "$mverify" | grep -qiE 'NOT applied|not yet been applied|have not'; then
+    elif grep -qiE 'NOT applied|not yet been applied|have not' <<< "$mverify"; then
       esc_reason='additive prod migration is still NOT applied after the post-merge heal (the apply step failed) — re-run once the cause is cleared'
     else
       esc_reason='additive prod migration applied/verify FAILED after merge — check migration status on prod'

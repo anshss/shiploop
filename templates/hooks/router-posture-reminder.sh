@@ -32,7 +32,7 @@ set -uo pipefail
 
 # --- read the UserPromptSubmit stdin payload (session_id, prompt, cwd) ---
 payload="$(cat 2>/dev/null || true)"
-get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
 session_id="$(get session_id)"
 [ -n "$session_id" ] || session_id="nosession"
 
@@ -63,7 +63,7 @@ print(d.get("prompt") or "")
     prompt_lc="$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')"
     pr_ref_re='(^|[^[:alnum:]])(pr|pull[[:space:]]+request)[[:space:]]*#[0-9]+'
     prompt_lc_noPR="$(printf '%s' "$prompt_lc" | sed -E "s/$pr_ref_re/ /g")"
-    tnum="$(printf '%s' "$prompt_lc_noPR" | grep -oE '#[0-9]+' 2>/dev/null | head -1 | tr -d '#' || true)"
+    tnum="$(printf '%s' "$prompt_lc_noPR" | grep -oE '#[0-9]+' 2>/dev/null | sed -n '1p' | tr -d '#' || true)"
     if [ -n "$tnum" ]; then
       # Dual-layout resolve (same as ticket-sweep-reminder.sh beside this file):
       # scaffolded workspace has hooks at <root>/scripts/, govern at

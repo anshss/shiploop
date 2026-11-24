@@ -40,7 +40,7 @@ MAIN="$META_ROOT"
 
 # --- read the Stop hook stdin payload (session_id, stop_hook_active, cwd) ---
 payload="$(cat 2>/dev/null || true)"
-get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
 session_id="$(get session_id)"
 cwd="$(get cwd)"
 case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;; esac

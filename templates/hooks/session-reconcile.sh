@@ -42,7 +42,7 @@ case "$apply_out" in
     # actually happened — a plain "un-parked 0, deferred 0, ..." line is the no-op shape and
     # stays silent. Checking for ANY digit 1-9 (rather than matching the exact wording) survives
     # a future rewording of that summary line.
-    if printf '%s' "$apply_out" | grep -qE '[1-9]'; then
+    if grep -qE '[1-9]' <<< "$apply_out"; then
       note="$apply_out"
     fi
     ;;

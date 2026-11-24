@@ -27,7 +27,7 @@ kill_port() {
   [ -n "$port" ] || return 0
   pids=$(lsof -ti tcp:"$port" 2>/dev/null) || true
   for pid in $pids; do
-    pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p')
     case "$pcwd" in
       "$owner_root"|"$owner_root"/*) kill -9 "$pid" 2>/dev/null || true ;;
       *) : ;;  # another checkout's process — never ours to kill

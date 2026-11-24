@@ -52,7 +52,8 @@ MAX_FILES="${GOVERN_INDEX_MAX_FILES:-5000}"
 # ctags understands the `-x` cross-reference format this reads, so match the banner.
 IDX_HAVE_CTAGS=0
 if [[ "${GOVERN_INDEX_CTAGS:-1}" == "1" ]] && command -v ctags >/dev/null 2>&1; then
-  if ctags --version 2>/dev/null | grep -qE 'Universal Ctags|Exuberant Ctags'; then IDX_HAVE_CTAGS=1; fi
+  # Here-string instead of a live pipe into `grep -q`: ctags output is fully collected first.
+  if grep -qE 'Universal Ctags|Exuberant Ctags' <<< "$(ctags --version 2>/dev/null)"; then IDX_HAVE_CTAGS=1; fi
 fi
 
 # ── file classification ─────────────────────────────────────────────────────────────────────────
@@ -93,7 +94,8 @@ idx::symbols() { # <repo-root> <rel-path>
     # `ctags -x` prints: <name> <kind> <line> <file> <source line>. Column 1 is all we need.
     out="$(ctags -x "$abs" 2>/dev/null \
       | awk -v p="$rel" 'NF>=4 && $1 ~ /^[A-Za-z_][A-Za-z0-9_]*$/ { print "sym\t" p "\t" $1 }' \
-      | LC_ALL=C sort -u | head -n 200)" || out=""
+      | LC_ALL=C sort -u | sed -n '1,200p')" || out=""
+      # `sed -n '1,200p'` instead of `head -n 200`: sed reads to EOF, so sort never gets SIGPIPEd.
     # A ctags build that doesn't know this language emits nothing — fall THROUGH to the greps rather
     # than silently dropping the file's symbols.
     if [[ -n "$out" ]]; then printf '%s\n' "$out"; return 0; fi
@@ -135,7 +137,7 @@ idx::symbols() { # <repo-root> <rel-path>
       ;;
     *) return 0 ;;
   esac | grep -Ev '^(if|for|while|return|else|end|do|then|fi|case|esac|in|of|new|this|self)$' \
-       | sort -u | head -n 200 | awk -v p="$rel" 'NF { print "sym\t" p "\t" $0 }'
+       | sort -u | sed -n '1,200p' | awk -v p="$rel" 'NF { print "sym\t" p "\t" $0 }'
   return 0
 }
 
@@ -310,7 +312,7 @@ idx::build_repo() { # <name> <root>
 
   if [[ "$mode" == "full" ]]; then
     while IFS= read -r f; do [[ -n "$f" ]] && files+=("$f"); done < <(
-      git -C "$root" ls-files 2>/dev/null | head -n "$MAX_FILES")
+      git -C "$root" ls-files 2>/dev/null | sed -n "1,${MAX_FILES}p")
   fi
 
   local tmp
@@ -417,7 +419,7 @@ idx::cmd_query() { # <term>
     while IFS= read -r row; do
       printf '%s\t%s\n' "$(basename "$tsv" .tsv)" "$row"
       found=1
-    done < <(grep -iF -- "$term" "$tsv" 2>/dev/null | head -n 200 || true)
+    done < <(grep -iF -- "$term" "$tsv" 2>/dev/null | sed -n '1,200p' || true)
   done
   [[ "$found" -eq 1 ]] || govern::log "index: no rows match '$term' (is the index built?)"
   return 0

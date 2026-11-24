@@ -187,7 +187,8 @@ append_ledger() { # N title url
 # foreign ticket number (#N) or a commit hash? Such a ticket leaks private context an OSS contributor
 # can't act on, so the lane SKIPS it (a human must sanitize it first) rather than publish confusion.
 has_internal_refs() { # text -> 0 if it contains a foreign #N or a commit hash
-  printf '%s' "$1" | grep -qE '#[0-9]+|commit `?[0-9a-f]{7}|`[0-9a-f]{7,40}`'
+  # Here-string instead of `printf | grep -q`: no live pipe for grep -q's early exit to SIGPIPE.
+  grep -qE '#[0-9]+|commit `?[0-9a-f]{7}|`[0-9a-f]{7,40}`' <<< "$1"
 }
 
 # All `## #N` ticket numbers currently in a file, one per line.

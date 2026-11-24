@@ -1,0 +1,69 @@
+# Allowlist for govern/test/test-pipefail-shape-guard.sh.
+#
+# Format: one entry per line, "<path-relative-to-templates/><TAB><exact trimmed offending line>".
+# A line that changes text (even by one character) drops off this list and the guard goes red
+# again: that is the point. A rewrite that grows a second offending stage re-earns review.
+#
+# Every row below is a TEST fixture under govern/test/: the producer is a test-captured variable
+# or a fixture file the test itself wrote, so the input is test-controlled and small by
+# construction (a few KB at most, far under the ~64KB pipe buffer where SIGPIPE bites). Rewriting
+# them would churn harness code without changing any live behavior; a row here records that
+# reasoning so the line's text is pinned and any edit re-earns review.
+govern/test/test-bookkeep-overlap-autostash-pop.sh	printf '%s' "$(cat "$V/tickets.md")" | grep -q '## #50 ' && f=1 || f=0
+govern/test/test-config-check.sh	if printf '%s' "$out" | grep -q "migration-shaped entry"; then
+govern/test/test-config-check.sh	if printf '%s' "$out" | grep -q "diverges from hub default"; then
+govern/test/test-config-check.sh	if printf '%s' "$out" | grep -q "references 'npm run dev'"; then
+govern/test/test-config-check.sh	if printf '%s' "$out" | grep -q "references 'npm run govern:resolve'"; then
+govern/test/test-config-check.sh	if printf '%s' "$out" | grep -q "references 'npm run retired-command'"; then
+govern/test/test-dual-lane-race.sh	printf '%s' "$ot" | grep -q '## #93 ' && f=1 || f=0
+govern/test/test-dual-lane-race.sh	printf '%s' "$ot" | grep -q '## #93 ' && f=1 || f=0
+govern/test/test-dual-lane-race.sh	printf '%s' "$ot" | grep -q '## #99 ' && f=1 || f=0
+govern/test/test-dual-lane-race.sh	printf '%s' "$ot" | grep -q '## #99 ' && f=1 || f=0
+govern/test/test-dual-lane-race.sh	printf '%s' "$ot" | grep -q '## #93 ' && f=1 || f=0
+govern/test/test-file-ticket-dup-flag.sh	if printf '%s' "$blk" | grep -q "possible duplicate"; then
+govern/test/test-file-ticket-guards.sh	if printf '%s' "$stderr2" | grep -q "marker is stripped"; then
+govern/test/test-flow-pipeline.sh	if printf '%s' "$tblk" | grep -qF "**Model:**"; then
+govern/test/test-flows-parser.sh	if printf '%s' "$probs" | grep -q "known vocabulary"; then vocabfp=1; else vocabfp=0; fi
+govern/test/test-flows-parser.sh	if govern::flow_ids "$F" | grep -qx "#12"; then coll=1; else coll=0; fi
+govern/test/test-flows-sweep.sh	assert_eq "$(govern::flows_matching_paths "$M" 5 "backend/src/providers/vastai/client.go" | head -1)" "deploy.vastai" "path-match: most-specific ranked first"
+govern/test/test-land-resolution-staged.sh	if printf '%s' "$last_msg" | grep -q "staged-refactor.txt"; then
+govern/test/test-lint-tickets-tags.sh	if printf '%s' "$out" | grep -q '^HEADING '; then
+govern/test/test-lint-tickets-tags.sh	if printf '%s' "$hook_out" | grep -q "Renumber the LATER duplicate"; then
+govern/test/test-merge-pr-branch-cleanup.sh	if printf '%s' "$outA" | grep -qF "could not delete local branch"; then
+govern/test/test-merge-pr-branch-cleanup.sh	if printf '%s' "$outA" | grep -qF "deleted lingering local branch"; then
+govern/test/test-merge-pr-subject.sh	if printf '%s' "$out" | grep -q -- "--subject"; then
+govern/test/test-multi-pr-merge.sh	apos="$(grep -n '^alpha#281$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"
+govern/test/test-multi-pr-merge.sh	ipos="$(grep -n '^api#66$' "$MERGE_ORDER" | head -1 | cut -d: -f1)"
+govern/test/test-overlap-nudge.sh	if printf '%s\n' "$out" | grep -q '#90'; then f=1; else f=0; fi
+govern/test/test-overlap-nudge.sh	if printf '%s\n' "$out" | grep -q '^\[overlap\] '; then f=1; else f=0; fi
+govern/test/test-pipefail-shape-guard.sh	if printf '%s' "$body" | grep -q 'NEEDLE'; then
+govern/test/test-pipefail-shape-guard.sh	printf 'offender.sh\tif printf %%s "$body" | grep -q %sNEEDLE%s; then\n' "'" "'" > "$T/allowlist.txt"
+govern/test/test-pipefail-shape-guard.sh	( set -o pipefail; printf '%s' "$big" | grep -q NEEDLE ) || rc_old=$?
+govern/test/test-pipefail-shape-guard.sh	assert_eq "$rc_old" "141" "OLD shape (printf | grep -q) reproduces SIGPIPE 141 on a >64KB payload (negative control)"
+govern/test/test-pipefail-shape-guard.sh	big_listing | head -n 5
+govern/test/test-pre-commit-hook.sh	if printf '%s' "$outA" | grep -qF "EXIT="; then
+govern/test/test-pre-commit-hook.sh	if printf '%s' "$outA" | grep -qF "running \$WSP_LINT_FIX_CMD"; then
+govern/test/test-select-ticket.sh	sel1() { "$SEL" "$1" "$2" | head -1; }
+govern/test/test-severity-parse-tolerant.sh	sel1() { "$SEL" "$1" "1,2,3,4" | head -1; }
+govern/test/test-ticket-parts.sh	if printf '%s' "$slice" | grep -q "do the A thing"; then
+govern/test/test-ticket-severity-value.sh	if printf '%s\n' "prose mentions **Severity:** mid-line" | grep -E "$GOVERN_SEVERITY_FIELD_RE" -q; then
+govern/test/test-ticket-severity-value.sh	win="$(GOVERN_TICKETS_FILE="$T/sel.md" GOVERN_ESCALATIONS_FILE="$T/none.md" "$DIR/../select-ticket.sh" "" "1,2,3" 2>/dev/null | head -1)"
+govern/test/test-ticket-sweep.sh	if printf '%s' "$out" | grep -q 'evidence summary is MISSING'; then mislabeled=1; else mislabeled=0; fi
+govern/test/test-update-config-converge.sh	if bash -c "source '$WS_TARGET' && echo SOURCED_OK" 2>/tmp/scaf-cfg-source.log | grep -q SOURCED_OK; then
+govern/test/test-valpending-apply-race.sh	echo "== mkdir identity"; type -a mkdir; command mkdir --version 2>&1 | head -2; readlink -f "$(command -v mkdir)" 2>&1 || true
+govern/test/test-worker-agent-doctrine.sh	floor_model="$(sed -n 's/.*GOVERN_WORKER_MODEL:-\([a-z0-9.-]*\)}.*/\1/p' "$WORKSPACE_LIB" | head -1)"
+govern/test/test-worker-agent-doctrine.sh	shared_permission="$(sed -n 's/.*GOVERN_PERMISSION_MODE:-\([a-zA-Z]*\)}.*/\1/p' "$SYNC_PORT" | head -1)"
+govern/test/test-worktree-rm-cwd-kill.sh	lsof -d cwd -Fpn 2>/dev/null | grep -qF "$T/wt/t99" && return 0; sleep 0.1; i=$((i+1)); done; return 1; }
+govern/test/test-wrap-in-place.sh	if find "$T" -maxdepth 1 -name '.wrap-staging.*' -type d 2>/dev/null | grep -q .; then staged=1; break; fi
+govern/test/test-wrap-in-place.sh	[ ! -d "$T/myapp" ] && ! find "$T" -maxdepth 1 -name '.wrap-staging.*' | grep -q . \
+# Proven-small producer: the stage feeding `head -n 10` is an awk END block that emits ONE line
+# per distinct depended-on module (dozens at most in a hub index), so the output never
+# approaches the ~64KB pipe buffer; the line also carries operator-facing text that must not be
+# reflowed, so it stays as-is and is pinned here instead of rewritten.
+govern/codebase-index.sh	| sort -rn | head -n 10 | awk -F'\t' '{ printf "  - `%s` — %s dependent(s)\n", $2, $1 }'
+# Proven-small producers, kept as-is because the operator-facing string on the same line
+# carries a hard-style constraint that forbids reflowing the line: git status --porcelain of a
+# single worktree (one line per dirty file, pathological only with thousands) and the grep of a
+# single ported PR's added lines (bounded by one PR's diff).
+govern/sync-port.sh	file_sync_escalation "porter reported 'ported' but left UNCOMMITTED changes in the templates worktree (strand — porter incomplete): $(printf '%s' "$_dirty" | head -5 | tr '\n' ' ')" "$BRANCH" "$drift_files_ml"
+govern/sync-port.sh	file_sync_escalation "GATE FAIL — ported template ADDED lines contain FORBIDDEN identity string(s). Sample: $(printf '%s' "$leaks" | head -3 | tr '\n' ' ' | cut -c1-200)" "$BRANCH" "$drift_files_ml"

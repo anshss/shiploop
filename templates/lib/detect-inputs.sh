@@ -67,9 +67,9 @@ detect_cmd() { # <repo-dir>
 detect_port() { # <repo-dir>
   local d="$1" script
   [ -f "$d/package.json" ] || { echo ""; return; }
-  script="$(grep -o '"dev"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/package.json" 2>/dev/null | head -1)"
+  script="$(grep -o '"dev"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/package.json" 2>/dev/null | sed -n '1p')"
   [ -n "$script" ] || { echo ""; return; }
-  sed -nE 's/.*(-p |--port[ =]|PORT=)([0-9]{2,5}).*/\2/p' <<<"$script" | head -1
+  sed -nE 's/.*(-p |--port[ =]|PORT=)([0-9]{2,5}).*/\2/p' <<<"$script" | sed -n '1p'
 }
 
 detect_visibility() { # <org> <name>

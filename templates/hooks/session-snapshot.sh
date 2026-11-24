@@ -20,7 +20,7 @@ MAIN="$META_ROOT"
 
 # --- read the SessionStart stdin payload (session_id, cwd) ---
 payload="$(cat 2>/dev/null || true)"
-get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
 session_id="$(get session_id)"
 cwd="$(get cwd)"
 [ -n "$session_id" ] || session_id="nosession"

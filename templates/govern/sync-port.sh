@@ -291,7 +291,7 @@ if [[ "$drift_rc" -eq 0 ]]; then
   govern::log "sync-port: templates in sync — nothing to port."
   exit 0
 elif [[ "$drift_rc" -ne 3 ]]; then
-  govern::die "sync-port: sync-templates --check errored (rc=$drift_rc): $(printf '%s' "$drift_out" | head -2)"
+  govern::die "sync-port: sync-templates --check errored (rc=$drift_rc): $(printf '%s' "$drift_out" | sed -n '1,2p')"
 fi
 
 DRIFT_FILES=()
@@ -351,7 +351,7 @@ if command -v "$GH_BIN" >/dev/null 2>&1 && [[ "$DRY_RUN" -ne 1 ]]; then
       file_sync_escalation "merged PR #$_merged_pr found for $BRANCH but advancing the sync marker failed — run 'sync-templates.sh --mark $MARK_TO' by hand." "$BRANCH" "$drift_files_ml"
       exit 1
     fi
-    marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | head -1)"
+    marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | sed -n '1p')"
     [[ -n "$marker_rel" ]] || marker_rel="scripts/govern/.templates-synced-at"
     govern::commit_meta_to_main "$LIVE_ROOT" "$marker_rel" "chore(govern): advance template-sync marker to ${MARK_TO:0:9} (sync-port merged PR #$_merged_pr)"
     govern::log "sync-port: marker advanced to ${MARK_TO:0:9} after merged PR #$_merged_pr."
@@ -698,7 +698,7 @@ if ! "$SYNC_TEMPLATES" --mark "$MARK_TO" >/dev/null 2>&1; then
   file_sync_escalation "PR #$pr_num MERGED but advancing the sync marker failed — run 'sync-templates.sh --mark $MARK_TO' by hand." "$BRANCH" "$drift_files_ml"
   exit 1
 fi
-marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | head -1)"
+marker_rel="$(cd "$LIVE_ROOT" && git ls-files --full-name -- '*/.templates-synced-at' 2>/dev/null | sed -n '1p')"
 [[ -n "$marker_rel" ]] || marker_rel="scripts/govern/.templates-synced-at"
 govern::commit_meta_to_main "$LIVE_ROOT" "$marker_rel" "chore(govern): advance template-sync marker to ${MARK_TO:0:9} (sync-port PR #$pr_num)"
 

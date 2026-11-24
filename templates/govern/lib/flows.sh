@@ -554,7 +554,7 @@ govern::ticket_flow_ids() { # N [tickets-file] -> "id id …"
   local n="$1" f="${2:-$TICKETS_FILE}" raw
   raw="$(govern::ticket_block "$n" "$f" \
     | awk 'NR==1{next} !started && NF==0 {next} NF==0 {exit} {started=1; print}' \
-    | sed -n -E 's/^[[:space:]]*\*{0,2}[Ff]low:\*{0,2}[[:space:]]*//p' | head -1)"
+    | sed -n -E 's/^[[:space:]]*\*{0,2}[Ff]low:\*{0,2}[[:space:]]*//p' | sed -n '1p')"
   printf '%s' "${raw//,/ }"
 }
 
@@ -616,7 +616,7 @@ govern::flows_sweep_file() { # <flows-file>
         govern::log "flows_sweep: $id — recorded $repokey@$sha not resolvable in $repodir; cannot compute"
         uncomputable=1; continue
       fi
-      changed="$(git -C "$repodir" log --oneline "${sha}..${target}" -- "$pathspec" 2>/dev/null | head -1 || true)"
+      changed="$(git -C "$repodir" log --oneline "${sha}..${target}" -- "$pathspec" 2>/dev/null | sed -n '1p' || true)"
       [[ -n "$changed" ]] && { staled=1; break; }
     done
 
@@ -840,7 +840,7 @@ govern::flows_passive_evidence() { # [meta-root] [--attach] -> advisory lines
     status="$(govern::flow_field "$id" Status "$flows")"
     # Only a flow that is SUPPOSED to be in use (a positive verdict, or measuring) can be "0 usage".
     case "$status" in PASS|EFFECTIVE|MEASURING) ;; *) continue ;; esac
-    usage="$(govern::flow_analytics_query "$src" | head -1 | grep -oE '^-?[0-9]+' | sed -n '1p' || true)"
+    usage="$(govern::flow_analytics_query "$src" | sed -n '1p' | grep -oE '^-?[0-9]+' | sed -n '1p' || true)"
     [[ -n "$usage" ]] || continue         # non-numeric / query failed → can't judge, skip
     if [[ "$usage" -eq 0 ]]; then
       printf 'PASSIVE %s: 0 usage from analytics (source: %s) — INEFFECTIVE-leaning; operator decides (never auto-stamped).\n' "$id" "$src"

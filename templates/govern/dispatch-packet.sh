@@ -54,7 +54,7 @@ ticket_test_cmd() { # N -> the **Test:** field's value, "" if absent
   local n="$1" block
   block="$(govern::ticket_block "$n" "$TICKETS_FILE")"
   [[ -n "$block" ]] || return 0
-  printf '%s\n' "$block" | sed -n -E 's/^\*\*Test:?\*\*[[:space:]]*//p' | head -1
+  printf '%s\n' "$block" | sed -n -E 's/^\*\*Test:?\*\*[[:space:]]*//p' | sed -n '1p'
   return 0
 }
 # Backticked tokens in the ticket's own **Where:** paragraph -- the same "narrow, trust the

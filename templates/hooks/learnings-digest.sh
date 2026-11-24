@@ -224,7 +224,7 @@ index="$(awk '
 [ -n "$index" ] || exit 0
 
 total="$(printf '%s\n' "$index" | grep -c .)"
-picked="$(printf '%s\n' "$index" | sort -r | head -n "$MAX_ENTRIES")"
+picked="$(printf '%s\n' "$index" | sort -r | sed -n "1,${MAX_ENTRIES}p")"
 [ -n "$picked" ] || exit 0
 
 TODAY_DAYS="$(_ld_days "$TODAY")"
@@ -244,7 +244,7 @@ body="$(
       fi
     fi
     sed -n "${s},${e}p" "$FILE" 2>/dev/null
-  done | sed -e 's/[[:space:]]*$//' | cat -s | head -n "$MAX_LINES"
+  done | sed -e 's/[[:space:]]*$//' | cat -s | sed -n "1,${MAX_LINES}p"
 )"
 [ -n "$body" ] || exit 0
 
