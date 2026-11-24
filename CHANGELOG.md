@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.20.16 - 2026-11-24
+
+### Changed
+
+**Ticket tooling: filing is verified, duplicates are caught, severity is a value ranking.**
+`file-ticket.sh` verifies its append landed by read-back, strips a body `Severity:` line that would
+fight the ticket's own header, and runs a duplicate scan over the parked file and the git ledger
+before writing; `select-ticket` ranks by severity value (Critical > High > Medium > Low), not
+alphabetically; multi-part tickets parse, with `ticket_proposal` gating each part on its
+`**Proposed solution:**` + `**Precision:**` pair (rc 2 when missing); the staleness gate treats a
+git-renamed path as inconclusive (exit 0) instead of missing; the ticket-sweep hook routes on lint
+tags (HEADING, SEVERITY) instead of prose matching.
+
+**resolve/merge hardening.** `resolve-ticket.sh` refuses a report naming a PR that merged nothing
+(exit 13, before any bookkeeping, `queue/tickets.md` byte-identical); `merge-pr.sh --subject` takes
+the squash subject explicitly, so a single-commit squash can no longer inherit the branch commit's
+subject; `land-resolution.sh` commits only the paths it staged, so unrelated already-staged files
+cannot ride a `resolve` commit; `dev.sh` exports each repo's `<REPO>_PORT` before running its dev
+command and refuses a non-numeric port; new `govern::pending_bg_tasks` and
+`govern::canonical_repo_name` helpers, with `.pr`/`.prs[]` canonicalization in
+`govern::normalize_pr_field`; the agent-progress guard can fail a worker that goes quiet holding an
+open background wait (`GOVERN_BG_WAIT_GUARD`, ships OFF: a behavior change, not a defect fix).
+
+**pipefail sweep: `producer | grep -q` and `producer | head -1` cannot come back.** 28 template
+scripts rewrote the early-exit-consumer shapes as here-strings or full-drain `sed` slices: under
+`set -o pipefail`, those shapes SIGPIPE the producer once its output exceeds the pipe buffer,
+turning a match into a false failure. A repo-wide guard test plus an allowlist (every remaining
+occurrence justified in place) keep the shape from returning.
+
 ## 1.20.15 - 2026-11-24
 
 ### Added
