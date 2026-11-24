@@ -79,8 +79,17 @@
 #       the merge set".
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
+#      A non-empty report `.tickets` array lands PER TICKET (see the loop below). Two shapes refuse
+#      BEFORE any bookkeeping rather than land nothing while claiming success:
+#        exit 14: the array is non-empty but yields no parseable {ticket,status} entries and is
+#                 not a bare-number echo of this ticket (["junk"], [{}]), a shape the loop would
+#                 silently zero-iterate.
+#        exit 15: booked nothing: no land-resolution call succeeded (every group member
+#                 parked/failed), so no "resolved" history row and no "landed" print.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
-#      the codebase index (GOVERN_INDEX) and tear down the ticket's worktree.
+#      the codebase index (GOVERN_INDEX) and tear down the ticket's worktree (the name
+#      dispatch-packet.sh stamped, then rootScope.worktree, then ticket-$N / t$N, then the merged
+#      PR's headRefName).
 #   9. Record the outcome into ticket-history.jsonl (govern-health.sh's only input), in the
 #      {ticket,run,status,ts} shape every reader expects.
 #
@@ -539,7 +548,28 @@ fi
 #    An EMPTY or absent `.tickets` array is the single-ticket path and lands exactly as it always
 #    has: a worker that never named a group must not have to remember to omit the field. ─────────
 _group_tickets_n="$(jq -r '(.tickets // []) | length' <<<"$report" 2>/dev/null || echo 0)"
+LAND_SUCCEEDED=0
+_is_group=0
 if [[ "${_group_tickets_n:-0}" -gt 0 ]]; then
+  # A `.tickets` entry that is a BARE NUMBER (`"tickets":[115]`, the shape a worker emits for a
+  # single-member batch) makes the `.tickets[].ticket` walk below error ("Cannot index number with
+  # ..."); the error is swallowed, the loop runs zero times, and the tail books "landed" and
+  # "resolved" while land-resolution.sh never runs. Classify the shape BEFORE any landing: every
+  # entry a bare number equal to THIS ticket N -> the single-ticket path; any other non-parseable
+  # shape -> refuse, the same before-bookkeeping contract every other refusal here honors.
+  _group_parseable_n="$(jq -r '[.tickets[] | select(type == "object" and (.ticket != null))] | length' <<<"$report" 2>/dev/null || echo 0)"
+  _group_bare_n="$(jq -r --argjson n "$N" '[.tickets[] | select(type == "number" and . == $n)] | length' <<<"$report" 2>/dev/null || echo 0)"
+  if [[ "${_group_parseable_n:-0}" -gt 0 ]]; then
+    _is_group=1
+  elif [[ "${_group_bare_n:-0}" -eq "${_group_tickets_n:-0}" ]]; then
+    _is_group=0  # every entry is a bare number equal to N: a one-member batch, land it singly
+  else
+    echo "resolve-ticket #$N: the report's tickets array is non-empty but yields no parseable {ticket,status} entries (shape: $(printf '%s' "$report" | jq -c '.tickets' 2>/dev/null | head -c 200)); refusing BEFORE any bookkeeping: no landing, no history row, the queue block stays. Fix the report's tickets array (each entry an object {ticket,status}) and re-run." >&2
+    exit 14
+  fi
+fi
+
+if [[ "$_is_group" -eq 1 ]]; then
   _group_stripped_report="$(jq -c '.newTickets = [] | .lessonPatch = null' <<<"$report" 2>/dev/null || echo "$report")"
   while IFS= read -r _gt; do
     [[ "$_gt" =~ ^[0-9]+$ ]] || continue
@@ -553,6 +583,7 @@ if [[ "${_group_tickets_n:-0}" -gt 0 ]]; then
           echo "resolve-ticket #$N: land-resolution.sh failed for group member #$_gt, ticket NOT bookkept. Check the error above and retry." >&2
           exit 8
         fi
+        LAND_SUCCEEDED=1
         ;;
       parked|failed)
         echo "resolve-ticket #$N: group member #$_gt reported '$_gstatus', left in the queue" >&2
@@ -573,6 +604,7 @@ else
     echo "resolve-ticket #$N: land-resolution.sh failed, ticket NOT bookkept. Check the error above and retry." >&2
     exit 8
   fi
+  LAND_SUCCEEDED=1
 fi
 
 # ── 6. Worker-boundary cleanup that belongs wherever a resolution lands: codebase-index refresh
@@ -583,19 +615,29 @@ fi
 if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
   # Resolve which worktree we're about to tear down via a NON-destructive registry lookup FIRST, so
   # we can inspect it for unreported commits before rm.sh --force ever runs (the safety net below).
-  # Priority: the report's own rootScope.worktree — the ONLY signal available when a root-scope-only
-  # ticket has no PR to derive a name from — then the headless convention ticket-$N, then the merged
+  # Priority: the name dispatch-packet.sh stamped when it created the worktree (the deterministic
+  # answer for a packet-dispatched ticket, read back instead of guessed), then the report's own
+  # rootScope.worktree (the ONLY signal available when a root-scope-only ticket has no PR to derive
+  # a name from), then the two naming conventions (headless ticket-$N, packet t$N), then the merged
   # PR's own headRefName. `wt_registry_path_for` fails closed (empty path) when the lookup helper
-  # isn't present or the name isn't registered, so this degrades exactly like the old blind-attempt
-  # probe did: "not found" here, never a hard error.
+  # isn't present or the name isn't registered, so a miss here is "not found", never a hard error.
   _wt_registry_lib="$WS_ROOT/scripts/worktree/lib/registry.sh"
   [[ -f "$_wt_registry_lib" ]] && source "$_wt_registry_lib"
-  _wt_name="$(jq -r '.rootScope.worktree // ""' <<<"$report" 2>/dev/null || true)"
+  _wt_stamp="$GOVERNOR_DIR/dispatch-worktrees/$N"
+  _wt_name="$(cat "$_wt_stamp" 2>/dev/null || true)"
   _wt_path=""
   [[ -n "$_wt_name" ]] && _wt_path="$(wt_registry_path_for "$_wt_name" 2>/dev/null || true)"
   if [[ -z "$_wt_path" ]]; then
+    _wt_name="$(jq -r '.rootScope.worktree // ""' <<<"$report" 2>/dev/null || true)"
+    [[ -n "$_wt_name" ]] && _wt_path="$(wt_registry_path_for "$_wt_name" 2>/dev/null || true)"
+  fi
+  if [[ -z "$_wt_path" ]]; then
     _wt_path="$(wt_registry_path_for "ticket-$N" 2>/dev/null || true)"
     [[ -n "$_wt_path" ]] && _wt_name="ticket-$N"
+  fi
+  if [[ -z "$_wt_path" ]]; then
+    _wt_path="$(wt_registry_path_for "t$N" 2>/dev/null || true)"
+    [[ -n "$_wt_path" ]] && _wt_name="t$N"
   fi
   if [[ -z "$_wt_path" ]]; then
     while IFS=$'\t' read -r _wrepo _wnum _wurl; do
@@ -608,7 +650,7 @@ if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
   fi
 
   if [[ -z "$_wt_path" ]]; then
-    echo "resolve-ticket #$N: no registered worktree found (checked rootScope.worktree, ticket-$N, and the PR's head branch) — nothing to tear down here; clean up manually if one exists under another name." >&2
+    echo "resolve-ticket #$N: no registered worktree found (checked the dispatch stamp, rootScope.worktree, ticket-$N, t$N, and the PR's head branch); nothing to tear down here, clean up manually if one exists under another name." >&2
   else
     # Safety net: a worker that forgot to report root-scope commits must not lose them silently to
     # the teardown below. Compare the worktree's commits ahead of local main against what
@@ -637,9 +679,20 @@ if [[ -z "${GOVERN_WORKTREE_CMD:-}" ]]; then
         || echo "resolve-ticket #$N: worktree:rm $_wt_name failed — clean up manually" >&2
     fi
   fi
+  # The stamp has served its purpose once this resolve decided a teardown: remove it so a stale
+  # entry can never steer a LATER resolve of the same number (a re-dispatch rewrites it anyway).
+  rm -f "$_wt_stamp" 2>/dev/null || true
 fi
 
 # ── 7. Record the outcome (govern-health.sh's only input) ──────────────────────────────────────
+# Only a resolve whose landing actually happened records "resolved" and prints "landed": a group
+# report whose every member is parked/failed (or unparseable) books nothing, and booking a resolve
+# that landed nothing is exactly the silent failure this script exists to refuse. "booked nothing"
+# exits non-zero so the caller knows the queue blocks named in the per-member lines above are live.
+if [[ "$LAND_SUCCEEDED" -ne 1 ]]; then
+  echo "resolve-ticket #$N: booked nothing: no land-resolution call succeeded on this report (every group member parked/failed, or none parseable). NOT recording 'resolved'." >&2
+  exit 15
+fi
 # Record EVERY PR with its disposition (merged / frontend-left-open / autonomy-left-open) so
 # nothing a multi-repo ticket opened is silently dropped from the history row.
 _rnote="${PR_DISPOSITIONS:-}"

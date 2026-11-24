@@ -177,6 +177,7 @@ e532e30c0f1621d93f1683596727b3ef4704ba5dac84f0ac3c5916a78a70de20  govern/determi
 8f21cc62eab8e0f30cf0cce7ada899451997c7d90875be7e159181e02f479b94  govern/dispatch-packet.sh
 d144ae491b4d4b0955e8aa8797544067236c02e3e831587ecd26c96a41aacfbd  govern/dispatch-packet.sh
 efbb3aae5b0405304da1bff0a168ab8be14e632e9d4a44ac47fe015806df8f53  govern/dispatch-packet.sh
+f89de5cb253c6da424ac7ab967efb2cb9775a33f0aba81705cfc32d44974a92b  govern/dispatch-packet.sh
 
 # -- govern/dispatch.sh --
 0a3e92a462da093be437f6d2c81fd4a5a6b6c674565b6af0b2ac9d7f7dd2070e  govern/dispatch.sh
@@ -510,6 +511,7 @@ d76ddceca7b60f9832dcc50ed358ffdaea116b8d599bec9dbeec540289d127f7  govern/preflig
 ba29e57556028498dc7be537a7e41f82732ea25ccc23dc5360c8561d222cf88c  govern/resolve-ticket.sh
 dd3853aca272b063ac622a577ac90306b1cec6af31f4635624cbcc4cc1b7ac88  govern/resolve-ticket.sh
 f79353555fab34366cbe4b8fa698b41b792c5109487c0eba32951246fc4628ae  govern/resolve-ticket.sh
+f7ec6554fbf675c9e95e4537a0583725d2f40758dc1d1c44dba3f62836ecf41b  govern/resolve-ticket.sh
 
 # -- govern/run-validation.sh --
 93af558542fbde16ca4c97b82451cc99086cedda709a551dac30adafe5b3b8b9  govern/run-validation.sh
@@ -1375,6 +1377,7 @@ a47fbef8d2c87398acb55dea0f5f32c2c793521831700f9d187ef79cb8fe185f  scripts/govern
 a503a2117d69b0f46625602c0cdb5c0a1eb01ece413d3f69d17764fc012f38d9  scripts/govern/test/test-valpending-emit.sh
 a50d3fd8453ad1ebdb3475263fc1ec7d418d24c8c4730ef187f48dc88d3c0e89  scripts/govern/test/test-escalations.sh
 a52d6b3c39f3b3fb30cf3959e2e7aa3ddcffe38b833441c9a2675726f929a25e  scripts/govern/test/test-locality-batch.sh
+a53b585ce6482949e56d8ffa82a32e6d50060821b639c1509cb28ac95f0a8caf  scripts/govern/test/test-file-ticket-seq-outside-repo.sh
 a55508ce6c512ac3a6d3d078a03b63a2be29b6f6be69f92c66f4a63fd4f4a388  scripts/govern/test/test-health-stale-escalations.sh
 a5c173aa54d88568c6a6fca776263b553b7362a3fb4ead02701cd96382ef65a5  scripts/govern/test/test-ticket-route-guard.sh
 a5eb4cb404a29fd80194f7e4116faf73cbc5bcedb0bfe6fedef81db5ebb93f0b  scripts/govern/test/test-sync-port.sh
@@ -1630,11 +1633,13 @@ f1203827965b01a20b9dbb17eab526f58843fced2ec3bcb21ec9b30a0d74ba79  scripts/govern
 f141f14215e01c79a3177ee293a401b627de9cc168d4b9a45f6794b7c47990f7  scripts/govern/test/test-merge-fail-park.sh
 f190d8ba4033e12ffef0dd05c980dbf966e1d0b3893cae2dc5cd11d8a8306d89  scripts/govern/test/test-sync-port-merged-marker.sh
 f229686425532dcbe742c0e2da5f3fd9ff9570763c1fb2ea36df9320ff91c4ef  scripts/govern/test/assert.sh
+f252f5630008e4114b473b3431ec67dbb5af39530d88d4f87cda73159ef4ce14  scripts/govern/test/test-staleness-rename.sh
 f287bf242a6e1505a76422819b20730add249445d26d52ed6c6282e1956fc5df  scripts/govern/test/test-validation-promote.sh
 f2bf828808f9cc99c60b28760c8997028173e25d764aa81e0cca11d213d3eee8  scripts/govern/test/test-flows-capabilities.sh
 f2f891a2203d2de79cd984732dad5881b79cc303b40ab7d35533e7af8a905287  scripts/govern/test/test-file-ticket-concurrent.sh
 f3042edf6c66e17577c6b175a3c4d5590c2d46c946a806a903e8e83a44fdb315  scripts/govern/test/test-na-permanent-nudge.sh
 f31566f67ef90fa766052b58a9c4646b1892d3dc617861520695a6d1f169109d  scripts/govern/test/test-improve-supervise-fidelity.sh
+f32a7862d0d4519aea4a33b6e18ef1f88d461fdfdf3638f6cf58155d58b4e602  scripts/govern/test/pipefail-shape-allowlist.txt
 f4004a77cdc5a5a11f27f4c6d38f3b099639d4de158b665f04b2f956663ab70c  scripts/govern/test/test-run-loop-multi-target.sh
 f4664bb660e9ed523ca8918d1671496827d7108b868ca5b7ff24faa07b5cc75c  scripts/govern/test/test-pre-dispatch-check.sh
 f49d483bbee74813aa1087ce0a75c2a2e27ed64ff337cf52080d6219b0f97759  scripts/govern/test/assert.sh
