@@ -39,7 +39,7 @@ You launch regular Claude Code sessions to build your project. What comes out of
 How a named ticket actually ships, in one pass:
 
 1. Each ticket gets a fresh worker, a single-ticket session in its own Git worktree. It reads only what it needs, makes the change, opens a pull request, and reports the result. Parallel tickets never collide or inherit each other’s state.
-2. Advisor-worker orchestration. An interactive Claude session acts as the advisor and delegates work to subagents using the right model for each task. If a subagent hits a judgment failure, it increases reasoning effort and sends the issue back to the advisor for re-specification.
+2. Advisor-worker orchestration. An interactive Claude session acts as the advisor and delegates work to subagents using the right model for each task. A worker runs sonnet by default and the advisor raises the model for a dispatch when the work needs it. If a worker cannot finish, it reports why and the advisor re-specifies the work.
 3. Memory improves over time. Resolved tickets leave short lessons in CLAUDE.md, which later sessions read so each new worker starts with what the system has already learned.
 
 ### Core Idea
@@ -50,7 +50,7 @@ How a named ticket actually ships, in one pass:
 
 - **Persistent context.** Manages context across sessions, preserving learnings from failures and allowing retries to resume instead of starting over.
 
-- **Model orchestration.** Matches work to the right model tier, with higher-tier sessions planning solutions and lower-cost workers handling implementation.
+- **Model orchestration.** Matches work to the right model tier, with a higher-tier advisor session planning solutions and sonnet workers handling implementation, raised per dispatch when the work needs it.
 
 - **Deterministic work.** Identifies work that can be handled deterministically and skips the model when it can.
 
@@ -69,7 +69,7 @@ You name the tickets, and the coordination happens almost entirely outside Claud
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh worker in its own git worktree (sonnet floor, opus on retry), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
+    <img src="assets/how-it-works-light.svg" width="880" alt="The shiploop loop: you name tickets from queue/tickets.md, and each one dispatches to a fresh worker in its own git worktree (sonnet by default, raised per dispatch by the advisor), which opens a PR and waits for CI. A merge guard (allowlist + three-factor) auto-merges green-CI PRs on opted-in repos, or leaves the PR for you on the default pr-only rung. Hard-stops park and escalate to governor/escalations.md; a manual audit can review a run and halt it on demand. Every resolved ticket writes a lesson into CLAUDE.md, so the next worker starts smarter.">
   </picture>
 </p>
 

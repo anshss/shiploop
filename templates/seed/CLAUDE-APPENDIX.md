@@ -75,20 +75,20 @@ answer needs more than one or two file reads, delegate; if you already know the 
 
 A **worker** is the trim, single-ticket session that resolves one `## #N` end to end and opens one
 PR: `Agent(subagent_type: "worker")` from a live session. The scaffolded definition at
-`.claude/agents/worker.md` pins the model and the tool set in frontmatter (so right-sizing is not
-left to judgment) and points at the canonical doctrine, `governor/worker-prompt.md`, rather than
+`.claude/agents/worker.md` pins the tool set and the default model (`sonnet`) in frontmatter and points at the canonical doctrine, `governor/worker-prompt.md`, rather than
 restating it. The run shows up in the session UI with live token counts and an openable transcript,
-and its structured report comes back to the driver. Gate it first with
-`npm run govern:pre-dispatch -- <N>` (NA-marker skip, already-a-public-issue, still-on-origin/main
-re-verify, dependency ordering, staleness, the per-ticket failure-streak breaker, upstream drift),
-or just say "work on 42 51" and let the session run those same steps for you, one ticket at a time.
+and its structured report comes back to the driver. Dispatch it with
+`npm run govern:dispatch -- <N>[,<N>...] [--model <haiku|sonnet|opus>]`, which runs the gates (the
+scripts own that list, read `pre-dispatch-check.sh` rather than a copy of it here), prints their
+verdict and the exact `Agent` call. The model is the advisor's per-dispatch choice, `sonnet` unless
+raised; nothing escalates it automatically. `npm run govern:status` shows what is running.
 
 Anything else you spawn with the `Agent` tool is a **subagent**, never a worker. The distinction is
 load-bearing rather than cosmetic: `worker` is a literal string in the call, so a routing rule that
 says "worker" cannot be satisfied by a generic spawn that merely feels worker-like.
 
 **Why the worker stops at PR-open.** Merge, the CI await, the park-on-red-CI recovery path and the
-queue edit all live in `resolve-ticket.sh`, and a session that merged its own PR would bypass every
+queue-block deletion all live in `resolve-ticket.sh`, and a session that merged its own PR would bypass every
 one of them. Piping the worker's report into `npm run govern:resolve -- <N>` is the last step.
 
 **Why the worker makes its own worktree.** The `Agent` tool's `isolation: "worktree"` worktrees the
@@ -367,6 +367,26 @@ Recognized Disposition tokens (case-insensitive, tolerant of common synonyms and
 - `approve-all` / `move-back` / `decide-later`: acted on only when the entry also carries a `- **Kind:** externalize-review` line, ignored on any other entry.
 
 `- **Make this a rule?:**` answered with non-empty, non-negative text is appended to `preferences.md`.
+
+---
+
+## Lessons that apply to any workspace
+
+- **`cmd &` inside a `run_in_background` call detaches with no completion notification.** The tool
+  tracks the shell it started, and that shell exits at once, so the real work finishes unobserved and
+  nothing wakes the session. Run the command itself as the background call, or in the foreground with
+  an explicit `timeout`.
+- **The sync-templates marker lives only in the main checkout.** In a worktree, `sync-templates.sh
+  --check` reports "no marker", and re-marking there discards the drift the marker was tracking. Run
+  sync commands from the main checkout.
+- **An operator-only step gets a numbered how-to, never invented busywork.** When the next step is
+  one only the operator can take (a credential, a console click, a physical action), write it as
+  numbered steps they can follow cold, say what happens next regardless, and stop. Do not fill the
+  wait with speculative work.
+- **A queue file overwritten by a stale editor copy shows up as deleted tickets and a resurrected
+  resolved one.** `govern::queue_stale_copy` detects exactly that: SessionStart warns with the diff,
+  and every script that writes the queue refuses (exit 12) until the file is restored from git.
+  `GOVERN_QUEUE_STALE_GUARD=0` turns it off.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: shiploop
-description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to fixed-floor subagents that escalate once on failure, promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
+description: Self-improving multi-agent harness: wraps N git sub-repos as one workspace, dispatches named tickets to worker subagents (sonnet by default, raised per dispatch by the advisor), promoting lessons into CLAUDE.md. Use when working in or scaffolding a meta-repo workspace (sub-folders each own .git; root has scripts/ + queue/tickets.md + governor/). Scaffold via /shiploop:setup.
 ---
 
 # shiploop — self-improving multi-agent harness
@@ -11,7 +11,8 @@ A workspace root holding N independent git repos as sub-folders — each its own
 — where the root is *also* its own git repo holding config, cross-cutting scripts, the ticket queue,
 the governor, and shared AI context. A self-improving multi-agent harness sits on top (worktrees +
 tickets + governor + hooks): a worker is a trim, single-ticket session, one per ticket, dispatched
-as a `worker` subagent at a fixed model floor and escalated once on a classified failure; every
+as a `worker` subagent that runs `sonnet` by default, the advisor raising the model per dispatch
+when the work needs it (no automatic escalation); every
 resolved ticket promotes a durable lesson into the git-tracked `CLAUDE.md`.
 
 Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git
@@ -57,8 +58,10 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
 | `npm run govern:pre-dispatch -- <N>` | Every pre-spawn gate for ticket N, one verdict line: `proceed` / `skip: <reason>` / `refuse: <reason>` |
+| `npm run govern:dispatch -- <N>[,<N>...] [--model <haiku\|sonnet\|opus>]` | Runs the gates, records the model (default `sonnet`) in the dispatch packet, prints the verdict, the ticket and the exact `Agent` call |
+| `npm run govern:status` | What is running now: active workers, their age and pending background tasks |
 | *(say "work on \<tickets\>")* | Dispatch a `worker` subagent for ticket N and pipe its JSON report onward (see Dispatch below) |
-| `npm run govern:resolve -- <N>` | Fed a worker's JSON report on stdin: awaits CI, merges, and lands the resolution |
+| `npm run govern:resolve -- <N>` | Reads the worker's report from `governor/reports/<N>.json` (or JSON on stdin): awaits CI, merges, lands the resolution and deletes the queue block |
 | `npm run govern:health` | Governor health audit |
 | `npm run govern:dry-run -- <N>` | Rehearse one ticket end to end, nothing merged or committed |
 | `npm run govern:context-budgets` | Report context budgets (lesson-cap and total-budget overage, learnings TTL archiving) outside a dispatch; never edits `CLAUDE.md` |
@@ -134,14 +137,16 @@ either way: would knowing this save a future session 5+ min?
 There is no `/govern` command, and there is no always-on loop behind it either. Dispatch runs
 inside YOUR session, one ticket at a time, near-zero Claude context throughout:
 
-1. `scripts/govern/pre-dispatch-check.sh <N>` (or `npm run govern:pre-dispatch -- <N>`), every
-   pre-spawn gate, one verdict line on stdout: `proceed` / `skip: <reason>` / `refuse: <reason>`.
+1. `npm run govern:dispatch -- <N>[,<N>...] [--model <alias>]` runs every pre-spawn gate (the scripts
+   own the list), prints the verdict (`proceed` / `skip: <reason>` / `refuse: <reason>`) and, on
+   `proceed`, the exact `Agent` call. The worker defaults to `sonnet`; `--model` raises it for that
+   one dispatch. Nothing escalates the model automatically.
 2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. The worker runs the
    doctrine in `governor/worker-prompt.md`, self-services its own worktree, implements the ticket's
    proposed solution, and returns a JSON report: it never merges and never touches
    `queue/tickets.md`.
-3. `scripts/govern/resolve-ticket.sh <N>`, fed the worker's report on stdin, awaits CI, merges, and
-   lands the resolution.
+3. `npm run govern:resolve -- <N>` reads the worker's report (`governor/reports/<N>.json`), awaits CI,
+   merges, and lands the resolution, deleting the ticket's queue block as it does.
 
 Named dispatch is the only front door: you name the ticket, the pipeline works exactly that one, at
 the least spend, with every gate on. There is no backlog sweep and no grind-until-empty loop.

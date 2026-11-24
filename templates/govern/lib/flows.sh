@@ -217,9 +217,15 @@ govern::cas_edit() { # <file> <edit-fn> [commit-msg] [extra-repo-relpath ...]
   root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
   # The commit below stages the whole file, so when the file is the tickets file it must not already
   # carry uncommitted changes this function did not make. Refused before the sync and the edit.
-  local qdir="" foreign=""
+  local qdir="" foreign="" stale=""
   [[ -n "${TICKETS_FILE:-}" ]] && qdir="$(cd "$(dirname "$TICKETS_FILE")" 2>/dev/null && pwd || true)"
   if [[ -n "$dir" && "$dir" == "$qdir" && "$(basename "$file")" == "$(basename "$TICKETS_FILE")" ]]; then
+    stale="$(govern::queue_stale_copy "$file")"
+    if [[ -n "$stale" ]]; then
+      govern::queue_stale_refusal "cas_edit" "$stale"
+      [[ "$held" == "1" ]] && govern::lock_release "$BK_LOCK"
+      return 12
+    fi
     foreign="$(govern::queue_foreign_changes "$file")"
     if [[ -n "$foreign" ]]; then
       govern::queue_foreign_refusal "cas_edit" "$foreign"

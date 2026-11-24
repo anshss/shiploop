@@ -21,12 +21,12 @@
 #     "Short title" [Severity] < body.md
 #   printf 'Where: ...\nObserved: ...\nDone when: ...\n' | scripts/govern/file-ticket.sh "Title" Low
 #
-# `--model` / `--effort` are NOT dispatch-time inputs. GOVERN_WORKER_MODEL is the floor every ticket
-# dispatches at, and a retry escalates off that floor on failure: a field set at filing time, before
-# any evidence exists, by whoever happened to notice the bug never outranks that. Both flags are still
-# ACCEPTED and ignored with one log line so an older caller (or a `/setup` doc a fleet copied)
-# degrades cleanly instead of consuming its value as the ticket title; queue entries still carrying
-# `**Model:**` / `**Effort:**` are likewise inert: nothing on the dispatch path reads them.
+# `--model` / `--effort` are NOT filing-time inputs. Model choice is made at dispatch, by the advisor:
+# `npm run govern:dispatch -- <N> --model <alias>` (default sonnet), because only at dispatch is there
+# evidence of how hard the work is. Both flags are still ACCEPTED and ignored with one log line so an
+# older caller (or a `/setup` doc a fleet copied) degrades cleanly instead of consuming its value as
+# the ticket title; queue entries carrying `**Model:**` / `**Effort:**` are likewise inert: nothing on
+# the dispatch path reads them.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -78,7 +78,7 @@ while [[ "${1:-}" == --* ]]; do
     --model|--effort)
       # Deprecated: sizing is measured, not guessed at filing time. Swallow the value so it can
       # never be mistaken for the title, say so once, and carry on.
-      govern::log "file-ticket: $1 is not a dispatch-time input, every ticket dispatches at the GOVERN_WORKER_MODEL floor; ignoring '${2:-}'"
+      govern::log "file-ticket: $1 is not a filing-time input, the model is chosen at dispatch (govern:dispatch --model); ignoring '${2:-}'"
       shift 2 ;;
     --flow)
       [[ -n "${2:-}" ]] || govern::die "--flow requires a value (flow-id[,flow-id…])"
@@ -202,6 +202,11 @@ ft_lock="$BK_LOCK"   # released by govern::_ft_exit (the single EXIT trap instal
 # filing. Checked before the pre-edit sync (the pull would carry the foreign edit through). Exit 12;
 # nothing is appended, stashed, discarded or committed. The NO_COMMIT path above leaves the commit
 # (and this check) to its caller.
+_stale="$(govern::queue_stale_copy "$TICKETS_FILE")"
+if [[ -n "$_stale" ]]; then
+  govern::queue_stale_refusal "file-ticket" "$_stale"
+  exit 12
+fi
 _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
 if [[ -n "$_foreign" ]]; then
   govern::queue_foreign_refusal "file-ticket" "$_foreign"

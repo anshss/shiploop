@@ -20,6 +20,7 @@ f613f5b45ab53a2f1988be7d4a224afb0bc24feeb1f1a42a465b9e5c558da98e  .claude/agents
 aaa1c22be46574b7d811602454f41fba8c8d494146dc2b6853c7ee8a479fc816  .claude/agents/lookup.md
 
 # -- .claude/agents/worker.md --
+0053b475c69e403dd2b25a30bdaa5472db12e0c9c3deaeed8b358b7476bb7887  .claude/agents/worker.md
 0524df2df49695ae9b5b8af3bda72473f2b8f7c9fbdac0f78420d003e8fe06e0  .claude/agents/worker.md
 135f0a8c3ede4c08b7a0d68208b62267654a86c5e519092fa7107d8b3134ef01  .claude/agents/worker.md
 156905cb5834945cd522057b8a602f3849823de806791a7296629d1bd747bd03  .claude/agents/worker.md
@@ -148,6 +149,7 @@ b62c0b7de23d729fea4238a5ef98079c22df6bfa402cf4a98410740c1e381d23  govern/claudem
 8ec9b9869346c097301ef93a750d94a50134dac5a3f9c85cfc27475660278d38  govern/config-check.sh
 8f9028f097129903a63263397da42382c6b84e00af4a7c1dbced82d9040a9cc2  govern/config-check.sh
 96586aa33f26d6190aaf103abd25286982e48728035dd50d7dee510b6e947640  govern/config-check.sh
+9d87facd592af8f83b340eae4a98ef9c3ee5581791c20fd45c78c4fbe269752e  govern/config-check.sh
 9f6786b1e63f182249a8b4ba0af98c8c08e69c44c3f2bca61ed82119af4523d2  govern/config-check.sh
 db174e27e3b330fdff2e7de7585363f99b07b55c7f68a73538ffdc03ef9e1b98  govern/config-check.sh
 e1b65381323c4f12f5830bb30f9908e03e7f232623716a92aa173c0bf21523dd  govern/config-check.sh
@@ -191,6 +193,7 @@ dffbdd6be957e7ea051555b1caf3a700d0200691b141f76a8904501f5894a7e7  govern/dry-run
 833fbf350ae2aca28839af1987389776731051ab31d89f64939690093c2a693d  govern/escalations-apply-answers.sh
 9f9c27352871d2c2b0e60c80b1314285344d0b9b4d8e56a2afe09c709dd0a774  govern/escalations-apply-answers.sh
 a04f9263946e24868a8f89cd923d7c14d7f80397ab49138a0a29ccecf16f244d  govern/escalations-apply-answers.sh
+adcecdbc1e28db500cd15c558d04d2baebd34faf4099e56f4f64170604a67367  govern/escalations-apply-answers.sh
 b939c5f236878af90c223b0fcb05bfa0f7940eeb97930076d2d6e725892dab82  govern/escalations-apply-answers.sh
 fa454664105bfe50d93423d18c9e671582dd9eb40f6c081f9ad987f826df808e  govern/escalations-apply-answers.sh
 
@@ -209,6 +212,7 @@ fd024843f5a7157c2ebc3ed5bcca60ec45a6f8af9be843f57aa6ffcb1de2a8ad  govern/escalat
 9fa01ea24dc3c003164c2697e9387e708dd2a8122b7b24ea01d5664efe1caf6e  govern/externalize-low-tickets.sh
 a1e65af04d58f1381a6278a11b487a5b5ec941e5c29a252c89e68c1710d31be3  govern/externalize-low-tickets.sh
 d0235bcc58ebdb9a8782d077f94b4f4308dc948d646de624074a0847c88aa833  govern/externalize-low-tickets.sh
+e88da520280108b592884cd3c79503d74dcbe4bd7d217f43094e1e59d9bbf0e8  govern/externalize-low-tickets.sh
 
 # -- govern/file-ticket.sh --
 1fd7ee971043875515c631536d2172874c3f7b8c1575db31f8d18aa0b1aaa9af  govern/file-ticket.sh
@@ -222,6 +226,7 @@ d0235bcc58ebdb9a8782d077f94b4f4308dc948d646de624074a0847c88aa833  govern/externa
 8b186f1a8be59f9e53eb1d7a8b0727e7c2bf76e23b08d9ee206ee33a50aafbdf  govern/file-ticket.sh
 ac49ca08b0b1831e88e6354dda1209b5733d4df39fbf457adbbaee82b55b4dae  govern/file-ticket.sh
 ade0555f211b9a28aedc65d7b856a173816bdf5506bf90503421e855f3b365f4  govern/file-ticket.sh
+b0080e2d6967bff4604c99ac0ca869f4faecf959e0d1f7b15b65859496114b93  govern/file-ticket.sh
 b2d00f8da4cc4e580b274cad01b7de89ae7c3cd499fd67901c71b99d375a5749  govern/file-ticket.sh
 bdccfb87c069e5edfa9edf3f53fb1c1ff0c9351f83e92d2c134eda37051e9128  govern/file-ticket.sh
 e95aae2d2aaa0425c7d255c0035dfb11284cab1e602f9de70a98211df2f814a3  govern/file-ticket.sh
@@ -271,6 +276,7 @@ f3ba0e7d9241e31ba2ed585988e6a2f694fdeaaa22125cda6e72356ff9797b35  govern/govern-
 349ab699475b8a15d1c51473303e949e693508e76c9f293f72526ae3082561be  govern/land-resolution.sh
 5738e4e92a0c05c5d5ea537cd374622d8f01589f9e8cb7c90a0edb85c5422c27  govern/land-resolution.sh
 6d3e23d7e2c520880f53cf89f372ec5aa09dcd846fb89b0f9129cb086c6b4c30  govern/land-resolution.sh
+732dd5e65934baf66ccab04b65cffbe84e28eca5a8789a55bb95a72578fd295e  govern/land-resolution.sh
 a9f8f537a9ba631b5c75bdf40bca898ec98621e5a5c246825a8cc2607bd04994  govern/land-resolution.sh
 d487a95beb0460a7c8f466eeb1b9e66dc0b4577069276459dee3ce4b3ef7c7b2  govern/land-resolution.sh
 e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-resolution.sh
@@ -310,6 +316,7 @@ e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-re
 62cf51ffbec5b747b9ba99cb5971727740933d61d5e6d421fd55238e7f6abca9  govern/lib/common.sh
 67cd440f7aa344250ae724bb6cdfad51a95a68e271efe0f0a28e7577e9af348f  govern/lib/common.sh
 67de00766e256bcb7eb1ab0a5a68ee59c35a57700387ee947bbabeb9b35d2404  govern/lib/common.sh
+6815802c8c16a39ce1ba4a8e5beaa97e470f712dd155d834db13fec1faf05989  govern/lib/common.sh
 68d0637351ad245af4bc1432a3158c444ac9e07c0e88f5875e9ab450fc7762be  govern/lib/common.sh
 6995796fa220a8a3a5d9a536a0c8f82ded4046a3ed270b46c7d17e2e0ff88987  govern/lib/common.sh
 703c85a725bbcdd6778e55c1c335cf65a059fbb5d4317b65b7fcd2f1d03b9058  govern/lib/common.sh
@@ -375,6 +382,7 @@ fc1b62d7f6ad48ed0b889fdec8fe06ef05af04d22995a8e16f8b974804505636  govern/lib/com
 # -- govern/lib/flows.sh --
 0b4ed2b283d5a84ff1dc1a1076e2a01e7d9b64a1fa5b112426396ff2795fd7d8  govern/lib/flows.sh
 13df9d442354a4499f3dacb0e150af59f6b2e60ebcbd7cff27cdb0ea05946e34  govern/lib/flows.sh
+53c12be0970b8b185a34dff0dbbeeedd2294588ec4f696f8d4f648e0f6d6067d  govern/lib/flows.sh
 568ce43b1dff681a44d44650d8633cf9facbce3d80f5acb6f1edd0f55410b4d4  govern/lib/flows.sh
 8373a7afbab6cfe3c0aa8305165eeda7a45179ca4ae3a5f3014b1ccca46ed0b9  govern/lib/flows.sh
 888f568826f797718339a94bc75c61b067369c58d2a09f9afe33dae6789534f0  govern/lib/flows.sh
@@ -665,6 +673,7 @@ b3c8bd8c9adcb1df65d464bfd797bcb6b4c58e14f252e7f326b7d09127492fad  hooks/rules-on
 30359f31d7da80d7ac49c3de345b91888520e038f066b228a882faa5961599c9  hooks/session-reconcile.sh
 6ada0a5915cf9a549cabb5f853a4096a39dac2e2d1a77cd6b8621506c7b54b2f  hooks/session-reconcile.sh
 7f0b1a2cd1d522e7400bf288a6513b8f583781f360c77e63ee6def9f4e361b3f  hooks/session-reconcile.sh
+88c9bac02fb5ffb1599d5c7536c53b992ac2672d1d7ad12574f78bee40a72cea  hooks/session-reconcile.sh
 
 # -- hooks/session-snapshot.sh --
 0036689dcef572fce89fba93e77067c1ece821678a895af1e8a6bea0c92286bd  hooks/session-snapshot.sh
@@ -1112,6 +1121,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 58d70a5939f0e0eb4860c8b839c90d1f56082e4fab821093095c60da55771d00  scripts/govern/test/test-infra-halt.sh
 592cb344e3bf72d7ad8f834b95d485127128a778ec011a8be0984e6d41672969  scripts/govern/test/test-events-status.sh
 59cd65c18758103ad0cf946efa922d4ee930e995392f29aa4027399572c0363c  scripts/govern/test/test-log-guard.sh
+59d93662597d09b9876dc3e2b1186e7ef91e36d7ad795312d30b3f04c8dc94cf  scripts/govern/test/pipefail-shape-allowlist.txt
 5b270c6d2883b44a60ccea1b5b461ae10b16b2b9743d311ec8d73aa641738b6b  scripts/govern/test/test-tokenjam-runid.sh
 5b32b3c09938a0cc40bbbe7eb01993a724bfd44c6120f5a343ad39e3407528a6  scripts/govern/test/test-usage-error-halt.sh
 5b41d3ec107f56e6514c888f3897e26ecf9179a21fc743bd2847b0fdfa230886  scripts/govern/test/test-flows-capabilities.sh
@@ -1221,6 +1231,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 85145e988a8354b0db4cee882ae5ded98506ef50f2ef726ee62daa05ab23aa23  scripts/govern/test/test-update-channel.sh
 857a78421f09fdf0c04143d2c13cbeeecffd505bcb7ec329b6b8af0583aa9202  scripts/govern/test/test-retry-notes-injection.sh
 85b24bd72f0d65e187f9b7c4e6342374999d243af3c8ccb4f64b17022c894ae4  scripts/govern/test/test-scaffold-teammate-idle-hook.sh
+86298d50ad964c2b61b49a21a21ee636668065bf62d6708caecd29fa9e2d91cf  scripts/govern/test/test-pipefail-shape-guard.sh
 8647eee4e7e482edc5f3029b76863663fd8f5ee3d21df42c73d2b0c1fc767b20  scripts/govern/test/test-worker-agent-doctrine.sh
 86f89ca0908451ba554ba0669ec0ade7a0acd40c39e41bbe4255e549071c8ad9  scripts/govern/test/test-unpark-own-pr-merge.sh
 876d31afae4628f3c67202d8ff86f7ffee93a73a8975efb315ed07a02b1222da  scripts/govern/test/test-parallel-no-double-attempt.sh

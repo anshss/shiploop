@@ -27,24 +27,27 @@
    | a `## #N` ticket exists, or the user names tickets | `Agent(subagent_type: "worker")`, one per ticket |
    | heavy but not ticket-shaped (investigation feeding an answer) | `Agent`, sized per the table below |
    | trivial | inline |
-   | a worker failed once | retry once with `model: opus`, then stop and report |
+   | a worker failed or parked | read its report, then re-dispatch with a corrected proposal or report to the operator; nothing retries or escalates on its own |
 
-   **Size the child:** `haiku` = mechanical/lookup · `sonnet` = search/investigate/standard edits ·
-   inherit only for judgment-heavy synthesis or final review. Never size a ticket when filing one —
-   the scout measures that.
+   **Model is chosen at dispatch, by you.** The worker runs `sonnet` by default; when the work needs
+   more, raise it for that one dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`.
+   There is no automatic escalation and no field on a ticket for it: never size a ticket when
+   filing one. For other children: `haiku` = mechanical/lookup · `sonnet` = search/investigate/standard
+   edits · inherit only for judgment-heavy synthesis or final review.
 
    **Naming several tickets dispatches their workers adjacently:** start the next worker while the
    previous one is still running, instead of waiting on its PR and resolution, because a worker
    spawned while another is running reads the shared prefix instead of writing it. Each still gets
    its own worktree; a worker never runs `git checkout`, `stash`, `reset` or `clean` outside its own
    tree.
-   The per-ticket gate is unchanged (`pre-dispatch-check.sh` still gates each ticket before its
-   worker starts, and a skip/refuse drops that ticket, not the group) and resolution stays
-   sequential regardless of spawn spacing.
+   `npm run govern:dispatch -- <N>[,<N>...]` runs the gates, prints their verdict, the ticket and the
+   exact `Agent` call to make; obey it, the scripts own the gate list. `npm run govern:status` answers
+   "what is running"; `npm run govern:resolve -- <N>` lands a finished worker.
 
-   **A worker ends at PR-open plus report.** Landing it is your last step: pipe that report into
-   `npm run govern:resolve -- <N>`, which awaits CI, merges, and edits the queue file. A ticket's
-   queue block is never deleted before merge.
+   **A worker ends at PR-open plus report.** Landing it is your last step: `npm run govern:resolve -- <N>`
+   awaits CI, merges, and then deletes that ticket's block from the queue file as part of landing it
+   (when autonomy leaves the PR open, it deletes the block with the PR surfaced). Nobody else deletes
+   a block: not the worker, not you, not before the PR merges.
 
 4. **Issue reported in conversation → investigate → answer → file at the checkpoint** (Stop-hook sweep
    or an explicit "file this"). A discussion turn ends with the finding, not a new `## #N`.
@@ -109,7 +112,8 @@ removing a sub-repo is a one-file edit there.
 ## Commands
 
 `npm run dev` · `doctor` · `sync` · `tail` · `worktree:new -- <slug>` · `worktree:rm -- <slug>` ·
-`govern:pre-dispatch -- <N>` · `govern:resolve -- <N>` (worker's JSON report on stdin).
+`govern:dispatch -- <N>[,<N>...] [--model <alias>]` · `govern:status` · `govern:resolve -- <N>`
+(reads the worker's report from `governor/reports/<N>.json`, or JSON on stdin).
 **Pass args after `--`.** Full table with flags: `CLAUDE-APPENDIX.md`, or `npm run` to list.
 
 ## Anti-patterns (load-bearing)

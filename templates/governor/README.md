@@ -114,51 +114,21 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
 - Additive prod migration auto-applies **only if** `GOVERN_MIGRATE_CMD` is configured (else it parks
   for a manual apply — it never merges code ahead of a schema it needs and forgets).
 
-## Model floor + retry policy (which model runs, and what a retry changes)
-- Sizing is **not predicted**. There is no per-ticket difficulty estimate: every first attempt
-  dispatches at the workspace floor `GOVERN_WORKER_MODEL` (default `sonnet`) and STAYS there.
-  Automatic tier escalation is removed: no failure class buys a bigger model, and
-  `GOVERN_WORKER_ESCALATION_MODEL` (default `opus`) is now only a cap on what an explicit request may
-  ask for. The scout used to score its survey into a `(model, effort)` verdict; that was measured as
-  a rubber stamp (4 of the 5 verdicts it ever cached were `opus/high`, and three tickets it sized
-  `opus` resolved at `sonnet` on attempt 1) and the scoring table, the HARD gate, and the
-  `--verdict`/`--score` modes are deleted. `haiku` runs the scout survey by default
-  (`GOVERN_SCOUT_MODEL`); it is not a ticket-work tier.
-- Tickets do **not** carry effective `Model:` / `Effort:` fields. An entry still holding them is
-  inert: ignored, never an error, because a filing-time guess is made before any evidence exists.
-  `GOVERN_MEASURED_SIZING=0` restores the old precedence in which those fields win.
-- The tier set is deliberately **coarse and must stay so**: the prompt cache is per-model and an
-  effort change invalidates the tools+system prefix, so spreading N tickets across N distinct
-  `(model, effort)` combinations fragments the cross-worker shared prefix that currently works.
-- A **retry** still classifies *why* the prior attempt failed, but the classification no longer picks
-  a price. **No row raises the tier:**
-
-  | failure signature (from the outcome ledger + the driver) | response |
-  |---|---|
-  | gh/network/auth outage, transient drop, CI state unverifiable | retry **identically** |
-  | red CI (usually a portability/env bug, not a thinking bug) | **same tier**, same effort |
-  | burned the per-worker token budget while still exploring | **same sizing** (a tier is not scope) |
-  | opened a PR that never landed (a coherent but wrong fix) | judgment → **raise effort only**, and file a re-specification request |
-  | anything else, incl. a wall-clock timeout or no evidence | hold at the floor, and file a re-specification request |
-
-- **Capability failure goes back to a person, not up a tier.** A `judgment` class or an unrecognized
-  signature files an entry under `## Open` in `escalations.md` (`Kind: respec`) asking the operator to
-  re-specify, split, or close the item, carrying what the worker learned. The reasoning: an item that
-  was scoped and still failed on capability at the floor is evidence the SPECIFICATION was
-  insufficient.
-- Effort is the only knob a retry moves, and only on `judgment`. It is a different and much cheaper
-  knob than tier: more reasoning per turn inside the same model, at the same per-token price, without
-  moving the prompt-cache key. Every decision is logged as
-  `worker #N sizing: model=… effort=… retry-class=… — <reason>` and recorded on the per-attempt
-  ledger row (`retryClass`, `retryReason`, `respecRequested`).
-
-  **This removal is a doctrine decision, not a measured one.** The corpus cannot settle it either
-  way: the 23% capability-failure figure comes from 30 *opus* first attempts (escalating from the
-  ceiling goes nowhere), and there are exactly 2 sonnet first attempts on record, both infrastructure
-  failures. The sonnet capability-failure rate, the one quantity that could justify or refute an
-  escalation rail, does not exist in the data.
-- **A session may never spawn above its own tier.** Every `--model` the harness assembles (worker,
-  scout, sync porter) is clamped to `max(opus, the model of the
+## Which model runs (chosen at dispatch, never escalated)
+- The worker subagent runs `sonnet` by default (`model:` in `.claude/agents/worker.md`). The advisor
+  raises it for one dispatch with `npm run govern:dispatch -- <N>[,<N>...] --model <haiku|sonnet|opus>`
+  when the work needs it, and the choice is recorded in the dispatch packet as a `Model:` line.
+- **Nothing escalates automatically.** No failure class buys a bigger model. A worker that cannot
+  finish reports an honest `status` plus `escalation`; the advisor reads it and decides whether to
+  re-dispatch with a corrected proposal (and a different `--model` if the work calls for one), split
+  the item, or take it to the operator.
+- Tickets carry no `Model:` / `Effort:` field. An entry still holding them is inert: ignored, never
+  an error, because a filing-time guess is made before any evidence exists.
+- The tier set is deliberately **coarse**: the prompt cache is per-model and an effort change
+  invalidates the tools+system prefix, so spreading tickets across many `(model, effort)`
+  combinations fragments the cross-worker shared prefix.
+- **A session may never spawn above its own tier.** Every `--model` the harness assembles (the
+  sync porter) is clamped to `max(opus, the model of the
   session that spawned it)`. Opus is the FLOOR of that ceiling, not the ceiling itself, so a haiku or
   sonnet driver can still be configured to dispatch opus; what the rail forbids is a driver
   buying a tier ABOVE the one it is itself running at, which is the only way a cheap session could
@@ -171,8 +141,6 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   ran below its configured tier.
 - `GOVERN_MODEL_CEILING=0` (kill switch): disables the clamp entirely, restoring the previous
   behaviour in which the configured tier is dispatched verbatim.
-- `GOVERN_MEASURED_SIZING=0` — kill switch: restores the old precedence in which a ticket's
-  `Model:`/`Effort:` field outranks the measured verdict.
 
 ### Delegate by token weight, not by task
 The reason to spawn at all is that the work would flood the parent with output it will never

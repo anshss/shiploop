@@ -52,29 +52,6 @@ req ROOT_PM      "${ROOT_PM:-}"
 req WORKTREE_BASE "${WORKTREE_BASE:-}"
 if [[ "${#REPOS[@]}" -eq 0 ]]; then problems+=("REPOS is empty (no sub-repos configured)"); fi
 
-# ── Worker model floor/ceiling: a HARD assertion, not informational ──
-# GOVERN_WORKER_MODEL (floor, every attempt) and GOVERN_WORKER_ESCALATION_MODEL (the CAP on what an
-# explicit request may ask for) are deliberately two knobs (see workspace.sh). The assertion SURVIVED
-# the removal of automatic escalation, with a new meaning: a cap at or below the floor means every
-# dispatch already runs at or above the highest tier anyone is allowed to request, so the cap knob
-# controls nothing and reads as configured when it is inert. `${VAR:-default}` lets a downstream
-# fleet's environment collapse them to the same tier SILENTLY, with no signal that it happened.
-# Assert it here as a hard PROBLEM (drives exit 1 below), not a warn_only print.
-#
-# Reuse the repo's own tier ordering (govern::model_rank, defined in lib/common.sh and already
-# used on the sizing path) instead of hard-coding a second list of model names here. govern::model_max itself is NOT enough for this check: on a
-# tie it returns the second argument (the ceiling) unchanged ("b wins ties"), so
-# `model_max(floor, ceiling) == ceiling` is true both when floor < ceiling (fine) AND when
-# floor == ceiling (the exact no-op this assertion exists to catch): it cannot express a STRICT
-# less-than. govern::model_rank, the primitive model_max is built on, can.
-resolved_floor="${GOVERN_WORKER_MODEL:-sonnet}"
-resolved_ceiling="${GOVERN_WORKER_ESCALATION_MODEL:-opus}"
-floor_rank="$(govern::model_rank "$resolved_floor")"
-ceiling_rank="$(govern::model_rank "$resolved_ceiling")"
-if [[ "$floor_rank" -ge "$ceiling_rank" ]]; then
-  problems+=("GOVERN_WORKER_MODEL='$resolved_floor' (floor, rank $floor_rank) is not strictly cheaper than GOVERN_WORKER_ESCALATION_MODEL='$resolved_ceiling' (the explicit-request cap, rank $ceiling_rank): a cap at or below the floor is inert, since every dispatch already runs at or above the highest tier a ticket Model: field may ask for")
-fi
-
 # ── Named-but-missing scripts — a HARD problem ──
 # Nothing checked whether a rule or an npm script naming an installed script
 # still points at a real file. Two live instances the same session: (a)
@@ -136,7 +113,7 @@ fi
 # templates/lib/workspace.sh whose default is neither empty nor an unfilled
 # `__PLACEHOLDER__` is a shared POLICY default (as opposed to per-workspace
 # identity like META_NAME/REPOS, which use `__PLACEHOLDER__` substitution and
-# so never match this pattern). Today that is exactly GOVERN_WORKER_MODEL and
+# so never match this pattern). Today that is GOVERN_WORKER_MODEL and
 # GOVERN_WORKER_ESCALATION_MODEL; the check stays correct if the hub adds
 # another self-referential policy default later with no code change here.
 #
@@ -177,7 +154,6 @@ fi
 opt_seen=()
 for k in GOVERN_MERGE_REPOS GOVERN_LOCAL_FIRST_REPOS \
          GOVERN_MODEL_CEILING GOVERN_SESSION_MODEL \
-         GOVERN_SCOUT GOVERN_SCOUT_MODEL GOVERN_SCOUT_TIMEOUT \
          GOVERN_EXTERNALIZE_LANE GOVERN_EXTERNALIZE_REPO GOVERN_EXTERNALIZE_SUBREPO \
          GOVERN_EXTERNALIZE_LABELS WSP_LINT_FIX_CMD GOVERN_MIGRATE_CMD GOVERN_VERIFY_CMD \
          GOVERN_UPSTREAM_HARNESS_REPO GOVERN_UPSTREAM_HARNESS_DIR \
@@ -279,10 +255,6 @@ if [[ "$MODE" == json ]]; then
     --arg h_ismerge      "$h_ismerge" \
     --arg h_islocal      "$h_islocal" \
     --arg h_next_ticket  "$h_next_ticket" \
-    --arg resolved_floor   "$resolved_floor" \
-    --arg resolved_ceiling "$resolved_ceiling" \
-    --argjson floor_rank   "$floor_rank" \
-    --argjson ceiling_rank "$ceiling_rank" \
     --argjson opt_seen   "$(printf '%s\n' "${opt_seen[@]}" | jq -R . | jq -s .)" \
     --argjson problems   "$( { [ "${#problems[@]}"  -gt 0 ] && printf '%s\n' "${problems[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
     --argjson warn_only  "$( { [ "${#warn_only[@]}" -gt 0 ] && printf '%s\n' "${warn_only[@]}"; } | jq -R . | jq -s '. | map(select(. != ""))')" \
@@ -291,8 +263,6 @@ if [[ "$MODE" == json ]]; then
       helpers: {repo_slug:$h_slug, repo_localdir:$h_localdir, repo_port:$h_port,
                repo_cmd:$h_cmd, is_merge_repo:$h_ismerge, is_local_first:$h_islocal,
                next_ticket_number:$h_next_ticket},
-      model_tiers: {floor:$resolved_floor, floor_rank:$floor_rank,
-                    ceiling:$resolved_ceiling, ceiling_rank:$ceiling_rank},
       knobs:$opt_seen, problems:$problems, warnings:$warn_only}'
 else
   echo "════════ config-check (no-auth smoke) ════════"
@@ -312,10 +282,6 @@ else
   echo "  wsp_is_merge_repo    : $h_ismerge"
   echo "  wsp_is_local_first   : $h_islocal"
   echo "  next_ticket_number   : ${h_next_ticket:-<skipped>}"
-  echo ""
-  echo "── worker model floor/ceiling ──"
-  echo "  GOVERN_WORKER_MODEL            (floor)   : $resolved_floor (rank $floor_rank)"
-  echo "  GOVERN_WORKER_ESCALATION_MODEL (ceiling) : $resolved_ceiling (rank $ceiling_rank)"
   echo ""
   echo "── optional knobs ──"
   for e in "${opt_seen[@]}"; do echo "  $e"; done

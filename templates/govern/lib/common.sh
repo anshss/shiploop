@@ -3547,3 +3547,56 @@ govern::extract_report() {
   [[ -n "$best" ]] || return 1
   printf '%s' "$best"
 }
+
+# govern::queue_stale_copy: print what is wrong when the tickets file's working-tree copy looks like
+# an OLDER copy written over a newer one (a long-open editor saving its stale buffer), empty when it
+# looks like a normal edit. Two signals, both read from git: the working tree deletes a `## #N`
+# block that HEAD has while no `resolve #N` commit came after the commit that added it (a live
+# ticket vanished), or it carries a `## #N` block HEAD lacks whose number a `resolve #N` commit
+# already landed (a resolved ticket came back). A plain append of a new number and a block removed
+# by a landed resolve both pass. The classification lines are followed by the head of the diff.
+# Read-only: it never stashes, discards or commits anything. GOVERN_QUEUE_STALE_GUARD=0 turns the
+# check off (prints nothing). The default lives here and nowhere else.
+govern::queue_stale_copy() { # [tickets-file]
+  [[ "${GOVERN_QUEUE_STALE_GUARD:-1}" == "0" ]] && return 0
+  local f="${1:-$TICKETS_FILE}" dir base n added subjects found=0 out=""
+  [[ -f "$f" ]] || return 0
+  dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
+  [[ -n "$dir" ]] || return 0
+  base="$(basename "$f")"
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  git -C "$dir" cat-file -e "HEAD:./$base" 2>/dev/null || return 0
+  [[ -n "$(git -C "$dir" status --porcelain -- "$base" 2>/dev/null || true)" ]] || return 0
+  local head_nums work_nums
+  head_nums="$(git -C "$dir" show "HEAD:./$base" 2>/dev/null | grep -oE '^## #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)"
+  work_nums="$(grep -oE '^## #[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+' | sort -u || true)"
+  while IFS= read -r n; do
+    [[ -n "$n" ]] || continue
+    added="$(git -C "$dir" log -S"## #${n} " --format=%H -1 -- "$base" 2>/dev/null || true)"
+    if [[ -n "$added" ]]; then
+      subjects="$(git -C "$dir" log --format=%s "${added}..HEAD" 2>/dev/null || true)"
+      if grep -qE "resolve #${n}([^0-9]|\$)" <<<"$subjects"; then continue; fi
+    fi
+    out+="  working copy deletes live ticket: ## #${n}"$'\n'
+    found=1
+  done < <(comm -23 <(printf '%s\n' "$head_nums") <(printf '%s\n' "$work_nums"))
+  while IFS= read -r n; do
+    [[ -n "$n" ]] || continue
+    subjects="$(git -C "$dir" log --format=%s 2>/dev/null || true)"
+    if grep -qE "resolve #${n}([^0-9]|\$)" <<<"$subjects"; then
+      out+="  working copy brings back resolved ticket: ## #${n}"$'\n'
+      found=1
+    fi
+  done < <(comm -13 <(printf '%s\n' "$head_nums") <(printf '%s\n' "$work_nums"))
+  [[ "$found" == "1" ]] || return 0
+  printf '%s' "$out"
+  git -C "$dir" diff --no-color -U0 -- "$base" 2>/dev/null | head -40 || true
+  return 0
+}
+
+# govern::queue_stale_refusal: the one refusal text every tickets-file writer prints (stderr) when
+# govern::queue_stale_copy found something. $1 is the script label, $2 the findings.
+govern::queue_stale_refusal() { # <label> <findings>
+  printf '%s: queue/tickets.md looks like a stale copy written over newer work (see below). Restore it from git (git diff queue/tickets.md shows the loss), then re-run. GOVERN_QUEUE_STALE_GUARD=0 turns this check off.\n%s\n' "$1" "$2" >&2
+  return 0
+}

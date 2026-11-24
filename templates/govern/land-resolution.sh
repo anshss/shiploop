@@ -170,6 +170,12 @@ trap 'govern::lock_release "$BK_LOCK"' EXIT
 # runtime) would be published under this resolve's message. Checked before the pre-edit sync because
 # the autostash pull would carry the foreign edit straight through. Exit 12; nothing is stashed,
 # discarded or committed. A caller that merged the PR first (resolve-ticket.sh) is told so here.
+_stale="$(govern::queue_stale_copy "$TICKETS_FILE")"
+if [[ -n "$_stale" ]]; then
+  govern::queue_stale_refusal "land-resolution #$N" "$_stale"
+  echo "land-resolution #$N: if the PR was already merged, the queue is NOT booked: once the file is restored, re-run resolve-ticket.sh <N> --no-merge with the same report." >&2
+  exit 12
+fi
 _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
 if [[ -n "$_foreign" ]]; then
   govern::queue_foreign_refusal "land-resolution #$N" "$_foreign"
