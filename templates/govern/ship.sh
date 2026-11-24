@@ -30,6 +30,8 @@
 #
 # Idempotent: a re-run reuses an existing commit (nothing new staged), an already-pushed branch
 # (push fast-forwards or no-ops), and the repo's already-open PR on that branch instead of a duplicate.
+# A re-run against a repo whose branch already landed (a squash merge severs ancestry but not content,
+# and a merged PR carries the branch regardless) pushes nothing and opens no duplicate PR for it.
 #
 # `.dispatch-packet.md` is NEVER staged, even via --add: it is gitignored runtime state, not source.
 # A workspace whose .gitignore predates the entry still ships: an untracked packet is skipped, never
@@ -231,11 +233,29 @@ for _repo in "${REPOS[@]}"; do
   [[ "${_ahead:-0}" -gt 0 ]] || continue   # nothing for this repo at all (no staged diff, no prior commit)
 
   _branch="$(govern::ticket_branch "$PRIMARY" "$_repo")"
+
+  # Squash-merge awareness (the landed.sh tree-compare, the same check reap.sh runs before
+  # downgrading "unmerged"): a squash merge severs SHA ancestry forever, so an ahead-count
+  # proves nothing about whether content landed. A branch whose tree is byte-identical to
+  # origin/$_base has nothing left to ship — push nothing, never `gh pr create` for a
+  # no-diff branch. A branch whose tree still differs is skipped too when a MERGED PR
+  # already carries it: the content landed (possibly edited before merge) and the tree
+  # difference is origin/$_base moving past the branch, not unlanded work.
+  if govern::tree_matches_origin "$_dir" "$_base"; then
+    govern::log "$_repo: HEAD tree is byte-identical to origin/$_base (content already landed, e.g. via a squash merge); skipping push and PR"
+    continue
+  fi
   govern::require gh
+  _slug="$(govern::repo_slug "$_repo")"
+  _merged="$(gh pr list --repo "$_slug" --head "$_branch" --state merged --json number,url 2>/dev/null \
+    | jq -c '.[0] // empty' 2>/dev/null || true)"
+  if [[ -n "$_merged" ]]; then
+    govern::log "$_repo: a merged PR (#$(jq -r '.number' <<<"$_merged")) already carries $_branch; skipping push and PR"
+    continue
+  fi
   _push_out="$(git -C "$_dir" push -u origin "HEAD:$_branch" 2>&1)" || govern::die "$_repo: git push failed: $(printf '%s' "$_push_out" | tail -3 | tr '\n' ' ')"
   govern::log "$_repo: pushed $_ahead commit(s) to $_branch"
 
-  _slug="$(govern::repo_slug "$_repo")"
   _pr_title="$COMMIT_SUBJECT"
   _pr_body="$COMMIT_BODY"
   if ! govern::repo_is_public "$_repo"; then

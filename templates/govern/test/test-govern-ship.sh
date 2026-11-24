@@ -11,6 +11,9 @@
 #      ticket id; a private repo's branch is ticket-<N> and the PR does.
 #   6. .dispatch-packet.md is never staged, even when named explicitly via --add, and an untracked
 #      packet left un-named never blocks the ship either.
+#   7. squash-merge awareness: a re-run against a repo whose branch already landed (tree
+#      byte-identical to origin/main, or a merged PR carrying the branch) pushes nothing and opens
+#      no PR for it; a tree that still differs with the PR still open ships as usual.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -33,7 +36,13 @@ LOG="$log"
 [[ -s "\$LOG" ]] || echo '[]' > "\$LOG"
 case "\$*" in
   *"repo view"*) echo private; exit 0 ;;
-  *"pr list"*) cat "\$LOG"; exit 0 ;;
+  *"pr list"*)
+    if [[ "\$*" == *" --state merged "* ]]; then
+      jq '[.[] | select(.state == "merged")]' "\$LOG"
+    else
+      cat "\$LOG"
+    fi
+    exit 0 ;;
   *"pr create"*)
     title=""; body=""; head=""; repo=""
     args=("\$@")
@@ -48,7 +57,7 @@ case "\$*" in
     num=\$(( \$(jq 'length' "\$LOG") + 100 ))
     url="https://github.com/\$repo/pull/\$num"
     jq --arg t "\$title" --arg b "\$body" --arg h "\$head" --arg u "\$url" --argjson n "\$num" \\
-      '. + [{number:\$n, url:\$u, headRefName:\$h, title:\$t, body:\$b}]' "\$LOG" > "\$LOG.tmp" && mv "\$LOG.tmp" "\$LOG"
+      '. + [{number:\$n, url:\$u, headRefName:\$h, title:\$t, body:\$b, state:"open"}]' "\$LOG" > "\$LOG.tmp" && mv "\$LOG.tmp" "\$LOG"
     echo "\$url"
     exit 0
     ;;
@@ -232,6 +241,79 @@ case "$(git -C "$CASE_T" show --stat --format= HEAD)" in
   *dispatch-packet*) assert_eq staged never-staged "6b. the packet is not in the commit" ;;
   *) assert_eq ok ok "6b. the packet is not in the commit" ;;
 esac
+rm -rf "$CASE_T"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 7. squash-merge awareness: a landed branch pushes nothing and opens no PR on a re-run
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+mark_pr_merged() { # <number> -- flip one stub PR's state to merged
+  jq --argjson n "$1" 'map(if .number == $n then . + {state:"merged"} else . end)' "$CASE_LOG" \
+    > "$CASE_LOG.tmp" && mv "$CASE_LOG.tmp" "$CASE_LOG"
+}
+
+setup_case
+echo "retry = 3" > "$CASE_T/alpha/retry.conf"
+run_ship 7; rc7a=$SHIP_RC; out7a="$SHIP_OUT"
+assert_eq "$rc7a" "0" "7. first ship opens the PR"
+pr7="$(jq -r '.pr.number' <<<"$out7a")"
+# Squash-land the branch: origin/main gains a DIFFERENT commit whose tree is byte-identical to
+# the branch tip. Ancestry is severed but the content landed; the PR is merged. Plumbing only
+# (commit-tree against the bare-side ref) so the working clone never moves off its branch.
+git -C "$CASE_T/alpha" fetch -q origin
+tree7="$(git -C "$CASE_T/alpha" rev-parse 'HEAD^{tree}')"
+parent7="$(git -C "$CASE_T/alpha" rev-parse origin/main)"
+s7="$(git -C "$CASE_T/alpha" commit-tree "$tree7" -p "$parent7" -m squash)"
+git -C "$CASE_T/alpha" push -q origin "$s7:refs/heads/main"
+git -C "$CASE_T/alpha" fetch -q origin
+mark_pr_merged "$pr7"
+run_ship 7; rc7b=$SHIP_RC; out7b="$SHIP_OUT"
+assert_eq "$rc7b" "0" "7. the re-run against the squash-landed repo still exits 0"
+assert_eq "$(jq -r '.pr' <<<"$out7b")" "null" "7. no PR for the squash-landed repo"
+assert_eq "$(jq -r '.prs | length' <<<"$out7b")" "0" "7. .prs is empty for the squash-landed repo"
+assert_eq "$(jq 'length' "$CASE_LOG")" "1" "7. no duplicate PR was opened"
+assert_contains "$SHIP_ERR" "skipping push and PR" "7. the skip is logged with its reason"
+rm -rf "$CASE_T"
+
+# ── 7b. a merged PR carries the branch even when the tree still differs (main moved past it) ──
+setup_case
+echo "retry = 3" > "$CASE_T/alpha/retry.conf"
+run_ship 7; rc7ba=$SHIP_RC; out7ba="$SHIP_OUT"
+assert_eq "$rc7ba" "0" "7b. first ship opens the PR"
+pr7b="$(jq -r '.pr.number' <<<"$out7ba")"
+mark_pr_merged "$pr7b"
+# main gains a human-EDITED version of the change (retry = 4): the branch's tree now differs
+# from origin/main, but the merged PR already carries the branch's work.
+git -C "$CASE_T/alpha" fetch -q origin
+blob4="$(printf 'retry = 4\n' | git -C "$CASE_T/alpha" hash-object -w --stdin)"
+tree4="$(printf '100644 blob %s\tretry.conf\n' "$blob4" | git -C "$CASE_T/alpha" mktree)"
+parent4="$(git -C "$CASE_T/alpha" rev-parse origin/main)"
+d7="$(git -C "$CASE_T/alpha" commit-tree "$tree4" -p "$parent4" -m 'merged with edits')"
+git -C "$CASE_T/alpha" push -q origin "$d7:refs/heads/main"
+git -C "$CASE_T/alpha" fetch -q origin
+run_ship 7; rc7bb=$SHIP_RC; out7bb="$SHIP_OUT"
+assert_eq "$rc7bb" "0" "7b. the re-run still exits 0"
+assert_eq "$(jq -r '.pr' <<<"$out7bb")" "null" "7b. no PR when a merged PR already carries the branch"
+assert_eq "$(jq 'length' "$CASE_LOG")" "1" "7b. no duplicate PR was opened"
+assert_contains "$SHIP_ERR" "merged PR" "7b. the skip is logged with its reason"
+rm -rf "$CASE_T"
+
+# ── 7c. negative control: tree differs and the PR is still open → real work, ship as usual ──
+setup_case
+echo "retry = 3" > "$CASE_T/alpha/retry.conf"
+run_ship 7; rc7ca=$SHIP_RC; out7ca="$SHIP_OUT"
+assert_eq "$rc7ca" "0" "7c. first ship opens the PR"
+pr7c="$(jq -r '.pr.number' <<<"$out7ca")"
+git -C "$CASE_T/alpha" fetch -q origin
+blob4c="$(printf 'retry = 4\n' | git -C "$CASE_T/alpha" hash-object -w --stdin)"
+tree4c="$(printf '100644 blob %s\tretry.conf\n' "$blob4c" | git -C "$CASE_T/alpha" mktree)"
+parent4c="$(git -C "$CASE_T/alpha" rev-parse origin/main)"
+d7c="$(git -C "$CASE_T/alpha" commit-tree "$tree4c" -p "$parent4c" -m 'main moved past the branch')"
+git -C "$CASE_T/alpha" push -q origin "$d7c:refs/heads/main"
+git -C "$CASE_T/alpha" fetch -q origin
+run_ship 7; rc7cb=$SHIP_RC; out7cb="$SHIP_OUT"
+assert_eq "$rc7cb" "0" "7c. the re-run still exits 0"
+assert_eq "$(jq -r '.pr.number' <<<"$out7cb")" "$pr7c" "7c. the open PR is reused, not duplicated"
+assert_eq "$(jq 'length' "$CASE_LOG")" "1" "7c. no duplicate PR was opened"
 rm -rf "$CASE_T"
 
 assert_done

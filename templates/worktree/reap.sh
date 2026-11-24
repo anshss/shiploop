@@ -31,6 +31,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/workspace.sh
 source "$ROOT/scripts/lib/workspace.sh"
+# The squash-merge downgrade lives in a shared helper (ship.sh's per-repo skip runs the same
+# tree compare). A workspace predating the module keeps the blocking behavior: without the
+# helper the downgrade never fires, which only ever KEEPS a worktree, never deletes one.
+if [ -f "$ROOT/scripts/govern/lib/landed.sh" ]; then
+  # shellcheck source=../govern/lib/landed.sh
+  . "$ROOT/scripts/govern/lib/landed.sh"
+fi
 
 APPLY=0; STRIP=0
 for a in "$@"; do
@@ -113,10 +120,6 @@ for wt in "$WORKTREE_BASE"/*/; do
   case "$slug" in
     t[0-9]*) ticket_num="${slug#t}"; ticket_num="${ticket_num%%-*}" ;;
   esac
-  ticket_gone=0
-  if [ -n "$ticket_num" ] && ! grep -qE "^## #${ticket_num}([^0-9]|$)" "$ROOT/queue/tickets.md" 2>/dev/null; then
-    ticket_gone=1
-  fi
 
   # 2/3. Per repo: uncommitted work, and commits not on origin/main. The list is REPOS
   #      *plus the meta worktree root itself* — sizing this loop by the sub-repo name
@@ -146,7 +149,11 @@ for wt in "$WORKTREE_BASE"/*/; do
     if [ -z "$ahead" ]; then
       blockers="$blockers ancestry-unknown($label)"
     elif [ "$ahead" -gt 0 ]; then
-      if [ "$ticket_gone" -eq 1 ] && git -C "$d" diff --quiet origin/main HEAD -- 2>/dev/null; then
+      # The downgrade runs only when BOTH signals agree (the shared landed.sh helper):
+      # the ticket named by the t<N> slug is gone from tickets.md AND this repo's
+      # committed tree is byte-identical to origin/main. The ticket file is passed
+      # explicitly so an inherited GOVERN_TICKETS_FILE cannot redirect the check.
+      if govern::branch_is_landed "$d" main "$ticket_num" "$ROOT/queue/tickets.md"; then
         : # ticket resolved+deleted and this repo's tree matches origin/main exactly ;
           # a squash-merge ancestry artifact, not real unlanded work
       else
