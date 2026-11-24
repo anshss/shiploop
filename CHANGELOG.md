@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.20.17 - 2026-11-24
+
+### Changed
+
+**A worker that waits on its own background task is no longer stranded (release train t2026-11-24-b).**
+A worker that ended its turn while its own background Bash or Monitor ran was never woken when the
+task finished. The scaffold now writes `BASH_DEFAULT_TIMEOUT_MS=1800000`,
+`BASH_MAX_TIMEOUT_MS=3600000` and `GOVERN_BG_WAIT_GUARD=1` into `.claude/settings.json` `env`
+(existing keys are kept), so a long command stays in the worker's turn instead of moving to the
+background at two minutes. A new PostToolUse hook, `bg-task-ledger.sh`, records each background
+launch as it happens. The agent-progress guard, now on by default, holds a stopping worker until each
+pending task's output file ends in Claude Code's `[exited with code N]` or `[killed]` line, for up to
+`GOVERN_BG_WAIT_MAX_S` (default 1740), then blocks with the task's status and last lines so the worker
+continues with the result; a task still running past the budget, or `GOVERN_BG_WAIT_HOLD=0`,
+re-blocks with the foreground re-run instead. The STALL signal no longer fires on a worker that ended
+on a valid report, a worker past its wall-clock cap can still run `govern:ship` and write its report,
+and an agent whose type starts with `ro-` is exempt from the stall signal. Two workspace switches,
+both off by default: `GOVERN_SESSION_OPTOUT_DIR` silences the posture and ticket-sweep reminders for
+a marked session, and `GOVERN_SYNC_PUSH_AHEAD=1` lets `sync.sh` push a local main that is ahead of
+origin and not behind.
+
+**Worker spawns are prepared, not gated; reports and live state move through files (release train t2026-11-24-b).**
+New `govern:dispatch -- <N>[,<N>...] [--model <alias>]` runs the pre-dispatch gates, cuts the
+packet, prints the ticket's Proposed solution and Done when, and prints the ready `Agent` call. A
+worker spawn with no fresh packet gets one cut by the router-posture guard, which returns the ticket's
+Proposed solution and Done when to the advisor as context; a gate verdict is the only refusal, and the
+model the advisor passes (sonnet by default) is recorded in the packet, never refused
+(`GOVERN_DISPATCH_GATE`, `GOVERN_DISPATCH_FRESH_HOURS`). A SubagentStop hook,
+`worker-report-capture.sh`, saves the worker's final report to `governor/reports/<N>.json`, and
+`govern:resolve -- <N>` reads it when nothing is piped in. New `govern:status` lists each live worker
+with its dispatch time, last tool call, idle time, pending background tasks and PR state.
+
+**The prose matches the scripts, and a stale copy of the queue file cannot land (release train t2026-11-24-b).**
+The worker runs sonnet by default and the advisor raises it for one dispatch with
+`govern:dispatch --model`; no doc claims automatic escalation. Queue-deletion wording, model and
+scout claims, and the seed's procedure text now agree with what the scripts do. The seed appendix
+gains three lessons: `cmd &` inside a background call detaches with no completion notification, the
+sync-templates marker lives only in the main checkout, and an operator-only step gets a numbered
+how-to. A new stale-copy guard (`GOVERN_QUEUE_STALE_GUARD`, default on) makes every govern writer of
+`queue/tickets.md` refuse a working-tree copy that deletes a live ticket or brings back a resolved
+one, and SessionStart warns about it.
+
 ## 1.20.16 - 2026-11-24
 
 ### Changed

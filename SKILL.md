@@ -141,7 +141,11 @@ inside YOUR session, one ticket at a time, near-zero Claude context throughout:
    own the list), prints the verdict (`proceed` / `skip: <reason>` / `refuse: <reason>`) and, on
    `proceed`, the exact `Agent` call. The worker defaults to `sonnet`; `--model` raises it for that
    one dispatch. Nothing escalates the model automatically.
-2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. The worker runs the
+2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. A worker spawn with no fresh
+   packet gets one cut automatically by the hook (the same path as `govern:dispatch`), and the advisor
+   receives the ticket's proposed solution and done-when as context at spawn time. The only refusal is
+   a pre-dispatch gate verdict (dependency unmerged, failure streak, drift), shown verbatim; the model
+   is never refused, whatever the advisor passes (default `sonnet`) is recorded in the packet. The worker runs the
    doctrine in `governor/worker-prompt.md`, self-services its own worktree, implements the ticket's
    proposed solution, and returns a JSON report: it never merges and never touches
    `queue/tickets.md`.
