@@ -1018,6 +1018,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 2a87f480832e886ef6229ae193b665b1e1c4f689bf3509f62c619083f4aba941  scripts/govern/test/test-spawn-worker-sweep.sh
 2a8c95f29b300bd701e8246190e5b03d6dd837fe963a78c5ae653fa7b8f457a4  scripts/govern/test/test-sync-port-fork-funnel.sh
 2b219a1e0efde09bdbef441580d8f7af68caadc3d80c16936b282116e17334bd  scripts/govern/test/test-ticket-route-guard.sh
+2b3cd4027d2d24af97f965544553a86eb6eee95b02e4a5b112955086902b0faa  scripts/govern/test/assert.sh
 2bd859b182f3a29bd4c1e477b496cf507b70e5a9808842fc015fae7795b2bcec  scripts/govern/test/test-file-ticket-dup-flag.sh
 2c14cbcfe6fd7f7904964ebdb5fc8e77f88fa25e46d1137bc0c1e047a0a2f5a9  scripts/govern/test/test-concurrency.sh
 2c182d10e4e41f50ab7ec145b95b1e4eac8004be03e2c7e8d6e2591928f6f607  scripts/govern/test/test-agent-progress-guard.sh
@@ -1149,6 +1150,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 566f55f783b4cae560f77b5ef7cff7cdcf00b7f7dfc3a6b65ceb3b43483b4c68  scripts/govern/test/test-resolve-ticket-ci-log.sh
 56e6205f16086fc7a76f2c1632a039514aabb02abbb566ff974eec0b9549777a  scripts/govern/test/test-orphan-teardown.sh
 5705e4511ec7f1960f2e09fdd41c370fe68cc9bd407c1479ab48b9d4d77d051c  scripts/govern/test/test-enforce-budgets.sh
+573ba35ed0352e5664fd23c3d8fcdc349660103a14e687e2e88b4d8f490368b0  scripts/govern/test/test-pre-commit-hook.sh
 579196417782b9002c4fa011fb6e22dd2204be1bd0b5828131f045182e5ab452  scripts/govern/test/test-ticket-route-guard.sh
 579532c77a4b594559e7df32affbccc073b0acac5d58783be555221fb3d65b6f  scripts/govern/test/test-deterministic-apply.sh
 57a615bf418ec833cc1ce1ca7955b5a984153485bf08026c50cf5e487426d620  scripts/govern/test/test-interrupted-classification.sh
@@ -1183,6 +1185,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 62e9ba7acec2a7a21c8fd6bc8b78e002e242e77c42f127cb32ed7dd694814609  scripts/govern/test/test-ticket-sweep.sh
 6393c9c316d6ead38bdbebf4bfd88211801c125a0b85d557c6e4b26f7d92a8f7  scripts/govern/test/test-post-merge-sync-probe.sh
 63edc66dbb5a537ac42e53b38da2616a373e860f95336dc063d9fc68e76cdd32  scripts/govern/test/test-resolve-unmerged-refusal.sh
+63f6f41f7e8fae56cfab42fc5aa3c710d9032db62f0eac4ec16e8671f306a1ea  scripts/govern/test/test-public-pr-hygiene.sh
 6489517bf514781d2c2a1a8faa6b8edb8d2e38f4fe0c8e28344359fe8560abfb  scripts/govern/test/test-bookkeep-missing-dir.sh
 6518eaf62d7ef3a8e1c071d7ac4304f66266e4150f467f1e071baf45abb47449  scripts/govern/test/test-worker-agent-doctrine.sh
 65542d76dcdf2dd3c353ff3ec3099ada5477f252c9cfdb5daa7c3d1806d3e84a  scripts/govern/test/test-ticket-sweep.sh
@@ -1263,6 +1266,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 82b33c64f62edd3693136b0275f2c3aed8664717614c3019779a7c610afc25bb  scripts/govern/test/test-timeout-classification.sh
 82f33eee11baa4dcc7a008e2d97464becab8cefd28e1e4d266d45d47c725fc1b  scripts/govern/test/test-pre-dispatch-check.sh
 833764bb7aae1d3cee1ce077c624c1eab67c01a955afa4fea47c3c052c487509  scripts/govern/test/test-unpark-own-pr-merge.sh
+8344b7132ec4d49117cf7c67b084dfbfd27f9ce35379ceafad02ad72fb62891e  scripts/govern/test/test-automerge-guard.sh
 83b37186e5e11f239d54751319e7a1ca7c1c02ce27d766f5efdb77e8b363936f  scripts/govern/test/test-worktree-adopt.sh
 843e4b8b5f6db9e1ec9c7196d2b6ffce4f5b1435214eadb27025bc218596093a  scripts/govern/test/test-lock-holder-pid.sh
 8451b231324fc510308fc698711d6b36a9df671275dcb25fc3d9ce49d825217d  scripts/govern/test/test-externalize-lock.sh
@@ -1458,12 +1462,14 @@ c17fea5401491e2f98c478033a9abe2dbcc39c4d57e9d75a1f702fb6ff9d4e97  scripts/govern
 c197d0b5aea4c5ed7b82ee853c30c285ebc273e4b235463f1f6e3b94109c9a72  scripts/govern/test/test-spawn-exclude-dynamic-prompt.sh
 c1a9c01ca37808dea498b99e5f981df6f0c615149891672bc994b76718579674  scripts/govern/test/test-externalize-gate.sh
 c21c04e95e7268040f68d312117625b0964baa65447bb5afbbda745247a9a6dc  scripts/govern/test/test-router-posture-vf-nudge.sh
+c25d8473d72f94e8012d99cc4cfe474c50d60859a64e24fe10a6165d87ce15e6  scripts/govern/test/test-sync-templates.sh
 c27b1fccfe2f9dd10614b6fd99e246d3d64728e395f91957af7cfd5f69cdf845  scripts/govern/test/test-vocab-worker-pairing.sh
 c3e66e7aef0be1d2810112a3cee8ad035743ac5c7f20adb54f3e44ff09a9159b  scripts/govern/test/test-claudemd-trim.sh
 c4813e505104a14d9d8f4c4a564b2fe35f8074d68ed75d4ef0464039416130c0  scripts/govern/test/test-router-posture-vf-nudge.sh
 c4899cc6419ebb902d245df9b3534e403f09fc238a3f4fd86208db10915328f9  scripts/govern/test/test-improvements-commit.sh
 c49cf575c16037fa9ef16c52f21f8e3410e747066926483eb1fb19c79f1f3fce  scripts/govern/test/test-improve-supervise-fidelity.sh
 c4ef4b4d77c9713d42ef43b44b37a46c18dcf2110a9e5ca8b229e08164edcc12  scripts/govern/test/test-resolve-pr-shape.sh
+c4fd247e893c55aea79f138725a2b164a4c9d01a03150ca7c9f264f3f4c60777  scripts/govern/test/test-proposal-gate.sh
 c54d55becfacb906052dba2a64ab5db72434717bcfbaa05be64c2da22db6993d  scripts/govern/test/test-flows-sweep.sh
 c596e343fc8d90b146370fc56c65f3de05cebaf0313706b4c1ebea3dd3faa162  scripts/govern/test/test-enforce-budgets.sh
 c6e1a2f18b1c0660d6455d511205704fde2e1251ae53880d5b4752d105717134  scripts/govern/test/test-pr-footer.sh
