@@ -85,7 +85,9 @@ rpt() { printf '{"status":"resolved","pr":{"repo":"alpha","number":%s},"newTicke
 # tickets.md read-modify-write. They MUST serialize on BK_LOCK, exactly like two concurrent
 # land-resolution.sh calls do in test-concurrency.sh.
 bash "$EXT" >/dev/null 2>&1 &
+bg_reap "$!"
 rpt 2 | bash "$BK" 2 >/dev/null 2>&1 &
+bg_reap "$!"
 wait
 
 heads="$(grep -oE '^## #[0-9]+' "$T/tickets.md" | tr '\n' ' ')"

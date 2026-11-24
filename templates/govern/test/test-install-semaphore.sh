@@ -46,6 +46,7 @@ run_workers() { # <capped|uncapped>
       [ "$mode" = "capped" ] && sem_release
       true
     ) &
+    bg_reap "$!"
   done
   wait
   awk '{ if ($0=="+") n++; else n--; if (n>max) max=n } END { print max+0 }' "$events"

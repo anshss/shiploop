@@ -139,6 +139,7 @@ f="$(outfile bw1 "")"
 ledger_line ag-wait bw1 "$f"
 ( sleep 2; printf 'last real line\n\n[exited with code 0]\n' >> "$f" ) &
 wpid=$!
+bg_reap "$wpid"
 out="$(MAXS=20 guard ag-wait "$T/empty.jsonl")"
 wait "$wpid" 2>/dev/null
 assert_contains "$(reason_of "$out")" "last real line" "hold: a task that finishes during the hold is delivered with its output"

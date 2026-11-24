@@ -34,6 +34,18 @@ MAX_PER_MIN="${GOVERN_MONITOR_MAX_PER_MIN:-6}"
 # out immediately rather than being half-alive.
 [[ "${GOVERN_MONITOR:-1}" == "0" ]] && exit 0
 
+# A monitor that gets killed (a test's cleanup, a session teardown) must not strand
+# its tail child: the `tail -n 0 -F` below runs as a process substitution whose pid
+# is not directly capturable, so the trap kills every live child of this shell. A
+# stranded tail would re-parent and follow a deleted log forever.
+govern_monitor_cleanup() {
+  trap - TERM INT EXIT
+  local c
+  for c in $(pgrep -P "$$" 2>/dev/null); do kill "$c" 2>/dev/null || true; done
+  exit 0
+}
+trap govern_monitor_cleanup TERM INT EXIT
+
 find_log() { # walk up from the session cwd (and CLAUDE_PROJECT_DIR) for governor/events.jsonl
   local d i
   if [[ -n "${GOVERN_EVENTS_FILE:-}" && -f "${GOVERN_EVENTS_FILE:-}" ]]; then

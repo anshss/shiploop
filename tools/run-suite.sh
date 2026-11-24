@@ -22,7 +22,8 @@
 #     given every uncovered skip is a hard failure. Local runs omit the flag.
 #
 # Exit 0 = every selected test passed or skipped; exit 1 = one or more failures
-# (each named, with its log path) or a broken order/skip-accounting.
+# (each named, with its log path), a leaked background fixture (see the
+# no-orphans guard below), or a broken order/skip-accounting.
 #
 # Tests may source this file to call build_order / assert_coverage / select_shard
 # against fixtures: sourcing defines the functions and runs nothing (the main
@@ -132,8 +133,55 @@ main() {
     local name="$1" rc=0
     bash "$suite_dir/$name.sh" > "$log_dir/$name.log" 2>&1 || rc=$?
     printf '%s\n' "$rc" > "$log_dir/$name.rc"
+    sweep_orphans "$name"
     return 0
   }
+
+  # ── no-orphans guard ────────────────────────────────────────────────────────
+  # A test that leaks a background fixture (a fleet-monitor, a long-sleep stub)
+  # holds its stdout pipe open: a runner that captures test output via command
+  # substitution then blocks on the orphan, not the test, so the suite hangs.
+  # After each test file, sweep for fixture processes whose parent is gone
+  # (re-parented to init), kill them, and fail the run on any survivor the suite
+  # itself created. Only pids NEW since this invocation started are counted, so a
+  # stray that predates the run never blames a test. A leak is recorded as
+  # <name>.orphans beside the rc file: run_one runs in a subshell when --jobs > 1,
+  # so records cannot travel through shell variables. GOVERN_SUITE_NO_ORPHANS=0
+  # disables the guard (escape hatch, never needed on a clean host).
+  orphans_now() { # -> newline-separated sorted pids of orphaned fixture processes
+    local p ppid
+    for p in $(pgrep -f "$orphans_pat" 2>/dev/null); do
+      ppid="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+      [ "$ppid" = "1" ] || continue
+      printf '%s\n' "$p"
+    done | sort -u
+    return 0
+  }
+  sweep_orphans() { # <name>
+    local name="$1" now new p
+    [ "${GOVERN_SUITE_NO_ORPHANS:-1}" = "1" ] || return 0
+    now="$(orphans_now)"
+    new="$(comm -13 <(printf '%s' "$base_orphans") <(printf '%s' "$now"))"
+    [ -n "$new" ] || return 0
+    # Plain TERM is enough: a fleet-monitor kills its own tail child on TERM, and
+    # a sleep stub dies directly. No lib/common.sh here on purpose: it sources the
+    # workspace config at source time, which a fixture suite dir cannot provide.
+    for p in $new; do kill "$p" 2>/dev/null || true; done
+    printf '%s\n' "$new" > "$log_dir/$name.orphans"
+    printf 'leaked background fixture process(es), killed by the no-orphans guard:\n%s\n' "$new" >> "$log_dir/$name.log"
+    return 0
+  }
+  local base_orphans orphans_pat
+  # The monitor half of the pattern is anchored on THIS suite's hub root: several
+  # suites (parallel workers on one host) can run at once, and an unanchored
+  # 'fleet-monitor.sh' match would blame this run for a sibling's leak. Long-sleep
+  # stubs carry no path, so they stay matched unanchored.
+  orphans_pat='sleep [0-9]{3,}'
+  case "$suite_dir" in
+    */scripts/govern/test)  orphans_pat="${suite_dir%/scripts/govern/test}/tools/fleet-monitor\.sh|$orphans_pat" ;;
+    */templates/govern/test) orphans_pat="${suite_dir%/templates/govern/test}/tools/fleet-monitor\.sh|$orphans_pat" ;;
+  esac
+  base_orphans="$(orphans_now)"
 
   if [ "$jobs" -gt 1 ]; then
     # Portable slot control (no `wait -n`, which macOS's stock bash 3.2 lacks):
@@ -191,6 +239,15 @@ main() {
   echo ""
   echo "passed=$passed  failed=$failed  skipped=$skipped  total=$total  (logs: $log_dir)"
 
+  # Orphan attribution: any <name>.orphans file is a fixture leak the guard caught
+  # and killed; it fails the run, named, no matter what the test's own rc said.
+  local orphaned=0 of
+  for of in "$log_dir"/*.orphans; do
+    [ -f "$of" ] || continue
+    orphaned=$((orphaned + 1))
+    echo "::error::$(basename "$of" .orphans) leaked background fixture process(es) (killed by the no-orphans guard): $(tr '\n' ' ' < "$of")"
+  done
+
   if [ "$failed" -gt 0 ]; then
     local f
     for f in ${fails[@]+"${fails[@]}"}; do
@@ -215,6 +272,7 @@ main() {
   fi
 
   [ "$failed" -eq 0 ] || return 1
+  [ "$orphaned" -eq 0 ] || return 1
   return 0
 }
 

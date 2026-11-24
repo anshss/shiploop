@@ -39,7 +39,7 @@ count_wins() { find "$T/wins" -type f 2>/dev/null | wc -l | tr -d ' '; }
 race() { # <claim-fn> <lockdir>: 12 concurrent claimers, prints how many won
   local fn="$1" d="$2" i
   command rm -rf "$T/wins" "$d"; command mkdir -p "$T/wins"
-  for i in $(seq 1 12); do ( "$fn" "$d" && : > "$T/wins/$i" ) & done
+  for i in $(seq 1 12); do ( "$fn" "$d" && : > "$T/wins/$i" ) & bg_reap "$!"; done
   wait
   count_wins
 }
@@ -60,6 +60,7 @@ for i in $(seq 1 9); do
     echo "+" >> "$EV"; sleep 0.4; echo "-" >> "$EV"
     sem_release
   ) &
+  bg_reap "$!"
 done
 wait
 p="$(peak "$EV")"
@@ -69,7 +70,7 @@ assert_eq "$r" "within" "install semaphore stays within its cap of 3 on a non-ex
 # Registry lock: 8 concurrent critical sections must never overlap.
 EV="$T/reg.events"; : > "$EV"
 crit() { echo "+" >> "$EV"; sleep 0.15; echo "-" >> "$EV"; }
-for i in $(seq 1 8); do ( wt_registry_with_lock crit ) & done
+for i in $(seq 1 8); do ( wt_registry_with_lock crit ) & bg_reap "$!"; done
 wait
 assert_eq "$(peak "$EV")" "1" "registry lock admits one holder at a time on a non-exclusive mkdir"
 assert_eq "$(grep -c '^+$' "$EV")" "8" "every registry critical section ran"

@@ -167,6 +167,97 @@ wsp_repo_slug() { printf '%s/%s' "\$GITHUB_ORG" "\$1"; }
 wsp_repo_localdir() { printf '%s/%s' "\$META_ROOT" "\$1"; }
 EOF
 }
+# ── Background-fixture reap ──────────────────────────────────────────────────
+# A backgrounded fixture that outlives its test holds the test's stdout pipe open,
+# so a runner that captures output via command substitution blocks on the orphan,
+# not the test (the run hangs; a `>file` runner just accumulates strays that
+# outlive the session). bg_reap records a spawned pid; on the test's EXIT, pass or
+# fail, the chained trap reaps every recorded pid with govern::kill_tree
+# (lib/common.sh, reused, never re-derived). bg_kill_all reaps on demand. The
+# chaining captures whatever EXIT trap the test had installed at bg_reap time and
+# runs it after the reap, so set the test's own trap BEFORE the first bg_reap
+# call; a trap installed later replaces the chain (re-arm by calling bg_reap
+# again, or call bg_kill_all from the new trap).
+GOVERN_TEST_BG_PIDS=()
+bg_reap_one() { # <pid> reap one recorded fixture's subtree
+  local pid="$1" i=0
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  # A `set -m` leader (the spawned-in-its-own-group shape kill_tree's group-wide
+  # first strike is built for) gets kill_tree whole. A plain `cmd &` fixture is
+  # NOT a group leader: it shares the test's own process group, so `kill -- -pid`
+  # would TERM the test itself. There the walk alone is used, children first so
+  # nothing escapes by re-parenting.
+  if [[ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" == "$pid" ]]; then
+    govern::kill_tree "$pid" 2
+    return 0
+  fi
+  govern::_kill_tree_walk "$pid" TERM
+  while kill -0 "$pid" 2>/dev/null && [[ "$i" -lt 10 ]]; do sleep 0.2; i=$((i+1)); done
+  govern::_kill_tree_walk "$pid" KILL
+  return 0
+}
+bg_kill_all() { # reap every recorded pid's whole subtree
+  local p had_e=0 had_u=0
+  case $- in *e*) had_e=1 ;; esac
+  case $- in *u*) had_u=1 ;; esac
+  [[ "${#GOVERN_TEST_BG_PIDS[@]}" -gt 0 ]] || return 0
+  if ! command -v govern::kill_tree >/dev/null 2>&1; then
+    # common.sh sources scripts/lib/workspace.sh from the workspace root at source
+    # time, so a test that never seeded a stub (or ran inside a real workspace)
+    # gets a throwaway one, removed after the source; a test that DID seed one
+    # keeps its own root untouched.
+    if [[ -z "${GOVERN_WS_ROOT:-}" ]]; then
+      local stubroot
+      stubroot="$(mktemp -d)"
+      mk_ws_stub "$stubroot"
+      # shellcheck source=../lib/common.sh
+      . "$ASSERT_DIR/../lib/common.sh"
+      unset GOVERN_WS_ROOT
+      rm -rf "$stubroot"
+    else
+      # shellcheck source=../lib/common.sh
+      . "$ASSERT_DIR/../lib/common.sh"
+    fi
+    # common.sh sources with `set -euo pipefail`; a test that opted out (set +e)
+    # must not inherit the stricter mode from a reap it never asked for.
+    [[ "$had_e" == 1 ]] || set +e
+    [[ "$had_u" == 1 ]] || set +u
+  fi
+  for p in ${GOVERN_TEST_BG_PIDS[@]+"${GOVERN_TEST_BG_PIDS[@]}"}; do
+    bg_reap_one "$p"
+  done
+  GOVERN_TEST_BG_PIDS=()
+  return 0
+}
+govern_bg_exit() { # chained EXIT trap: reap recorded fixtures, then the test's own trap
+  bg_kill_all
+  if [[ -n "${GOVERN_BG_PREV_EXIT_CMD:-}" ]]; then eval "$GOVERN_BG_PREV_EXIT_CMD"; fi
+}
+bg_reap() { # pid... call right after `cmd &` with "$!"
+  local p spec
+  if [[ "${BASHPID:-}" != "$$" ]]; then
+    # A subshell (a command substitution, a function run inside one) cannot pass
+    # its records to the main shell's list, and arming the trap here would reap
+    # the recorded pids when the SUBSHELL exits, killing live fixtures. Refuse.
+    return 0
+  fi
+  for p in "$@"; do GOVERN_TEST_BG_PIDS+=("$p"); done
+  spec="$(trap -p EXIT)"
+  if [[ "$spec" == "trap -- 'govern_bg_exit' EXIT" ]]; then return 0; fi
+  GOVERN_BG_PREV_EXIT_CMD=""
+  if [[ -n "$spec" ]]; then
+    # `trap -p` prints `trap -- '<command>' EXIT`; peel the frame so what remains
+    # is the bare command text, ready for eval. A trap whose own text contains
+    # single quotes would need the escapes preserved instead; none in this suite.
+    GOVERN_BG_PREV_EXIT_CMD="${spec#trap -- }"
+    GOVERN_BG_PREV_EXIT_CMD="${GOVERN_BG_PREV_EXIT_CMD% EXIT}"
+    GOVERN_BG_PREV_EXIT_CMD="${GOVERN_BG_PREV_EXIT_CMD#\'}"
+    GOVERN_BG_PREV_EXIT_CMD="${GOVERN_BG_PREV_EXIT_CMD%\'}"
+  fi
+  trap 'govern_bg_exit' EXIT
+  return 0
+}
+
 assert_eq() { # actual expected message
   if [[ "$1" == "$2" ]]; then printf 'ok   - %s\n' "$3"
   else printf 'FAIL - %s\n       expected: [%s]\n       actual:   [%s]\n' "$3" "$2" "$1"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
