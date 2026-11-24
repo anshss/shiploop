@@ -140,7 +140,7 @@ _pdc_check_unrelated_precision() {
   fi
   local m prec nfiles
   for m in "$@"; do
-    prec="$(govern::ticket_precision "$m" "$TICKETS_FILE")"
+    prec="$(govern::ticket_precision "$m" "$TICKETS_FILE" || true)" # rc 3 stale / rc 2 ambiguous degrade to the scoped default
     # `grep -c .` prints 0 and exits 1 on empty input: unguarded here, the caller's set -e
     # (pre-dispatch-check.sh) plus this file's pipefail abort the whole multi-batch plan
     # between batch 1's verdicts and batch 2's evaluation, silently.

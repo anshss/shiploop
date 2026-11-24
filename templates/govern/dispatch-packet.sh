@@ -58,6 +58,11 @@ govern::log "creating worktree '$NAME' (or adopting it if a prior dispatch alrea
 bash "$WT_NEW" "$NAME" --adopt 1>&2 || govern::die "worktree:new failed for '$NAME'"
 WORKTREE_PATH="$WORKTREE_BASE/$NAME"
 [[ -d "$WORKTREE_PATH" ]] || govern::die "expected worktree at $WORKTREE_PATH after worktree:new, found nothing"
+# Stamp the slug under the governor state so resolve-ticket.sh tears this worktree down by the name
+# dispatch actually used, instead of guessing among naming conventions when the report omits
+# rootScope.worktree. Best-effort: a failed write degrades resolve to its registry probes.
+mkdir -p "$GOVERNOR_DIR/dispatch-worktrees" 2>/dev/null || true
+printf '%s\n' "$NAME" > "$GOVERNOR_DIR/dispatch-worktrees/$PRIMARY" 2>/dev/null || true
 
 # ── 2. gather every member's advisor budget, test command, and measured paths ────────────────────
 budget_for_grade() { # stated|scoped|open|"" -> advisor-consult budget for that grade
@@ -141,7 +146,7 @@ PACKET="$WORKTREE_PATH/.dispatch-packet.md"
     else
       printf '(ticket #%s not found in %s)\n\n' "$_n" "$TICKETS_FILE"
     fi
-    _prec="$(govern::ticket_precision "$_n" "$TICKETS_FILE")"
+    _prec="$(govern::ticket_precision "$_n" "$TICKETS_FILE" || true)" # rc 3 stale / rc 2 ambiguous degrade to the scoped default
     printf 'Advisor-consult budget for #%s: %s (grade: %s)\n\n' "$_n" "$(budget_for_grade "$_prec")" "${_prec:-scoped (default)}"
     _tc="$(ticket_test_cmd "$_n")"
     if [[ -n "$_tc" ]]; then

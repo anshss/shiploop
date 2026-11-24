@@ -422,15 +422,21 @@ preflight() {
   fi
 
   # 7 — single filesystem (cross-device child turns rename into copy+delete)
+  # st_dev portable: GNU stat FIRST (BSD's `-f '%d'` form). On GNU, `stat -f` means
+  # --file-system and takes no format argument, so `stat -f '%d' <path>` reads '%d' as a
+  # FILENAME: it prints fs info for <path> to stdout AND exits nonzero, and appending the
+  # `stat -c` fallback concatenates a multi-line blob that differs per path, making every
+  # entry look cross-device (this refused every clean repo on Linux). Same order as
+  # stat_mtime in govern/lib/common.sh.
   local root_dev e edev
-  root_dev="$(stat -f '%d' . 2>/dev/null || stat -c '%d' . 2>/dev/null || echo '')"
+  root_dev="$(stat -c '%d' . 2>/dev/null || stat -f '%d' . 2>/dev/null || echo '')"
   if [ -n "$root_dev" ]; then
     local -a entries=()
     while IFS= read -r -d '' e; do entries+=("$e"); done < <(find . -maxdepth 1 -mindepth 1 -print0)
     for e in "${entries[@]:-}"; do
       [ -n "$e" ] || continue
       case "$(basename "$e")" in "$UNDO_FILE"|"$MANIFEST_FILE"|.wrap-staging.*) continue ;; esac
-      edev="$(stat -f '%d' "$e" 2>/dev/null || stat -c '%d' "$e" 2>/dev/null || echo "$root_dev")"
+      edev="$(stat -c '%d' "$e" 2>/dev/null || stat -f '%d' "$e" 2>/dev/null || echo "$root_dev")"
       if [ "$edev" != "$root_dev" ]; then
         refuse "$e is on a DIFFERENT filesystem than the workspace root — the move would become a copy+delete (slow, non-atomic, and risks a partial .git). Resolve the cross-device mount before wrapping."
       fi

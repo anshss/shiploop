@@ -1,0 +1,14 @@
+# The doc-guard subset of tools/hub-context-tests.txt: the tests a DOC-ONLY push to main runs
+# from tools/hub-context-pre-push.sh. The full list costs ~85s serially, far over the sub-30s
+# budget a direct-to-main doc push must respect, and the tests contend when run concurrently, so
+# a prose-only diff (every changed path is a *.md or VERSION) runs just these cheap guards, the
+# defect class a doc push can actually break (README/SKILL prose regressions like an undefined
+# first use of a term). tools/check-version-consistency.sh additionally runs when VERSION or
+# CHANGELOG.md changed, wired in the checker, not listed here.
+#
+# Every entry must also be listed in tools/hub-context-tests.txt (the checker refuses to run
+# when the two lists disagree) and follows its conventions: one test name per non-comment line,
+# no .sh suffix, a leading ! quarantines.
+
+test-vocab-agent-worker
+test-vocab-worker-pairing

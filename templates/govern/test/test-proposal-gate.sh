@@ -133,4 +133,36 @@ call_site="$(grep -n 'govern::ticket_proposal "\$N" "\$TICKETS_FILE"' "$PDC")"
 assert_eq "$([ -n "$call_site" ] && echo yes || echo no)" "yes" \
   "6d. the gate's decision is keyed on \$N + \$TICKETS_FILE only -- no prompt/type argument exists to widen"
 
+# ── 7. a STALE worker-worktree copy refuses naming the staleness ───────────────────────────────
+# The fixture repo ($T) becomes the MAIN checkout; a linked worktree gets a copy whose ticket #64
+# lost its proposal (it predates main's proposal append). The gate must refuse with the STALE
+# reason, never "no proposed solution" -- that wrong reason sent a session to rewrite a proposal
+# that already existed on main. Ticket #60 (no proposal on EITHER copy) stays the plain refusal.
+cat >> "$T/queue/tickets.md" <<'TIX'
+
+## #64 - proposal exists on main only
+
+**Severity:** Low
+
+Observed: something.
+Done when: PR opens.
+
+**Proposed solution:** Flip the stale guard on line 12 of guard.sh.
+
+**Precision:** open
+
+---
+TIX
+( cd "$T" && git add -A && git commit -q -m tix && git worktree add -q --detach "$T/wtree" )
+grep -v 'Flip the stale guard' "$T/queue/tickets.md" | grep -v '^\*\*Precision:\*\* open' > "$T/wtree/queue/tickets.md"
+
+out="$(GOVERN_QUEUE_DIR="$T/wtree/queue" GOVERN_PROPOSAL_GATE=1 "$PDC" 60)"
+assert_eq "$out" "refuse: no proposed solution - the driver must specify before dispatch" \
+  "7a. a ticket absent in BOTH copies still refuses with the plain reason, no stale probe"
+
+out="$(GOVERN_QUEUE_DIR="$T/wtree/queue" GOVERN_PROPOSAL_GATE=1 "$PDC" 64)"
+assert_contains "$out" "STALE" "7b. a proposal present on MAIN but missing in the caller copy refuses naming the staleness"
+assert_not_contains "$out" "no proposed solution" \
+  "7b. the stale refusal never reads as 'no proposed solution'"
+
 assert_done

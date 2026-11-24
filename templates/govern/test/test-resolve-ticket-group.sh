@@ -154,4 +154,48 @@ assert_not_contains "$(cat "$T/land-body-41.json" 2>/dev/null)" "group-wide find
 assert_not_contains "$(cat "$T/land-body-41.json" 2>/dev/null)" "a group-wide lesson" \
   "6c. …and lessonPatch stripped too"
 
+# ── 7. a BARE-NUMBER tickets array equal to N ([41]) is a one-member batch: the single path ──────
+# The `.tickets[].ticket` walk errors on a bare number ("Cannot index number with ..."); unguarded,
+# the error is swallowed, the loop runs zero times, and the tail prints "landed" and records
+# "resolved" while land-resolution.sh never runs and the block stays queued.
+mkdir -p "$T/governor"
+: > "$LANDED"; : > "$MERGED"
+hist="$T/governor/ticket-history.jsonl"; : > "$hist"
+report='{"status":"resolved","pr":{"repo":"alpha","number":14,"url":"u"},"prs":[],"tickets":[40]}'
+rc="$(run_rt 40 "$report")"
+assert_eq "$(landed 40)" "yes" "7a. tickets:[40] resolves through the single path and lands"
+assert_eq "$(landed_count)" "1" "7b. exactly one land call"
+assert_eq "$rc" "0" "7c. exit 0"
+assert_contains "$(cat "$hist")" '"status":"resolved"' "7d. a resolved history row is written"
+
+# ── 8. a non-empty array that parses to nothing refuses BEFORE any bookkeeping ───────────────────
+# Cases: a bare number that is NOT this ticket, a string, an object without .ticket. Each must exit
+# non-zero with no land call, no "landed"/bookkeeping output, and no new history row.
+hist_case() { # <report> <label-prefix>
+  : > "$LANDED"; : > "$hist"
+  local rc out
+  out="$( ( cd "$T" && printf '%s' "$1" | bash "$T/bin/resolve-ticket.sh" 40 2>&1 ); echo $? )"
+  rc="${out##*$'\n'}"
+  assert_eq "$(landed_count)" "0" "$2: nothing lands"
+  assert_not_contains "$rc" "0" "$2: exits non-zero"
+  assert_not_contains "$out" "resolve-ticket #40: landed" "$2: no landed line"
+  assert_eq "$([[ -s "$hist" ]] && echo present || echo absent)" "absent" "$2: no history row"
+  assert_contains "$out" "no parseable {ticket,status} entries" "$2: the refusal names the unparseable shape"
+}
+hist_case '{"status":"resolved","pr":{"repo":"alpha","number":15,"url":"u"},"prs":[],"tickets":[99]}' "8a. a bare number that is not N"
+hist_case '{"status":"resolved","pr":{"repo":"alpha","number":16,"url":"u"},"prs":[],"tickets":["junk"]}' "8b. a bare string"
+hist_case '{"status":"resolved","pr":{"repo":"alpha","number":17,"url":"u"},"prs":[],"tickets":[{}]}' "8c. an object without .ticket"
+
+# ── 9. a group whose every member is parked books nothing: honest refusal at the tail ────────────
+: > "$LANDED"; : > "$MERGED"; : > "$hist"
+report='{"status":"resolved","pr":{"repo":"alpha","number":18,"url":"u"},"prs":[],
+  "tickets":[{"ticket":40,"status":"parked","note":"blocked"},{"ticket":41,"status":"parked","note":"blocked"}]}'
+out="$( ( cd "$T" && printf '%s' "$report" | bash "$T/bin/resolve-ticket.sh" 40 2>&1 ); echo $? )"
+rc="${out##*$'\n'}"
+assert_not_contains "$rc" "0" "9a. an all-parked group exits non-zero"
+assert_eq "$(landed_count)" "0" "9b. nothing lands"
+assert_contains "$out" "booked nothing" "9c. the tail says so honestly"
+assert_not_contains "$out" "resolve-ticket #40: landed" "9d. no landed line"
+assert_not_contains "$(cat "$hist")" '"status":"resolved"' "9e. no resolved history row"
+
 assert_done

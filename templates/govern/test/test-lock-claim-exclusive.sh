@@ -8,9 +8,25 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-source "$DIR/../lib/common.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# common.sh sources $WS_ROOT/scripts/lib/workspace.sh, which exists only in a scaffolded
+# workspace; seed a minimal one in a temp GOVERN_WS_ROOT so the test also runs from the hub.
+export GOVERN_WS_ROOT="$T"
+mkdir -p "$T/scripts/lib"
+cat > "$T/scripts/lib/workspace.sh" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+META_ROOT="\${META_ROOT:-$T}"
+GITHUB_ORG="acme"
+REPOS=(alpha)
+GOVERN_MERGE_REPOS=(alpha)
+wsp_is_merge_repo() { [ "\$1" = alpha ]; }
+wsp_repo_slug() { printf '%s/%s' "\$GITHUB_ORG" "\$1"; }
+wsp_repo_localdir() { printf '%s/%s' "\$META_ROOT" "\$1"; }
+EOF
+source "$DIR/../lib/common.sh"
+
 LOCK="$T/locks/x"; command mkdir -p "$T/locks"
 
 govern::lock_try "$LOCK" && rc=0 || rc=$?
