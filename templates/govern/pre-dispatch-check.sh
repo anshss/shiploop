@@ -212,7 +212,13 @@ pdc_gate_one() {
   # through the one shared implementation (govern::ticket_proposal). Nothing else on this path
   # re-parses the ticket file.
   if [[ "${GOVERN_PROPOSAL_GATE:-1}" != "0" ]]; then
-    if [[ -z "$(govern::ticket_proposal "$N" "$TICKETS_FILE")" ]]; then
+    local _prop _prc=0
+    _prop="$(govern::ticket_proposal "$N" "$TICKETS_FILE")" || _prc=$?
+    if [[ "$_prc" -eq 2 ]]; then
+      echo "refuse: #$N is folded into parts (or carries several proposals) - dispatch one part with GOVERN_TICKET_PART=<letter>"
+      return 0
+    fi
+    if [[ -z "$_prop" ]]; then
       echo "refuse: no proposed solution - the driver must specify before dispatch"
       return 0
     fi

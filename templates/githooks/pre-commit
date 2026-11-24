@@ -12,6 +12,12 @@
 # — the commit proceeds — because a broken linter should never block the human operator (or the
 # governor) mid-commit; the CI / health lane catches real quality regressions.
 #
+# LOCAL SEAM: after its own checks the hook runs every executable file in `.githooks/pre-commit.d/`
+# (the hook's own directory, else the harness root's `.githooks/`) in name order. A non-zero exit
+# fails the commit and names the file. An absent or empty directory changes nothing. Put
+# workspace-specific checks there instead of editing this hub-owned file, so an update can refresh
+# the hook without freezing it.
+#
 # CO-EXISTENCE: when a sub-repo already has a pre-commit hook (husky, lefthook, hand-rolled), the
 # installer skips this file entirely and logs "existing pre-commit — leaving in place". Neither
 # side clobbers the other; the operator can chain the workspace fixer in manually if they want it.
@@ -30,22 +36,43 @@ _find_workspace_sh() {
   return 1
 }
 WSP_FILE="$(_find_workspace_sh "$SUBREPO_ROOT" || true)"
-[ -n "$WSP_FILE" ] || exit 0
 
-# shellcheck source=/dev/null
-source "$WSP_FILE" 2>/dev/null || exit 0
+# The lint-fix step. Every early exit of the old flat script is a `return 0` here so the local seam
+# below still runs when no fixer is configured.
+_lint_fix() {
+  [ -n "$WSP_FILE" ] || return 0
+  # shellcheck source=/dev/null
+  source "$WSP_FILE" 2>/dev/null || return 0
+  local cmd="${WSP_LINT_FIX_CMD:-}"
+  [ -n "$cmd" ] || return 0
+  local name
+  name="$(basename "$SUBREPO_ROOT")"
+  echo "[pre-commit] $name: running \$WSP_LINT_FIX_CMD..."
+  if ( cd "$SUBREPO_ROOT" && eval "$cmd" >/dev/null 2>&1 ); then
+    # Re-stage only files that were ALREADY tracked-and-modified, so a fix that also created new
+    # files (rare, but e.g. formatter-generated cache) is not sneak-added to the commit.
+    ( cd "$SUBREPO_ROOT" && git add -u )
+    echo "[pre-commit] lint-fix ok — modified files re-staged."
+    return 0
+  fi
+  echo "[pre-commit] ⚠  lint-fix reported issues (soft warning — commit proceeds)."
+  return 0
+}
+_lint_fix
 
-CMD="${WSP_LINT_FIX_CMD:-}"
-[ -n "$CMD" ] || exit 0
-
-_name="$(basename "$SUBREPO_ROOT")"
-echo "[pre-commit] $_name: running \$WSP_LINT_FIX_CMD..."
-if ( cd "$SUBREPO_ROOT" && eval "$CMD" >/dev/null 2>&1 ); then
-  # Re-stage only files that were ALREADY tracked-and-modified, so a fix that also created new
-  # files (rare, but e.g. formatter-generated cache) is not sneak-added to the commit.
-  ( cd "$SUBREPO_ROOT" && git add -u )
-  echo "[pre-commit] lint-fix ok — modified files re-staged."
-  exit 0
+# Local seam: the hook's own directory first (a hooksPath install), else the harness root's
+# `.githooks/` (a copy installed into a sub-repo's hooks dir).
+_seam_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/pre-commit.d"
+if [ ! -d "$_seam_dir" ] && [ -n "$WSP_FILE" ]; then
+  _seam_dir="$(dirname "$WSP_FILE")/../../.githooks/pre-commit.d"
 fi
-echo "[pre-commit] ⚠  lint-fix reported issues (soft warning — commit proceeds)."
+if [ -d "$_seam_dir" ]; then
+  for _f in "$_seam_dir"/*; do
+    [ -f "$_f" ] && [ -x "$_f" ] || continue
+    if ! "$_f"; then
+      echo "[pre-commit] ✗ $(basename "$_f") failed — commit blocked." >&2
+      exit 1
+    fi
+  done
+fi
 exit 0

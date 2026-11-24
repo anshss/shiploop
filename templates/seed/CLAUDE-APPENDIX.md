@@ -379,6 +379,9 @@ Recognized Disposition tokens (case-insensitive, tolerant of common synonyms and
 - **The sync-templates marker lives only in the main checkout.** In a worktree, `sync-templates.sh
   --check` reports "no marker", and re-marking there discards the drift the marker was tracking. Run
   sync commands from the main checkout.
+- **Keep advisor commits out of a worker's worktree.** `govern:ship` pushes every sub-repo that has
+  commits on the ticket branch, so a commit the advisor makes inside the worker's worktree ships a
+  second time inside the worker's PR. Advisor edits belong in the main checkout.
 - **An operator-only step gets a numbered how-to, never invented busywork.** When the next step is
   one only the operator can take (a credential, a console click, a physical action), write it as
   numbered steps they can follow cold, say what happens next regardless, and stop. Do not fill the

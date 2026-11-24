@@ -79,7 +79,8 @@ Ignore only these two things in it, kept for historical shape but never populate
 5. **Ship with `npm run govern:ship -- [--add <path>]... <N>[,<N>...]`** from the worktree root,
    never improvised `git add`/`commit`/`push`/`gh pr create`; `--add` every new file (it refuses
    unnamed ones). It prints a report skeleton to fill in. **Never `git stash`**: stash refs are
-   shared by every worktree of a repo, so a parallel worker can pop yours.
+   shared by every worktree of a repo, so a parallel worker can pop yours. A review follow-up
+   re-runs `govern:ship`, never a bare `git push` (worker-prompt.md §1).
 6. **You stop at PR-open plus report.** Do not merge, do not wait on CI, do not touch
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of

@@ -135,4 +135,11 @@ git -C "$REPO" add -A; git -C "$REPO" commit -qm "chore: tweak workspace.sh conf
 rc=0; out="$(bash "$TOOL" --check)" || rc=$?
 assert_eq "$rc" "0" "workspace.sh config change → NOT drift (config sink excluded), exit 0"
 
+# ── no marker (as in a worktree): exit 2 and the message names the main checkout ────────────────
+rc=0; out="$(GOVERN_SYNC_MARKER="$REPO/no-such-marker" bash "$TOOL" --check 2>&1)" || rc=$?
+assert_eq "$rc" "2" "no marker → exit 2"
+assert_contains "$out" "marker lives only in the main checkout" "no-marker message says where the marker lives"
+assert_contains "$out" "never from a worktree" "no-marker message forbids marking from a worktree"
+assert_not_contains "$out" "to initialize" "no-marker message does not suggest marking in place"
+
 assert_done

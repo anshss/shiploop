@@ -22,6 +22,7 @@ aaa1c22be46574b7d811602454f41fba8c8d494146dc2b6853c7ee8a479fc816  .claude/agents
 # -- .claude/agents/worker.md --
 0053b475c69e403dd2b25a30bdaa5472db12e0c9c3deaeed8b358b7476bb7887  .claude/agents/worker.md
 0524df2df49695ae9b5b8af3bda72473f2b8f7c9fbdac0f78420d003e8fe06e0  .claude/agents/worker.md
+09705ee2a8c7e38f281d11c65f18e9d09f233fcbaab1e28a95e6dba135312ef8  .claude/agents/worker.md
 135f0a8c3ede4c08b7a0d68208b62267654a86c5e519092fa7107d8b3134ef01  .claude/agents/worker.md
 156905cb5834945cd522057b8a602f3849823de806791a7296629d1bd747bd03  .claude/agents/worker.md
 1a05b35b279bc36c35c8b500ed633624866e03c9077a9e80c399455f352f575a  .claude/agents/worker.md
@@ -91,6 +92,7 @@ d3cf17c246dd127e60bdbb43cf67f076f4ece79a8055fbe884b8bcdd5907a82e  doctor.sh
 
 # -- githooks/pre-commit --
 964d9027025b924258bf5cb94c0edbde8f8320ed868c8805859e9bce5e8ee5f4  githooks/pre-commit
+a165784007c841709fdc8c93addbf53c1e1a222436a7210e85efc53083905f30  githooks/pre-commit
 
 # -- githooks/pre-push --
 47b424779020acaabc95873676f6bbe4c59abe1f3d1fa0e7000eeacb08db3a1c  githooks/pre-push
@@ -324,6 +326,7 @@ e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-re
 68d0637351ad245af4bc1432a3158c444ac9e07c0e88f5875e9ab450fc7762be  govern/lib/common.sh
 6995796fa220a8a3a5d9a536a0c8f82ded4046a3ed270b46c7d17e2e0ff88987  govern/lib/common.sh
 6c7bd2f21a3854af4ce6c14dfb87fb033a441563c27a9e2401185fdcb30f9778  govern/lib/common.sh
+6ea04ef3198212078a8f641dbb1e2ca45d03980bdb5bac14908cb88816c5cc21  govern/lib/common.sh
 703c85a725bbcdd6778e55c1c335cf65a059fbb5d4317b65b7fcd2f1d03b9058  govern/lib/common.sh
 7336487902e1859e529b4152a06e16642de905bf41b945349bc5aadb9ddaf244  govern/lib/common.sh
 778cee697960ca64cbe0f8b38a7ef9ec17c4060570193f739f2ab26c2c1acf6b  govern/lib/common.sh
@@ -450,6 +453,7 @@ cbf275e8f4afb9b5101896bb57e5a08c0a25033680bb3dd37cd38c9b8e2e99a8  govern/lint-va
 9c81e58262b76665bd58802b16ac4ed2e17d965082248652ceaa2a96a4547ad1  govern/merge-pr.sh
 9c8909b0b035366376f47eaba087bab35dd18f191220d3a9e2c3cbc8efcb2ca4  govern/merge-pr.sh
 d4e9d1e084abb2917751782a7233aae46f7ceeabfd8166848e25f7d2498b0fbe  govern/merge-pr.sh
+f25ff7d1dbdf577e91db929b872899e5fd0378db41aff3b53b0e6b1d79c75242  govern/merge-pr.sh
 
 # -- govern/post-merge-check.sh --
 7481861830950aa7de62c9f574fe469ec6b16dc9ef890f3c7e42231e5cf8980f  govern/post-merge-check.sh
@@ -461,6 +465,7 @@ d4e9d1e084abb2917751782a7233aae46f7ceeabfd8166848e25f7d2498b0fbe  govern/merge-p
 3dd077a248c39b99d4171f216acb1775f1f2779b3b97685579ccf257f079f41f  govern/pre-dispatch-check.sh
 48c78bfbb0b6b7643677c6d13dda674ec2c699cf96628e0fd9352ea529440d4b  govern/pre-dispatch-check.sh
 4a795a982e04c043f9c5f5f5cf5110aee2bb2bbc032cba9fccf24bc1c9a233e3  govern/pre-dispatch-check.sh
+69bf27ca588e62efebb78a57a93f0fc6b9ec4bafd9c293e743769249ba838b74  govern/pre-dispatch-check.sh
 708f6c2d09dfce93e749b4e35e96d0e93390b7e8968cfa9fc7fc71af2c25886f  govern/pre-dispatch-check.sh
 8747fd03c88cab9e873c7a0fcc8cc9fd4658117523682d7b43112d95431c71c3  govern/pre-dispatch-check.sh
 a81070cdccbceb3f43080737ea38496d1f61b10edff21eaa7c51552e1f9a98e5  govern/pre-dispatch-check.sh
@@ -568,6 +573,7 @@ fb7ad49f63736505d550609235ff28eb0ac396e36938eedcef13a22cc9ca00b5  govern/sync-po
 1cda5eeda231fd4af26c0784c06869d4292b815faf4f9072e482ab418b20616c  govern/sync-templates.sh
 408f38acad0c41b324e4e0c4a44e7f0ab7e8269fa5db6339f49f206f93725ef7  govern/sync-templates.sh
 518dd0cbf374be6bedec0de98ba65439449c78797588848c74f93b782bc0c13d  govern/sync-templates.sh
+85e44c046f39017651faa7ecc512b17390d72c165a38011eb04039fba926099e  govern/sync-templates.sh
 b7a9415d8cd86f2f992a701eb33746d408e3820b0cd862b7889d6e39b332f020  govern/sync-templates.sh
 d47b23701e868d0d04ed99a6d05ed7b991cf2e989b04bf3895ecd60307b0482e  govern/sync-templates.sh
 
@@ -1076,6 +1082,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 3ec3b1b87775fb719db109ce4dd8d1afa7643b3d34f153022462ae6974c37346  scripts/govern/test/test-valpending-apply-race.sh
 3ee04042da0b1844489ab43af90cf872b76a14770ab21d36c7ad3598f3b34055  scripts/govern/test/test-stream-usage.sh
 3f94e8070d118fc39cf59a5f1e0b570f19e0a3706f6392e919a8bb25aa039465  scripts/govern/test/test-govern-validations-listing.sh
+3fc9be7b315655bb613af70a476a0798bcb7b97a4761e5439fa16983d38832d9  scripts/govern/test/test-sync-templates-old-converge.sh
 4017b0b8ab885362a32853c9a53bb681753f9e39388abf22b2ee0b7c400ff617  scripts/govern/test/test-install-semaphore.sh
 402a1592b8e4943b966a6e37ea3cd0fcf3d0895a07351444fc152fd7d95ba3ad  scripts/govern/test/test-lint-prose-deps.sh
 405224bf1240dc0fee51b7b19fd2652463f06b46341e902ef0615d8a181fab66  scripts/govern/test/test-claudemd-size-trigger.sh
