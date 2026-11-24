@@ -20,9 +20,11 @@ source "$DIR/assert.sh"
 set +e   # assert.sh sets -e; we drive the hook and inspect exit codes ourselves
 
 # Resolve the hook in both layouts: scaffolded workspace (<root>/.githooks/) and the template repo
-# (templates/githooks/, i.e. two levels up from this test dir).
-HOOK="$DIR/../../../.githooks/pre-push"
-[ -x "$HOOK" ] || HOOK="$DIR/../../githooks/pre-push"
+# (templates/githooks/, i.e. two levels up from this test dir). The template repo is checked FIRST:
+# the hub checkout now also ships its own .githooks/pre-push (the hub-context guard, no branch
+# policy), which is a DIFFERENT hook from the harness policy this test asserts.
+HOOK="$DIR/../../githooks/pre-push"
+[ -x "$HOOK" ] || HOOK="$DIR/../../../.githooks/pre-push"
 [ -x "$HOOK" ] || { echo "SKIP: pre-push hook not found/executable"; exit 0; }
 
 # run_hook GOVERN_RUN_VALUE REMOTEREF  -> sets $rc and $err (stderr)

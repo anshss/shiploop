@@ -1089,15 +1089,20 @@ govern::ticket_has_parts() { # <block>
 # not count toward ambiguity — file-ticket.sh appends one to EVERY ticket, including those whose
 # body already carries a real proposal.
 #
-# Exit: 0 with the body, 0 empty when there is genuinely no proposal, 2 empty when ambiguous.
-govern::ticket_proposal() { # <N>[part] [tickets-file] -> proposal body (rc 2 = ambiguous)
+# Exit: 0 with the body, 0 empty when there is genuinely no proposal, 2 empty when ambiguous,
+# 3 empty when the caller's tickets file is STALE (main's copy holds a proposal this copy lacks:
+# govern::_tickets_field_stale, message on stderr).
+govern::ticket_proposal() { # <N>[part] [tickets-file] -> proposal body (rc 2 ambiguous, rc 3 stale)
   local ref="$1" f="${2:-$TICKETS_FILE}" n part
   read -r n part <<<"$(govern::ticket_ref_part "$ref")"
   local block; block="$(govern::ticket_block "$n" "$f")"
-  [[ -n "$block" ]] || return 0
+  if [[ -z "$block" ]]; then
+    govern::_tickets_field_stale govern::ticket_proposal "$ref" "$f" # rc 3 when stale, else rc 0
+    return
+  fi
   if [[ -n "$part" ]]; then
     block="$(govern::ticket_part_slice "$part" <<<"$block")"
-    [[ -n "$block" ]] || return 0
+    [[ -n "$block" ]] || { govern::_tickets_field_stale govern::ticket_proposal "$ref" "$f"; return; }
   elif govern::ticket_has_parts "$block"; then
     return 2
   fi
@@ -1130,7 +1135,7 @@ govern::ticket_proposal() { # <N>[part] [tickets-file] -> proposal body (rc 2 = 
   local count="${out%%$'\n'*}" raw=""
   if [[ "$count" != "$out" ]]; then raw="${out#*$'\n'}"; fi
   if (( count > 1 )); then return 2; fi
-  [[ -n "${raw//[[:space:]]/}" ]] || return 0
+  [[ -n "${raw//[[:space:]]/}" ]] || { govern::_tickets_field_stale govern::ticket_proposal "$ref" "$f"; return; }
   printf '%s\n' "$raw"
 }
 
@@ -1142,24 +1147,73 @@ govern::ticket_proposal() { # <N>[part] [tickets-file] -> proposal body (rc 2 = 
 # Part-aware the same way govern::ticket_proposal is: a part may be named on $1 (or via
 # GOVERN_TICKET_PART), and an unpartitioned call against a folded ticket — or a slice carrying two
 # DIFFERENT grades — returns 2 with no output rather than picking whichever one comes first.
-govern::ticket_precision() { # <N>[part] [tickets-file] -> stated|scoped|open (rc 2 = ambiguous)
+# Stale-aware like govern::ticket_proposal (rc 3, govern::_tickets_field_stale): an empty read is
+# cross-checked against the MAIN checkout's copy, so a worktree file predating main's precision
+# line never reads as a genuine absence.
+govern::ticket_precision() { # <N>[part] [tickets-file] -> stated|scoped|open (rc 2 ambiguous, rc 3 stale)
   local ref="$1" f="${2:-$TICKETS_FILE}" n part
   read -r n part <<<"$(govern::ticket_ref_part "$ref")"
   local block; block="$(govern::ticket_block "$n" "$f")"
-  [[ -n "$block" ]] || return 0
+  [[ -n "$block" ]] || { govern::_tickets_field_stale govern::ticket_precision "$ref" "$f"; return; }
   if [[ -n "$part" ]]; then
     block="$(govern::ticket_part_slice "$part" <<<"$block")"
-    [[ -n "$block" ]] || return 0
+    [[ -n "$block" ]] || { govern::_tickets_field_stale govern::ticket_precision "$ref" "$f"; return; }
   elif govern::ticket_has_parts "$block"; then
     return 2
   fi
   local vals
   vals="$(sed -n -E 's/^\*\*Precision[^*]*\*\*[[:space:]]*:?[[:space:]]*([A-Za-z]+).*/\1/p' <<<"$block" \
     | tr '[:upper:]' '[:lower:]' | command grep -E '^(stated|scoped|open)$' || true)"
-  [[ -n "$vals" ]] || return 0
+  [[ -n "$vals" ]] || { govern::_tickets_field_stale govern::ticket_precision "$ref" "$f"; return; }
   local uniq; uniq="$(sort -u <<<"$vals" | command grep -c . || true)"
   if (( uniq > 1 )); then return 2; fi
   sed -n '1p' <<<"$vals"
+}
+
+# govern::_main_checkout_tickets_file - the MAIN checkout's copy of a tickets file, resolved from
+# the git common dir (never the caller's own worktree copy). Empty when the caller's file IS the
+# main checkout's copy (nothing to compare against), or when no main copy resolves: a non-git dir,
+# a missing main copy, a file outside its repo toplevel. Every empty return degrades the staleness
+# probe below to the old no-cross-check behavior.
+govern::_main_checkout_tickets_file() { # [tickets-file] -> path | ""
+  local f="${1:-$TICKETS_FILE}" dir dirphys common wttop rel
+  dir="$(dirname "$f")"
+  [[ -d "$dir" ]] || return 0
+  # Physical dir path: git reports symlink-resolved roots (/tmp vs /private/tmp on macOS), so the
+  # worktree-relative path below must be built from the same physical form.
+  dirphys="$(cd "$dir" && pwd -P)" || return 0
+  common="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  [[ "$common" = /* ]] || common="$dir/$common"
+  common="$(cd "$common" && pwd -P)" || return 0
+  common="$(dirname "$common")"
+  wttop="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [[ "$common" != "$wttop" ]] || return 0
+  rel="${dirphys%/}/$(basename "$f")"
+  rel="${rel#"$wttop"/}"
+  [[ "$rel" != "$f" ]] || return 0
+  [[ -f "$common/$rel" ]] || return 0
+  printf '%s' "$common/$rel"
+}
+
+# govern::_tickets_field_stale - the shared exit path behind ticket_proposal / ticket_precision
+# when the CALLER's copy of the queue file yields no field: re-read the field from the MAIN
+# checkout's copy, because a worker worktree's queue file can predate main's proposal-appending
+# commit and the resulting plain-empty reads as "genuinely no proposal", sending the session to
+# rewrite a proposal that already exists. rc 3 = STALE: main holds the field, a message on stderr
+# says so and stdout stays empty so every "empty output -> stop" backstop still fires. rc 0 = the
+# old plain-empty (main lacks the field too, or no main copy resolves).
+govern::_tickets_field_stale() { # <probe-fn> <ref> [caller-tickets-file] -> rc 3 stale | rc 0 empty
+  local probe="$1" ref="$2" f="${3:-$TICKETS_FILE}" m out rc=0
+  m="$(govern::_main_checkout_tickets_file "$f")"
+  [[ -n "$m" ]] || return 0
+  out="$("$probe" "$ref" "$m")" || rc=$?
+  case "$rc" in
+    0) [[ -n "${out//[[:space:]]/}" ]] || return 0 ;;
+    2) : ;; # ambiguous on MAIN: the field demonstrably exists there, so the caller copy is stale
+    *) return 0 ;;
+  esac
+  printf 'tickets-file STALE: this copy of the queue file lacks the field but the main checkout copy (%s) holds it - re-sync the worktree queue file from main\n' "$m" >&2
+  return 3
 }
 
 # govern::ticket_block_delete — rewrite $2 (default TICKETS_FILE) with ticket $1's block removed:
@@ -2513,14 +2567,19 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
       }
     }
     # (B) implicit deps from a BLOCKER: another ticket #cur declaring a `**Blocks:** ... #N ...` line.
-    # Matched on the BOLD marker (`**Blocks:**` / `**Blocks**`) or a line-leading `Blocks:` — NOT the
-    # bare word "blocks", which shows up in prose far more than "depends on" does (e.g. "this blocks
-    # the deploy flow") and would falsely link tickets. Only fires when the marker line names #N
-    # exactly. `cur != n` skips #N own `**Blocks:**` (that names its dependents, not its blockers);
-    # `cur != ""` guards the preamble before the first heading.
+    # Anchored to the START of the line, the same discipline branch (A) applies, bold optional and
+    # colon required (either wrap order): a marker occurrence ANYWHERE ELSE on a line is
+    # documentation, not a declaration. A backticked `**Blocks:**` example, a quoted one, or a
+    # bullet-list item never matches, so an unrelated ticket number later on that same line is never
+    # swept in as a false blocker (a prose line carrying a marker example once parked the dispatch
+    # gate on a ticket it had no relationship to). Matched on the word `blocks` plus its colon, NOT
+    # the bare word "blocks", which shows up in prose far more than "depends on" does (e.g. "this
+    # blocks the deploy flow") and would falsely link tickets. Only fires when the marker line names
+    # #N exactly. `cur != n` skips #N own `**Blocks:**` (that names its dependents, not its
+    # blockers); `cur != ""` guards the preamble before the first heading.
     cur != n && cur != "" {
       low=tolower($0)
-      if (low ~ /\*\*blocks:?\*\*/ || low ~ /^[[:space:]]*blocks:/) {
+      if (low ~ /^[[:space:]]*\*?\*?blocks(:\*?\*?|\*?\*?:)/) {
         s=$0; names_n=0
         while (match(s,/#[0-9]+/)) {
           if (substr(s,RSTART+1,RLENGTH-1)==n) names_n=1

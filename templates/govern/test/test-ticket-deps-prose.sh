@@ -10,6 +10,9 @@
 #   (D) marker spelling variants still parse: `**Depends on**: #K` (colon outside the bold) and a
 #       plain unbolded `Depends on: #K`.
 #   (E) only the MARKER line is harvested — a `#N` on the line right after it is not swept in.
+#   (F) the `**Blocks:**` branch is anchored to the START of the line: a backticked marker example
+#       plus an unrelated `#N` on the SAME line contributes nothing, while genuine line-start
+#       markers (`**Blocks:**`, `**Blocks**:` and a plain `Blocks:`) still parse.
 # Sandboxed: temp tickets.md, hermetic workspace stub; no network.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,5 +86,34 @@ body
 body
 EOF
 assert_eq "$(govern::ticket_deps 40 "$ROOT/blocks.md" | tr '\n' ',')" "41," "C: **Blocks:** implicit-blocker path still works unaffected"
+
+# ── (F) the blocks branch is anchored to line start: prose examples contribute nothing ──
+cat > "$ROOT/blocks-prose.md" <<'EOF'
+# Tickets
+---
+## #50 — dependent, no marker of its own
+body
+---
+## #51 — the would-be blocker; its only "Blocks" text is a backticked example inside prose
+To declare an edge, write `**Blocks:** #50` on its own line, and coordinate with ticket #52, which is unrelated.
+body
+EOF
+assert_eq "$(govern::ticket_deps 50 "$ROOT/blocks-prose.md" | tr '\n' ',')" "" "F: a backticked '**Blocks:**' example plus an unrelated number on the same line contributes no deps"
+
+cat > "$ROOT/blocks-real.md" <<'EOF'
+# Tickets
+---
+## #60 — dependent
+body
+---
+## #61 — the blocker, colon outside the bold wrapper
+**Blocks**: #60
+body
+---
+## #62 — the blocker, plain unbolded marker
+Blocks: #60
+body
+EOF
+assert_eq "$(govern::ticket_deps 60 "$ROOT/blocks-real.md" | tr '\n' ',')" "61,62," "F: line-start '**Blocks**:' and plain 'Blocks:' markers still parse"
 
 assert_done

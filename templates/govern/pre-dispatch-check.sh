@@ -218,6 +218,10 @@ pdc_gate_one() {
       echo "refuse: #$N is folded into parts (or carries several proposals) - dispatch one part with GOVERN_TICKET_PART=<letter>"
       return 0
     fi
+    if [[ "$_prc" -eq 3 ]]; then
+      echo "refuse: #$N's proposal is missing from THIS copy of queue/tickets.md but exists on the main checkout - the copy is STALE, re-sync it instead of rewriting the proposal"
+      return 0
+    fi
     if [[ -z "$_prop" ]]; then
       echo "refuse: no proposed solution - the driver must specify before dispatch"
       return 0
