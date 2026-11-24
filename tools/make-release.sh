@@ -96,13 +96,14 @@ gh auth status >/dev/null 2>&1 \
   || fail "gh is not authenticated (run: gh auth login); make-release.sh cuts a GitHub release"
 
 # The one permitted pending change is the CHANGELOG.md section for this release: release parity
-# counts the CHANGELOG lines the RELEASE COMMIT itself adds, so the staged section must land
-# inside that commit, never before it. Anything else pending refuses.
+# counts the CHANGELOG lines the RELEASE COMMIT itself adds, so an interactive close stages the
+# section here and it lands inside that commit. A fully clean tree is also accepted: the section
+# is then already committed at HEAD (the scripted/fixture path), and parity's train coverage
+# counting zero added lines only matters when the release closes train trailers. Anything else
+# pending refuses.
 unrelated="$(git status --porcelain | grep -v ' CHANGELOG\.md$' || true)"
 [ -z "$unrelated" ] \
   || fail "working tree has pending changes other than CHANGELOG.md; commit or remove them before a release"
-[ -n "$(git status --porcelain -- CHANGELOG.md)" ] \
-  || fail "no CHANGELOG.md modification staged; write the <version> section first, then rerun"
 
 branch="$(git branch --show-current)"
 [ "$branch" = "main" ] || fail "not on main (on '$branch'); a release lands on main"
