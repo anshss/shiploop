@@ -475,6 +475,7 @@ f25ff7d1dbdf577e91db929b872899e5fd0378db41aff3b53b0e6b1d79c75242  govern/merge-p
 # -- govern/post-merge-check.sh --
 7481861830950aa7de62c9f574fe469ec6b16dc9ef890f3c7e42231e5cf8980f  govern/post-merge-check.sh
 8d41e7eb80b3be787ad0445e6de01bbcccea27cdc5b06eaf478cab5d1c59197e  govern/post-merge-check.sh
+f28183edda940a1a8f962f9a6e130eb6086025e377a7da1c5bf847184ef172ba  govern/post-merge-check.sh
 
 # -- govern/pre-dispatch-check.sh --
 06eece39f6cce7778981fb8817ec3dfbaa36cda2b4dbaad1791429d70abb00d5  govern/pre-dispatch-check.sh
