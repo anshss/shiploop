@@ -691,7 +691,11 @@ govern::_lock_reclaim() { # lockdir stale_s
 govern::date_to_epoch() { # YYYY-MM-DD -> epoch
   local d="${1:-}"
   [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
-  date -j -f "%Y-%m-%d" "$d" +%s 2>/dev/null || date -d "$d" +%s 2>/dev/null
+  # Pin midnight explicitly: BSD date fills input fields the format omits from the CURRENT
+  # clock, so a bare %Y-%m-%d parse returns "that date at the current wall-clock instant"
+  # and any downstream age-in-days floors one low when the parse lands >=1s after the
+  # caller's now-capture (slow under load). GNU date already parses to midnight.
+  date -j -f "%Y-%m-%d %H:%M:%S" "$d 00:00:00" +%s 2>/dev/null || date -d "$d" +%s 2>/dev/null
 }
 # Blocking acquire: spin up to timeout_s. Returns 0 acquired, 1 timed out. Caller releases.
 # Reclaims a stale lock ONLY when the recorded holder pid is dead (or missing) AND mtime is
