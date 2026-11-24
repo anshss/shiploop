@@ -377,7 +377,7 @@ idx::write_summary() {
       printf -- '- test→file links: %s\n' "$(awk -F'\t' '$1=="cov"' "$tsv" | wc -l | tr -d ' ')"
       printf '\n  Most-depended-on modules:\n\n'
       awk -F'\t' '$1=="dep"{c[$2]++} END{for(k in c) printf "%d\t%s\n", c[k], k}' "$tsv" \
-        | sort -rn | head -n 10 | awk -F'\t' '{ printf "  - `%s` — %s dependent(s)\n", $2, $1 }'
+        | sort -rn | awk -F'\t' 'NR <= 10 { printf "  - `%s`: %s dependent(s)\n", $2, $1 }'
       printf '\n'
     done
   } > "$out"

@@ -504,7 +504,7 @@ fi
 
 _dirty="$(git -C "$TEMPLATE_REPO_DIR" status --porcelain 2>/dev/null)"
 if [[ -n "$_dirty" ]]; then
-  file_sync_escalation "porter reported 'ported' but left UNCOMMITTED changes in the templates worktree (strand — porter incomplete): $(printf '%s' "$_dirty" | head -5 | tr '\n' ' ')" "$BRANCH" "$drift_files_ml"
+  file_sync_escalation "porter reported 'ported' but left UNCOMMITTED changes in the templates worktree (strand: porter incomplete): $(head -5 <<<"$_dirty" | tr '\n' ' ')" "$BRANCH" "$drift_files_ml"
   exit 1
 fi
 
@@ -538,7 +538,7 @@ added="$(git -C "$TEMPLATE_REPO_DIR" diff "origin/main...$BRANCH" -- "${CHANGED[
           | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
 leaks="$(printf '%s\n' "$added" | grep -iwE "$FREGEX" || true)"
 if [[ -n "$leaks" ]]; then
-  file_sync_escalation "GATE FAIL — ported template ADDED lines contain FORBIDDEN identity string(s). Sample: $(printf '%s' "$leaks" | head -3 | tr '\n' ' ' | cut -c1-200)" "$BRANCH" "$drift_files_ml"
+  file_sync_escalation "GATE FAIL: ported template ADDED lines contain FORBIDDEN identity string(s). Sample: $(head -3 <<<"$leaks" | tr '\n' ' ' | cut -c1-200)" "$BRANCH" "$drift_files_ml"
   exit 1
 fi
 

@@ -137,6 +137,7 @@ b62c0b7de23d729fea4238a5ef98079c22df6bfa402cf4a98410740c1e381d23  govern/claudem
 # -- govern/codebase-index.sh --
 05233d8dc2673ab7c40bdcf19934670864a52b7c5d3b4e4a1ac997de38cf7b97  govern/codebase-index.sh
 8ea96c0a1b23616c88832247a80b24a1dbaf62900c7a09501b07271c149e158f  govern/codebase-index.sh
+8ec664e175cd9ebaf2bd89e4b8fa781b8352d0f286ecf91e23fef347e2971e5e  govern/codebase-index.sh
 
 # -- govern/config-check.sh --
 1857a3164675179b656e385fa3cf8d7f0b0e3e9fbd05a455cee913b7f6488a89  govern/config-check.sh
@@ -236,6 +237,7 @@ ade0555f211b9a28aedc65d7b856a173816bdf5506bf90503421e855f3b365f4  govern/file-ti
 b0080e2d6967bff4604c99ac0ca869f4faecf959e0d1f7b15b65859496114b93  govern/file-ticket.sh
 b2d00f8da4cc4e580b274cad01b7de89ae7c3cd499fd67901c71b99d375a5749  govern/file-ticket.sh
 bdccfb87c069e5edfa9edf3f53fb1c1ff0c9351f83e92d2c134eda37051e9128  govern/file-ticket.sh
+d955592b3a0518c7c12ec478ebfa7e1c230cc1c7238fa7fd585d29fb9838abc9  govern/file-ticket.sh
 e95aae2d2aaa0425c7d255c0035dfb11284cab1e602f9de70a98211df2f814a3  govern/file-ticket.sh
 f35dab6174fd576cebd4cf6572dd13f35288cb8761464e584bf97574a2dd4706  govern/file-ticket.sh
 
@@ -534,6 +536,7 @@ d93a1f552026a7da2270913f57d9ec2bff93ecf027107c05e970d76f1178cb89  govern/select-
 379b36c51c9b9595c0d62c3f9478d145cd1a71db13870bd6aa70c792434fcbc9  govern/staleness-gate.sh
 3b15af477509fea947a6c77b33df09f3cd537b5271d4a7cfd51c96b66d0c859d  govern/staleness-gate.sh
 3ee54f21dd91d1b4b1a55f36c640d11aabe5d2f14f82c614094919c2ce49887a  govern/staleness-gate.sh
+ee413508a5be0bab7c90f1511d005380f2fac1b69755a1c01963a1a45339765b  govern/staleness-gate.sh
 
 # -- govern/status.sh --
 14aa2aaf0d3f6abc78081be7311508003700f97e6f0194ae323da54b3bb18405  govern/status.sh
@@ -565,6 +568,7 @@ ed583a87ac63d5b129cb9a9a75a74904f6fdc6b6eb02a8e404e4167049971612  govern/statusl
 4b5167906d6624e804df9b214bc08e243580ab93e57695150cf6ee3f3264249f  govern/sync-port.sh
 81807468f4a30dc00775c9b9d302e51fa5a9186a105a1abbb3f199d92d646a5f  govern/sync-port.sh
 87182869590ff6a7b04ef86ef6ea5b16054bb57f61a69d822e7f88b78a25e9dd  govern/sync-port.sh
+9b5e57bc43c4483591975dca5fe78388b86619cf99d23d7376ebb64b9a16d6e8  govern/sync-port.sh
 9e3c61b29c3d703d80ea6904b101d233b6eecf385a0a1fb169002681499d539d  govern/sync-port.sh
 a0a1bee8a7b8ac28a470c10885a87701af31fbaa7dd6788e91f37bcffaec54cd  govern/sync-port.sh
 aef8e1501f403dd77ca6db33a691dd759f86be754df474289a1965ce3b5664ba  govern/sync-port.sh

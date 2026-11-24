@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.20.21 - 2026-11-24
+
+### Fixed
+
+**`file-ticket.sh` commits a filing whose seq file sits outside the tickets repo.**
+The filing commit names the tickets file and the seq file as pathspecs, and a pathspec git cannot
+match fails the whole commit, with the error swallowed. With `GOVERN_TICKET_SEQ_FILE` outside the
+tickets repo, or on a file that repo ignores, a filing was appended and staged but never committed,
+so the next filing's foreign-changes guard refused it with exit 12. The commit now names the seq
+file only when git tracks it there; a tracked seq file is committed with the ticket as before. New
+test: `test-file-ticket-seq-outside-repo.sh`.
+
+**No producer-into-`head` pipeline is left on the shape-guard allowlist.**
+`sync-port.sh`'s two escalation samples read `head` from a here-string, and `codebase-index.sh`
+takes its ten most-depended-on modules with an `awk` that drains all of `sort`'s output, so none of
+them can SIGPIPE its producer under `pipefail` as the output grows. Their allowlist rows are gone,
+so the shape guard now enforces those lines, and every remaining row is a test fixture. The affected
+messages read `strand: porter incomplete`, `GATE FAIL: ported template ADDED lines ...` and
+`` `<module>`: N dependent(s) ``.
+
+**The staleness gate's STALE verdict says `(deleted, not renamed)`**, so a deletion verdict reads
+apart from the rename verdict on its own.
+
 ## 1.20.20 - 2026-11-24
 
 ### Fixed

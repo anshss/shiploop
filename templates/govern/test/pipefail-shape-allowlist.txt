@@ -56,14 +56,3 @@ govern/test/test-worker-agent-doctrine.sh	shared_permission="$(sed -n 's/.*GOVER
 govern/test/test-worktree-rm-cwd-kill.sh	lsof -d cwd -Fpn 2>/dev/null | grep -qF "$T/wt/t99" && return 0; sleep 0.1; i=$((i+1)); done; return 1; }
 govern/test/test-wrap-in-place.sh	if find "$T" -maxdepth 1 -name '.wrap-staging.*' -type d 2>/dev/null | grep -q .; then staged=1; break; fi
 govern/test/test-wrap-in-place.sh	[ ! -d "$T/myapp" ] && ! find "$T" -maxdepth 1 -name '.wrap-staging.*' | grep -q . \
-# Proven-small producer: the stage feeding `head -n 10` is an awk END block that emits ONE line
-# per distinct depended-on module (dozens at most in a hub index), so the output never
-# approaches the ~64KB pipe buffer; the line also carries operator-facing text that must not be
-# reflowed, so it stays as-is and is pinned here instead of rewritten.
-govern/codebase-index.sh	| sort -rn | head -n 10 | awk -F'\t' '{ printf "  - `%s` — %s dependent(s)\n", $2, $1 }'
-# Proven-small producers, kept as-is because the operator-facing string on the same line
-# carries a hard-style constraint that forbids reflowing the line: git status --porcelain of a
-# single worktree (one line per dirty file, pathological only with thousands) and the grep of a
-# single ported PR's added lines (bounded by one PR's diff).
-govern/sync-port.sh	file_sync_escalation "porter reported 'ported' but left UNCOMMITTED changes in the templates worktree (strand — porter incomplete): $(printf '%s' "$_dirty" | head -5 | tr '\n' ' ')" "$BRANCH" "$drift_files_ml"
-govern/sync-port.sh	file_sync_escalation "GATE FAIL — ported template ADDED lines contain FORBIDDEN identity string(s). Sample: $(printf '%s' "$leaks" | head -3 | tr '\n' ' ' | cut -c1-200)" "$BRANCH" "$drift_files_ml"

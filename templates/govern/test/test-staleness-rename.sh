@@ -49,11 +49,13 @@ run 1
 assert_eq "$RC" "0" "#1: a renamed path is inconclusive, NOT stale (was exit 10 before)"
 assert_contains "$OUT" "RENAMED" "#1: the verdict names the rename evidence"
 assert_contains "$OUT" "alpha/setup.js" "#1: the verdict names the renamed path"
+assert_not_contains "$OUT" "not renamed" "#1: a rename verdict never claims the path was not renamed"
 
 # the truly-deleted path: still confidently stale (negative control).
 run 2
 assert_eq "$RC" "10" "#2: a true deletion still exits 10 (negative control)"
 assert_contains "$OUT" "STALE #2" "#2: verdict still says STALE"
+assert_contains "$OUT" "(deleted, not renamed)" "#2: the STALE verdict says the path was deleted, not renamed"
 
 # the sweep is per-ticket: a ticket naming BOTH is inconclusive if ANY path was renamed
 # (the delete evidence on the other path cannot outrank the rename).
