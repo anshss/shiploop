@@ -39,7 +39,7 @@ Ignore only these two things in it, kept for historical shape but never populate
 
 0. **Prompt names a packet?** Your worktree exists there and the packet covers steps 1-3 (ticket
    block(s), gotchas, advisor budget, `GOVERN_BATCH_MEMBER_TURNS` for a group). `cd` in, read it,
-   run steps 2-3 only for what it missed. No packet: run steps 1-3 as written.
+   run steps 2-3 only for what it missed. No packet named: try `.dispatch-packet.md` in your worktree.
 1. **Your worktree is self-service.** Nothing allocated one for you. Run
    `npm run worktree:new -- t<N>` from the workspace root, `cd` into the path it prints, and do all
    work there. **NEVER use the Agent tool's `isolation: "worktree"`**: it worktrees the root repo
