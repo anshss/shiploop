@@ -175,5 +175,22 @@ fi
 # nothing `$BEST_M` above didn't already. The full breakdown, grouped by model_source with cost, is
 # `status.sh`'s "by source" section; this is the one-line hint that it exists.
 [[ "$N_MIX" -gt 1 ]] && printf ' · %s' "$MIX"
+
+# Idle marker for the oldest live worker: a worker whose own transcript has not been written for
+# GOVERN_STATUSLINE_IDLE_S (default 300) is waiting on something, most often a background task that
+# will never wake it. One `stat` of the file at <session transcript without .jsonl>/subagents/, found
+# through the statusline JSON's transcript_path; silent when that path or file is not there.
+# GOVERN_STATUSLINE_IDLE_S=0 turns the marker off.
+_IDLE_S="${GOVERN_STATUSLINE_IDLE_S:-300}"
+_TP="$(_field "$IN" transcript_path)"
+if [[ "$_IDLE_S" -gt 0 && -n "$_TP" && -n "$BEST_A" ]] 2>/dev/null; then
+  _WT="${_TP%.jsonl}/subagents/agent-${BEST_A}.jsonl"
+  if [[ -f "$_WT" ]]; then
+    _MT="$(stat -c %Y "$_WT" 2>/dev/null || stat -f %m "$_WT" 2>/dev/null || echo 0)"
+    if [[ "$_MT" -gt 0 ]] 2>/dev/null && [[ $(( NOW - _MT )) -ge "$_IDLE_S" ]]; then
+      printf ' · idle %s' "$(_hms "$(( NOW - _MT ))")"
+    fi
+  fi
+fi
 printf '\n'
 exit 0

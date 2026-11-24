@@ -15,12 +15,12 @@
 #
 # Design constraints, shared with the once-per-session reminder this hook extends:
 #   • The Read/Bash heavy-inline-work advisory above NEVER blocks; it only
-#     advises via additionalContext. Four deliberate exceptions elsewhere in
+#     advises via additionalContext. Five deliberate exceptions elsewhere in
 #     this file return permissionDecision "deny": the verify-filter lever (a
 #     Bash call, only when it can't safely rewrite instead), the ticket-route
 #     guard (an Agent call, and only once a referenced ticket number is
-#     confirmed to exist), the proposed-solution gate (an Agent call, worker
-#     dispatches only), and the worker-spawns-worker guard (an Agent call
+#     confirmed to exist), the proposed-solution gate and the dispatch-packet
+#     gate (Agent calls, worker dispatches only), and the worker-spawns-worker guard (an Agent call
 #     whose CALLER is itself a worker). Either way the script always exits 0.
 #   • Low-noise / no per-turn token cost: a small per-session warn CAP (not a
 #     per-turn re-inject). After the cap is hit the hook goes silent.
@@ -189,6 +189,7 @@ command -v python3 >/dev/null 2>&1 || exit 0   # parser needed; degrade silently
   IFS= read -r agent_name
   IFS= read -r agent_type
   IFS= read -r permission_mode
+  IFS= read -r agent_model
 } < <(printf '%s' "$payload" | python3 -c '
 import sys, json
 try:
@@ -212,6 +213,7 @@ fields = [
     g("name"),
     d.get("agent_type") or "",
     d.get("permission_mode") or "",
+    g("model"),
 ]
 for f in fields:
     print(f.replace("\t", " ").replace("\n", " "))
@@ -224,6 +226,7 @@ agent_desc="${agent_desc:-}"
 agent_name="${agent_name:-}"
 agent_type="${agent_type:-}"
 permission_mode="${permission_mode:-}"
+agent_model="${agent_model:-}"
 [ -n "$tool_name" ] || exit 0
 
 # --- worker-spawns-worker: fires even for a worker caller (see header SIXTH behavior) -------
@@ -380,6 +383,84 @@ print(json.dumps({
 ' "$gate_deny" 2>/dev/null || true
           exit 0
         fi
+      fi
+    fi
+    # ── EIGHTH behavior: the dispatch-packet gate ───────────────────────────────────────────────
+    # pre-dispatch-check.sh (dependency, failure-streak and drift gates) and dispatch-packet.sh
+    # (worktree, packet, model) only run when the advisor remembers to run them. This gate makes
+    # the spawn itself require their output: the prompt must name a packet file that exists, whose
+    # heading lists every ticket the call is about, that is fresher than GOVERN_DISPATCH_FRESH_HOURS
+    # (default 6), and whose `Model:` line equals the call's `model` param (no param means sonnet).
+    # Every deny carries the exact command or call that passes. GOVERN_DISPATCH_GATE=0 turns it off.
+    # Unlike the proposal gate this does not degrade to allow when the ticket is unresolvable: the
+    # packet is the evidence, and a spawn without one has none.
+    if [ "${GOVERN_DISPATCH_GATE:-1}" != "0" ]; then
+      dg_pm="${ROOT_PM:-npm}"
+      dg_nums="$(resolve_tnum | tr '\n' ' ' | sed -E 's/ +$//')"
+      dg_csv="$(printf '%s' "$dg_nums" | tr ' ' ',')"
+      [ -n "$dg_csv" ] || dg_csv="<N>"
+      dg_cmd="${dg_pm} run govern:dispatch -- ${dg_csv}"
+      dg_reason=""
+      dg_packet="$(printf '%s' "$agent_prompt" | grep -oE '[^[:space:]]*\.dispatch-packet\.md' | sed -n '1p' || true)"
+      dg_alias=""
+      if [ -z "$dg_packet" ]; then
+        dg_reason="the prompt names no dispatch packet"
+      elif [ ! -f "$dg_packet" ]; then
+        dg_reason="the packet ${dg_packet} does not exist"
+      else
+        dg_head="$(sed -n -E 's/^# Dispatch packet for (.*)$/\1/p' "$dg_packet" | sed -n '1p')"
+        for dg_n in $dg_nums; do
+          case ", ${dg_head}," in
+            *", #${dg_n},"*) ;;
+            *) dg_reason="the packet ${dg_packet} does not list #${dg_n}"; break ;;
+          esac
+        done
+        if [ -z "$dg_reason" ]; then
+          dg_created="$(sed -n -E '1s/^<!-- GOVERN:PACKET-CREATED ([0-9]+) -->$/\1/p' "$dg_packet")"
+          [ -n "$dg_created" ] || dg_created="$(stat -c %Y "$dg_packet" 2>/dev/null || stat -f %m "$dg_packet" 2>/dev/null || echo 0)"
+          dg_hours="${GOVERN_DISPATCH_FRESH_HOURS:-6}"
+          case "$dg_hours" in (''|*[!0-9]*) dg_hours=6 ;; esac
+          if [ $(( $(date +%s) - dg_created )) -gt $(( dg_hours * 3600 )) ]; then
+            dg_reason="the packet ${dg_packet} is older than ${dg_hours}h"
+          fi
+        fi
+        if [ -z "$dg_reason" ]; then
+          dg_alias="$(sed -n -E 's/^Model: ([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' "$dg_packet" | sed -n '1p')"
+          [ -n "$dg_alias" ] || dg_alias="sonnet"
+          dg_call_lc="$(printf '%s' "${agent_model:-sonnet}" | tr '[:upper:]' '[:lower:]')"
+          case "$dg_call_lc" in
+            *haiku*) dg_call_model="haiku" ;;
+            *sonnet*) dg_call_model="sonnet" ;;
+            *opus*) dg_call_model="opus" ;;
+            *) dg_call_model="$dg_call_lc" ;;
+          esac
+          if [ "$dg_call_model" != "$dg_alias" ]; then
+            if [ "$dg_alias" = "sonnet" ]; then
+              dg_fix="omit the \`model\` param (the packet's Model is sonnet)"
+            else
+              dg_fix="pass model: \"${dg_alias}\" on the Agent call"
+            fi
+            dg_reason="the call's model is ${dg_call_model} but the packet's Model line is ${dg_alias}: ${dg_fix}, or re-run the command below with --model ${dg_call_model} to change the packet"
+          fi
+        fi
+      fi
+      if [ -n "$dg_reason" ]; then
+        dg_deny="[DISPATCH GATE] Denied: ${dg_reason}. A worker spawn must come from a fresh dispatch packet, which is what runs the dependency, failure-streak and drift gates and records the model. Run:
+
+  ${dg_cmd}
+
+and spawn the worker with the Agent call it prints (subagent_type \"worker\", the prompt line naming the packet, and a \`model\` param only when it is not sonnet). Set GOVERN_DISPATCH_GATE=0 to turn this gate off for the session."
+        python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
+  }
+}))
+' "$dg_deny" 2>/dev/null || true
+        exit 0
       fi
     fi
     # The fan-out cap (see header FIFTH behavior): count this dispatch, and once a

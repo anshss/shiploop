@@ -7,10 +7,11 @@
 # and lands the ticket.
 #
 # Usage:  printf '%s' "$report" | resolve-ticket.sh <N> [--no-merge]
+#         resolve-ticket.sh <N> [--no-merge]       (no stdin: reads governor/reports/<N>.json)
 #   <N>          the ticket number.
 #   --no-merge   skip the CI-await + merge steps for a PR the OPERATOR already merged (or
 #                deliberately left open) by hand — go straight to landing.
-#   stdin        the worker's JSON report — the EXACT shape land-resolution.sh consumes:
+#   stdin        optional when governor/reports/<N>.json exists (stdin wins when given). The worker's JSON report, the EXACT shape land-resolution.sh consumes:
 #                .pr, .prs[], .status, .lessonPatch, .newTickets[], .validation.*
 #                Accepted `.pr` shapes (an ambiguous contract once let a present-but-
 #                unparseable `.pr` silently land as "no PR", deleting a queue block with the PR
@@ -107,9 +108,19 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$N" =~ ^[0-9]+$ ]] || govern::die "usage: resolve-ticket.sh <N> [--no-merge] — ticket number required"
 
-report="$(cat)"
-[[ -n "$report" ]] || govern::die "resolve-ticket #$N: no report on stdin — pipe the worker's JSON report in"
-jq -e . >/dev/null 2>&1 <<<"$report" || govern::die "resolve-ticket #$N: stdin is not valid JSON"
+# The report comes from stdin when stdin carries one (it always wins), else from the report file the
+# SubagentStop capture wrote for this ticket. A terminal stdin is never read: there is nothing to wait for.
+REPORT_FILE="$GOVERNOR_DIR/reports/$N.json"
+REPORT_SHAPE='{ status, pr: { repo, number, url } | number, validation, newTickets[] }'
+report=""
+if [[ ! -t 0 ]]; then report="$(cat)"; fi
+report_src="stdin"
+if [[ -z "$report" && -s "$REPORT_FILE" ]]; then
+  report="$(cat "$REPORT_FILE")"
+  report_src="$REPORT_FILE"
+fi
+[[ -n "$report" ]] || govern::die "resolve-ticket #$N: no report on stdin and none at $REPORT_FILE. Pipe the worker's final JSON message in, or wait for the worker to finish so its report lands in that file. Expected shape: $REPORT_SHAPE"
+jq -e . >/dev/null 2>&1 <<<"$report" || govern::die "resolve-ticket #$N: the report from $report_src is not valid JSON (expected the worker's final JSON message, shape: $REPORT_SHAPE)"
 
 status="$(jq -r '.status // "failed"' <<<"$report" 2>/dev/null || echo failed)"
 if [[ "$status" != "resolved" ]]; then

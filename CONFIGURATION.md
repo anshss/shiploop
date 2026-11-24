@@ -111,4 +111,9 @@ environment variables if you need to change one.
 | `GOVERN_RULES_STATE_DIR` | `$TMPDIR` | Where `rules-on-touch.sh` writes its per-session, per-pack delivery stamps (tests point this at a scratch dir) |
 | `GOVERN_RULES_LOCAL` | `scripts/rules-on-touch.local.sh` | This workspace's own rule packs: define `rules_local_triggers` and `rules_local_pack_text` there to extend the hook without editing the template |
 | `WSP_ANALYTICS_QUERY_CMD` | empty | Command a flow's passive-evidence check (`templates/govern/lib/flows.sh`) shells out to for analytics data; unset means the check degrades to "no passive evidence" |
+| `GOVERN_DISPATCH_GATE` | `1` (on) | The dispatch-packet gate in `templates/hooks/router-posture-guard.sh`: an `Agent(subagent_type: "worker")` call is denied unless its prompt names a packet (from `npm run govern:dispatch`) that exists, lists every ticket in the call, is fresher than `GOVERN_DISPATCH_FRESH_HOURS`, and whose `Model:` line equals the call's `model` param (no param means sonnet). Every deny prints the exact command. `0` turns it off |
+| `GOVERN_DISPATCH_FRESH_HOURS` | `6` | How old a dispatch packet may be before the gate above treats it as stale and asks for a fresh `govern:dispatch` |
+| `GOVERN_STATUS_WORKERS` | `1` (on) | The live-worker section of `templates/govern/status.sh`, read from the newest session's subagent transcripts: dispatched-at, last tool call, idle time, pending background tasks, PR state and the tail of a gate log the worker named. `0` omits it. `GOVERN_STATUS_SUBAGENTS_DIR` points it at a specific `subagents/` directory |
+| `GOVERN_STATUS_PR` | `1` (on) | Whether that section asks `gh` for the PR state of each worker's branch (one bounded call per sub-repo). `0` skips the network call |
+| `GOVERN_STATUSLINE_IDLE_S` | `300` | Seconds of transcript silence after which the statusline segment appends `idle <duration>` for its oldest live worker. `0` turns the marker off |
 
