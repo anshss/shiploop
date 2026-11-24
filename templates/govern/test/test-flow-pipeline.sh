@@ -57,7 +57,7 @@ Drive the real deploy.
 ---
 EOF
 git -C "$M" add -A; git -C "$M" commit -q -m seed
-rep="$(jq -nc --arg s "$BSHA" '{status:"resolved",pr:{repo:"backend",number:3,url:"https://github.com/acme/backend/pull/3"},newTickets:[],validation:{ranLiveTest:true,evidence:"drove real deploy; PASS",environment:"prod",validatedShas:{backend:$s}}}')"
+rep="$(jq -nc --arg s "$BSHA" '{status:"resolved",pr:{repo:"alpha",number:3,url:"https://github.com/acme/alpha/pull/3"},newTickets:[],validation:{ranLiveTest:true,evidence:"drove real deploy; PASS",environment:"prod",validatedShas:{backend:$s}}}')"
 printf '%s' "$rep" | GOVERN_TICKETS_FILE="$M/queue/tickets.md" GOVERN_GOVERNOR_DIR="$M/governor" \
   GOVERNOR_DIR="$M/governor" "$DIR/../land-resolution.sh" 12 >/dev/null 2>&1
 assert_eq "$(govern::flow_field deploy.correctness Status "$M/.claude/shiploop/validation/flows.md")" "PASS" "bookkeep: stamped the flow PASS on resolve"

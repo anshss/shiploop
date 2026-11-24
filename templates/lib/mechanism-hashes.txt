@@ -57,6 +57,7 @@ d7b5aa44644f829c5b0767312600e2fb7b6416d190b745605e0ed7d19fe9ce75  .claude/comman
 
 # -- dev.sh --
 a60a8934a0b1ccd3ac3ff2731a85951bae3009f24edcac4ae8705287cd286c31  dev.sh
+a9bfe14c884388ce1530f45b71685fc22f7c44e4db3f457ad213106408f6ec0a  dev.sh
 f10ec05eb6dd014bf82bc9f4a23237052b4aac5c27f97d6fd0279c82ab66f8c2  dev.sh
 
 # -- doctor.sh --
@@ -209,6 +210,7 @@ a1e65af04d58f1381a6278a11b487a5b5ec941e5c29a252c89e68c1710d31be3  govern/externa
 281b29ea1ecb0663505657aaef0d05e0a1f383e1c798685276c801c7dd486175  govern/file-ticket.sh
 2e7f89f0f429d5d2429bd60675112f4e8dd174212cb7f31fd42ff2ce74005e2f  govern/file-ticket.sh
 333be75abdff278b3c2e7dad8bb34a38dbafa1735a75f5afacc919f03dc2b1e5  govern/file-ticket.sh
+3dcc4f9d6504770468647c1822a97fd6fdaea8612f6b51d58ae191dc6806f37f  govern/file-ticket.sh
 418adedb295eec96293115dd1289670a73629f539fd4c2c1f81b601782cb7c33  govern/file-ticket.sh
 57f8cb8539ebea67da051f8f6c319912a30f6b53854cec625ceda8360b5442bc  govern/file-ticket.sh
 5c794ea04e260665ec3180bab345e9498711c830bc8d4869e56effe447f70ee5  govern/file-ticket.sh
@@ -262,6 +264,7 @@ f3ba0e7d9241e31ba2ed585988e6a2f694fdeaaa22125cda6e72356ff9797b35  govern/govern-
 # -- govern/land-resolution.sh --
 04a8c08068498d8293da224847d54b98001b06767e2fb61903818efa0c9333d1  govern/land-resolution.sh
 349ab699475b8a15d1c51473303e949e693508e76c9f293f72526ae3082561be  govern/land-resolution.sh
+5738e4e92a0c05c5d5ea537cd374622d8f01589f9e8cb7c90a0edb85c5422c27  govern/land-resolution.sh
 6d3e23d7e2c520880f53cf89f372ec5aa09dcd846fb89b0f9129cb086c6b4c30  govern/land-resolution.sh
 a9f8f537a9ba631b5c75bdf40bca898ec98621e5a5c246825a8cc2607bd04994  govern/land-resolution.sh
 d487a95beb0460a7c8f466eeb1b9e66dc0b4577069276459dee3ce4b3ef7c7b2  govern/land-resolution.sh
@@ -356,6 +359,7 @@ e65c52099aa4a2619572843bd0070b41ed1801a975387c84efc95411952be910  govern/lib/com
 e6ba2cab98f735011ce172ec8a6f64246da0150f9b8229bc57c999b3c7e7b1bb  govern/lib/common.sh
 e7887bc257ccaad679bfb0ceff879b95d4ba328c82114938beac0f1843766fad  govern/lib/common.sh
 ec96797109b554ae5816a748cfbf86da9d6c9c3092f7202122fcace985102515  govern/lib/common.sh
+edb5ebab90de21860a705cd581e72499d1dcf155e65fef7f42534a02cf567614  govern/lib/common.sh
 f51ce29bb529bcb2fd9d4cd6a05b451bb09c0df8a6c205b25f59fa0378f6c075  govern/lib/common.sh
 f634057ae05b3417f5d4492e9095b16a05b8668a934faadb7b5b555ba7cdf5af  govern/lib/common.sh
 f884cbaaa3cdcfe39e784ca28ab85c5d9d33bf8f101daadc1fd3695acfdb3884  govern/lib/common.sh
@@ -398,6 +402,7 @@ d38afa000d36fdf8f8e9af12fbc7c71752d601d3eb706644b316d7775b969fd7  govern/lib/val
 b4ec994cf4a027de5826f07217e7cf766634a2c4280ecaf8e995d53a6b729f69  govern/lib/valpending.sh
 
 # -- govern/lint-tickets.sh --
+1a317c2e31492558f6a5b57a10cd2d78598e65ade3ffe60b2b721d63662e954d  govern/lint-tickets.sh
 46f4b44e7b1c4af36a05068fbf12af15d267da221d1b250e330a679f90cfe291  govern/lint-tickets.sh
 c0e4a1655436304f3c392b7e7106335212cd72aa2892e80158932f37c8715721  govern/lint-tickets.sh
 cfb158526059f9b0eaf780f0c508a2ad6db4f452e1c618141049d6adb2bfceeb  govern/lint-tickets.sh
@@ -413,6 +418,7 @@ cbf275e8f4afb9b5101896bb57e5a08c0a25033680bb3dd37cd38c9b8e2e99a8  govern/lint-va
 # -- govern/merge-pr.sh --
 07ef102202b596b126e7642c65167441a454533fa3509b84169abae233a8a197  govern/merge-pr.sh
 099444379f76b9ea69b2017d7872b16e97d5227d05024125dc43cd471e6d1fda  govern/merge-pr.sh
+1fd43d2fdfe93fc89da92b284e76ec580a2ea428c72ff9607d6bb183d3a5344f  govern/merge-pr.sh
 2070fd03ab9f0fdb5b30df7ec80543b6f595f5a8b2997b39ef4e052d4fc7c688  govern/merge-pr.sh
 414693d9b37e8daaa775ad70403ce2f1ea918df7639afb18bc2780ea98dff381  govern/merge-pr.sh
 4b159018135baa50082398edda41dcf6d97af90a42e1f614de01b9a34044b503  govern/merge-pr.sh
@@ -466,6 +472,7 @@ d76ddceca7b60f9832dcc50ed358ffdaea116b8d599bec9dbeec540289d127f7  govern/preflig
 63cb1d42e0a682ed095ddcbefb07afe9b23851ab20e6e0b226ee8b0469242a99  govern/resolve-ticket.sh
 65aca21bcdbd2441741709516abd31b6bd5d3d3fecd65960da2b8684a43bec02  govern/resolve-ticket.sh
 79abbf4f50d8b38c3b8520f2b59d8e5ba5a1b69f7e0ca4b87f274ec8677f3735  govern/resolve-ticket.sh
+8200e6cfc5b2ac7fe5270111c48ec4462f8ee147b20bd7f0006026ec7d63d849  govern/resolve-ticket.sh
 8cd6f67e515136a69ffdf036caef790d356c6a9606b6b89d29c088c76920171f  govern/resolve-ticket.sh
 dd3853aca272b063ac622a577ac90306b1cec6af31f4635624cbcc4cc1b7ac88  govern/resolve-ticket.sh
 f79353555fab34366cbe4b8fa698b41b792c5109487c0eba32951246fc4628ae  govern/resolve-ticket.sh
@@ -480,6 +487,7 @@ b73da2696cf448fbe0d1ef6b2ccc7d1fc9b7f92a672c5578e872143b24286903  govern/run-val
 6c69dd18ba5b33c994c27c43b755e60f85c02bee722a2e8e49c2b6da8b2b2f79  govern/select-ticket.sh
 9a96d3f46d29935d960cbd2982121a087ba3aed646ec35ab20cddc9ece792336  govern/select-ticket.sh
 a47aa3f3a3656dfa5c16a65d981a541e21ae477200d7e91d5ee81b5c54482faf  govern/select-ticket.sh
+ae3081a68b4dfc0df439f29f30672e6a09071bb6d3d3cfeb9e974ce10e1c64af  govern/select-ticket.sh
 c663bdad4cc52722d1d4c65c2abb598e0665f658b99d762c5ae2376d54880c04  govern/select-ticket.sh
 d93a1f552026a7da2270913f57d9ec2bff93ecf027107c05e970d76f1178cb89  govern/select-ticket.sh
 
@@ -490,6 +498,7 @@ d93a1f552026a7da2270913f57d9ec2bff93ecf027107c05e970d76f1178cb89  govern/select-
 
 # -- govern/staleness-gate.sh --
 032d12ddfd16a09dc808d96a5f11afbe2d2f153f442a25dd7ee4cfe2c6f569ae  govern/staleness-gate.sh
+1b97971261c3badf3b4e7e4f13ccb6ba94087f9ae804befa5c7d9e4ac16064fc  govern/staleness-gate.sh
 379b36c51c9b9595c0d62c3f9478d145cd1a71db13870bd6aa70c792434fcbc9  govern/staleness-gate.sh
 3ee54f21dd91d1b4b1a55f36c640d11aabe5d2f14f82c614094919c2ce49887a  govern/staleness-gate.sh
 
@@ -535,6 +544,7 @@ d47b23701e868d0d04ed99a6d05ed7b991cf2e989b04bf3895ecd60307b0482e  govern/sync-te
 # -- govern/ticket-proposal.sh --
 45dbf2f8a554ee64ebcdc9f5def1e57498056305889960bb8fa19b22f69e9660  govern/ticket-proposal.sh
 6a857a937fc1b3845d931bdf460f8c666e63e93dad19382e15aba571136e4e29  govern/ticket-proposal.sh
+89028c20bae15963d6e0ea738f6c5a827f9ccbda8ff9ddbf87ab079cd7477e94  govern/ticket-proposal.sh
 d12d06f54a8d197010f63e5e3429adf215c6cf92b2d0b748771041b6b98c3b2a  govern/ticket-proposal.sh
 
 # -- govern/validation-record.sh --
@@ -558,6 +568,7 @@ dbbb57e0ec91e67131c6299543ccba460bcd7e83d0214fe8a58f2267ef925d53  govern/validat
 # -- hooks/agent-progress-guard.sh --
 03f93a264702b63f5750cff46fe149644a92fafa9d7b025bd23b3bdd0d5061a6  hooks/agent-progress-guard.sh
 0c5aa1825890c7f930ed28e2ae4d8462ebcc39e1f0352ea19c58a213b50ffe33  hooks/agent-progress-guard.sh
+0e572300a85fad7abd61593ce2343cc24ec53c83be9395170c864212e14a58e4  hooks/agent-progress-guard.sh
 2c2e0a71af2c215f99535fa42a925119e17fc087589107e02504c0aa2359f68c  hooks/agent-progress-guard.sh
 45368384fe871a9c48f26dae0cc633ad957bf9b347979ebe67b1456693b39659  hooks/agent-progress-guard.sh
 658b2f787aed695483a90b9c5fe6a46eaa7af26038ce130de945ec29c5da2c52  hooks/agent-progress-guard.sh
@@ -645,6 +656,7 @@ a3f9e457ea59afb85fd273c9544b9278d99bcfe155b5dccc5065e043b1862674  hooks/session-
 26d5c775d0742eef4c2596da94562b11845555d308af2bb8aa851edcbcced003  hooks/ticket-sweep-reminder.sh
 27df69315a7c879561cf31125bdbdd764f46473749a65d478a7296370c34bc98  hooks/ticket-sweep-reminder.sh
 2cf6c63b66d45eaa68cc8fae1b1f3b7f43a5bdc342f0ec6017e1a96feb9d67b4  hooks/ticket-sweep-reminder.sh
+310395530287aa08802c8cf13693b7eeccb07409dc4b5a7a58abaad3812c1717  hooks/ticket-sweep-reminder.sh
 32c06cc07ea0db819c8bf6206cfc5e88fda64062fd782c04be046293797b1be7  hooks/ticket-sweep-reminder.sh
 398d6cb00cd5ab4ff8980471a0f816b7ba4d28ce2c70a3f8ff7b2a9fbfd752ae  hooks/ticket-sweep-reminder.sh
 3a568c5b4c0edbed067bbf07de1bd37231cbb8512fc65d925bf1b3fbd1b640ea  hooks/ticket-sweep-reminder.sh

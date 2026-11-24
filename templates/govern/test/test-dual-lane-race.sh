@@ -26,8 +26,9 @@ WS_STUB() {
 set -uo pipefail
 META_ROOT="${META_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 GITHUB_ORG="acme"
-REPOS=(alpha)
+REPOS=(alpha web)
 GOVERN_MERGE_REPOS=(alpha)
+GOVERN_FRONTEND_REPOS=(web)
 wsp_is_merge_repo() { [ "$1" = alpha ]; }
 wsp_repo_slug() { printf '%s/%s' "$GITHUB_ORG" "$1"; }
 wsp_repo_localdir() { printf '%s/%s' "$META_ROOT" "$1"; }

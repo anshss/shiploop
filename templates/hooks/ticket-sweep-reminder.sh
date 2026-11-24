@@ -48,19 +48,47 @@ case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exi
 [ -n "$cwd" ] || cwd="$PWD"
 [ -n "$session_id" ] || session_id="nosession"
 
-# --- collision backstop: a duplicate `## #N` heading in tickets.md means two filings reused
-# one number. Surface it the moment a session ends — independent of (and before) the new-ticket
-# reminder below, and NOT gated by the once-per-session marker, so a collision nags until fixed.
+# --- collision backstop: lint-tickets.sh fails on TWO independent, unrelated faults — a duplicate
+# `## #N` heading (two filings reused one number) and a duplicate `**Severity:**` field inside one
+# block. Surface either the moment a session ends — independent of (and before) the new-ticket
+# reminder below, and NOT gated by the once-per-session marker, so either nags until fixed.
 # stop_hook_active (handled above) prevents an in-turn loop. Run as a subprocess so the lint's set
 # flags can't leak into this hook (which deliberately runs without -e).
+#
+# The two faults are ROUTED SEPARATELY, not folded into one hardcoded reason string: before this,
+# ANY non-zero exit here was reported as a duplicate heading regardless of which check actually
+# failed — a severity-dup fault (no duplicate heading at all) was reported under the wrong name,
+# with a remedy (renumbering a ticket that was never duplicated) that silently corrupts a live
+# ticket's `**Ref:**`/`depends on #N` pointers if followed. lint-tickets.sh tags each stdout line
+# `HEADING #N ×count` or `SEVERITY #N ×count` precisely so this hook can tell them apart instead
+# of assuming.
 lint="$SELF_ROOT/scripts/govern/lint-tickets.sh"
 [ -x "$lint" ] || lint="$SELF_ROOT/govern/lint-tickets.sh"
 if [ -x "$lint" ]; then
   if ! dups="$("$lint" "$MAIN/queue/tickets.md" 2>/dev/null)" && [ -n "${dups:-}" ]; then
-    dups_flat="$(printf '%s' "$dups" | tr '\n' ' ')"
-    reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number: \
-${dups_flat}. Renumber the LATER duplicate to live max+1 (file-ticket.sh prints the next safe \
-number), commit, then stop. Only blocker — do not start other work."
+    heading_dups="$(printf '%s\n' "$dups" | sed -n 's/^HEADING //p')"
+    sev_dups="$(printf '%s\n' "$dups" | sed -n 's/^SEVERITY //p')"
+    other_dups="$(printf '%s\n' "$dups" | grep -vE '^(HEADING|SEVERITY) ' || true)"
+    reason=""
+    if [ -n "$heading_dups" ]; then
+      heading_flat="$(printf '%s\n' "$heading_dups" | tr '\n' ' ')"
+      reason="tickets.md has a DUPLICATE ## #N heading — two filings collided on one number: \
+${heading_flat}. Renumber the LATER duplicate to live max+1 (file-ticket.sh prints the next safe \
+number), commit, then stop."
+    fi
+    if [ -n "$sev_dups" ]; then
+      sev_flat="$(printf '%s\n' "$sev_dups" | tr '\n' ' ')"
+      sev_reason="tickets.md has a ticket carrying two **Severity:** fields: ${sev_flat}. Only \
+the FIRST field is read, so delete the dead second copy from each ticket's body (keep any \
+rationale as prose), commit, then stop."
+      reason="${reason:+$reason }$sev_reason"
+    fi
+    if [ -n "$other_dups" ]; then
+      other_flat="$(printf '%s\n' "$other_dups" | tr '\n' ' ')"
+      reason="${reason:+$reason }tickets.md lint failed with an untagged fault — read the \
+lint's own output rather than guessing a remedy: ${other_flat}."
+    fi
+    reason="$reason Only blocker — do not start other work."
     esc=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
     printf '{"decision":"block","reason":"%s"}\n' "$esc"
     exit 0

@@ -70,9 +70,15 @@ while IFS= read -r line; do
   # (`- **Severity:** …`) and both colon placements (`**Severity:**` and `**Severity**:`).
   # The strict `**Severity:***` glob missed the list form and the colon-outside-bold form,
   # silently deprioritizing those tickets to sev=4.
+  # The VALUE is ranked, never the whole line: a substring `case` over the lowercased line
+  # sorted `**Severity:** Medium — downgraded from High` as High. govern::severity_rank strips
+  # the marker, drops leading decoration, and matches only the FIRST word against the allowlist,
+  # so anything after the level (an annotation naming another level included) is inert.
+  # Rank mapping note: severity_rank is 1=Severe 2=High 3=Medium 4=Low 5=unknown; this loop's
+  # legacy local scale is 1=High 2=Medium 3=Low 4=unknown, so High..Low shift down by one.
   elif [[ -n "$current" && "$line" =~ ^[[:space:]]*(-[[:space:]]+)?\*\*Severity(\*\*:|:\*\*) ]]; then
-    lc="$(printf '%s' "$line" | tr 'A-Z' 'a-z')"
-    case "$lc" in *high*) sev=1;; *medium*) sev=2;; *low*) sev=3;; esac
+    case "$(govern::severity_rank "$line")" in
+      1|2) sev=1;; 3) sev=2;; 4) sev=3;; esac
   fi
 done < "$TICKETS_FILE"
 flush

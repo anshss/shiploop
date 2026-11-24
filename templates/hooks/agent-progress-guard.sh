@@ -135,6 +135,31 @@ fi
 # installs to scripts/ (workspace) or lives at templates/hooks/ (hub repo / hermetic tests). ---
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# --- background-task wait guard (GOVERN_BG_WAIT_GUARD; ships OFF — set =1 to enable) ---
+# A child that ends its turn "waiting for the background task's completion notification" never
+# gets that notification: nothing re-invokes a stopped subagent, so the result (and the rest of
+# its task) is silently lost. govern::pending_bg_tasks reads the child's OWN transcript and names
+# the tasks it started but neither reported nor stopped. If any are pending, block the stop ONCE
+# with the remedy in the reason (a second stop passes via stop_hook_active, handled above;
+# delegate-wait guards are the parent-side backstop for that case). OFF by default: this BLOCKS a
+# stop that every existing install allows today, so it is a behavior change, not a defect fix —
+# a workspace opts in deliberately.
+# The wall-clock denial exception applies: a capped child has no legal move, so it is allowed to
+# stop (govern::watchdog_denied, same terminal-state rule the stall block below honors).
+if [ "$idle" = "0" ] && [ "${GOVERN_BG_WAIT_GUARD:-0}" = "1" ]; then
+  pending="$(
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
+      || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::pending_bg_tasks >/dev/null 2>&1 || exit 0
+    govern::watchdog_denied "$transcript_path" && exit 0
+    govern::pending_bg_tasks "$transcript_path"
+  )" || true
+  if [ -n "$pending" ]; then
+    printf '{"decision":"block","reason":"Background task(s) you started are unreported: %s. A subagent is not woken when its background task finishes after it stops, so stopping now loses that result. Wait INSIDE this turn: one Bash call with timeout up to 600000 that polls until the task is done (a sleep inside a loop is allowed, a bare leading sleep is not), then read its output and report. If you no longer need it, stop the task first. Next time, give a long command an explicit timeout (up to 600000) so it is not moved to the background."}\n' "$pending"
+    exit 0
+  fi
+fi
+
 result="$(
   source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
     || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0

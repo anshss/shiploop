@@ -101,6 +101,21 @@ for repo in "${REPOS[@]}"; do
   [[ ",$SCOPE," == *",$repo,"* ]] || continue
   cmd="$(wsp_repo_cmd "$repo")"
   port=$(wsp_repo_port "$repo" "$SLOT")
+  # Export the repo's port under its own variable name (wsp_repo_portvar) BEFORE running its dev
+  # command: a dev command that interpolates its port var (e.g. `${MYREPO_PORT} --port`) evaluated
+  # an ALWAYS-EMPTY variable before this, because nothing exported it into the environment — a
+  # refusal-that-exits-0, and worse when the command's own fallback silently binds a default port
+  # instead of the slot's advertised one, so every caller pointed at the slot gets
+  # connection-refused. A non-resolvable port refuses loudly (skip the repo) rather than exporting
+  # an empty or garbage value.
+  portvar="$(wsp_repo_portvar "$repo")"
+  if [ -n "$portvar" ]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "[dev] refusing to boot $repo: could not resolve a numeric port for \$$portvar (got '$port') — skipping" >&2
+      continue
+    fi
+    export "$portvar=$port"
+  fi
   free_port "$port"
   run_one "$repo" "$cmd"
 done

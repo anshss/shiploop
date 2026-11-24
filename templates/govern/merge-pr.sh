@@ -61,10 +61,22 @@ if ! _guard_reason="$(govern::pr_automerge_allowed "$REPO" "$PR")"; then
 fi
 unset _guard_reason
 
-# --delete-branch removes the REMOTE head on merge (a surviving origin/ticket-<N> — or the neutral
-# origin/sl-<hex> on a public repo — collides when the ticket is re-opened and re-run). The actual
-# head name is read from the PR below, so this works for either naming scheme.
+# --subject is REQUIRED here, not cosmetic: GitHub's squash-merge of a SINGLE-COMMIT PR defaults
+# the merge commit's message to that COMMIT's own subject, not the PR title. The PR-hygiene scrub
+# (govern::scrub_pr_ticket_ref, lib/common.sh) can only PATCH the PR's title/body, never the branch
+# commit, so a worker whose commit subject still carried the local ticket id leaked it into the
+# public repo's history on exactly the single-commit PRs this governor always produces. Building
+# the squash subject from the PR title forces the merge message to match what was scrubbed,
+# regardless of what the worker put in its commit subject. Best-effort: a lookup failure degrades
+# to the pre-fix default (GitHub's own subject choice) rather than blocking the merge, since this
+# is a hygiene improvement, never a correctness gate on the merge itself.
+_subject="$(gh pr view "$PR" --repo "$(govern::repo_slug "$REPO")" --json title -q '.title' 2>/dev/null || true)"
 cmd=(gh pr merge "$PR" --repo "$(govern::repo_slug "$REPO")" --squash --delete-branch)
+if [[ -n "$_subject" ]]; then
+  cmd+=(--subject "$_subject")
+else
+  govern::log "WARN could not read $REPO#$PR's title for an explicit merge subject — squash may inherit the branch commit's subject verbatim"
+fi
 if [[ "${GOVERN_ECHO:-0}" == "1" ]]; then
   printf 'WOULD RUN: %s\n' "${cmd[*]}"
 else

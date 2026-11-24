@@ -2,9 +2,12 @@
 # Lint tickets.md for duplicate `## #N` headings. A duplicate means two filings collided on
 # one number — exactly the failure collision-safe numbering (govern::next_ticket_number) prevents
 # at the source; this is the cheap backstop that CATCHES one that still slipped through (a
-# hand-edit, a pre-helper filing, an unserialized append). Prints the offending numbers to stderr
-# and exits 1 if any duplicate exists; silent + exit 0 when clean. Wire into the Stop hook
-# (scripts/hooks/ticket-sweep-reminder).
+# hand-edit, a pre-helper filing, an unserialized append). ALSO fails on a ticket block carrying
+# two `**Severity:**` fields (whatever renders the ticket reads the FIRST; a second copy is
+# invisible dead text that can disagree with it). Each fault's stdout lines are TAGGED
+# `HEADING #N ×count` / `SEVERITY #N ×count` so the Stop hook routes them to the right remedy.
+# Prints the offending numbers to stderr and exits 1 if any duplicate exists; silent + exit 0
+# when clean. Wire into the Stop hook (scripts/hooks/ticket-sweep-reminder).
 #
 # ALSO runs a NON-BLOCKING warning pass: prose dependency phrases ("depends on #N", "blocked
 # by #N", "blocks #N") that lack a canonical bold `**Depends on:**`/`**Blocks:**` marker — a
@@ -37,10 +40,28 @@ if dangling="$(govern::dangling_dep_refs "$file")" && [[ -n "$dangling" ]]; then
   printf '  → the blocker is resolved or was never filed. Re-check and update the ticket, do not just delete the ref.\n' >&2
 fi
 
+# Two INDEPENDENT faults fail this lint, and each is TAGGED on its stdout lines — `HEADING #N
+# ×count` or `SEVERITY #N ×count` — so the Stop hook can route them separately instead of reporting
+# every non-zero exit as a heading collision (whose remedy — renumbering — silently corrupts a live
+# ticket's `**Ref:**`/`depends on #N` pointers if followed for the WRONG fault). An untagged line
+# (a future check) surfaces verbatim as "read the lint's own output".
+rc=0
 if dups="$(govern::duplicate_ticket_headings "$file")"; then
+  :
+else
+  printf 'DUPLICATE ## #N heading(s) in %s — two filings reused one number:\n' "$file" >&2
+  printf '%s\n' "$dups" | sed 's/^/HEADING /'
+  rc=1
+fi
+if sevdups="$(govern::duplicate_severity_fields "$file")"; then
+  :
+else
+  printf 'Ticket(s) carrying two **Severity:** fields in %s — only the FIRST is read:\n' "$file" >&2
+  printf '%s\n' "$sevdups" | sed 's/^/SEVERITY /'
+  rc=1
+fi
+if [[ "$rc" -eq 0 ]]; then
   exit 0
 fi
-# Human header → stderr; the bare "#N ×count" list → stdout (machine-readable for the Stop hook).
-printf 'DUPLICATE ## #N heading(s) in %s — two filings reused one number:\n' "$file" >&2
-printf '%s\n' "$dups"
-exit 1
+# Tagged "#N ×count" list → stdout (machine-readable for the Stop hook); human headers → stderr.
+exit "$rc"

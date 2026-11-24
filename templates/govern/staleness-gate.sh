@@ -130,7 +130,45 @@ sg::git_knew() { # <rel-path>
   return 1
 }
 
-total=0; missing=0; alive_example=""; gone_known=0; gone_example=""
+# Was the LAST commit that touched this now-missing path a RENAME rather than a true deletion? A
+# path that is merely gone under its OLD name can still hold a live defect at the new one — the
+# gate calling such a ticket stale skips work on a bug that moved and is still alive.
+# `git log -- <path>` limits the diff to that one pathspec BEFORE rename pairing runs, so it can
+# only ever see the DELETE side of a rename and never the ADD side — rename detection needs both.
+# So: find the hash of the last commit that touched the path (the same lookup sg::git_knew does),
+# then re-inspect THAT COMMIT's full, unrestricted diff (no pathspec) with rename detection on, and
+# check whether the missing path shows up as the FROM side of an R entry. A directory-shaped
+# candidate (ends in `/`, stripped below) matches as a path PREFIX, since git detects renames
+# per-file, not per-directory, so `dir/a` and `dir/b` inside a renamed directory each surface as
+# their own R line naming the file, never the directory itself.
+sg::git_renamed() { # <rel-path>
+  local p="$1"
+  local r root stripped roots=("$WS_ROOT") cand hash
+  p="${p%/}"
+  stripped="${p#*/}"
+  for r in ${REPOS[@]+"${REPOS[@]}"}; do
+    roots+=("$(wsp_repo_localdir "$r" 2>/dev/null || printf '%s/%s' "$WS_ROOT" "$r")")
+  done
+  for root in "${roots[@]}"; do
+    [[ -d "$root" ]] || continue
+    git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || continue
+    for cand in "$p" "$stripped"; do
+      [[ -n "$cand" ]] || continue
+      hash="$(git -C "$root" log --format=%H -1 -- "$cand" 2>/dev/null || printf '')"
+      [[ -n "$hash" ]] || continue
+      if git -C "$root" show --find-renames --diff-filter=R --name-status "$hash" 2>/dev/null \
+           | awk -F'\t' -v p="$cand" '
+               $1 ~ /^R/ { old=$2; if (old == p || index(old, p "/") == 1) { found=1 } }
+               END { exit !found }
+             '; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+total=0; missing=0; alive_example=""; gone_known=0; gone_example=""; renamed_known=0; renamed_example=""
 while IFS= read -r p; do
   [[ -n "$p" ]] || continue
   total=$((total + 1))
@@ -138,9 +176,26 @@ while IFS= read -r p; do
     [[ -z "$alive_example" ]] && alive_example="$p"
   else
     missing=$((missing + 1))
-    if sg::git_knew "$p"; then gone_known=1; [[ -z "$gone_example" ]] && gone_example="$p"; fi
+    if sg::git_knew "$p"; then
+      # A rename is INCONCLUSIVE, not evidence of a dead ticket — the defect may be live at the new
+      # path. Checked before counting it as a deletion, per path.
+      if sg::git_renamed "$p"; then
+        renamed_known=1; [[ -z "$renamed_example" ]] && renamed_example="$p"
+      else
+        gone_known=1; [[ -z "$gone_example" ]] && gone_example="$p"
+      fi
+    fi
   fi
 done < "$CANDIDATES"
+
+# A detected rename on ANY named path outranks the delete evidence entirely: the ticket's own
+# subject may well have moved with it, so treat the whole verdict as inconclusive rather than stale
+# even when another named path genuinely was deleted.
+if [[ "$renamed_known" -eq 1 ]]; then
+  printf 'dispatch #%s: inconclusive — `%s` looks RENAMED rather than deleted (git shows a rename at its last touching commit); the defect may be live at the new path — not stale\n' \
+    "$N" "$renamed_example"
+  exit 0
+fi
 
 if [[ "$total" -gt 0 && "$missing" -eq "$total" && "$gone_known" -eq 1 ]]; then
   printf 'STALE #%s: all %s named path(s) are gone from disk and git history shows `%s` once existed (deleted) — skipping\n' \
