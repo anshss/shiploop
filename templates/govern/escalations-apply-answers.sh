@@ -48,6 +48,13 @@ fi
 # The step-6 commit stages the whole tickets file, and the dispositions below edit it first, so a
 # file that already carries uncommitted changes must be refused BEFORE any of them runs. Exit 12;
 # nothing is stashed, discarded or committed.
+if declare -F govern::queue_stale_copy >/dev/null 2>&1; then
+  _stale="$(govern::queue_stale_copy "$TICKETS_FILE")"
+  if [[ -n "$_stale" ]]; then
+    govern::queue_stale_refusal "apply-answers" "$_stale"
+    exit 12
+  fi
+fi
 if declare -F govern::queue_foreign_changes >/dev/null 2>&1; then
   _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
   if [[ -n "$_foreign" ]]; then

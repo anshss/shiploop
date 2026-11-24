@@ -99,6 +99,11 @@ if [[ "${GOVERN_BOOKKEEP_LOCK_HELD:-0}" != "1" ]]; then
   # changes is refused before any edit (exit 12). A dry run commits nothing, and a caller holding the
   # lock (apply-answers) already ran the check before its own edits.
   if [[ "$DRY" -ne 1 && "${GOVERN_EXTERNALIZE_NO_COMMIT:-0}" != "1" ]]; then
+    _stale="$(govern::queue_stale_copy "$TICKETS_FILE")"
+    if [[ -n "$_stale" ]]; then
+      govern::queue_stale_refusal "externalize-low-tickets" "$_stale"
+      exit 12
+    fi
     _foreign="$(govern::queue_foreign_changes "$TICKETS_FILE")"
     if [[ -n "$_foreign" ]]; then
       govern::queue_foreign_refusal "externalize-low-tickets" "$_foreign"

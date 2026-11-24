@@ -32,12 +32,10 @@ so the parser finds them.
 - **`Flow:`** — tag this ticket as a flow-registry validation (`--flow <id[,id…]>`); the worker gets
   the flow block(s) injected and bookkeeping stamps the registry on resolve.
 
-> **There is no `Model:` / `Effort:` field.** Worker sizing is a MEASUREMENT, not something you
-> declare at filing time. A cheap read-only scout pass greps the real code before dispatch and its
-> verdict picks the tier — it knows how many files the fix touches, whether tests cover the area, and
-> whether there is a precedent commit, none of which you know while writing the ticket. Entries in
-> older queues still carrying these fields are inert; they are not an error, they just do nothing.
-> (`GOVERN_MEASURED_SIZING=0` restores the old field-wins precedence if a fleet needs it.)
+> **There is no `Model:` / `Effort:` field.** Model choice is made at dispatch, not at filing time:
+> the advisor runs `npm run govern:dispatch -- <N> --model <alias>` when the work needs more than the
+> `sonnet` default. Entries in older queues still carrying these fields are inert; they are not an
+> error, they just do nothing.
 
 ---
 

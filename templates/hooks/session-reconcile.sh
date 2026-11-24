@@ -16,6 +16,9 @@
 #   npm run govern:escalations-apply
 #   npm run govern:escalations-emit
 #
+# It also warns, with the diff, when queue/tickets.md in the working tree looks like an older copy
+# saved over newer work (govern::queue_stale_copy; GOVERN_QUEUE_STALE_GUARD=0 turns that check off).
+#
 # Kill switch: GOVERN_SESSION_RECONCILE=0.
 set -uo pipefail
 
@@ -26,6 +29,19 @@ set -uo pipefail
 [ "${GOVERN_SESSION_RECONCILE:-1}" != "0" ] || exit 0
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "${GOVERN_QUEUE_STALE_GUARD:-1}" != "0" ] && [ -f "$SELF_ROOT/queue/tickets.md" ]; then
+  stale_out="$(
+    GOVERN_WS_ROOT="$SELF_ROOT" GOVERN_TICKETS_FILE="$SELF_ROOT/queue/tickets.md"
+    export GOVERN_WS_ROOT GOVERN_TICKETS_FILE
+    source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null || exit 0
+    command -v govern::queue_stale_copy >/dev/null 2>&1 || exit 0
+    govern::queue_stale_copy "$SELF_ROOT/queue/tickets.md" 2>/dev/null || true
+  )"
+  if [ -n "$stale_out" ]; then
+    printf -- '── queue integrity ──\nqueue/tickets.md looks like a stale copy written over newer work. Restore it from git before anything writes the queue (every queue writer refuses until then):\n%s\n' "$stale_out"
+  fi
+fi
+
 APPLY="$SELF_ROOT/scripts/govern/escalations-apply-answers.sh"
 EMIT="$SELF_ROOT/scripts/govern/escalations-emit-pending.sh"
 [ -f "$APPLY" ] && [ -f "$EMIT" ] || exit 0

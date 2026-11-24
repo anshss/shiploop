@@ -124,6 +124,10 @@ export GOVERN_BG_WAIT_GUARD=0 GOVERN_BG_LEDGER=0 GOVERN_REPORT_CAPTURE=0
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.
 export GOVERN_INDEX=0
 
+# The stale-copy check runs git history scans on every queue writer. Fixtures that write the queue by
+# hand would trip it for reasons that are not their subject, so it is off here; its own test turns it on.
+export GOVERN_QUEUE_STALE_GUARD=0
+
 # Seed a hermetic workspace stub so a test never depends on the LIVE scripts/lib/workspace.sh (its repo
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it

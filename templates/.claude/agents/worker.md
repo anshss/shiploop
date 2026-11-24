@@ -92,6 +92,6 @@ Ignore only these two things in it, kept for historical shape but never populate
 8. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
 9. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
-   `status` and a filled `escalation` rather than thrashing; the driver owns the one retry.
+   `status` and a filled `escalation` rather than thrashing; the advisor decides what happens next.
 10. **You ARE the worker: never dispatch `subagent_type: "worker"`.** Spawn only read-only
     `lookup`/`investigator` children.
