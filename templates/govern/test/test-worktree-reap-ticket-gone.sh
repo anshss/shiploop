@@ -20,8 +20,9 @@ trap 'rm -rf "$T"' EXIT
 
 # ── Sandbox: meta repo + sub-repo "alpha", each with a local bare origin so the reaper's
 # once-per-repo fetch and its origin/main ancestry checks resolve. ──
-mkdir -p "$T/scripts/worktree" "$T/scripts/lib" "$T/alpha" "$T/queue"
+mkdir -p "$T/scripts/worktree" "$T/scripts/lib" "$T/scripts/govern/lib" "$T/alpha" "$T/queue"
 cp "$DIR/../../worktree/reap.sh" "$T/scripts/worktree/reap.sh"
+cp "$DIR/../lib/landed.sh" "$T/scripts/govern/lib/landed.sh"
 cat > "$T/scripts/lib/workspace.sh" <<EOF
 ROOT_PM=npm
 WORKTREE_BASE="$T/wt"
@@ -71,7 +72,14 @@ assert_eq "$rc1" "0" "reap dry run succeeds"
 assert_contains "$out1" "REAPABLE (1)" "ticket gone + tree identical: t7 is reapable"
 assert_not_contains "$out1" "unmerged(alpha:1)" "ticket gone + tree identical: no unmerged blocker"
 
-# ── 2. Ticket STILL OPEN: the same tree keeps the blocker (t-N slug alone proves nothing) ──
+# ── 2. Helper module missing: the downgrade degrades to BLOCKING (fail closed) ──
+mv "$T/scripts/govern/lib/landed.sh" "$T/scripts/govern/lib/landed.sh.away"
+out2a="$(bash "$T/scripts/worktree/reap.sh" 2>&1)"
+assert_contains "$out2a" "unmerged(alpha:1)" "helper missing: squash-landed shape stays blocked"
+assert_contains "$out2a" "REAPABLE (0)" "helper missing: nothing is reapable"
+mv "$T/scripts/govern/lib/landed.sh.away" "$T/scripts/govern/lib/landed.sh"
+
+# ── 3. Ticket STILL OPEN: the same tree keeps the blocker (t-N slug alone proves nothing) ──
 printf '# tickets\n\n## #7 - the t7 ticket\n\n## #8 - unrelated ticket\n' > "$T/queue/tickets.md"
 out2="$(bash "$T/scripts/worktree/reap.sh" 2>&1)"; rc2=$?
 assert_contains "$out2" "unmerged(alpha:1)" "ticket still open: unmerged blocker kept"

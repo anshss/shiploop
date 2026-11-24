@@ -327,6 +327,7 @@ e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-re
 52f40ed5c7f058665cc6eefa62cea50c2d40fbb1d91251cc0b4484ae880ca222  govern/lib/common.sh
 5e95172bbef78c7874b303f5cfadaa8215bb80003255f38132edcf73b030f212  govern/lib/common.sh
 5ef2f4be96315bb477391df707b694c5977e0f735bd0f3c4126f1bf5c606e282  govern/lib/common.sh
+60bfd2a72441de176cd487980023aae8c619bd8f62ef5f0581f8f5ad597e7142  govern/lib/common.sh
 62cf51ffbec5b747b9ba99cb5971727740933d61d5e6d421fd55238e7f6abca9  govern/lib/common.sh
 67cd440f7aa344250ae724bb6cdfad51a95a68e271efe0f0a28e7577e9af348f  govern/lib/common.sh
 67de00766e256bcb7eb1ab0a5a68ee59c35a57700387ee947bbabeb9b35d2404  govern/lib/common.sh
@@ -417,6 +418,9 @@ e58c15ababb0eb7404dbdb13e8a00a304476382c57a10a9b84995493b43b8862  govern/lib/flo
 ecf43046f53ad5629e4c2b5a0ecd00a233905f25351ef69d60b74b84a4227d7d  govern/lib/flows.sh
 f7a4863cf1c1188c5e6f057abb410a4f0be58c7a19cc8ad91a83b81a9ce605bb  govern/lib/flows.sh
 fe01ab1043e6bfd7cad5babd83b15d47ef48299d75aacb57e963bcd5deafdfd7  govern/lib/flows.sh
+
+# -- govern/lib/landed.sh --
+7077916159252c4603f806094ac952900a9e0e0789cd36094c7a62df0d8a46f0  govern/lib/landed.sh
 
 # -- govern/lib/plan.sh --
 041c4f83e20379855897aaf50b76a77a1dbfae7446b8c62c1595f5178fc00d61  govern/lib/plan.sh
@@ -541,6 +545,7 @@ d93a1f552026a7da2270913f57d9ec2bff93ecf027107c05e970d76f1178cb89  govern/select-
 21fb1f7e569720c4e5bfc9df48205b5f48622364df497e8bd6483b2c986131eb  govern/ship.sh
 34149738fc8862a34299d9995eacd77a91a173bf726d4f7fbe38d4a4d6bf74c9  govern/ship.sh
 3e37a981975980c66d3bbef92a59963c67762be5ba7102d34a3846139a9a191c  govern/ship.sh
+91ac571cdbb82a43626f09f9e836e4111b8f1d9ec55371690e5f3762dd71ecf5  govern/ship.sh
 
 # -- govern/staleness-gate.sh --
 032d12ddfd16a09dc808d96a5f11afbe2d2f153f442a25dd7ee4cfe2c6f569ae  govern/staleness-gate.sh
@@ -844,6 +849,7 @@ eed618debf5f22c53996d462c6010633aed537a067cefa5465e8ec6145c690c1  worktree/new.s
 63e70d21a5ce3daaa3b49f8aa76e2978f74a65bc5f5023b4eabf059f2bedea3f  worktree/reap.sh
 b6902d77b1b3ece8bff28cdc34cad7b4297f5908791ed623e3c17f1821ce69ef  worktree/reap.sh
 be613550cee4fefb10e2a550d8e188620e173fb439c0e925002baacd53de3806  worktree/reap.sh
+ecab9d9b0e74eadec1ca56533ab57beb4a0ffce15f6efefc90b9b6800ff340d5  worktree/reap.sh
 
 # -- worktree/rm.sh --
 0827c39a14ad0352d052d5163e682a520a70f7ffda5498f7900a26b1d30b3775  worktree/rm.sh

@@ -33,6 +33,10 @@ source "$WS_ROOT/scripts/lib/workspace.sh"
 # probes for the function before calling it, so absence degrades to today's always-spawn path.
 [[ -f "$GOVERN_LIB_DIR/pregate.sh" ]] && source "$GOVERN_LIB_DIR/pregate.sh"
 
+# Landed-branch check (squash-merge awareness), shared with the worktree reaper. Same
+# existence guard: a workspace scaffolded before this module shipped simply runs without it.
+[[ -f "$GOVERN_LIB_DIR/landed.sh" ]] && source "$GOVERN_LIB_DIR/landed.sh"
+
 GOVERNOR_DIR="$WS_ROOT/governor"
 PREFERENCES_FILE="${GOVERN_PREFERENCES_FILE:-$GOVERNOR_DIR/preferences.md}"
 ESCALATIONS_FILE="${GOVERN_ESCALATIONS_FILE:-$GOVERNOR_DIR/escalations.md}"
