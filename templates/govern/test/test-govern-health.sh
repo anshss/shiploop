@@ -81,7 +81,8 @@ E="$(mktemp -d)"
 mk_ws_stub "$E"
 export GOVERN_QUEUE_DIR="$E/queue"
 mkdir -p "$E/bin/lib" "$E/queue" "$E/logs/ticket-1"
-( cd "$E" && git init -q && git config user.email t@t && git config user.name t )
+( cd "$E" && git init -q && git config user.email t@t && git config user.name t \
+  && git remote add origin https://github.com/acme/harness.git )
 
 set +e
 cp "$RT" "$E/bin/resolve-ticket.sh"
@@ -104,7 +105,27 @@ cat > "$E/bin/merge-pr.sh" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
-chmod +x "$E/bin"/*.sh
+cat > "$E/bin/post-merge-check.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+# gh stub: PR 101 is OPEN in the harness repo, so the report's named PR reaches the merge set
+# (a named PR that gh cannot confirm is a refusal, not a landing).
+cat > "$E/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+q=""; prev=""
+for a in "$@"; do [[ "$prev" == "-q" ]] && q="$a"; prev="$a"; done
+if [[ "$*" == *"pr view 101"* ]]; then
+  case "$q" in
+    *.state) printf 'OPEN\n' ;;
+    *.url)   printf 'https://github.com/acme/harness/pull/101\n' ;;
+    *)       printf '{"state":"OPEN"}\n' ;;
+  esac
+  exit 0
+fi
+exit 1
+STUB
+chmod +x "$E/bin"/*.sh "$E/bin/gh"
 export LANDED_LOG="$ELANDED"
 landed_count() { [[ -f "$ELANDED" ]] || { echo 0; return 0; }; tr -cd '\n' < "$ELANDED" | wc -c | tr -d ' '; }
 
@@ -129,7 +150,7 @@ EHIST="$E/history.jsonl"
 report='{"status":"resolved","pr":{"repo":"harness","number":101,"url":"http://pr/1"},"prs":[]}'
 : > "$ELANDED"
 out="$( cd "$E" && printf '%s' "$report" \
-  | GOVERN_HISTORY_FILE="$EHIST" GOVERN_LOG_ROOT="$E/logs" GOVERN_SELFREF_REPOS="harness shiploop" \
+  | PATH="$E/bin:$PATH" GOVERN_HISTORY_FILE="$EHIST" GOVERN_LOG_ROOT="$E/logs" GOVERN_SELFREF_REPOS="harness shiploop" \
     bash "$E/bin/resolve-ticket.sh" 1 2>&1 )"
 rc=$?
 

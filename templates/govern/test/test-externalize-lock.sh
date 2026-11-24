@@ -78,7 +78,7 @@ export GOVERN_EXTERNALIZE_REPO="acme/alpha-oss"
 export GOVERN_EXTERNALIZE_SUBREPO="alpha"
 export GOVERN_NO_PUSH=1
 
-rpt() { printf '{"status":"resolved","pr":{"repo":"x","number":%s},"newTickets":[],"lessonPatch":null}' "$1"; }
+rpt() { printf '{"status":"resolved","pr":{"repo":"alpha","number":%s},"newTickets":[],"lessonPatch":null}' "$1"; }
 
 # Fire the externalization stage (moves #1 out of tickets.md into the review queue) and a
 # land-resolution.sh resolve of #2 (deletes it from tickets.md) AT ONCE, both racing the SAME

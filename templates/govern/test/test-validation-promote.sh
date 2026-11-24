@@ -72,7 +72,7 @@ assert_contains "$ptr" "validation-evidence" "pointer: history entry tagged kind
 # ── 2. ordinary ticket (no live test) → NO promotion, NO pointer ──
 mk_tickets; : > "$HIST"
 GOVERN_NO_PUSH=1 GOVERN_HISTORY_FILE="$HIST" GOVERN_TICKETS_FILE="$T/tickets.md" \
-  printf '{"status":"resolved","pr":{"repo":"api","number":7},"newTickets":[],"lessonPatch":null,"validation":null}' | bash "$BK" 41 >/dev/null 2>&1
+  printf '{"status":"resolved","pr":{"repo":"alpha","number":7},"newTickets":[],"lessonPatch":null,"validation":null}' | bash "$BK" 41 >/dev/null 2>&1
 assert_eq "$(ls "$T/.claude/shiploop/validation"/ticket-41-* 2>/dev/null | wc -l | tr -d ' ')" "0" "no-promote: ordinary ticket writes no validation summary"
 assert_eq "$(grep '"ticket":41' "$HIST" 2>/dev/null | wc -l | tr -d ' ')" "0" "no-promote: ordinary ticket writes no pointer"
 

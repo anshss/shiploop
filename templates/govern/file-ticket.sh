@@ -37,8 +37,35 @@
 # git repo (tests / offline), in which case the append is left on disk like the legacy path.
 # Exit 12: in commit mode, queue/tickets.md already has uncommitted changes this script did not make
 # (govern::queue_foreign_changes; GOVERN_QUEUE_FOREIGN_GUARD=0 disables the check). Nothing is appended.
-set -euo pipefail
+#
+# NOTHING in this script may exit silently: an ERR trap names the failing line and cause, and one
+# EXIT trap reports any exit that filed nothing (forcing it non-zero) — a silent no-op is not
+# reachable. The append is only "filed" once the heading is READ BACK out of the file on disk
+# (govern::_ft_verify_appended): until that runs, any exit — zero or not — is reported as a failed
+# filing, so a caller can never mistake a no-op for a filed ticket number.
+set -Eeuo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$DIR/lib/common.sh"
+
+ft_filed=""   # set once the ticket is verifiably on disk; an EXIT while this is empty is a failure
+ft_lock=""    # bookkeep lock to release on exit, once held
+govern::_ft_err() {
+  local rc="$1" line="$2" cmd="$3"
+  printf '[govern ERROR] file-ticket: FAILED (exit %s) at line %s: %s\n' "$rc" "$line" "$cmd" >&2
+  if [[ "$rc" == "141" ]]; then
+    printf '[govern ERROR] file-ticket: exit 141 is SIGPIPE — a consumer closed a pipe while its producer was still writing. Report this: the shape is supposed to be gone.\n' >&2
+  fi
+}
+govern::_ft_exit() {
+  local rc=$?
+  [[ -n "$ft_lock" ]] && govern::lock_release "$ft_lock"
+  if [[ -z "$ft_filed" ]]; then
+    printf '[govern ERROR] file-ticket: EXITED WITHOUT FILING (exit %s) — no ticket was appended. Do NOT record a ticket number from this run.\n' "$rc" >&2
+    [[ "$rc" == "0" ]] && rc=1   # never let a no-op filing look like a success to the caller
+  fi
+  exit "$rc"
+}
+trap 'govern::_ft_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
+trap 'govern::_ft_exit' EXIT
 
 flow_field=""
 flow_op_field=""
@@ -74,6 +101,39 @@ title="${1:?ticket title required (arg 1)}"
 sev="${2:-Medium}"
 body="$(cat)"
 [[ -n "${body//[[:space:]]/}" ]] || govern::die "ticket body required on stdin"
+# The emitter owns the `**Severity:**` field (it is arg 2 here), so strip any copy the caller also
+# put in the body: callers routinely open a body with `**Severity:** High — <rationale>`; that
+# shipped a SECOND field on open tickets, and whatever renders the ticket reads the FIRST, so the
+# second is invisible dead text that can disagree with it. Any rationale is preserved as prose:
+# only the marker is dropped, never the sentence after it. Line-anchored via
+# GOVERN_SEVERITY_FIELD_RE, so a backticked or mid-sentence mention of the field is untouched.
+# Detection runs in pure bash (line-by-line `[[ =~ ]]`), never a body piped into a quiet-mode grep:
+# such a consumer exits at its first match, and on a body past the pipe buffer that SIGPIPEs the
+# still-writing producer under `set -o pipefail` — silently skipping the strip on precisely the
+# large bodies most likely to carry the field. The awk pipes below are unaffected: awk never exits
+# before EOF here, so it can't close the pipe on its producer.
+_ft_has_sev_field=0
+while IFS= read -r _ft_line || [[ -n "$_ft_line" ]]; do
+  [[ "$_ft_line" =~ $GOVERN_SEVERITY_FIELD_RE ]] && { _ft_has_sev_field=1; break; }
+done <<< "$body"
+if [[ "$_ft_has_sev_field" -eq 1 ]]; then
+  govern::log "file-ticket: body carried its own \`**Severity:**\` field — the emitter writes that field, so the marker is stripped and any rationale kept as prose"
+  body="$(printf '%s\n' "$body" | awk -v re="$GOVERN_SEVERITY_FIELD_RE" '
+    $0 ~ re {
+      sub(re, "")                                    # drop the field marker
+      sub(/^[[:space:]]*/, "")
+      lc = tolower($0)
+      if (lc ~ /^(severe|high|medium|low)([^a-z]|$)/) {   # drop the level word the emitter re-states
+        sub(/^[A-Za-z]+/, ""); sub(/^[[:space:]]*(—|–|-|:)?[[:space:]]*/, "")
+      }
+      if ($0 ~ /^[[:space:]]*$/) next                     # field was level-only → drop the line
+    }
+    { print }
+  ')"
+  # Collapse a leading blank line left behind by a dropped level-only field.
+  body="$(printf '%s\n' "$body" | awk 'NR==1 && $0 ~ /^[[:space:]]*$/ {next} {print}')"
+  [[ -n "${body//[[:space:]]/}" ]] || govern::die "file-ticket: body was nothing but a **Severity:** field — give the ticket a real body"
+fi
 # Kept as an empty splice slot so the two printf call sites below (legacy append-only path and the
 # atomic path) stay identical in shape. No sizing field is ever emitted any more.
 model_block=""
@@ -108,12 +168,24 @@ commit_dir="$(cd "$(dirname "$TICKETS_FILE")" && pwd)"
 SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
 BK_LOCK="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
 
+# Outcome assertion, not a proxy: the append is only "filed" once the heading is READ BACK out of
+# the file on disk. This is also what arms $ft_filed — until it runs, the EXIT trap above treats
+# any exit, zero or not, as a failed filing and says so.
+govern::_ft_verify_appended() { # $1 = allocated number
+  local n="$1" heads
+  heads="$(grep -cE "^## #$n[[:space:]]" "$TICKETS_FILE" 2>/dev/null || true)"
+  [[ "$heads" == "1" ]] || govern::die "file-ticket: append verification FAILED — $TICKETS_FILE holds $heads headings matching '## #$n' (expected exactly 1). NOTHING was filed under that number."
+  ft_filed="$n"
+  govern::log "file-ticket: filed #$n — '$title' [$sev], $(printf '%s\n' "$body" | wc -l | tr -d ' ') body lines appended to $TICKETS_FILE"
+}
+
 if [[ "${GOVERN_FILE_TICKET_NO_COMMIT:-0}" == "1" ]]; then
   # Legacy append-only path (explicit opt-in). Still routes numbering through the shared allocator
   # (which takes the bookkeep lock itself) so the number stays collision-safe; just leaves the
   # append uncommitted for the caller to stage. Prefer the default atomic path while a run is active.
   n="$(govern::next_ticket_number "$TICKETS_FILE")"
   printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n%s\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" "$proposal_block" >> "$TICKETS_FILE"
+  govern::_ft_verify_appended "$n"
   echo "$n"
   exit 0
 fi
@@ -123,7 +195,7 @@ fi
 # mkdir-mutex; reclaim a crashed holder's lock after 5min. Non-fatal if busy >60s — proceed degraded,
 # same as land-resolution.sh.
 govern::lock_acquire "$BK_LOCK" 60 300 || govern::log "file-ticket: bookkeep lock busy >60s — proceeding (degraded)"
-trap 'govern::lock_release "$BK_LOCK"' EXIT
+ft_lock="$BK_LOCK"   # released by govern::_ft_exit (the single EXIT trap installed at the top)
 
 # Refuse to commit a tickets file that already carries uncommitted changes: the pathspec commit below
 # takes the whole on-disk file, so a block something else wrote would be published as part of this
@@ -172,28 +244,53 @@ govern::_dup_title_words() { # title -> sorted unique lowercase words, len>2, co
     | awk 'length($0)>2 && !/^(the|and|for|with|from|this|that|into|onto|over|your|have|does|when|only|ever|never|both)$/' \
     | sort -u
 }
-dup_of=""
-new_words="$(govern::_dup_title_words "$title")"
-new_count="$(printf '%s\n' "$new_words" | grep -c . || true)"
-if [[ "$new_count" -gt 0 && -f "$TICKETS_FILE" ]]; then
+# Scan an ALREADY-COLLECTED `<num>\t<title>` stream; echo "<label>#N" on the first hit, nothing on
+# no match. Every caller below collects its producer into a variable FIRST and feeds it here as a
+# here-string, so an early hit has no live producer left to SIGPIPE (a `break`/`return` on the
+# first hit would close a still-writing pipe: exit 141 under pipefail).
+govern::_dup_scan() { # $1 = label prefix (""|"parked "|"previously-filed "), $2 = the stream
+  local label="$1" stream="$2" hnum htitle ex_words shared
+  [[ -n "$stream" ]] || return 0
   while IFS=$'\t' read -r hnum htitle; do
     [[ -n "$hnum" ]] || continue
     ex_words="$(govern::_dup_title_words "$htitle")"
     shared="$(comm -12 <(printf '%s\n' "$new_words") <(printf '%s\n' "$ex_words") | grep -c . || true)"
     if [[ "$shared" -gt 0 ]] && awk -v s="$shared" -v n="$new_count" 'BEGIN{exit !(s/n >= 0.5)}'; then
-      dup_of="$hnum"; break
+      printf '%s#%s' "$label" "$hnum"; return 0
     fi
-  done < <(grep -E '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]' "$TICKETS_FILE" 2>/dev/null \
-              | sed -E 's/^##[[:space:]]+#([0-9]+)[[:space:]]*[—-][[:space:]]*/\1\t/')
+  done <<< "$stream"
+  return 0
+}
+govern::_dup_headings() { # $1 = queue file -> "<num>\t<title>" stream
+  grep -E '^##[[:space:]]+#[0-9]+[[:space:]]*[—-]' "$1" 2>/dev/null \
+    | sed -E 's/^##[[:space:]]+#([0-9]+)[[:space:]]*[—-][[:space:]]*/\1\t/' || true
+}
+dup_of=""
+new_words="$(govern::_dup_title_words "$title")"
+new_count="$(printf '%s\n' "$new_words" | grep -c . || true)"
+if [[ "$new_count" -gt 0 ]]; then
+  [[ -f "$TICKETS_FILE" ]] && dup_of="$(govern::_dup_scan '' "$(govern::_dup_headings "$TICKETS_FILE")")"
+  [[ -z "$dup_of" && -f "$TICKETS_PARKED_FILE" ]] \
+    && dup_of="$(govern::_dup_scan 'parked ' "$(govern::_dup_headings "$TICKETS_PARKED_FILE")")"
+  if [[ -z "$dup_of" ]] && git -C "$commit_dir" rev-parse --git-dir >/dev/null 2>&1; then
+    # Closed-ticket ledger, for free: every ticket ever filed left a commit subject behind, and
+    # numbers are monotonic so a hit is unambiguous even though the block itself was deleted.
+    # Collected first — `git log` over thousands of commits is the biggest producer in this
+    # script, and it is the one an early hit would SIGPIPE if the scan streamed it live.
+    ledger="$(git -C "$commit_dir" log --max-count=4000 --format=%s -- "$(basename "$TICKETS_FILE")" 2>/dev/null \
+                | sed -nE 's/^docs\(tickets\): file #([0-9]+)[[:space:]]*[—-][[:space:]]*(.+)$/\1\t\2/p' || true)"
+    dup_of="$(govern::_dup_scan 'previously-filed ' "$ledger")"
+  fi
 fi
 if [[ -n "$dup_of" ]]; then
-  govern::log "file-ticket: new ticket #$n's title overlaps existing #$dup_of — flagging as a possible duplicate (still filing)"
-  body="⚠ possible duplicate of #$dup_of
+  govern::log "file-ticket: new ticket #$n's title overlaps existing $dup_of — flagging as a possible duplicate (still filing)"
+  body="⚠ possible duplicate of $dup_of — read that entry before working this one, and merge into it rather than working both. A \`parked\`/\`previously-filed\` hit is NOT in the live queue: look in the parked tickets file, or \`git log -S'## #N' -- <tickets-file>\` for a ticket already resolved and deleted.
 
 $body"
 fi
 
 printf '\n## #%s — %s\n\n**Severity:** %s\n%s%s\n%s\n%s\n---\n' "$n" "$title" "$sev" "$model_block" "$flow_block" "$body" "$proposal_block" >> "$TICKETS_FILE"
+govern::_ft_verify_appended "$n"
 
 # Commit tickets.md + .ticket-seq and CAS-push to origin/main with rebase-retry, so the filed ticket
 # can never be left uncommitted (and thus clobbered by a concurrent land-resolution.sh run). Mirrors

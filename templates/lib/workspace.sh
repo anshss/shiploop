@@ -264,6 +264,19 @@ wsp_repo_port() {
   echo $(( base + ${2:-0} * SLOT_PORT_STEP ))
 }
 
+# Environment-variable NAME a repo's dev port is exported under before its dev command runs
+# (e.g. `shiploop-site` -> `SHIPLOOP_SITE_PORT`). Uppercase, non-alphanumerics mapped to `_`,
+# suffixed `_PORT`. Empty if the repo isn't known. scripts/dev.sh exports this variable (with the
+# resolved port) into the environment of each repo's dev command; a dev_cmd template that
+# interpolates `$<NAME>` gets the slot's real port, never an empty string.
+wsp_repo_portvar() {
+  local i name
+  i=$(wsp_repo_index "$1") || return 0
+  name="${REPOS[$i]}"
+  [ -n "$name" ] || return 0
+  printf '%s_PORT\n' "$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')"
+}
+
 # Dev command for <repo> (empty if unknown).
 wsp_repo_cmd() {
   local i

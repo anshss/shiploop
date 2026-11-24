@@ -86,7 +86,7 @@ EOF
 printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md" 2>/dev/null || { mkdir -p "$T/governor"; printf '## Open\n\n## Resolved\n' > "$T/governor/escalations.md"; }
 ( cd "$T" && git add -A && git commit -q -m init )
 
-rpt() { printf '{"status":"resolved","pr":{"repo":"x","number":%s},"newTickets":[],"lessonPatch":null}' "$1"; }
+rpt() { printf '{"status":"resolved","pr":{"repo":"alpha","number":%s},"newTickets":[],"lessonPatch":null}' "$1"; }
 # fire two bookkeeps at once, each resolving a different ticket — they MUST serialize on BK_LOCK.
 # NOTE: GOVERN_TICKETS_FILE must sit on the CONSUMER side of the pipe — a prefix before `rpt N` would
 # apply only to `rpt`, never to the `bash "$BK"` that actually reads it (the bug that made this test

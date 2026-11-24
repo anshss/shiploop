@@ -70,6 +70,12 @@
 #       run did not make, refuse with exit 12 and merge nothing (GOVERN_QUEUE_FOREIGN_GUARD=0
 #       disables the check). A refusal after a merge ("PR merged; queue not booked") also exits 12;
 #       clear the file and re-run with --no-merge to book it.
+#   6d. (before any merge, see step 5) If the report NAMES a PR (.pr or .prs[]) but the merge path
+#       collected no PR row for it (the two consumers of the same field disagree — typically a
+#       .repo that names no configured repo), refuse with exit 13 and merge nothing: landing would
+#       delete the queue block against a PR that never merged. Exit 13, NOT 12, because the 6c
+#       guard owns 12; a caller can tell "tickets.md is dirty" from "the reported PR never reached
+#       the merge set".
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
@@ -179,6 +185,9 @@ if [[ -n "$_pr_num" ]]; then
       _scrub=0
     fi
     [[ "$_scrub" == "1" ]] && govern::scrub_pr_ticket_ref "$_pr_slug" "$_pr_num" "$N"
+    # Title/body are scrubbed above; a commit SUBJECT carrying the same #N can only be reported
+    # (rewriting a pushed commit is a force-push). WARN-only backstop, same guard conditions.
+    [[ "$_scrub" == "1" ]] && govern::warn_commit_ticket_ref "$_pr_slug" "$_pr_num" "$N"
     _specs="$(govern::pr_spec_files "$_pr_slug" "$_pr_num" 2>/dev/null || true)"
     [[ -n "$_specs" ]] && echo "resolve-ticket #$N: WARN $_pr_slug#$_pr_num includes Claude spec/plan artifact(s) that must NOT be on a public PR — strip before merge: $(printf '%s' "$_specs" | tr '\n' ' ')" >&2
   fi
@@ -332,6 +341,19 @@ elif [[ -n "$pr_lines" ]]; then
     exit 5
   fi
 else
+  # A report that NAMES a PR but produced no merge row is a two-consumers-of-one-field
+  # contradiction, not a PR-less resolve: one consumer read `.pr` fine (bookkeeping prints it)
+  # while the merge path saw nothing — typically a `.repo` value that matches no configured repo
+  # once normalized. Landing here deletes the queue block against a PR that never merged and then
+  # prints "landed". REFUSE instead: non-zero, block untouched, no bookkeeping, no history
+  # "resolved" row. Exit 13, NOT 12: the queue foreign-changes guard above owns 12 (two different
+  # refusals sharing one code would make callers unable to tell "tickets.md is dirty" from "the
+  # report's PR never reached the merge set"). Documented in the exit-code table in the header.
+  if [[ "$(jq -r '((.pr // null) != null) or ((.prs // []) | length > 0)' <<<"$report" 2>/dev/null || echo false)" == "true" ]]; then
+    echo "resolve-ticket #$N: the report NAMES a PR ($(jq -r '[ (.pr // empty), ((.prs // [])[]) ] | map(select(. != null)) | map("\(.repo // "?")#\(.number // "?")") | join(", ")' <<<"$report" 2>/dev/null || echo '?')) but the merge path collected no PR to merge: the two consumers of the same field disagree. NOT landing: the queue block stays, nothing was merged. Check the repo name against the configured repos (and any collect_ticket_prs warning above), fix the report, then re-run: or merge by hand and re-run with --no-merge." >&2
+    rt_record_history parked "reported PR did not reach the merge set"
+    exit 13
+  fi
   echo "resolve-ticket #$N: no PR found on the report (.pr/.prs[] empty, none discovered) — nothing to merge; landing the resolution as-is." >&2
 fi
 

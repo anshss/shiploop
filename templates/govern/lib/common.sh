@@ -895,6 +895,56 @@ govern::duplicate_ticket_headings() { # [tickets-file]
   return 1
 }
 
+# The canonical `**Severity:**` field shape, line-ANCHORED: an optional list marker, the bold
+# marker in either colon placement (`**Severity:**` / `**Severity**:`). A prose mention mid-line,
+# or a backticked `**Severity:**`, is deliberately NOT a field.
+# Bracketed `[*]` rather than `\*` on purpose: this string is also handed to awk via -v, and awk
+# processes escape sequences in a -v assignment, so `\*` would reach the regex engine as a bare `*`.
+GOVERN_SEVERITY_FIELD_RE='^[[:space:]]*(-[[:space:]]+)?[*][*]Severity([*][*]:|:[*][*])'
+
+# govern::severity_rank <field-line> — print the numeric rank of the field's VALUE:
+# 1=Severe 2=High 3=Medium 4=Low 5=unknown.
+# Parses the VALUE, never the whole line: a substring `case` over the whole lowercased line
+# sorted `**Severity:** Medium — downgraded from High` as High and re-breaks on every future
+# annotation naming another level. Here the marker is stripped, leading decoration (`**`,
+# backticks, list marker) is dropped, and only the FIRST WORD of what remains is matched against
+# the allowlist — so anything after the level is inert.
+govern::severity_rank() { # <line>
+  local val first
+  val="$(printf '%s' "$1" \
+    | sed -E "s/$GOVERN_SEVERITY_FIELD_RE//" \
+    | tr 'A-Z' 'a-z' | sed -E 's/^[^a-z]*//')"
+  first="${val%%[^a-z]*}"
+  case "$first" in
+    severe) printf '1\n' ;;
+    high)   printf '2\n' ;;
+    medium) printf '3\n' ;;
+    low)    printf '4\n' ;;
+    *)      printf '5\n' ;;
+  esac
+}
+
+# govern::duplicate_severity_fields [tickets-file] — print `#N ×count` for every ticket block
+# carrying MORE THAN ONE `**Severity:**` field, one per line. Returns 0 (silent) when clean, 1 when
+# any ticket has two. A second field is never harmless: whatever renders the ticket reads the FIRST,
+# so a second one is invisible dead text that can disagree with it.
+govern::duplicate_severity_fields() { # [tickets-file]
+  local f="${1:-$TICKETS_FILE}"
+  [[ -f "$f" ]] || return 0
+  local out
+  out="$(awk -v re="$GOVERN_SEVERITY_FIELD_RE" '
+    /^##[[:space:]]+#[0-9]+/ {
+      if (cur != "" && c > 1) printf "#%s \303\227%d\n", cur, c
+      cur = $0; sub(/^##[[:space:]]+#/, "", cur); sub(/[^0-9].*$/, "", cur); c = 0; next
+    }
+    cur != "" && $0 ~ re { c++ }
+    END { if (cur != "" && c > 1) printf "#%s \303\227%d\n", cur, c }
+  ' "$f")"
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out"
+  return 1
+}
+
 # ── not-govern-automatable markers ────────────────────────────────────
 # A ticket whose BODY carries a bold "not govern-automatable" marker
 # (**NOT govern-automatable…**, **requires web-UI…**, **handle interactively…**) cannot be
@@ -932,6 +982,43 @@ govern::ticket_block() { # N [tickets-file]
   ' "$f"
 }
 
+# govern::ticket_ref_part — split a ticket reference into number and optional PART letter.
+# `900A`, `900.A`, `900-a` all mean "part A of ticket 900"; a bare `900` carries no part and
+# falls back to $GOVERN_TICKET_PART (the headless lane's way in: a caller that takes a bare
+# number as $1 never learned about parts). Prints "<number> <PART>" (PART may be empty).
+govern::ticket_ref_part() { # <ref>
+  local ref="$1" n part=""
+  if [[ "$ref" =~ ^([0-9]+)[.:_-]?([A-Za-z])$ ]]; then
+    n="${BASH_REMATCH[1]}"; part="${BASH_REMATCH[2]}"
+  else
+    n="${ref//[^0-9]/}"; part="${GOVERN_TICKET_PART:-}"
+  fi
+  part="${part^^}"
+  printf '%s %s\n' "$n" "$part"
+}
+
+# govern::ticket_part_slice — stdin is a ticket block; print only the `### <letter>. ...`
+# subsection for part $1 (its heading through the line before the next `### <letter>.` heading or
+# the end of the block). Empty output when the block has no such part.
+govern::ticket_part_slice() { # <PART>
+  awk -v p="$1" '
+    /^###[[:space:]]+[A-Za-z][.):]/ {
+      h = $0; sub(/^###[[:space:]]+/, "", h)
+      grab = (toupper(substr(h, 1, 1)) == toupper(p))
+      if (grab) print
+      next
+    }
+    grab { print }
+  '
+}
+
+# govern::ticket_has_parts — is ticket block $1 FOLDED into `### <letter>.` parts, i.e. is a bare
+# ticket number not by itself enough to name one change? Takes the block as an ARGUMENT, not on a
+# pipe: `printf ... | grep -q` dies at exit 141 under pipefail.
+govern::ticket_has_parts() { # <block>
+  command grep -qE '^###[[:space:]]+[A-Za-z][.):]' <<<"$1"
+}
+
 # ── the dispatch contract carries a proposed solution ───────────────────────────────────────────
 # The advisor decides what the change is BEFORE dispatching a worker, and records that decision IN
 # THE TICKET rather than in a spawn prompt only pre-dispatch-check.sh can't see. One implementation,
@@ -946,29 +1033,63 @@ govern::ticket_block() { # N [tickets-file]
 # on a ticket nobody has actually thought about yet, which is the exact defect this design exists to
 # close. Detected by a fixed sentinel substring, the same idiom govern::is_placeholder already uses
 # for an unanswered escalation.
-govern::ticket_proposal() { # N [tickets-file] -> **Proposed solution:** body, "" if absent/placeholder
-  local n="$1" f="${2:-$TICKETS_FILE}"
+#
+# A FOLDED ticket (one carrying `### A.` / `### B.` parts) is AMBIGUOUS when called by bare
+# number: the old code silently returned the earliest part's proposal, which is how a worker
+# dispatched against part B could implement part A while believing it followed doctrine, and
+# because it always returned SOMETHING, the "empty output -> STOP" backstop stayed green on a
+# plausible wrong answer. Refuse rather than guess:
+#   * $1 may name a part (`900A`, or GOVERN_TICKET_PART=A alongside a bare number); the scan is
+#     then restricted to that `### A.` subsection.
+#   * the header match is loose — anything opening `**Proposed solution` — so a date, a
+#     parenthetical or a RESCOPED note in the header no longer hides the block.
+#   * with no part named, a block that is folded into parts, or that carries more than one real
+#     proposal, prints NOTHING and returns 2. Ambiguity is reported, never resolved by position.
+# The filing-time placeholder ("(advisor: fill in before dispatch") still reads as ABSENT, and does
+# not count toward ambiguity — file-ticket.sh appends one to EVERY ticket, including those whose
+# body already carries a real proposal.
+#
+# Exit: 0 with the body, 0 empty when there is genuinely no proposal, 2 empty when ambiguous.
+govern::ticket_proposal() { # <N>[part] [tickets-file] -> proposal body (rc 2 = ambiguous)
+  local ref="$1" f="${2:-$TICKETS_FILE}" n part
+  read -r n part <<<"$(govern::ticket_ref_part "$ref")"
   local block; block="$(govern::ticket_block "$n" "$f")"
   [[ -n "$block" ]] || return 0
-  local raw
-  raw="$(printf '%s\n' "$block" | awk '
-    /^\*\*Proposed solution:?\*\*/ {
+  if [[ -n "$part" ]]; then
+    block="$(govern::ticket_part_slice "$part" <<<"$block")"
+    [[ -n "$block" ]] || return 0
+  elif govern::ticket_has_parts "$block"; then
+    return 2
+  fi
+  # awk prints the count of REAL proposals on line 1, then the first of them — the count is what
+  # makes an ambiguous ticket refusable instead of silently first-wins.
+  local out; out="$(awk '
+    function flush(   i, body) {
+      if (!grab) return
+      while (n > 0 && buf[n-1] ~ /^[[:space:]]*$/) n--
+      body = ""
+      for (i = 0; i < n; i++) body = body buf[i] "\n"
+      if (body ~ /[^[:space:]]/ && index(body, "(advisor: fill in before dispatch") == 0) {
+        real++
+        if (real == 1) first = body
+      }
+      grab = 0; n = 0
+    }
+    /^\*\*Proposed solution[^A-Za-z]/ {
+      flush()
       line = $0
-      sub(/^\*\*Proposed solution:?\*\*[[:space:]]*/, "", line)
-      grab = 1
-      if (line != "") { buf[n++] = line }
+      sub(/^\*\*Proposed solution[^*]*\*\*[[:space:]]*/, "", line)
+      grab = 1; n = 0
+      if (line != "") buf[n++] = line
       next
     }
-    grab && /^\*\*[A-Za-z][^*]*:\*\*/ { exit }
+    grab && (/^\*\*[A-Za-z][^*]*:\*\*/ || /^###[[:space:]]/) { flush(); next }
     grab { buf[n++] = $0 }
-    END {
-      while (n > 0 && buf[n-1] ~ /^[[:space:]]*$/) n--   # drop trailing blank lines
-      for (i = 0; i < n; i++) print buf[i]
-    }
-  ')"
-  case "$raw" in
-    *"(advisor: fill in before dispatch"*) return 0 ;;
-  esac
+    END { flush(); printf "%d\n", real + 0; if (real >= 1) printf "%s", first }
+  ' <<<"$block")"
+  local count="${out%%$'\n'*}" raw=""
+  if [[ "$count" != "$out" ]]; then raw="${out#*$'\n'}"; fi
+  if (( count > 1 )); then return 2; fi
   [[ -n "${raw//[[:space:]]/}" ]] || return 0
   printf '%s\n' "$raw"
 }
@@ -978,18 +1099,27 @@ govern::ticket_proposal() { # N [tickets-file] -> **Proposed solution:** body, "
 # lowercase out). A missing or unrecognised value (including the filing-time placeholder, which
 # starts with an underscore and so never matches the bare-word capture) prints nothing — callers
 # resolve that to "scoped" themselves: absence must never silently buy the cheapest grade.
-govern::ticket_precision() { # N [tickets-file] -> stated|scoped|open, "" if absent/unrecognized
-  local n="$1" f="${2:-$TICKETS_FILE}"
+# Part-aware the same way govern::ticket_proposal is: a part may be named on $1 (or via
+# GOVERN_TICKET_PART), and an unpartitioned call against a folded ticket — or a slice carrying two
+# DIFFERENT grades — returns 2 with no output rather than picking whichever one comes first.
+govern::ticket_precision() { # <N>[part] [tickets-file] -> stated|scoped|open (rc 2 = ambiguous)
+  local ref="$1" f="${2:-$TICKETS_FILE}" n part
+  read -r n part <<<"$(govern::ticket_ref_part "$ref")"
   local block; block="$(govern::ticket_block "$n" "$f")"
   [[ -n "$block" ]] || return 0
-  local val
-  val="$(printf '%s\n' "$block" \
-    | sed -n -E 's/^\*\*Precision:?\*\*[[:space:]]*([A-Za-z]+).*/\1/p' \
-    | tr '[:upper:]' '[:lower:]' | head -1)"
-  case "$val" in
-    stated|scoped|open) printf '%s\n' "$val" ;;
-    *) return 0 ;;
-  esac
+  if [[ -n "$part" ]]; then
+    block="$(govern::ticket_part_slice "$part" <<<"$block")"
+    [[ -n "$block" ]] || return 0
+  elif govern::ticket_has_parts "$block"; then
+    return 2
+  fi
+  local vals
+  vals="$(sed -n -E 's/^\*\*Precision[^*]*\*\*[[:space:]]*:?[[:space:]]*([A-Za-z]+).*/\1/p' <<<"$block" \
+    | tr '[:upper:]' '[:lower:]' | command grep -E '^(stated|scoped|open)$' || true)"
+  [[ -n "$vals" ]] || return 0
+  local uniq; uniq="$(sort -u <<<"$vals" | command grep -c . || true)"
+  if (( uniq > 1 )); then return 2; fi
+  sed -n '1p' <<<"$vals"
 }
 
 # govern::ticket_block_delete — rewrite $2 (default TICKETS_FILE) with ticket $1's block removed:
@@ -1054,6 +1184,28 @@ govern::scrub_pr_ticket_ref() { # slug pr N   (slug = owner/repo)
   else
     govern::log "WARN could not scrub #$n from $slug#$pr via REST — operator: edit the PR to drop the #$n reference"
   fi
+}
+
+# The half govern::scrub_pr_ticket_ref cannot close: a commit SUBJECT on the branch can carry the
+# same #N with no backstop of its own — rewriting a PUSHED commit is a force-push, a hard-stop this
+# repo never takes, so title/body get PATCHED above while a leaked commit subject can only be
+# reported. merge-pr.sh closes the leak on ITS OWN merge path (an explicit --subject built from the
+# just-scrubbed PR title, so a squash can never inherit the branch commit verbatim), but a
+# hand-merge, a rebase/merge-commit strategy, or a future change to the merge path reopens the hole
+# silently. WARN ONLY, never a rewrite: naming the repo, the PR and the offending subject is what
+# keeps the hole visible if the merge path ever changes under it.
+govern::warn_commit_ticket_ref() { # slug pr N
+  local slug="$1" pr="$2" n="$3" j subj
+  command -v gh >/dev/null 2>&1 || return 0
+  [[ -n "$slug" && -n "$pr" && "$n" =~ ^[0-9]+$ ]] || return 0
+  j="$(gh api "repos/$slug/pulls/$pr/commits" 2>/dev/null || true)"
+  printf '%s' "$j" | jq -e 'type=="array"' >/dev/null 2>&1 || return 0
+  while IFS= read -r subj; do
+    [[ -n "$subj" ]] || continue
+    if [[ "$subj" =~ (^|[^0-9])#$n([^0-9]|$) ]]; then
+      govern::log "WARN $slug#$pr — a commit subject on this branch still carries the local ticket id #$n: \"$subj\" (title/body are scrubbed, but a merge path with no explicit --subject inherits this verbatim into the public repo)"
+    fi
+  done < <(printf '%s' "$j" | jq -r '.[].commit.message // "" | split("\n")[0]' 2>/dev/null || true)
 }
 
 # Surface (do NOT auto-rewrite) any Claude spec/plan/design artifact that leaked into a PR's diff.
@@ -2098,6 +2250,38 @@ govern::resolve_pr_repo() { # <pr-number> -> "repo url"
   return 1
 }
 
+# Canonicalize a reported repo identifier onto the ONE token the merge path actually keys on.
+# govern::collect_ticket_prs emits a row only when its repo field EXACTLY equals a short name from
+# govern::_repos_merge_first or a recognized harness slug: so a report naming the same repo by its
+# full owner/repo SLUG (a shape nothing rejected) was matched by neither walk and vanished from the
+# merge set with no output, while bookkeeping printed that same `.pr.repo` verbatim one line later
+# and the run claimed "landed" with the PR still open. Accepts: a configured short name; a full
+# `owner/name` slug compared case-insensitively against govern::repo_slug for every configured
+# repo; a harness slug or its bare repo name. Prints the canonical token + rc 0, or prints nothing
+# + rc 1 when NOTHING configured matches: callers must treat that as a hard refusal, never as
+# "no PR".
+govern::canonical_repo_name() { # <repo-or-slug> -> canonical repo token
+  local want="$1" lc r slug hslug
+  [[ -n "$want" ]] || return 1
+  lc="$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')"
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    [[ "$(printf '%s' "$r" | tr '[:upper:]' '[:lower:]')" == "$lc" ]] && { printf '%s' "$r"; return 0; }
+    slug="$(govern::repo_slug "$r" 2>/dev/null || true)"
+    [[ -n "$slug" ]] || continue
+    [[ "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" == "$lc" ]] && { printf '%s' "$r"; return 0; }
+  done < <(govern::_repos_merge_first)
+  # Harness/meta-repo rows never appear in that allowlist; collect_ticket_prs handles them via its
+  # own is_harness_repo walk, which matches a bare name OR a full slug, so either form is canonical.
+  while IFS= read -r hslug; do
+    [[ -n "$hslug" ]] || continue
+    case "$(printf '%s' "$hslug" | tr '[:upper:]' '[:lower:]')" in
+      "$lc"|*"/$lc") printf '%s' "$want"; return 0 ;;
+    esac
+  done < <(govern::harness_repo_slugs 2>/dev/null)
+  return 1
+}
+
 # normalize the worker-report `.pr` field into the canonical {repo,number,url} object, or
 # refuse. Accepted shapes:
 #   * absent / null           — no PR at all (legitimate — see `.prs[]`); passed through untouched.
@@ -2111,8 +2295,26 @@ govern::resolve_pr_repo() { # <pr-number> -> "repo url"
 # configured repo has open) — the caller MUST treat that as a hard refusal, never fall through to
 # the "no PR" path: that silent fall-through once deleted a queue block while the PR sat open,
 # unmerged.
+# Every `.repo` this function passes through: `.pr`'s and every `.prs[]` entry's: is rewritten
+# through govern::canonical_repo_name, so the repo token that reaches BOOKKEEPING is byte-identical
+# to the one the MERGE path keys on. Before that, any non-empty string was accepted here and a full
+# owner/repo slug then silently failed collect_ticket_prs' exact-match walk: one consumer read the
+# field, the other saw "no PR", and the block was deleted with the PR open. `.prs[]` entries follow
+# the same OBJECT contract as `.pr` and reach the SAME two consumers, so they are canonicalized on
+# the same seam; a malformed/unknown entry refuses the whole report rather than being dropped (a
+# sibling PR silently missing from the merge set is the exact defect above).
 govern::normalize_pr_field() { # <report-json> -> normalized-report-json (rc 1 = refuse)
-  local report="$1" pr_type num repo resolved rrepo rurl
+  local report="$1" pr_type num repo canon resolved rrepo rurl i n prepo pcanon
+  n="$(jq -r '(.prs // []) | length' <<<"$report" 2>/dev/null || echo 0)"
+  i=0
+  while [[ "$i" -lt "${n:-0}" ]]; do
+    prepo="$(jq -r --argjson i "$i" '.prs[$i].repo // empty' <<<"$report" 2>/dev/null || true)"
+    num="$(jq -r --argjson i "$i" '.prs[$i].number // empty' <<<"$report" 2>/dev/null || true)"
+    [[ -n "$prepo" && -n "$num" && "$num" =~ ^[0-9]+$ ]] || return 1
+    pcanon="$(govern::canonical_repo_name "$prepo")" || return 1
+    report="$(jq -c --argjson i "$i" --arg r "$pcanon" '.prs[$i].repo = $r' <<<"$report" 2>/dev/null)" || return 1
+    i=$((i+1))
+  done
   pr_type="$(jq -r '.pr | type' <<<"$report" 2>/dev/null || echo error)"
   case "$pr_type" in
     null)
@@ -2123,7 +2325,8 @@ govern::normalize_pr_field() { # <report-json> -> normalized-report-json (rc 1 =
       num="$(jq -r '.pr.number // empty' <<<"$report" 2>/dev/null || true)"
       repo="$(jq -r '.pr.repo // empty' <<<"$report" 2>/dev/null || true)"
       if [[ -n "$num" && "$num" =~ ^[0-9]+$ && -n "$repo" ]]; then
-        printf '%s' "$report"
+        canon="$(govern::canonical_repo_name "$repo")" || return 1
+        jq -c --arg r "$canon" '.pr.repo = $r' <<<"$report" 2>/dev/null
         return 0
       fi
       return 1
@@ -3077,6 +3280,31 @@ govern::watchdog_denied() { # <jsonl> -> 0 = the child was denied by the wall-cl
   # "no marker" by accident of grep treating the file as binary.
   tail -n "$n" "$f" 2>/dev/null | LC_ALL=C tr -d '\000' \
     | grep '"type":"user"' 2>/dev/null | grep -qF '[AGENT WATCHDOG]' 2>/dev/null
+}
+
+# A CHILD CANNOT WAIT ON ITS OWN BACKGROUND TASK ACROSS A STOP. A background Agent/Bash task or a
+# Monitor whose owning child ends its turn "until the notification arrives" never gets that
+# notification: while the child is still in a turn, a finished task lands in its transcript as an
+# attachment (`queued_command`) carrying `<task-id>ID</task-id>`; after the stop, nothing lands.
+# So a task is PENDING when the child's own transcript shows it STARTED (a Bash moved to the
+# background or run with run_in_background, or a Monitor) and shows neither that completion entry
+# nor a TaskStop/KillShell of it. Ownership comes from the child's own transcript on purpose: a
+# hook payload's `background_tasks` lists the WHOLE session's tasks (the parent's and every
+# teammate's) with no owner field. Prints the pending ids, space-separated; empty for every
+# degenerate input (no file, no jq) — absence of data is never evidence.
+govern::pending_bg_tasks() { # <child-jsonl> -> space-separated task ids | empty
+  local f="${1:-}"
+  [[ -n "$f" && -s "$f" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | jq -R 'fromjson? // empty' 2>/dev/null | jq -rs '
+    def ids(re): [ .[] | scan(re) | map(select(. != null))[0] ];
+    ([ .[] | select(.type == "user") | (.message.content | tostring) ]
+      | ids("moved to the background \\(ID: ([a-z0-9]+)\\)|running in background with ID: ([a-z0-9]+)|Monitor started \\(task ([a-z0-9]+)")) as $started
+    | ([ .[] | select(.type != "assistant") | tostring ] | ids("<task-id>([a-z0-9]+)</task-id>")) as $noted
+    | ([ .[] | select(.type == "assistant") | .message.content[]?
+         | select(.type == "tool_use" and (.name == "TaskStop" or .name == "KillShell" or .name == "KillBash"))
+         | (.input.task_id // .input.shell_id // empty) ]) as $stopped
+    | ($started - $noted - $stopped) | unique | join(" ")' 2>/dev/null || true
 }
 
 # ── in-flight token-budget monitoring ─────────────────────────────────

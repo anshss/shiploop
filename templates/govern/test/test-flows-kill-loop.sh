@@ -107,7 +107,7 @@ Remove the feature end-to-end and open a PR.
 ---
 EOF
 git -C "$M" add -A; git -C "$M" commit -q -m "seed removal ticket"
-rep="$(jq -nc '{status:"resolved",pr:{repo:"backend",number:20,url:"https://github.com/acme/backend/pull/20"},newTickets:[],validation:{}}')"
+rep="$(jq -nc '{status:"resolved",pr:{repo:"alpha",number:20,url:"https://github.com/acme/alpha/pull/20"},newTickets:[],validation:{}}')"
 printf '%s' "$rep" | GOVERN_TICKETS_FILE="$M/queue/tickets.md" GOVERN_GOVERNOR_DIR="$M/governor" \
   GOVERNOR_DIR="$M/governor" "$DIR/../land-resolution.sh" 12 >/dev/null 2>&1
 assert_eq "$(govern::flow_field opt.dead Status "$FL")" "TOMBSTONED" "bookkeep: Flow-op:remove ticket → flow TOMBSTONED on resolve"

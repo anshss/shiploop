@@ -492,11 +492,22 @@ pr="$(printf '%s' "$report" | jq -r '
   | (map("\(.repo)#\(.number)") | join(", "))
   | if . == "" then "?#0" else . end' 2>/dev/null || echo '?#0')"
 ( cd "$commit_dir"
-  git add "$(basename "$TICKETS_FILE")"
-  for pf in ${patched_files[@]+"${patched_files[@]}"}; do git add "$pf"; done   # lesson target + (on overflow) CLAUDE-APPENDIX.md
-  git add "$SEQ_FILE" 2>/dev/null || true  # high-water mark (absolute path; no-op if outside repo, e.g. tests)
-  [[ -n "$vdoc" ]] && git add "$vdoc" 2>/dev/null || true  # promoted validation summary (absolute path)
-  git commit -q -m "docs(tickets): resolve #$N ($pr)" || true
+  # Commit ONLY the paths this landing staged. A bare `git commit` publishes the WHOLE index, so an
+  # operator's unrelated staged work (e.g. deletions staged for an unrelated refactor) would ride
+  # in under "resolve #N". The queue foreign-changes guard upstream only inspects tickets.md's own
+  # uncommitted state, so it cannot catch this: unrelated STAGED files leave tickets.md clean while
+  # poisoning the index this commit would publish. An empty pathspec list must never reach `git
+  # commit` — with no pathspec it would fall back to the whole index, the exact shape this avoids.
+  declare -a commit_paths=()
+  git add "$(basename "$TICKETS_FILE")" && commit_paths+=("$(basename "$TICKETS_FILE")")
+  for pf in ${patched_files[@]+"${patched_files[@]}"}; do git add "$pf" && commit_paths+=("$pf"); done   # lesson target + (on overflow) CLAUDE-APPENDIX.md
+  git add "$SEQ_FILE" 2>/dev/null && commit_paths+=("$SEQ_FILE")  # high-water mark (absolute path; no-op if outside repo, e.g. tests)
+  [[ -n "$vdoc" ]] && git add "$vdoc" 2>/dev/null && commit_paths+=("$vdoc")  # promoted validation summary (absolute path)
+  if [[ ${#commit_paths[@]} -gt 0 ]]; then
+    git commit -q -m "docs(tickets): resolve #$N ($pr)" -- "${commit_paths[@]}" || true
+  else
+    govern::log "bookkeep #$N: nothing was staged — skipping the resolve commit (a pathspec-less commit would publish the whole index)"
+  fi
 
   # Publish the bookkeep commit as a CAS-with-retry loop so a concurrent driver sharing one
   # origin/main can't resurrect this delete. If the push is rejected (origin advanced under us —
