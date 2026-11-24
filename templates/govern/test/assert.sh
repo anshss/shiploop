@@ -339,15 +339,19 @@ if [[ "${GOVERN_SANDBOX:-1}" != "0" && -z "${GOVERN_SANDBOX_ROOT:-}" ]]; then
   # heredoc, so no expansion surprises in the shim's own array arithmetic).
   cat > "$GOVERN_SANDBOX_ROOT/bin/mktemp" <<'EOF'
 #!/usr/bin/env bash
-# Sandbox mktemp shim: BSD mktemp ignores TMPDIR, so a bare call would land in
-# the shared per-user temp dir instead of this test's sandbox. A call with no
-# template argument gets one inside TMPDIR; anything else passes through.
+# Sandbox mktemp shim: BSD mktemp ignores the TMPDIR variable, so a bare call
+# would land in the shared per-user temp dir instead of this test's sandbox. A
+# call with no template argument gets one inside TMPDIR; a call WITH a template
+# passes that template through verbatim: it carries its own directory (mktemp
+# honors the directory portion of a template even when it ignores TMPDIR), so
+# dropping it would silently redirect the caller's files out of the sandbox and
+# erase any distinctive name a downstream assertion matches on.
 tpl=""; args=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -t) args+=("$1" "$2"); shift 2 ;;
     -*) args+=("$1"); shift ;;
-    *) tpl="$1"; shift ;;
+    *) tpl="$1"; args+=("$1"); shift ;;
   esac
 done
 if [ -z "$tpl" ]; then args+=("${TMPDIR:-/tmp}/tmp.XXXXXXXXXX"); fi

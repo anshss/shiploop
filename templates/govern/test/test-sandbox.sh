@@ -20,6 +20,13 @@ assert_contains "$TMP" "$GOVERN_SANDBOX_ROOT/tmp" "mktemp lands inside the priva
 bare_tmp="$(mktemp -d)"
 assert_contains "$bare_tmp" "$GOVERN_SANDBOX_ROOT/tmp" "a bare mktemp -d lands inside the private TMPDIR (BSD mktemp ignores TMPDIR, so it is shimmed)"
 rm -rf "$bare_tmp"
+# A template'd call keeps the caller's template: the shim must not drop it, or the
+# files land in the host's shared temp dir under a generic name and any mechanism
+# (or test) matching on the template's distinctive prefix silently loses that path.
+tpl_tmp="$(mktemp -d "${TMPDIR}/govern-sandbox-shim-probe.XXXXXX")"
+assert_contains "$tpl_tmp" "$GOVERN_SANDBOX_ROOT/tmp" "a template'd mktemp -d lands inside the private TMPDIR"
+assert_contains "$tpl_tmp" "govern-sandbox-shim-probe." "a template'd mktemp -d keeps the caller's template verbatim"
+rm -rf "$tpl_tmp"
 assert_eq "${GIT_CONFIG_GLOBAL:-}" "$GOVERN_SANDBOX_ROOT/home/.gitconfig" "global git config is pointed inside the sandbox"
 assert_eq "${GIT_CONFIG_NOSYSTEM:-}" "1" "system git config is disabled"
 child_home="$(bash -c 'printf %s "$HOME"')"
