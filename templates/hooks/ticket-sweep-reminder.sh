@@ -78,15 +78,16 @@ fi
 # failed — a severity-dup fault (no duplicate heading at all) was reported under the wrong name,
 # with a remedy (renumbering a ticket that was never duplicated) that silently corrupts a live
 # ticket's `**Ref:**`/`depends on #N` pointers if followed. lint-tickets.sh tags each stdout line
-# `HEADING #N ×count` or `SEVERITY #N ×count` precisely so this hook can tell them apart instead
-# of assuming.
+# `HEADING #N ×count`, `SEVERITY #N ×count` or `FIELD #N line <n>: ...` precisely so this hook can
+# tell them apart instead of assuming.
 lint="$SELF_ROOT/scripts/govern/lint-tickets.sh"
 [ -x "$lint" ] || lint="$SELF_ROOT/govern/lint-tickets.sh"
 if [ -x "$lint" ]; then
   if ! dups="$("$lint" "$MAIN/queue/tickets.md" 2>/dev/null)" && [ -n "${dups:-}" ]; then
     heading_dups="$(printf '%s\n' "$dups" | sed -n 's/^HEADING //p')"
     sev_dups="$(printf '%s\n' "$dups" | sed -n 's/^SEVERITY //p')"
-    other_dups="$(printf '%s\n' "$dups" | grep -vE '^(HEADING|SEVERITY) ' || true)"
+    field_lines="$(printf '%s\n' "$dups" | sed -n 's/^FIELD //p')"
+    other_dups="$(printf '%s\n' "$dups" | grep -vE '^(HEADING|SEVERITY|FIELD) ' || true)"
     reason=""
     if [ -n "$heading_dups" ]; then
       heading_flat="$(printf '%s\n' "$heading_dups" | tr '\n' ' ')"
@@ -100,6 +101,13 @@ number), commit, then stop."
 the FIRST field is read, so delete the dead second copy from each ticket's body (keep any \
 rationale as prose), commit, then stop."
       reason="${reason:+$reason }$sev_reason"
+    fi
+    if [ -n "$field_lines" ]; then
+      field_flat="$(printf '%s\n' "$field_lines" | tr '\n' ' ')"
+      field_reason="tickets.md has a bullet-prefixed field marker: ${field_flat}. The extractors \
+anchor on line start, so the field is invisible to them; strip the leading bullet (and its space) \
+so the line starts with the bold marker, the form file-ticket.sh files. Commit, then stop."
+      reason="${reason:+$reason }$field_reason"
     fi
     if [ -n "$other_dups" ]; then
       other_flat="$(printf '%s\n' "$other_dups" | tr '\n' ' ')"
