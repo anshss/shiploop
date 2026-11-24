@@ -46,7 +46,7 @@ assert_contains "$out" "FIELD #11" "the field fault is tagged FIELD"
 field_line="$(printf '%s\n' "$out" | sed -n 's/^FIELD //p')"
 assert_eq "$field_line" "#11 line 5: - **Proposed solution:** Do the thing. -> **Proposed solution:** Do the thing." \
   "the FIELD line names the raw line AND the canonical de-bulleted form"
-if printf '%s' "$out" | grep -q '^SEVERITY '; then
+if grep -q '^SEVERITY ' <<<"$out"; then
   echo "FAIL - a field-only fault produced a SEVERITY line"; ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
   echo "ok   - a field-only fault produces no SEVERITY line"
@@ -89,7 +89,7 @@ cp "$T/field.md" "$T/queue/tickets.md"
 hook_out="$(printf '{"session_id":"frout","stop_hook_active":false,"cwd":"%s"}' "$T" \
   | META_ROOT="$T" bash "$SWEEP" 2>/dev/null)"
 assert_contains "$hook_out" "bullet-prefixed field marker" "the sweep hook routes a field fault under the de-bullet remedy"
-if printf '%s' "$hook_out" | grep -q "untagged fault"; then
+if grep -q "untagged fault" <<<"$hook_out"; then
   echo "FAIL - sweep hook called a FIELD fault untagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
   echo "ok   - sweep hook does NOT report a FIELD fault as untagged"

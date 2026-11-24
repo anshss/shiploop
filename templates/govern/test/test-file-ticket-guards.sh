@@ -119,7 +119,7 @@ assert_eq "$sev8" "1" "exactly one Severity field survives (the emitter's)"
 # 9. Negative control for 8: no de-bullet log on a body with no bullet-prefixed field marker.
 stderr9="$(printf 'Where: x\nObserved: plain body\nDone when: z\n' \
   | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "no bullet fields control" Low 2>&1 >/dev/null)"
-if printf '%s' "$stderr9" | grep -q "de-bulleted"; then
+if grep -q "de-bulleted" <<<"$stderr9"; then
   echo "FAIL - de-bullet log fired on a body with no bullet-prefixed field marker"; ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
   echo "ok   - no de-bullet log on a clean body"
