@@ -95,8 +95,14 @@ command -v gh >/dev/null 2>&1 \
 gh auth status >/dev/null 2>&1 \
   || fail "gh is not authenticated (run: gh auth login); make-release.sh cuts a GitHub release"
 
-[ -z "$(git status --porcelain)" ] \
-  || fail "working tree is not clean; commit or remove pending changes before a release"
+# The one permitted pending change is the CHANGELOG.md section for this release: release parity
+# counts the CHANGELOG lines the RELEASE COMMIT itself adds, so the staged section must land
+# inside that commit, never before it. Anything else pending refuses.
+unrelated="$(git status --porcelain | grep -v ' CHANGELOG\.md$' || true)"
+[ -z "$unrelated" ] \
+  || fail "working tree has pending changes other than CHANGELOG.md; commit or remove them before a release"
+[ -n "$(git status --porcelain -- CHANGELOG.md)" ] \
+  || fail "no CHANGELOG.md modification staged; write the <version> section first, then rerun"
 
 branch="$(git branch --show-current)"
 [ "$branch" = "main" ] || fail "not on main (on '$branch'); a release lands on main"
@@ -176,7 +182,7 @@ fi
 apply_mutations "$ROOT"
 run_verifications "$ROOT"
 
-git add VERSION .claude-plugin/plugin.json .claude-plugin/marketplace.json templates/lib/mechanism-hashes.txt
+git add VERSION .claude-plugin/plugin.json .claude-plugin/marketplace.json templates/lib/mechanism-hashes.txt CHANGELOG.md
 git commit -m "release: $VERSION_ARG, $HEADLINE"
 git tag "v$VERSION_ARG"
 git push origin main "refs/tags/v$VERSION_ARG"
