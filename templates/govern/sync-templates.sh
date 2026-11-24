@@ -188,24 +188,88 @@ mirrored_files() { # <base>
   done < <(candidate_files "$1")
 }
 
+# Was this blob EVER a version the hub shipped for the template at $tpl? A converge
+# commit writes an exact hub version that may be older than today's template, so
+# "equals today's template" alone would count every old pull as local drift as soon
+# as the hub changes the file again. Three sources, cheapest first: the shipped-hash
+# manifests under $TEMPLATES_ROOT/lib (mechanism scripts and seeds), then the hub
+# git history of the template path (main plus v* release tags, the same ref set
+# tools/gen-mechanism-hashes.sh walks) for mirrored files neither manifest covers.
+# Unreadable manifests or a templates root outside a git checkout just answer "no".
+# Per-run cache of each template's history hashes. Created and removed by drift_commits (never
+# inside a nested command substitution) so every lookup in one walk shares one directory.
+HASH_CACHE_DIR=""
+cleanup_hash_cache() {
+  if [[ -n "$HASH_CACHE_DIR" ]]; then rm -rf "$HASH_CACHE_DIR"; fi
+  return 0
+}
+trap cleanup_hash_cache EXIT   # covers an interrupted walk; drift_commits runs in a subshell, which resets traps
+
+blob_sha256() { shasum -a 256 | cut -d' ' -f1; }
+
+hub_history_hashes() { # <template-path> -> one sha256 per line, cached per template
+  local tpl="$1" key top prefix rel mainref cand sha
+  key="$HASH_CACHE_DIR/$(printf '%s' "$tpl" | tr '/ ' '__')"
+  if [[ ! -f "$key" ]]; then
+    : > "$key"
+    top="$(git -C "$(dirname "$tpl")" rev-parse --show-toplevel 2>/dev/null)" || { return 0; }
+    prefix="$(git -C "$(dirname "$tpl")" rev-parse --show-prefix 2>/dev/null)"
+    rel="${prefix}$(basename "$tpl")"
+    mainref=HEAD
+    for cand in origin/main main; do
+      if git -C "$top" rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then mainref="$cand"; break; fi
+    done
+    {
+      git -C "$top" log --format='%H' "$mainref" --tags='v[0-9]*' --follow -- "$rel" 2>/dev/null \
+      | while IFS= read -r sha; do
+          [[ -n "$sha" ]] || continue
+          git -C "$top" show "$sha:$rel" 2>/dev/null | blob_sha256
+        done
+    } | sort -u > "$key"
+  fi
+  cat "$key"
+  return 0
+}
+
+was_shipped_version() { # <blob-sha256> <template-path>
+  local h="$1" tpl="$2" rel seedrel m
+  rel="${tpl#"$TEMPLATES_ROOT"/}"
+  seedrel="${rel#seed/}"
+  m="$TEMPLATES_ROOT/lib/mechanism-hashes.txt"
+  [[ -f "$m" ]] && grep -Fxq "$h  $rel" "$m" && return 0
+  m="$TEMPLATES_ROOT/lib/seed-hashes.txt"
+  [[ "$seedrel" != "$rel" && -f "$m" ]] && grep -Fxq "$h  $seedrel" "$m" && return 0
+  hub_history_hashes "$tpl" | grep -Fxq "$h" && return 0
+  return 1
+}
+
 drift_commits() { # <base>
-  local sha f tpl
+  local sha f tpl h
+  HASH_CACHE_DIR="$(mktemp -d)"
   while IFS= read -r sha; do
     [[ -z "$sha" ]] && continue
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
       tpl="$(template_counterpart_path "$f")" || continue
-      # K6 — content-aware: a commit whose post-state for a mirrored file already
-      # MATCHES the template is a hub→workspace convergence (a /shiploop:update
-      # pull), NOT a local improvement to port back. Skip it so pulls don't
-      # masquerade as harness→hub drift. A file that DIFFERS from the template is
-      # genuine unported local work → count the commit.
+      # Content-aware: a commit whose post-state for a mirrored file already
+      # MATCHES the template, or any version the hub ever shipped, is a
+      # hub→workspace convergence (a /shiploop:update pull), NOT a local
+      # improvement to port back. Skip it so pulls don't masquerade as
+      # harness→hub drift. A file that is no shipped version is genuine unported
+      # local work → count the commit. A file the commit deleted has no post-state
+      # and counts as before.
       if ! cmp -s <(git_g show "$sha:$f" 2>/dev/null) "$tpl"; then
+        h="$(git_g show "$sha:$f" 2>/dev/null | blob_sha256)"
+        if git_g cat-file -e "$sha:$f" 2>/dev/null && was_shipped_version "$h" "$tpl"; then
+          continue
+        fi
         git_g log -1 --format='%h %s' "$sha"
         break
       fi
     done < <(git_g diff-tree --no-commit-id --name-only -r "$sha" -- "${TRACKED[@]}" "${EXCLUDES[@]}")
   done < <(git_g log --no-merges --format='%H' "$1..$UPPER" -- "${TRACKED[@]}" "${EXCLUDES[@]}")
+  cleanup_hash_cache
+  return 0
 }
 
 MODE="${1:---check}"
