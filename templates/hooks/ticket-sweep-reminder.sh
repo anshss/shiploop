@@ -48,6 +48,24 @@ case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exi
 [ -n "$cwd" ] || cwd="$PWD"
 [ -n "$session_id" ] || session_id="nosession"
 
+# --- session opt-out (GOVERN_SESSION_OPTOUT_DIR; unset = off) ---
+# A workspace whose own tooling drives some sessions (a loop that owns its Stop decision, say) marks
+# them by touching $GOVERN_SESSION_OPTOUT_DIR/<session_id>; a marker younger than
+# GOVERN_SESSION_OPTOUT_HOURS (default 6) makes this hook exit silently. Checked before the
+# once-per-session marker, so a skipped session never spends it. Read from the hook's environment,
+# the same way router-posture-reminder.sh reads it: set it in .claude/settings.json `env`.
+if [ -n "${GOVERN_SESSION_OPTOUT_DIR:-}" ] && [ "$session_id" != "nosession" ]; then
+  _optout="${GOVERN_SESSION_OPTOUT_DIR%/}/$session_id"
+  if [ -f "$_optout" ]; then
+    _hours="${GOVERN_SESSION_OPTOUT_HOURS:-6}"
+    case "$_hours" in (""|*[!0-9]*) _hours=6 ;; esac
+    # GNU stat first, then BSD; on GNU, `stat -f` prints file-system noise, hence the digit strip.
+    _mt="$(stat -c %Y "$_optout" 2>/dev/null || stat -f %m "$_optout" 2>/dev/null || echo 0)"
+    _mt="${_mt//[!0-9]/}"; [ -n "$_mt" ] || _mt=0
+    [ $(( $(date +%s) - _mt )) -le $(( _hours * 3600 )) ] && exit 0
+  fi
+fi
+
 # --- collision backstop: lint-tickets.sh fails on TWO independent, unrelated faults — a duplicate
 # `## #N` heading (two filings reused one number) and a duplicate `**Severity:**` field inside one
 # block. Surface either the moment a session ends — independent of (and before) the new-ticket
@@ -339,9 +357,11 @@ direction/Done when/Ref) only when independently dispatchable — a different ar
 without touching another ticket. Never split one discussion's findings into tickets a single worker \
 would fix in one PR. An operator rejection this session (\"that should be one ticket\", \"don't file \
 that\") binds here too. \
-(2) RESOLVED: for any ticket whose fix PR you opened this session, delete it from tickets.md now; \
-promote a durable lesson to CLAUDE.md first only if settled/new/<=3 lines (else CLAUDE-APPENDIX.md); \
-name the PR# in the deletion commit. \
+(2) RESOLVED: for a ticket whose fix PR was opened this session, land it with \
+\`npm run govern:resolve -- <N>\` fed the worker's report, never by hand-editing tickets.md: under \
+GOVERN_AUTONOMY=auto it awaits CI and merges, then deletes the block; under pr-only or observe it \
+leaves the PR open for a human to merge and deletes the block at once. Either way it applies the \
+report's lessonPatch and commits the deletion. \
 Nothing to file/delete -> say so in one line. Bookkeeping only, no new work. \
 If anything from this session still needs the operator, END this reply with the full operator ask \
 (the shape CLAUDE.md defines: what got done, numbered decisions with what yes/no each change and your \
