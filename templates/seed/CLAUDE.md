@@ -41,7 +41,7 @@
    its own worktree; a worker never runs `git checkout`, `stash`, `reset` or `clean` outside its own
    tree.
    `npm run govern:dispatch -- <N>[,<N>...]` runs the gates, prints their verdict, the ticket and the
-   exact `Agent` call to make; obey it, the scripts own the gate list. `npm run govern:status` answers
+   exact `Agent` call to make; obey it, the scripts own the gate list. Spawning a worker without running it first is fine: the hook cuts the packet and hands you the ticket's proposed solution and done-when, and the only refusal is a gate verdict, shown verbatim. `npm run govern:status` answers
    "what is running"; `npm run govern:resolve -- <N>` lands a finished worker.
 
    **A worker ends at PR-open plus report.** Landing it is your last step: `npm run govern:resolve -- <N>`
