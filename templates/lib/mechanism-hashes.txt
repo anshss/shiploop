@@ -715,7 +715,7 @@ f6dcd99017140455c6dbd769993bed95a880e8bca773f48e1a98b0dbc0d9aea0  hooks/router-p
 # -- hooks/rules-on-touch.sh --
 091b6c578aaa4c655b2b0cfbd20ae87d2728d75cb152094348aa93706013299f  hooks/rules-on-touch.sh
 18ddb58f7f999390d170f97af8e52ff9dff3d3a677fbf09a6452b1b4e795c158  hooks/rules-on-touch.sh
-aa43e9ca9679ad81172c1205645bfc53592418dd205fbe291b7e07850ff79a97  hooks/rules-on-touch.sh
+2051fa84a4695052b7d6428a146149ba0c25fd8bb64ad55969d0e98df7908860  hooks/rules-on-touch.sh
 b3c8bd8c9adcb1df65d464bfd797bcb6b4c58e14f252e7f326b7d09127492fad  hooks/rules-on-touch.sh
 
 # -- hooks/session-reconcile.sh --

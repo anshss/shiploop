@@ -263,6 +263,8 @@ EOF
     govern) cat <<'EOF'
 [RULES/govern] Editing a governor script:
 - **Never add a new `claude` flag to the dispatch path unguarded.** Gate it on a CACHED `--help` probe, never on a version compare (a version reports what shipped, not what this binary supports), give it an env kill switch, and expose a `_GOVERN_<X>_SUPPORTED` pre-seed seam so tests can skip the probe. An unbounded probe on the dispatch path is also a hang risk: bound it.
+- **`local x` (declared, unset) + `$x` under `set -u` is "unbound variable", and if it dies inside a `$(...)` feeding an assignment the WHOLE script exits silently.** Pre-initialize every flag-like local (`local seen=""`).
+- **BSD `tr -s '[:space:]' ' '` EATS the trailing newline**, so a `while read` fed by such a stage runs its body ZERO times, silently. Trim with `sed -E 's/^[[:space:]]+|[[:space:]]+$//g'` instead.
 - **Diff the workspace copy against the hub template before fixing a govern-script defect** (`bash scripts/govern/sync-templates.sh --check`). The bug is often already fixed upstream, and a local-only fix silently forks the fleet.
 EOF
 ;;
