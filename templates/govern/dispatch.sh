@@ -21,6 +21,39 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
+# ── block extraction, straight out of the ticket block ───────────────────────────────────────────
+# A field runs from its marker line to the next bold `**Field:**` line, a `---` rule or a heading.
+ticket_field() { # <N> <marker-regex> -> the field's text, trailing blank lines trimmed
+  local n="$1" marker="$2"
+  govern::ticket_block "$n" "$TICKETS_FILE" | awk -v m="$marker" '
+    grab && (/^\*\*[A-Za-z][^*]*:?\*\*/ || /^---[[:space:]]*$/ || /^##[[:space:]]/) { exit }
+    !grab && $0 ~ m { grab = 1 }
+    grab { buf[++n] = $0 }
+    END { while (n > 0 && buf[n] ~ /^[[:space:]]*$/) n--; for (i = 1; i <= n; i++) print buf[i] }'
+  return 0
+}
+
+print_blocks() { # <N>... -> each ticket's Proposed solution and Done when blocks, verbatim
+  local n ps dw
+  for n in "$@"; do
+    printf '\n#%s Proposed solution:\n' "$n"
+    ps="$(ticket_field "$n" '^\\*\\*Proposed solution:?\\*\\*')"
+    printf '%s\n' "${ps:-(none found)}"
+    printf '\n#%s Done when:\n' "$n"
+    dw="$(ticket_field "$n" '^(\\*\\*Done when:?\\*\\*|Done when:)')"
+    printf '%s\n' "${dw:-(none found)}"
+  done
+  return 0
+}
+
+# --print-blocks <N>[,<N>...]: only the blocks, no gates and no packet. router-posture-guard.sh calls
+# it to hand the advisor the ticket at spawn time.
+if [[ "${1:-}" == "--print-blocks" ]]; then
+  IFS=',' read -r -a _pb <<< "${2:-}"
+  print_blocks "${_pb[@]}"
+  exit 0
+fi
+
 MODEL_ALIAS="sonnet"
 BATCH_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -54,18 +87,6 @@ else
   PROCEED=("${BATCH_ARGS[0]}")
 fi
 
-# ── block extraction, straight out of the ticket block ───────────────────────────────────────────
-# A field runs from its marker line to the next bold `**Field:**` line, a `---` rule or a heading.
-ticket_field() { # <N> <marker-regex> -> the field's text, trailing blank lines trimmed
-  local n="$1" marker="$2"
-  govern::ticket_block "$n" "$TICKETS_FILE" | awk -v m="$marker" '
-    grab && (/^\*\*[A-Za-z][^*]*:?\*\*/ || /^---[[:space:]]*$/ || /^##[[:space:]]/) { exit }
-    !grab && $0 ~ m { grab = 1 }
-    grab { buf[++n] = $0 }
-    END { while (n > 0 && buf[n] ~ /^[[:space:]]*$/) n--; for (i = 1; i <= n; i++) print buf[i] }'
-  return 0
-}
-
 # ── 2 + 3. packet and the ready call, per batch ──────────────────────────────────────────────────
 for batch in "${PROCEED[@]}"; do
   [[ -n "$batch" ]] || continue
@@ -76,15 +97,7 @@ for batch in "${PROCEED[@]}"; do
 
   printf '\n== batch %s ==\n' "$batch"
   IFS=',' read -r -a members <<< "$batch"
-  for n in "${members[@]}"; do
-    printf '\n#%s Proposed solution:\n' "$n"
-    ps="$(ticket_field "$n" '^\\*\\*Proposed solution:?\\*\\*')"
-    printf '%s\n' "${ps:-(none found)}"
-    printf '\n#%s Done when:\n' "$n"
-    dw="$(ticket_field "$n" '^(\\*\\*Done when:?\\*\\*|Done when:)')"
-    printf '%s\n' "${dw:-(none found)}"
-  done
-
+  print_blocks "${members[@]}"
   printf '\nPacket: %s\nSpawn it with exactly this call:\n\nAgent(\n  subagent_type: "worker",\n  name: "worker-%s",\n' "$packet" "$primary"
   [[ "$MODEL_ALIAS" == "sonnet" ]] || printf '  model: "%s",\n' "$MODEL_ALIAS"
   printf '  description: "Resolve ticket %s",\n  prompt: "%s"\n)\n' "$primary" "$prompt"

@@ -173,7 +173,7 @@ d144ae491b4d4b0955e8aa8797544067236c02e3e831587ecd26c96a41aacfbd  govern/dispatc
 efbb3aae5b0405304da1bff0a168ab8be14e632e9d4a44ac47fe015806df8f53  govern/dispatch-packet.sh
 
 # -- govern/dispatch.sh --
-1ababa82675cf8a29409ffcf2115dbd901e901b9665bd2144e95349f639b2893  govern/dispatch.sh
+0a3e92a462da093be437f6d2c81fd4a5a6b6c674565b6af0b2ac9d7f7dd2070e  govern/dispatch.sh
 
 # -- govern/dry-run.sh --
 689761372db04ffd04a9b0d433c54164e3528d092ab0069f3c631b23df4e103b  govern/dry-run.sh
@@ -626,6 +626,7 @@ f86a3d0d3b3db1e2ef8d169dbe637db5dc34b4ee407ef0e85e4cfbc02da36b97  hooks/learning
 # -- hooks/router-posture-guard.sh --
 0bf149ffa486a414a0b7eb478a4288f32c88c0c4c85466010daddfb1829f7afc  hooks/router-posture-guard.sh
 12ea5a5b6a17449451cc68d266f3a4db17a656346a57cdc7c7f1105d40c3e674  hooks/router-posture-guard.sh
+12f0b5e9a104100aa90b64e5b73033dffeba4e18cee4e4657554bb79f61a52b8  hooks/router-posture-guard.sh
 1b79f4089973ae62743d3bc11920df2f87e2dc027ad94fe7eb7bc212a3631525  hooks/router-posture-guard.sh
 22a07ed6c70cb922d337c9874927a6727f3412029ca1e3b7a2af7bd8621e45e6  hooks/router-posture-guard.sh
 24a0f4cd81604dc6c19c323bf172d26fa99234343f2a2ba7cf06acbd0f86d113  hooks/router-posture-guard.sh
@@ -643,7 +644,6 @@ f86a3d0d3b3db1e2ef8d169dbe637db5dc34b4ee407ef0e85e4cfbc02da36b97  hooks/learning
 7db97982f2125fae6aa609fad86d7f07c1d948bacff8682d37ddc2727729d5d2  hooks/router-posture-guard.sh
 99f17d9c69bdc78079b1c22da79c66148af6b4d22f63944f4115ef2095126c89  hooks/router-posture-guard.sh
 bde2ef4564aa6f71407475e836898c67de65ebf09688d3334b326bae428d624e  hooks/router-posture-guard.sh
-c3bd11d7516d17fa91101ce25710a9b061238f325a30832b20b14f6fc87771f1  hooks/router-posture-guard.sh
 ce4964144ee2d2a3a4d826de5244ba3c3349620ddb1972f96f653aa6cd941f1f  hooks/router-posture-guard.sh
 e52a6fffdbcedf93f360dfed8b3298d04713ef1ea3485cb51114441d523a9907  hooks/router-posture-guard.sh
 ed1bfea89e5911e7ac70b2fb0d39333f1229ca0524a767d636964832e1088090  hooks/router-posture-guard.sh
