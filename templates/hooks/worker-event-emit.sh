@@ -51,7 +51,7 @@ set -uo pipefail
 [ "${GOVERN_EVENTS:-0}" = "1" ] || exit 0
 
 payload="$(cat 2>/dev/null || true)"
-get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
 
 agent_id="$(get agent_id)"
 [ -n "$agent_id" ] || exit 0   # no agent_id → the driver/advisor's own call, never touch it

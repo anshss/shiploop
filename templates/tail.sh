@@ -85,7 +85,9 @@ tail_with_prefix() {
   # shellcheck disable=SC2086
   tail $tail_args "$file" 2>/dev/null | while IFS= read -r line; do
     if [ -n "$GREP_PATTERN" ]; then
-      if ! echo "$line" | grep -qE "$GREP_PATTERN"; then
+      # Pure bash regex instead of `echo | grep -qE`: no pipe, so an absurdly long single
+      # log line cannot SIGPIPE the producer under pipefail.
+      if ! [[ "$line" =~ $GREP_PATTERN ]]; then
         continue
       fi
     fi

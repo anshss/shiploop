@@ -240,7 +240,7 @@ wt_registry_alloc_and_register() {
   # stale entry and fall through to re-allocate (freeing its slot for reuse). Keep the hard error
   # only when the path is still present (a genuine live collision).
   existing_path=$(printf '%s' "$reg" | jq -r --arg n "$name" \
-    '.slots | to_entries[] | select(.value.name == $n) | .value.path' | head -1)
+    '.slots | to_entries[] | select(.value.name == $n) | .value.path' | sed -n '1p')
   if [ -n "$existing_path" ] && [ "$existing_path" != "null" ]; then
     if [ -e "$existing_path" ]; then
       echo "worktree '$name' already in registry (path exists: $existing_path)" >&2
@@ -304,7 +304,7 @@ wt_registry_remove() {
   local name="$1"
   local reg slot
   reg=$(wt_registry_read)
-  slot=$(printf '%s' "$reg" | jq -r --arg n "$name" '.slots | to_entries[] | select(.value.name == $n) | .key' | head -1)
+  slot=$(printf '%s' "$reg" | jq -r --arg n "$name" '.slots | to_entries[] | select(.value.name == $n) | .key' | sed -n '1p')
   if [ -z "$slot" ] || [ "$slot" = "null" ]; then
     return 1
   fi

@@ -132,7 +132,7 @@ if command -v gh >/dev/null 2>&1; then
     rdisp="$(jq -r '.disposition // ""' <<<"$row" 2>/dev/null)"
     govern::is_placeholder "$rans" && govern::is_placeholder "$rdisp" || continue
     rtext="$(jq -r '[.title,.reason,.question] | join(" ")' <<<"$row" 2>/dev/null || true)"
-    rref="$(grep -oE '[A-Za-z0-9_.-]+#[0-9]+' <<<"$rtext" | head -1 || true)"
+    rref="$(grep -oE '[A-Za-z0-9_.-]+#[0-9]+' <<<"$rtext" | sed -n '1p' || true)"
     [[ -n "$rref" ]] || continue
     rrepo="${rref%%#*}"; rnum="${rref##*#}"
     rslug="$(govern::repo_slug "$rrepo" 2>/dev/null || true)"

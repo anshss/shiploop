@@ -97,7 +97,8 @@ else
   if [[ -n "$head" ]]; then
     localdir="$(govern::repo_localdir "$REPO")"
     if [[ -d "$localdir/.git" || -f "$localdir/.git" ]] && git -C "$localdir" rev-parse --verify "$head" >/dev/null 2>&1; then
-      if git -C "$localdir" worktree list --porcelain 2>/dev/null | grep -q "^branch refs/heads/${head}$"; then
+      _wt_list="$(git -C "$localdir" worktree list --porcelain 2>/dev/null)"
+      if grep -q "^branch refs/heads/${head}$" <<< "$_wt_list"; then
         : # checked out in a worktree → worktree:rm deletes it on teardown; skip silently (no noise)
       else
         git -C "$localdir" branch -D "$head" >/dev/null 2>&1 \

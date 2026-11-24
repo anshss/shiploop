@@ -424,10 +424,10 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         govern::log "bookkeep #$N: lessonPatch routed to CLAUDE-APPENDIX.md (\"$heading\") instead of always-on $lp_file — $route_reason"
         target="$appendix"   # the summary line reports the sink that actually received the lesson
       elif [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
-        if printf '%s' "$text" | grep -qE '^[[:space:]]*$'; then
+        if grep -qE '^[[:space:]]*$' <<< "$text"; then
           lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"
         else
-          lead="$(printf '%s\n' "$text" | head -n1)"
+          lead="$(printf '%s\n' "$text" | sed -n '1p')"
         fi
         heading="#$N — ${ticket_title:-lesson}"
         insert_text="$lead"$'\n\n'"See \`CLAUDE-APPENDIX.md\` → \"$heading\"."

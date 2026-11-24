@@ -102,7 +102,7 @@ set -uo pipefail
 
 # --- read the SubagentStop/TeammateIdle hook stdin payload ---
 payload="$(cat 2>/dev/null || true)"
-get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
 case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;; esac
 
 event_name="$(get hook_event_name)"

@@ -137,7 +137,7 @@ kill_worktree_stack() {
     [ -n "$port" ] || continue
     pids=$(lsof -ti tcp:"$port" 2>/dev/null) || true
     for pid in $pids; do
-      pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+      pcwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p')
       case "$pcwd" in
         "$wt_root"|"$wt_root"/*) kill -9 "$pid" 2>/dev/null && killed=$((killed + 1)) || true ;;
         *) : ;;  # a process from another checkout on this port — never ours to kill

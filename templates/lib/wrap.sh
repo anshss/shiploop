@@ -320,7 +320,7 @@ preflight() {
   # submodule checkout; wrapping it corrupts the main repo's back-pointers.
   if [ -f .git ]; then
     local mainrepo
-    mainrepo="$(sed -n 's/^gitdir: //p' .git 2>/dev/null | head -1)"
+    mainrepo="$(sed -n 's/^gitdir: //p' .git 2>/dev/null | sed -n '1p')"
     refuse ".git is a FILE (linked worktree or submodule checkout) — wrapping it would corrupt the main repo. Main repo gitdir: ${mainrepo:-<unreadable>}. Out of scope for v1."
   fi
   [ -d .git ] || refuse "no .git directory here — not at the root of a git repo. cd to the repo root and re-run."
@@ -397,7 +397,7 @@ preflight() {
   fi
 
   # git maintenance register (global config carries the absolute path) — warn hard
-  if git config --global --get-regexp '^maintenance\.repo$' 2>/dev/null | grep -Fq "$WORKSPACE_DIR"; then
+  if grep -Fq "$WORKSPACE_DIR" <<< "$(git config --global --get-regexp '^maintenance\.repo$' 2>/dev/null)"; then
     if [ "$CONFIRM_MAINTENANCE" -eq 0 ]; then
       NEEDS_CONFIRM+=("--confirm-maintenance|git maintenance is registered for this repo (global config holds the OLD absolute path $WORKSPACE_DIR). After wrapping, re-register: git maintenance unregister (old) then git -C $WORKSPACE_DIR/$NAME maintenance register.")
     fi
@@ -463,7 +463,7 @@ preflight() {
 
   # 9 — subfolder name collision, case-insensitively
   local existing
-  existing="$(find . -maxdepth 1 -mindepth 1 -iname "$NAME" 2>/dev/null | head -1)"
+  existing="$(find . -maxdepth 1 -mindepth 1 -iname "$NAME" 2>/dev/null | sed -n '1p')"
   if [ -n "$existing" ]; then
     local got; got="$(basename "$existing")"
     if [ "$got" != "$NAME" ]; then
@@ -529,7 +529,7 @@ greenfield_preflight() {
 
   # 9 — subfolder name collision, case-insensitively (same check as wrap's).
   local existing
-  existing="$(find . -maxdepth 1 -mindepth 1 -iname "$NAME" 2>/dev/null | head -1)"
+  existing="$(find . -maxdepth 1 -mindepth 1 -iname "$NAME" 2>/dev/null | sed -n '1p')"
   if [ -n "$existing" ]; then
     printf 'COLLISION: an entry named "%s" already exists here — choose a different sub-repo name.\n' "$(basename "$existing")" >&2
     exit 4

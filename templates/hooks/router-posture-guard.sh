@@ -291,15 +291,15 @@ if [ "$tool_name" = "Agent" ]; then
   contract_re='^[Rr]esolve #[0-9]+(, #[0-9]+)*\.'
   resolve_tnum() { # -> ticket number(s) this Agent call is about, one per line, "" if none
     local t contract
-    contract="$(grep -oE "$contract_re" <<< "$probe" 2>/dev/null | head -1 || true)"
+    contract="$(grep -oE "$contract_re" <<< "$probe" 2>/dev/null | sed -n '1p' || true)"
     if [ -n "$contract" ]; then
       grep -oE '#[0-9]+' <<< "$contract" | tr -d '#'
       return
     fi
-    t="$(grep -oE '#[0-9]+' <<< "$probe_lc_noPR" 2>/dev/null | head -1 | tr -d '#' || true)"
+    t="$(grep -oE '#[0-9]+' <<< "$probe_lc_noPR" 2>/dev/null | sed -n '1p' | tr -d '#' || true)"
     if [ -z "$t" ]; then
       t="$(grep -oEi '^(t|w|ticket-?)[0-9]+' <<< "$agent_name"$'\n'"$agent_desc" 2>/dev/null \
-             | grep -oE '[0-9]+' | head -1 || true)"
+             | grep -oE '[0-9]+' | sed -n '1p' || true)"
     fi
     printf '%s' "$t"
   }
@@ -488,7 +488,7 @@ print(json.dumps({
   fi
 
   if { [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; } && [ "$exempt" != 1 ]; then
-    tnum="$(resolve_tnum | head -1)"
+    tnum="$(resolve_tnum | sed -n '1p')"
     if [ -n "$tnum" ] && ticket_block_exists "$tnum"; then
       deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, ticket/group session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
@@ -576,8 +576,8 @@ case "$tool_name" in
     ;;
   Bash)
     # Verbose build / dev-server / install run.
-    if printf '%s' "$command" | grep -Eq \
-      '(^|[[:space:];&|])((npm|pnpm|yarn|bun)[[:space:]]+(run[[:space:]]+)?(dev|build|start)|(npm|pnpm|bun)[[:space:]]+(ci|install|i)([[:space:]]|$)|yarn[[:space:]]+install|next[[:space:]]+(dev|build)|vite[[:space:]]+build|turbo[[:space:]]+run[[:space:]]+(dev|build)|(cargo|go|docker)[[:space:]]+build|webpack([[:space:]]|$)|tsc([[:space:]]|$))'; then
+    if grep -Eq \
+      '(^|[[:space:];&|])((npm|pnpm|yarn|bun)[[:space:]]+(run[[:space:]]+)?(dev|build|start)|(npm|pnpm|bun)[[:space:]]+(ci|install|i)([[:space:]]|$)|yarn[[:space:]]+install|next[[:space:]]+(dev|build)|vite[[:space:]]+build|turbo[[:space:]]+run[[:space:]]+(dev|build)|(cargo|go|docker)[[:space:]]+build|webpack([[:space:]]|$)|tsc([[:space:]]|$))' <<< "$command"; then
       reason="a verbose build/dev/install run"
     fi
     ;;
@@ -588,10 +588,10 @@ esac
 # GOVERN_VF_DENY can each turn their own half off without disturbing the other's evidence.
 vf_command_hit=0
 if [ "$tool_name" = "Bash" ]; then
-  if printf '%s' "$command" | grep -Eq \
-      '(^|[[:space:];&|])(npm[[:space:]]+(run[[:space:]]+)?(test|build|check)([[:space:]]|$)|pytest([[:space:]]|$)|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|vitest([[:space:]]|$)|jest([[:space:]]|$)|tsc([[:space:]]|$)|node[[:space:]]+--test([[:space:]]|$))' \
-    && ! printf '%s' "$command" | grep -Eq \
-      '(verify-filter\.sh|npm[[:space:]]+run[[:space:]]+vf([[:space:]]|$))'; then
+  if grep -Eq \
+      '(^|[[:space:];&|])(npm[[:space:]]+(run[[:space:]]+)?(test|build|check)([[:space:]]|$)|pytest([[:space:]]|$)|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|vitest([[:space:]]|$)|jest([[:space:]]|$)|tsc([[:space:]]|$)|node[[:space:]]+--test([[:space:]]|$))' <<< "$command" \
+    && ! grep -Eq \
+      '(verify-filter\.sh|npm[[:space:]]+run[[:space:]]+vf([[:space:]]|$))' <<< "$command"; then
     vf_command_hit=1
   fi
 fi

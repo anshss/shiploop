@@ -95,7 +95,7 @@ if [ -d "$WORKTREE_BASE" ]; then
   for wt in "$WORKTREE_BASE"/*/; do
     [ -d "${wt%/}" ] || continue
     wt="${wt%/}"
-    if printf '%s\n' "$reg_paths" | grep -Fxq -- "$wt"; then continue; fi
+    if grep -Fxq -- "$wt" <<< "$reg_paths"; then continue; fi
     UNREGISTERED=$((UNREGISTERED + 1))
     row_fmt="%-4s %-32s"
     row_args=("—" "$(basename "$wt")")
