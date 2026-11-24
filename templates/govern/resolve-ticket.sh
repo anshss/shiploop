@@ -564,7 +564,9 @@ if [[ "${_group_tickets_n:-0}" -gt 0 ]]; then
   elif [[ "${_group_bare_n:-0}" -eq "${_group_tickets_n:-0}" ]]; then
     _is_group=0  # every entry is a bare number equal to N: a one-member batch, land it singly
   else
-    echo "resolve-ticket #$N: the report's tickets array is non-empty but yields no parseable {ticket,status} entries (shape: $(printf '%s' "$report" | jq -c '.tickets' 2>/dev/null | head -c 200)); refusing BEFORE any bookkeeping: no landing, no history row, the queue block stays. Fix the report's tickets array (each entry an object {ticket,status}) and re-run." >&2
+    # cut (never exits early) not head: a byte-bounded slice must drain the producer, or a large
+    # report can SIGPIPE the jq under pipefail.
+    echo "resolve-ticket #$N: the report's tickets array is non-empty but yields no parseable {ticket,status} entries (shape: $(printf '%s' "$report" | jq -c '.tickets' 2>/dev/null | cut -c1-200)); refusing BEFORE any bookkeeping: no landing, no history row, the queue block stays. Fix the report's tickets array (each entry an object {ticket,status}) and re-run." >&2
     exit 14
   fi
 fi
