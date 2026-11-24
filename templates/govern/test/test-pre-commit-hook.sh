@@ -9,6 +9,10 @@
 #   C. A pre-existing NON-ours pre-commit (e.g. husky, lefthook, hand-rolled) → installer refuses to
 #      clobber it and returns 0 with a "leaving in place" note; the operator's hook survives.
 #   D. A pre-existing pre-commit that carries OUR marker → installer refreshes it (idempotent).
+#   E. Local seam: no .githooks/pre-commit.d directory (and an empty one) → commit passes unchanged.
+#   F. Local seam: a passing script runs (and runs in name order), even with no lint-fix command.
+#   G. Local seam: a failing script blocks the commit (non-zero) and is named; a non-executable
+#      file in the directory is ignored.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -119,5 +123,48 @@ else
   assert_eq "refreshed" "refreshed" "installer replaced a stale prior-installed hook"
 fi
 assert_eq "$refresh_sha" "$canon_sha" "refreshed hook matches the canonical source byte-for-byte"
+
+# ── Seam scenarios: .githooks/pre-commit.d/ ──────────────────────────────────
+write_workspace_sh ""
+cp "$T/.githooks/pre-commit" "$SUB/.git/hooks/pre-commit"
+SEAM="$T/.githooks/pre-commit.d"
+
+# E. No directory, then an empty one: nothing changes, exit 0.
+rm -rf "$SEAM"
+rc=0; outE="$( cd "$SUB" && bash .git/hooks/pre-commit 2>&1 )" || rc=$?
+assert_eq "$rc" "0" "seam E: no pre-commit.d directory leaves the commit passing"
+mkdir -p "$SEAM"
+rc=0; outE="$( cd "$SUB" && bash .git/hooks/pre-commit 2>&1 )" || rc=$?
+assert_eq "$rc" "0" "seam E: an empty pre-commit.d directory leaves the commit passing"
+
+# F. Passing scripts run, in name order, with no lint-fix command configured.
+cat > "$SEAM/20-second" <<EOF
+#!/usr/bin/env bash
+echo second >> "$T/seam-order"
+EOF
+cat > "$SEAM/10-first" <<EOF
+#!/usr/bin/env bash
+echo first >> "$T/seam-order"
+EOF
+chmod +x "$SEAM/20-second" "$SEAM/10-first"
+rm -f "$T/seam-order"
+rc=0; outF="$( cd "$SUB" && bash .git/hooks/pre-commit 2>&1 )" || rc=$?
+assert_eq "$rc" "0" "seam F: passing seam scripts leave the commit passing"
+assert_eq "$(tr '\n' ' ' < "$T/seam-order")" "first second " "seam F: scripts ran in name order"
+
+# G. A failing script blocks and is named; a non-executable file is ignored (its sentinel never appears).
+cat > "$SEAM/15-bad" <<'EOF'
+#!/usr/bin/env bash
+echo "product check says no"
+exit 3
+EOF
+chmod +x "$SEAM/15-bad"
+printf '#!/usr/bin/env bash\ntouch "%s/SENTINEL-NOEXEC"\n' "$T" > "$SEAM/05-noexec"
+rm -f "$T/seam-order"
+rc=0; outG="$( cd "$SUB" && bash .git/hooks/pre-commit 2>&1 )" || rc=$?
+assert_eq "$rc" "1" "seam G: a failing seam script fails the commit"
+assert_contains "$outG" "15-bad" "seam G: the failing file is named"
+assert_eq "$(test -e "$T/SENTINEL-NOEXEC" && echo ran || echo skipped)" "skipped" "seam G: a non-executable file is ignored"
+assert_eq "$(tr '\n' ' ' < "$T/seam-order")" "first " "seam G: scripts after the failure did not run"
 
 assert_done

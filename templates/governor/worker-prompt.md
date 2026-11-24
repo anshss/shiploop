@@ -35,6 +35,10 @@ If you cannot tell whether something is in scope, it is not.
    NOT `git stash`, ever: even inside your own tree, a stash ref lives in the object database every
    worktree of that repo shares, so a stash you push is poppable from a PARALLEL worker's tree. A
    PUBLIC-REPO PR HYGIENE section below, if present, overrides branch/PR-body rules.
+   **A review follow-up** (a reviewer or CI asks for a change on your open PR): commit on the same
+   worktree and re-run `govern:ship` with the same ticket number. It is idempotent: it pushes the
+   ticket branch and reuses the open PR. A bare `git push` lands on a stray branch and leaves the PR
+   unchanged; confirm with `gh pr view <N> --json headRefOid` that the PR head is your new commit.
 5. Found a NEW bug/gap? FIRST `grep '^## #' queue/tickets.md` here for a ticket with the same
    symptom/root cause: if one covers it use `crossRefs.overlaps`, else `newTickets`.
 6. Durable root-level lesson? Fill `lessonPatch` (contract in §5).

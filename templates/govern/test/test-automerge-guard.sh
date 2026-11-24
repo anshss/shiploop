@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two-factor auto-merge safety guard (govern::pr_automerge_allowed): the governor's auto-merge
+# Three-factor auto-merge safety guard (govern::pr_automerge_allowed): the governor's auto-merge
 # lane must NEVER land a PR it did not itself open, regardless of CI. This test exercises every
 # fail-closed path directly against merge-pr.sh via a fake `gh` on PATH — the CANONICAL adversary
 # for the "external contributor's green PR gets auto-merged" scenario the guard exists to prevent.
@@ -9,9 +9,13 @@
 #   B. Own author    + FORK repo (bob owns head)               → BLOCK exit 5, reason fork-pr
 #   C. gh api user   FAILS                                     → BLOCK exit 5, reason lookup-failed
 #   D. Own author    + own repo + green CI, branch ticket-42   → ALLOW exit 0, guard silent
-#   E. Own author    + own repo + green CI, branch vf-lever-enforce (a real worktree:new slug,
-#      matching no governor branch pattern) → ALLOW exit 0: the guard no longer looks at branch
-#      name at all, so a worktree:new slug merges same as any other own-author, non-fork PR.
+#   E. Own author    + own repo + green CI, branch vf-lever-enforce (matches no governor branch
+#      pattern)                                                → BLOCK exit 5, reason bad-branch
+#   F. Same foreign branch with GOVERN_MERGE_BRANCH_GUARD=0    → ALLOW exit 0 (kill switch)
+#   G. sync-auto-<x> branch on a private repo                  → ALLOW exit 0
+#   H. sl-<12hex> branch on a PRIVATE repo                     → BLOCK exit 5, reason bad-branch
+#   I. sl-<12hex> branch on a PUBLIC repo                      → ALLOW exit 0
+#   J. ticket-<N> branch on a PUBLIC repo                      → ALLOW exit 0
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -23,6 +27,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"   # alpha auto-mergeable, web frontend, org acme
 # Guard is bypassed by default under mk_ws_stub — this test exercises it explicitly.
 unset _GOVERN_ASSUME_MERGE_ALLOWED
+export GOVERN_MERGE_BRANCH_GUARD=1
 
 # The gh stub is DATA-DRIVEN: the test writes GH_* files that shape each response so the same stub
 # handles every matrix cell without a per-cell rewrite. Files:
@@ -109,13 +114,33 @@ else
 fi
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "D: gh pr merge WAS invoked once"
 
-# ── E. Own author + own repo + green CI, branch vf-lever-enforce (a real worktree:new slug,
-#      not any governor-owned pattern) → ALLOW. The regression test for this ticket: the guard
-#      no longer has a branch-pattern leg, so a worktree:new slug merges like any other PR that
-#      passes the author and fork checks. ──
+# ── E. Own author + own repo, a branch no governor lane produces → block(bad-branch) ──
 pr_json "acme" "vf-lever-enforce" "acme" "acme"
 run_merge
-assert_eq "$rc" "0" "E: worktree:new slug branch is ALLOWED (no branch-pattern leg left to trip)"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "E: gh pr merge WAS invoked once"
+assert_eq "$rc" "5" "E: a foreign branch name is blocked with exit 5"
+assert_contains "$out" "external-pr-blocked (bad-branch)" "E: reason token is bad-branch"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "E: gh pr merge was NEVER invoked"
+
+# ── F. Same branch with the kill switch off → ALLOW ──
+GOVERN_MERGE_BRANCH_GUARD=0 run_merge
+assert_eq "$rc" "0" "F: GOVERN_MERGE_BRANCH_GUARD=0 turns the branch check off"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "F: gh pr merge WAS invoked once"
+
+# ── G. sync-auto-* branch on a private repo → ALLOW ──
+pr_json "acme" "sync-auto-2026" "acme" "acme"
+run_merge
+assert_eq "$rc" "0" "G: sync-auto-* branch is ALLOWED"
+
+# ── H. sl-<12hex> on a PRIVATE repo → block; I. on a PUBLIC repo → allow; J. ticket-<N> public → allow ──
+pr_json "acme" "sl-0123456789ab" "acme" "acme"
+run_merge
+assert_eq "$rc" "5" "H: neutral sl-<hex> branch is blocked on a private repo"
+assert_contains "$out" "external-pr-blocked (bad-branch)" "H: reason token is bad-branch"
+GOVERN_PUBLIC_REPOS=alpha run_merge
+assert_eq "$rc" "0" "I: neutral sl-<hex> branch is ALLOWED on a public repo"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "I: gh pr merge WAS invoked once"
+pr_json "acme" "ticket-42" "acme" "acme"
+GOVERN_PUBLIC_REPOS=alpha run_merge
+assert_eq "$rc" "0" "J: ticket-<N> branch is ALLOWED on a public repo"
 
 assert_done

@@ -11,6 +11,8 @@
 #      real proposal.
 #   3. A ticket with a real, multi-paragraph proposal (and no **Precision:**) -> proceed.
 #   4. GOVERN_PROPOSAL_GATE=0 -> proceed even on the no-proposal ticket (the documented kill switch).
+#   4b. A ticket folded into `### <letter>.` parts, dispatched by bare number -> a part-naming
+#      refusal (not "no proposed solution"); dispatched with GOVERN_TICKET_PART -> proceed.
 #   5. Exactly one verdict line on stdout, the same posture every other gate holds.
 #   6. This gate is scoped to
 #      a TICKET-NUMBER dispatch and can never become a prompt-shape check — that distinction is
@@ -69,6 +71,20 @@ A second paragraph of detail: the current cap lives in retry.sh:40, change the l
 **Precision:** scoped
 
 ---
+
+## #63 — folded into parts
+
+**Severity:** Low
+
+### A. first part
+
+**Proposed solution:** do the A thing
+
+### B. second part
+
+**Proposed solution:** do the B thing
+
+---
 TIX
 
 # ── 1. no proposal at all -> refuse ────────────────────────────────────────────────────────────
@@ -88,6 +104,13 @@ assert_eq "$out" "proceed" "3. a real, multi-paragraph proposal lets the dispatc
 # ── 4. GOVERN_PROPOSAL_GATE=0 -> proceed even with no proposal (kill switch) ────────────────────
 out="$(GOVERN_PROPOSAL_GATE=0 "$PDC" 60)"
 assert_eq "$out" "proceed" "4. GOVERN_PROPOSAL_GATE=0 bypasses the gate entirely"
+
+# ── 4b. folded ticket: the refusal names the cause; naming a part proceeds ──────────────────────
+out="$(GOVERN_PROPOSAL_GATE=1 "$PDC" 63)"
+assert_eq "$out" "refuse: #63 is folded into parts (or carries several proposals) - dispatch one part with GOVERN_TICKET_PART=<letter>" \
+  "4b. a folded ticket refuses with the part-aware message, not 'no proposed solution'"
+out="$(GOVERN_PROPOSAL_GATE=1 GOVERN_TICKET_PART=b "$PDC" 63)"
+assert_eq "$out" "proceed" "4b. GOVERN_TICKET_PART=<letter> lets a folded ticket's part dispatch"
 
 # ── 5. exactly one verdict line, always ─────────────────────────────────────────────────────────
 lines="$(GOVERN_PROPOSAL_GATE=1 "$PDC" 60 | wc -l | tr -d ' ')"

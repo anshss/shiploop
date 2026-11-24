@@ -119,6 +119,11 @@ export GOVERN_BG_WAIT_GUARD=0 GOVERN_BG_LEDGER=0 GOVERN_REPORT_CAPTURE=0
                                       # so no other fixture blocks, waits or writes through them;
                                       # their own tests opt back in.
 
+# The auto-merge guard's branch-name check ships ON and blocks any PR whose head is not a governor
+# branch. Fixtures open PRs under arbitrary stub branch names, so it is off here; the guard tests
+# (test-automerge-guard.sh, test-public-pr-hygiene.sh) turn it back on.
+export GOVERN_MERGE_BRANCH_GUARD=0
+
 # Index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite
 # that resolves hundreds of synthetic tickets. Its own test builds a real index explicitly.

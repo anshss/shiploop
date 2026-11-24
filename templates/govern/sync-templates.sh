@@ -64,6 +64,16 @@ set -uo pipefail
 GOVERN_DIR="${GOVERN_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 MARKER="${GOVERN_SYNC_MARKER:-$GOVERN_DIR/.templates-synced-at}"
 
+# The marker is an untracked file that exists only in the main checkout. A worktree never has one,
+# and running --mark there would start a fresh marker and discard the drift the main checkout has
+# accumulated, so the message sends the operator back to the main checkout.
+no_marker() {
+  echo "sync-templates: no marker at $MARKER" >&2
+  echo "  The marker lives only in the main checkout: run --check, --files and --mark from there," >&2
+  echo "  never from a worktree (marking in a worktree discards the main checkout's accumulated drift)." >&2
+  return 0
+}
+
 # N4: optional enumeration UPPER BOUND. Every drift walk below is "marker..UPPER";
 # UPPER defaults to HEAD (unchanged behavior). sync-port pins it to a single
 # HEAD capture (GOVERN_SYNC_UPPER_BOUND=<sha>) so a mirrored-file commit landing
@@ -212,7 +222,7 @@ MODE="${1:---check}"
 
 case "$MODE" in
   --sha)
-    read_marker || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
+    read_marker || { no_marker; exit 2; }
     ;;
 
   --mark)
@@ -227,7 +237,7 @@ case "$MODE" in
     ;;
 
   --diff)
-    base="$(read_marker)" || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
+    base="$(read_marker)" || { no_marker; exit 2; }
     files=()
     while IFS= read -r f; do [[ -n "$f" ]] && files+=("$f"); done < <(mirrored_files "$base")
     [[ ${#files[@]} -eq 0 ]] && { echo "(none — mirrored templates in sync through $base)"; exit 0; }
@@ -254,14 +264,14 @@ case "$MODE" in
     # `mirrored_files` would leak its loop's last-iteration status (1 whenever the
     # final candidate happens to be unmirrored), turning a clean workspace into a
     # phantom "unknowable" and silently disarming the gate. Capture, then exit 0.
-    base="$(read_marker)" || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
+    base="$(read_marker)" || { no_marker; exit 2; }
     paths="$(mirrored_files "$base")"
     [[ -n "$paths" ]] && printf '%s\n' "$paths"
     exit 0
     ;;
 
   --files)
-    base="$(read_marker)" || { echo "sync-templates: no marker at $MARKER" >&2; exit 2; }
+    base="$(read_marker)" || { no_marker; exit 2; }
     files="$(mirrored_files "$base")"
     [[ -z "$files" ]] && { echo "(none — mirrored templates in sync through $base)"; exit 0; }
     while IFS= read -r f; do
@@ -271,9 +281,7 @@ case "$MODE" in
     ;;
 
   --check|"")
-    base="$(read_marker)" || {
-      echo "sync-templates: no marker at $MARKER — run 'sync-templates.sh --mark' to initialize" >&2
-      exit 2; }
+    base="$(read_marker)" || { no_marker; exit 2; }
     commits="$(drift_commits "$base")"
     if [[ -z "$commits" ]]; then
       echo "✓ templates in sync through ${base:0:9} — no unported harness commits touch a mirrored file"
