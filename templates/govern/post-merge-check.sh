@@ -18,6 +18,16 @@
 #                            (workspace.sh seeds the value; note a fresh temp checkout has no
 #                            node_modules, so prefer a dependency-free command or have the command
 #                            install/point at deps).
+#   GOVERN_LABS_FILE         export-only: if eval/labs/select.js exists in the temp checkout, this
+#                            script selects the lab set from the merged sha's FIRST-PARENT diff and
+#                            hands the file to $CMD via this variable (empty/unset = run the full
+#                            suite). The first-parent diff is used because the PR branch does not
+#                            exist at gate time and first-parent survives squash and fast-forward
+#                            merges; select.js owns every forced-full rule (gate machinery,
+#                            fixtures, an explicit full request) and over-selects by design. A
+#                            missing or failing selector falls back to the full suite: failing
+#                            toward MORE labs is the safe direction. A $CMD that never reads the
+#                            variable is unaffected.
 #   GOVERN_ECHO=1            print what would run, touch nothing, exit 0 (dry-run convention).
 #
 # Exit codes:
@@ -77,8 +87,24 @@ if ! git -C "$localdir" worktree add --detach "$tmp/check" "$sha" >/dev/null 2>&
   exit 8
 fi
 
+# Lab selection (see GOVERN_LABS_FILE above): select the lab set from the merged sha's
+# FIRST-PARENT diff (the PR branch does not exist at gate time; first-parent survives squash and
+# fast-forward merges). Selector missing or failing leaves the file empty = full suite: failing
+# toward MORE labs is the safe direction.
+labsfile=""
+if [ -f "$tmp/check/eval/labs/select.js" ]; then
+  git -C "$tmp/check" diff --name-only "${sha}^1" "$sha" > "$tmp/changed.txt" 2>/dev/null || true
+  if ( cd "$tmp/check" && node eval/labs/select.js --changed "$tmp/changed.txt" \
+       > "$tmp/labs.txt" 2> "$tmp/select.log" ); then
+    labsfile="$tmp/labs.txt"
+    govern::log "post-merge-check: lab selection: $(tail -n 1 "$tmp/select.log")"
+  else
+    govern::log "post-merge-check: selector failed; falling back to the full lab suite"
+  fi
+fi
+
 govern::log "post-merge-check: running GOVERN_POST_MERGE_CMD on merged $REPO main ($sha)${PR:+, PR #$PR}"
-if ( cd "$tmp/check" && bash -c "$CMD" ); then
+if ( cd "$tmp/check" && GOVERN_LABS_FILE="$labsfile" bash -c "$CMD" ); then
   govern::log "post-merge-check: PASS on merged ref ($sha)"
   exit 0
 else
