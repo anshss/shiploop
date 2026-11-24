@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.20.19 - 2026-11-24
+
+### Fixed
+
+**The drift check no longer counts old update commits as unported local work (release train t2026-11-24-c).**
+`sync-templates --check` compared each mirrored file against today's template, so a commit that
+had written an older shipped version during an update read as a local edit as soon as the hub
+changed that file again, and the count only ever grew. A file now counts as drift only when its
+content is no version the hub ever shipped: its hash in `templates/lib/mechanism-hashes.txt` or
+`templates/lib/seed-hashes.txt`, or, for a mirrored file neither covers, a match against the
+template's history on the hub's main and release tags.
+
+### Changed
+
+**Ported from the fleet: clearer dispatch refusals, a review follow-up rule, a local pre-commit seam (release train t2026-11-24-c).**
+`pre-dispatch-check.sh` now says when a ticket is folded into parts (or carries several proposals)
+and names `GOVERN_TICKET_PART=<letter>`, instead of reporting "no proposed solution". The worker
+doctrine adds that a review follow-up commits and re-runs `govern:ship`, never a bare `git push`.
+`.githooks/pre-commit` runs every executable file in `.githooks/pre-commit.d/` after its own checks,
+so a workspace keeps its own commit checks without editing the hub-owned hook. The auto-merge guard
+gains an opt-in branch-pattern check (`GOVERN_MERGE_BRANCH_GUARD=1`; off by default, so the author
+and fork checks stay the default guard): when on, a PR head must be a governor-named branch
+(`ticket-<N>`, `sync-auto-*`, or `sl-<12hex>` on a public repo). `sync-templates` says the marker
+lives only in the main checkout when none is found, and the seed appendix notes that advisor commits
+made inside a worker's worktree get shipped with it.
+
 ## 1.20.18 - 2026-11-24
 
 ### Fixed
