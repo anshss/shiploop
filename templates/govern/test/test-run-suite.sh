@@ -12,7 +12,10 @@
 #      fixture suite with a deliberately broken test, and exits nonzero naming
 #      the failure;
 #   5. with --hub-context given, a skip NOT covered by the list is a hard
-#      failure (a skip that runs in no job is silently dead coverage).
+#      failure (a skip that runs in no job is silently dead coverage);
+#   6. the order check runs the selection REVERSED and fails naming any test
+#      whose verdict differs between the two passes; default ON for a full run,
+#      OFF for a shard run, an explicit --order-check 0|1 always wins.
 #
 # Runs with -e OFF throughout (the runner's failure paths are exercised as
 # return codes, and assert.sh records failures without aborting).
@@ -163,5 +166,76 @@ fi
 grep -q 'runs in NO job' "$T/ctx-empty.out" \
   || { echo "FAIL: uncovered skip not reported"; exit 1; }
 echo "ok - --hub-context: uncovered skip fails the run, listed skip passes"
+
+# ── 6. order check: a verdict that flips with run order is named and fails ───
+# Fixture pair that is order-dependent BY CONSTRUCTION: the planter writes a
+# marker file at a fixed path, the detector consumes it and fails when it is
+# present. Canonical order (planter, detector): detector fails. Reversed:
+# detector passes. The verdicts differ, so the order check must fail the run
+# naming the detector.
+FXO="$T/suite-order"
+mkdir -p "$FXO"
+printf '#!/usr/bin/env bash\nprintf x > "$ORDERCHECK_MARKER_DIR/marker"\necho planted\nexit 0\n' > "$FXO/test-ka-planter.sh"
+cat > "$FXO/test-kz-detect.sh" <<'EOF'
+#!/usr/bin/env bash
+if [ -f "$ORDERCHECK_MARKER_DIR/marker" ]; then
+  rm -f "$ORDERCHECK_MARKER_DIR/marker"
+  echo "marker present"
+  exit 1
+fi
+echo "clean"
+exit 0
+EOF
+chmod +x "$FXO"/test-*.sh
+ORDERCHECK_MARKER_DIR="$T/marker-dir"
+mkdir -p "$ORDERCHECK_MARKER_DIR"
+export ORDERCHECK_MARKER_DIR
+
+rm -f "$ORDERCHECK_MARKER_DIR/marker"
+rc_ord=0
+main --suite-dir "$FXO" --order-check 1 --log-dir "$T/logs-ord" > "$T/order.out" 2>&1 || rc_ord=$?
+if [ "$rc_ord" -eq 0 ]; then
+  echo "FAIL: order check passed a suite whose verdict flips with order"; cat "$T/order.out"; exit 1
+fi
+grep -q '^::error::order-dependent test: test-kz-detect' "$T/order.out" \
+  || { echo "FAIL: order check did not name the order-dependent test"; cat "$T/order.out"; exit 1; }
+grep -q '^order-check reversed pass:' "$T/order.out" \
+  || { echo "FAIL: order check did not report the reversed pass"; cat "$T/order.out"; exit 1; }
+echo "ok - order check fails the run naming the order-dependent test"
+
+rm -f "$ORDERCHECK_MARKER_DIR/marker"
+rc_noord=0
+main --suite-dir "$FXO" --order-check 0 --log-dir "$T/logs-noord" > "$T/order-off.out" 2>&1 || rc_noord=$?
+if grep -q '^order-check reversed pass:' "$T/order-off.out"; then
+  echo "FAIL: --order-check 0 still ran the reversed pass"; exit 1
+fi
+if [ "$rc_noord" -ne 1 ]; then
+  echo "FAIL: --order-check 0 lost the canonical failure (exit=$rc_noord)"; exit 1
+fi
+echo "ok - --order-check 0 runs the canonical pass only"
+
+rm -f "$ORDERCHECK_MARKER_DIR/marker"
+rc_shard=0
+main --suite-dir "$FXO" --shard 1/1 --log-dir "$T/logs-shard" > "$T/order-shard.out" 2>&1 || rc_shard=$?
+if grep -q '^order-check reversed pass:' "$T/order-shard.out"; then
+  echo "FAIL: a shard run defaulted the order check ON"; exit 1
+fi
+echo "ok - shard runs default the order check OFF"
+
+# Green control: verdicts identical in both orders pass the check and the run.
+FXG="$T/suite-order-green"
+mkdir -p "$FXG"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FXG/test-ka-ok.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FXG/test-kz-ok.sh"
+rc_green=0
+main --suite-dir "$FXG" --order-check 1 --log-dir "$T/logs-green" > "$T/order-green.out" 2>&1 || rc_green=$?
+if [ "$rc_green" -ne 0 ]; then
+  echo "FAIL: order check reddened an order-independent suite (exit=$rc_green)"; cat "$T/order-green.out"; exit 1
+fi
+grep -q '^ok - order check: every verdict identical in both orders$' "$T/order-green.out" \
+  || { echo "FAIL: green order check did not report the invariant"; cat "$T/order-green.out"; exit 1; }
+echo "ok - order check passes an order-independent suite"
+
+unset ORDERCHECK_MARKER_DIR
 
 assert_done

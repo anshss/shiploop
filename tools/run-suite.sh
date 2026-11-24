@@ -11,19 +11,29 @@
 # Usage:
 #   tools/run-suite.sh [--suite-dir DIR] [--hint FILE] [--shard i/n]
 #                      [--jobs N] [--log-dir DIR] [--hub-context FILE]
+#                      [--order-check 0|1]
 #
 #   --suite-dir DIR    Directory holding test-*.sh (default ./scripts/govern/test).
 #   --hint FILE        Scheduling hint; default: slow-tests-first.txt beside this script.
 #   --shard i/n        Run only the round-robin i-th partition of n over the order.
 #   --jobs N           Run N tests concurrently (default 1 = sequential, CI's order).
 #   --log-dir DIR      Where per-test logs go (default: a mktemp dir, kept on failure).
+#                      With the order check on, the reversed pass logs to
+#                      "<log-dir>-reversed" beside it.
 #   --hub-context FILE Skip-accounting list (tools/hub-context-tests.txt). A test that
 #     exits 77 (skip) here runs nowhere unless that list covers it, so with this flag
 #     given every uncovered skip is a hard failure. Local runs omit the flag.
+#   --order-check 0|1  After the canonical pass, run the SAME selection in REVERSED
+#     order and fail when any test's verdict differs between the two passes: that
+#     converts cross-test order dependence from "a worker notices on their machine"
+#     into a guarded invariant. Doubles the run's wall clock. Default ON for a full
+#     run (no --shard), OFF for a shard run (CI's shard job, where each partition
+#     runs in its own job and the doubling would bill every PR).
 #
 # Exit 0 = every selected test passed or skipped; exit 1 = one or more failures
 # (each named, with its log path), a leaked background fixture (see the
-# no-orphans guard below), or a broken order/skip-accounting.
+# no-orphans guard below), a broken order/skip-accounting, or (order check on)
+# a test whose verdict depends on run order.
 #
 # Tests may source this file to call build_order / assert_coverage / select_shard
 # against fixtures: sourcing defines the functions and runs nothing (the main
@@ -85,7 +95,7 @@ main() {
   local suite_dir="scripts/govern/test"
   local hint
   hint="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/slow-tests-first.txt"
-  local shard="" shards="" jobs=1 log_dir="" hub_context=""
+  local shard="" shards="" jobs=1 log_dir="" hub_context="" order_check="" rev_log=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -95,12 +105,22 @@ main() {
       --jobs)        jobs="$2"; shift 2 ;;
       --log-dir)     log_dir="$2"; shift 2 ;;
       --hub-context) hub_context="$2"; shift 2 ;;
+      --order-check) order_check="$2"; shift 2 ;;
       -h|--help)     usage; return 0 ;;
       *) echo "unknown flag: $1" >&2; usage >&2; return 2 ;;
     esac
   done
 
   [ -d "$suite_dir" ] || { echo "::error::suite dir not found: $suite_dir" >&2; return 2; }
+
+  # Default: ON for a full run, OFF for a shard run; an explicit value always wins.
+  if [ -z "$order_check" ]; then
+    if [ -n "$shard" ]; then order_check=0; else order_check=1; fi
+  fi
+  case "$order_check" in
+    0|1) ;;
+    *) echo "::error::--order-check takes 0 or 1, got: $order_check" >&2; return 2 ;;
+  esac
 
   local tmp order selected
   tmp="$(mktemp -d)"
@@ -129,11 +149,11 @@ main() {
   local passed=0 failed=0 skipped=0 total=0
   local fails=() skips=()
 
-  run_one() { # <name>
-    local name="$1" rc=0
-    bash "$suite_dir/$name.sh" > "$log_dir/$name.log" 2>&1 || rc=$?
-    printf '%s\n' "$rc" > "$log_dir/$name.rc"
-    sweep_orphans "$name"
+  run_one() { # <name> <log_dir>
+    local name="$1" ld="$2" rc=0
+    bash "$suite_dir/$name.sh" > "$ld/$name.log" 2>&1 || rc=$?
+    printf '%s\n' "$rc" > "$ld/$name.rc"
+    sweep_orphans "$name" "$ld"
     return 0
   }
 
@@ -157,8 +177,8 @@ main() {
     done | sort -u
     return 0
   }
-  sweep_orphans() { # <name>
-    local name="$1" now new p
+  sweep_orphans() { # <name> <log_dir>
+    local name="$1" ld="$2" now new p
     [ "${GOVERN_SUITE_NO_ORPHANS:-1}" = "1" ] || return 0
     now="$(orphans_now)"
     new="$(comm -13 <(printf '%s' "$base_orphans") <(printf '%s' "$now"))"
@@ -167,8 +187,8 @@ main() {
     # a sleep stub dies directly. No lib/common.sh here on purpose: it sources the
     # workspace config at source time, which a fixture suite dir cannot provide.
     for p in $new; do kill "$p" 2>/dev/null || true; done
-    printf '%s\n' "$new" > "$log_dir/$name.orphans"
-    printf 'leaked background fixture process(es), killed by the no-orphans guard:\n%s\n' "$new" >> "$log_dir/$name.log"
+    printf '%s\n' "$new" > "$ld/$name.orphans"
+    printf 'leaked background fixture process(es), killed by the no-orphans guard:\n%s\n' "$new" >> "$ld/$name.log"
     return 0
   }
   local base_orphans orphans_pat
@@ -183,40 +203,73 @@ main() {
   esac
   base_orphans="$(orphans_now)"
 
-  if [ "$jobs" -gt 1 ]; then
-    # Portable slot control (no `wait -n`, which macOS's stock bash 3.2 lacks):
-    # hold at most $jobs background PIDs, poll with kill -0, reap by dropping the
-    # dead ones; the final `wait` drains the rest. Each test's real status lands
-    # in its .rc file, so exit codes are never read off the `wait`s.
-    local name pids=() p alive newpids=()
-    while IFS= read -r name; do
-      total=$((total + 1))
-      run_one "$name" &
-      pids+=("$!")
-      while [ "${#pids[@]}" -ge "$jobs" ]; do
-        alive=0
-        newpids=()
-        for p in ${pids[@]+"${pids[@]}"}; do
-          if kill -0 "$p" 2>/dev/null; then
-            alive=$((alive + 1))
-            newpids+=("$p")
+  run_pass() { # <selected_file> <log_dir> <count:1 canonical, 0 reversed>
+    local sel="$1" ld="$2" inc="$3" name p alive
+    if [ "$jobs" -gt 1 ]; then
+      # Portable slot control (no `wait -n`, which macOS's stock bash 3.2 lacks):
+      # hold at most $jobs background PIDs, poll with kill -0, reap by dropping the
+      # dead ones; the final `wait` drains the rest. Each test's real status lands
+      # in its .rc file, so exit codes are never read off the `wait`s.
+      local pids=() newpids=()
+      while IFS= read -r name; do
+        [ "$inc" = "1" ] && total=$((total + 1))
+        run_one "$name" "$ld" &
+        pids+=("$!")
+        while [ "${#pids[@]}" -ge "$jobs" ]; do
+          alive=0
+          newpids=()
+          for p in ${pids[@]+"${pids[@]}"}; do
+            if kill -0 "$p" 2>/dev/null; then
+              alive=$((alive + 1))
+              newpids+=("$p")
+            fi
+          done
+          # Not `pids=("${newpids[@]}")`: with newpids empty, unquoted expansion
+          # of a possibly-empty array is what stays unbound-safe on bash 3.2.
+          pids=(${newpids[@]+"${newpids[@]}"})
+          if [ "$alive" -ge "$jobs" ]; then
+            sleep 0.2
           fi
         done
-        # Not `pids=("${newpids[@]}")`: with newpids empty, unquoted expansion
-        # of a possibly-empty array is what stays unbound-safe on bash 3.2.
-        pids=(${newpids[@]+"${newpids[@]}"})
-        if [ "$alive" -ge "$jobs" ]; then
-          sleep 0.2
-        fi
-      done
+      done < "$sel"
+      wait
+    else
+      while IFS= read -r name; do
+        [ "$inc" = "1" ] && total=$((total + 1))
+        run_one "$name" "$ld"
+      done < "$sel"
+    fi
+    return 0
+  }
+
+  run_pass "$selected" "$log_dir" 1
+
+  # ── order-independence check ────────────────────────────────────────────────
+  # A test green in canonical order and red (or skipped, or vice versa) in
+  # reversed order is reading state another test left behind. Running the SAME
+  # selection in REVERSED order and comparing verdicts turns that from a
+  # once-noticed machine-local flake into a guarded invariant of every full run.
+  if [ "$order_check" = "1" ]; then
+    local rev_log="${log_dir}-reversed"
+    mkdir -p "$rev_log"
+    awk '{ a[NR] = $0 } END { for (i = NR; i >= 1; i--) print a[i] }' "$selected" > "$tmp/selected-rev.txt"
+    echo "order-check: running the same selection in reversed order (logs: $rev_log)"
+    run_pass "$tmp/selected-rev.txt" "$rev_log" 0
+    local rev_passed=0 rev_failed=0 rev_skipped=0 rname rrc mismatch=0 rc1 rc2
+    while IFS= read -r rname; do
+      rrc="$(cat "$rev_log/$rname.rc")"
+      if [ "$rrc" -eq 0 ]; then rev_passed=$((rev_passed + 1))
+      elif [ "$rrc" -eq 77 ]; then rev_skipped=$((rev_skipped + 1))
+      else rev_failed=$((rev_failed + 1)); fi
+      rc1="$(cat "$log_dir/$rname.rc")"
+      if [ "$rc1" != "$rrc" ]; then
+        echo "::error::order-dependent test: $rname verdict differs canonical=$rc1 reversed=$rrc (logs: $log_dir/$rname.log, $rev_log/$rname.log)"
+        mismatch=$((mismatch + 1))
+      fi
     done < "$selected"
-    wait
-  else
-    local name rc
-    while IFS= read -r name; do
-      total=$((total + 1))
-      run_one "$name"
-    done < "$selected"
+    echo "order-check reversed pass: passed=$rev_passed  failed=$rev_failed  skipped=$rev_skipped"
+    [ "$mismatch" -eq 0 ] || return 1
+    echo "ok - order check: every verdict identical in both orders"
   fi
 
   # Summary: one line per test, in order (logs hold the full output either way).
@@ -242,7 +295,7 @@ main() {
   # Orphan attribution: any <name>.orphans file is a fixture leak the guard caught
   # and killed; it fails the run, named, no matter what the test's own rc said.
   local orphaned=0 of
-  for of in "$log_dir"/*.orphans; do
+  for of in "$log_dir"/*.orphans ${rev_log:+"$rev_log"/*.orphans}; do
     [ -f "$of" ] || continue
     orphaned=$((orphaned + 1))
     echo "::error::$(basename "$of" .orphans) leaked background fixture process(es) (killed by the no-orphans guard): $(tr '\n' ' ' < "$of")"

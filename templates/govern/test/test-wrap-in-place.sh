@@ -234,7 +234,13 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 if [ "$staged" = 1 ]; then
-  kill -INT "$WPID" 2>/dev/null
+  # Signal the whole job group, not just the leader: wrap.sh is parked in a
+  # foreground `sleep` inside its hang seam, and an INT to the leader alone is
+  # deferred by bash until that sleep exits — under a loaded parallel runner
+  # that deferred window (plus poll time) used to outlive the seam and let the
+  # transform COMPLETE (exit 0, layout moved) with the signal never acting.
+  # Group-INT kills the sleep too, so the trap fires immediately.
+  kill -INT -- "-$WPID" 2>/dev/null || kill -INT "$WPID" 2>/dev/null
   wait "$WPID" 2>/dev/null; rc=$?
   assert_eq "$rc" "1" "5. wrap exits nonzero after SIGINT"
   assert_eq "$(layout_no_wrap "$T")" "$BEFORE" "5. trap restored layout byte-identical"

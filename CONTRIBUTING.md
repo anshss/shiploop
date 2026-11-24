@@ -45,7 +45,7 @@ There is no dev server; everything is bash. The realistic dev loop:
    chmod +x "$WS"/scripts/govern/test/*.sh
    bash tools/run-suite.sh --suite-dir "$WS/scripts/govern/test" --jobs 8
    ```
-   `--jobs 8` runs tests concurrently with each test's output captured to its own log file and a fail summary (log paths included) at the end; omit it for CI's exact sequential order. Other flags: `--shard i/n` runs one round-robin partition, `--hint FILE` overrides the scheduling hint, `--hub-context FILE` enables CI's skip accounting (off locally). If it is green locally against a fresh scaffold, CI will almost always be green too.
+   `--jobs 8` runs tests concurrently with each test's output captured to its own log file and a fail summary (log paths included) at the end; omit it for CI's exact sequential order. Other flags: `--shard i/n` runs one round-robin partition, `--hint FILE` overrides the scheduling hint, `--hub-context FILE` enables CI's skip accounting (off locally), and the order check (on by default for a full run, off for a shard) runs the whole selection a second time in reversed order and fails naming any test whose verdict depends on run order. If it is green locally against a fresh scaffold, CI will almost always be green too.
 
    Negative controls (does a guard actually fire?) run against the NEW test file only: `bash templates/govern/test/test-<name>.sh` from this checkout. Never run negative controls against the whole suite: a deliberately broken fixture in a full run wastes the run and risks the broken copy leaking into a commit.
 
@@ -68,6 +68,8 @@ Meaning:
 - `&` + `wait $!` — the child is a background job so a hang is escapable (`GOVERN_WORKER_TIMEOUT` in production, `kill %1` in test), but the test still waits for its full exit status.
 
 Follow this idiom for any new test that shells out to a mechanism script. A test that inherits the parent's TTY or does not `wait` will race the runner and produce flakes that only reproduce on CI.
+
+The environment a test runs in is the harness's, not yours: sourcing `templates/govern/test/assert.sh` installs a per-test sandbox before your test body runs (a private `HOME` holding a canary dotfile, a private `TMPDIR`, git config pointed inside the sandbox), and `assert_done` verifies it after. Write fixtures through `$HOME` and `mktemp` as usual and they land inside the sandbox automatically; a test that genuinely needs host behavior opts out with `govern_sandbox_off  # <one-line reason>` right after the source.
 
 ### Never simulate a missing tool with a hardcoded PATH
 
