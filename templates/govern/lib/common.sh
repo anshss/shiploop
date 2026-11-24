@@ -796,31 +796,15 @@ govern::ticket_filemax() { # [tickets-file] -> N
   echo "${m:-0}"
 }
 
-# govern::ticket_logmax: highest ticket number named by a `file #N`, `resolve #N` or `delete #N`
-# commit subject anywhere in the git history of the directory holding the tickets file (every ref),
-# or 0 when that directory is not a git repo or git fails. The three verbs are the ones the queue's
-# own commits use; matching is case-insensitive and the verb must start the line or follow a
-# non-alphanumeric character, so a `repo#230` PR reference in a subject never counts. A number whose
-# block was filed by hand and later resolved and deleted leaves no trace in the file or in
-# .ticket-seq, but its commit subjects still carry it.
-govern::ticket_logmax() { # [tickets-file] -> N (0 if none)
-  local f="${1:-$TICKETS_FILE}" dir n
-  dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
-  [[ -n "$dir" ]] || { printf '0\n'; return 0; }
-  n="$(git -C "$dir" log --all --format=%s 2>/dev/null \
-        | grep -ioE '(^|[^[:alnum:]])(file|resolve|delete) #[0-9]+' \
-        | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
-  printf '%s\n' "${n:-0}"
-  return 0
-}
-
 # govern::next_ticket_number — allocate the next number: max(highest `## #N` in tickets.md,
-# persisted high-water mark in governor/.ticket-seq, highest number in the queue's commit subjects)
-# + 1, then bump .ticket-seq to it. A number is
+# persisted high-water mark in governor/.ticket-seq) + 1, then bump .ticket-seq to it. A number is
 # therefore NEVER reused — not after the highest ticket is resolved+deleted, and not by a
 # manual filing that never read/bumped the seq. The read+bump is serialized under the bookkeep
 # lock so two concurrent filers (a govern driver and an operator sweep) can't read the same max and
-# collide on one number. Reentrant: a caller already holding the bookkeep lock (land-resolution.sh
+# collide on one number. No git-subject term: a hand-minted filing's "file #N" commit subject
+# burned whole number ranges AFTER the fact while preventing nothing; the seq high-water mark plus
+# the session-end lint (a live heading above the seq is a hand-mint) are the guards. Reentrant: a
+# caller already holding the bookkeep lock (land-resolution.sh
 # does) sets GOVERN_BOOKKEEP_LOCK_HELD=1 to skip re-acquiring (the mkdir mutex is NOT reentrant — a
 # second acquire from the same process would spin to timeout). Prints the allocated number to stdout.
 #
@@ -839,12 +823,10 @@ govern::next_ticket_number() { # [tickets-file] -> N
     if govern::lock_acquire "$lock" 60 300; then got_lock=1
     else govern::log "next_ticket_number: bookkeep lock busy >60s — proceeding (degraded)"; fi
   fi
-  local hwm filemax logmax maxn
+  local hwm filemax maxn
   hwm="$( [[ -f "$seq_file" ]] && tr -dc '0-9' < "$seq_file" 2>/dev/null || echo 0)"; hwm="${hwm:-0}"
   filemax="$(govern::ticket_filemax "$tickets_file")"
   maxn=$(( hwm > filemax ? hwm : filemax ))
-  logmax="$(govern::ticket_logmax "$tickets_file")"
-  maxn=$(( maxn > logmax ? maxn : logmax ))
   maxn=$((maxn+1))
   if [[ "${GOVERN_SEQ_PEEK:-0}" != "1" ]]; then
     printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true

@@ -334,6 +334,7 @@ e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-re
 68d0637351ad245af4bc1432a3158c444ac9e07c0e88f5875e9ab450fc7762be  govern/lib/common.sh
 6995796fa220a8a3a5d9a536a0c8f82ded4046a3ed270b46c7d17e2e0ff88987  govern/lib/common.sh
 6c7bd2f21a3854af4ce6c14dfb87fb033a441563c27a9e2401185fdcb30f9778  govern/lib/common.sh
+6c8ac93da34f44a872476dc3b8e8a563e17382280ad7206dbeec0e5e01d0927f  govern/lib/common.sh
 6ea04ef3198212078a8f641dbb1e2ca45d03980bdb5bac14908cb88816c5cc21  govern/lib/common.sh
 703c85a725bbcdd6778e55c1c335cf65a059fbb5d4317b65b7fcd2f1d03b9058  govern/lib/common.sh
 7336487902e1859e529b4152a06e16642de905bf41b945349bc5aadb9ddaf244  govern/lib/common.sh
@@ -718,6 +719,7 @@ e69846829bb412dc52fe5fc36ddc880ff2484a45659e8fdba6afb6acd0caf7d7  hooks/router-p
 f6dcd99017140455c6dbd769993bed95a880e8bca773f48e1a98b0dbc0d9aea0  hooks/router-posture-reminder.sh
 
 # -- hooks/rules-on-touch.sh --
+06a9ec4a8d4ff62b15e8a9d09c71906267510ca3a30cf4fb9f0ee67403f5b0a7  hooks/rules-on-touch.sh
 091b6c578aaa4c655b2b0cfbd20ae87d2728d75cb152094348aa93706013299f  hooks/rules-on-touch.sh
 18ddb58f7f999390d170f97af8e52ff9dff3d3a677fbf09a6452b1b4e795c158  hooks/rules-on-touch.sh
 2051fa84a4695052b7d6428a146149ba0c25fd8bb64ad55969d0e98df7908860  hooks/rules-on-touch.sh
@@ -984,6 +986,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 11c831904c38645adb4dccbcd4f73c905a1b3b91325c87208fac02bcf7dce2ac  scripts/govern/test/test-codebase-index.sh
 1211a6387a6379c2ee641090e3fc2af79c4f8de3fdd346ccc12a6dc2cb35489d  scripts/govern/test/test-events-status.sh
 1267754c47c30564042f17d826b9bd80e8a669fe419e58571474ead5f70f7964  scripts/govern/test/test-validation-record.sh
+13bab0206f4f6ebd6abc056d498f2120a9f87bd191d1d82d6a0ee12a7198698e  scripts/govern/test/test-file-ticket-guards.sh
 13ee0ac4c7a02f8c9e020b17983d2de133f5843da51f42e68ac79070a0024477  scripts/govern/test/test-self-apply.sh
 1465ee57833b1339711b226441085a1abb5997b3d3e43332eb0aad3bf4283787  scripts/govern/test/test-infra-halt.sh
 14964f3b3c5f0fadcc658ec9c2ddea0c55b941b62ac6a831e74652328f860127  scripts/govern/test/test-validation-gate-heading-variants.sh
