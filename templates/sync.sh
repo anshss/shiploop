@@ -190,6 +190,34 @@ sync_repo() {
   fi
 }
 
+# A dirty root is never pulled, rebased or switched (it can hold uncommitted coordination edits),
+# but commits already made on its main still need to reach origin. A push touches no working-tree
+# file, so when the root is on main with an origin, ahead and not behind is pushed. Behind or
+# diverged prints both counts and the inspect command and pushes nothing. Silent when there is no
+# origin, the root is not on main, or GOVERN_NO_PUSH=1; a failed fetch warns and moves nothing.
+push_dirty_root() {
+  [ "${GOVERN_NO_PUSH:-0}" != "1" ] || return 0
+  git remote get-url origin >/dev/null 2>&1 || return 0
+  [ "$(git branch --show-current)" = "main" ] || return 0
+  if ! git fetch --quiet origin main >/dev/null 2>&1; then
+    warn "root fetch failed: not pushing"
+    return 0
+  fi
+  local behind ahead
+  read -r behind ahead < <(git rev-list --left-right --count origin/main...main 2>/dev/null || echo "0	0")
+  behind="${behind:-0}"; ahead="${ahead:-0}"
+  if [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+    if git push origin main >/dev/null 2>&1; then
+      ok "pushed $ahead root main commit(s) to origin (tree left as is)"
+    else
+      fail "root main is ahead by $ahead and the push FAILED: git push origin main"
+    fi
+  elif [ "$behind" -gt 0 ]; then
+    warn "root main is ahead by $ahead and behind by $behind: not pushed. Inspect with: git log --oneline --left-right main...origin/main"
+  fi
+  return 0
+}
+
 # Also sync the workspace root (it's a git repo too).
 sync_root() {
   printf "\n%s── %s ──%s\n" "$ANSI_DIM" "root (meta-repo)" "$ANSI_RESET"
@@ -202,6 +230,7 @@ sync_root() {
   dirty=$(git status --porcelain | wc -l | tr -d ' ')
   if [ "$dirty" -gt 0 ]; then
     warn "DIRTY ($dirty files) — skipped"
+    push_dirty_root
     return
   fi
   repair_duplicate_upstream
