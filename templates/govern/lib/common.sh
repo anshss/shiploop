@@ -1834,7 +1834,7 @@ govern::pending_sync_clear() { # <repo>
 }
 
 # ── auto-merge safety guard (external-PR protection) ────────────────────────
-# Three independent, FAIL-CLOSED checks the auto-merge path (merge-pr.sh + every other `gh pr merge`
+# Two always-on, FAIL-CLOSED checks (plus one opt-in) the auto-merge path (merge-pr.sh + every other `gh pr merge`
 # caller) MUST pass before the `gh pr merge` is even attempted. Rationale: once the workspace's sub-
 # repos go public, an external contributor's PR — or a compromised branch push that happens to be
 # green — must NEVER be auto-merged, regardless of CI. Human merges via gh/web are unaffected: this
@@ -1843,14 +1843,14 @@ govern::pending_sync_clear() { # <repo>
 #      (the workspace owner / governor bot). Different login → block (`external-author`).
 #   2. **Head repo == base repo** — the PR is NOT from a fork. Same login on a fork clone is not
 #      enough; a fork PR is unconditionally rejected (`fork-pr`).
-#   3. **Head branch matches a governor-owned pattern** — `govern:ship` pushes `ticket-<N>` on a
+#   3. **(opt-in, GOVERN_MERGE_BRANCH_GUARD=1) Head branch matches a governor-owned pattern** — `govern:ship` pushes `ticket-<N>` on a
 #      private repo and the neutral `sl-<hex>` scheme on a PUBLIC repo (see govern::neutral_branch);
 #      the sync-port lane pushes `sync-auto-*`. Any other branch name → `bad-branch`. Extend
-#      GOVERN_MERGE_BRANCH_RE if you add another governor-owned naming scheme, or set
-#      GOVERN_MERGE_BRANCH_GUARD=0 to turn this check off.
+#      GOVERN_MERGE_BRANCH_RE if you add another governor-owned naming scheme. Off by default:
+#      checks 1 and 2 always apply.
 # Any gh/jq/lookup error is treated as a block (`lookup-failed`) — a transient GitHub outage NEVER
 # degrades into a blind merge.
-GOVERN_MERGE_BRANCH_GUARD="${GOVERN_MERGE_BRANCH_GUARD:-1}"
+GOVERN_MERGE_BRANCH_GUARD="${GOVERN_MERGE_BRANCH_GUARD:-0}"
 # NB: the two patterns are assigned via a conditional (not `${VAR:-default}`) because the `{12}`
 # quantifier's `}` would otherwise terminate the parameter-expansion default early and mangle the regex.
 [[ -n "${GOVERN_MERGE_BRANCH_RE:-}" ]] || GOVERN_MERGE_BRANCH_RE='^(ticket-[0-9]+|sync-auto-.*)$'
@@ -2099,7 +2099,7 @@ govern::pr_automerge_allowed() { # <repo> <pr> -> [reason on stdout on block]; r
   # spoofed fork owner name). Then the branch pattern (final structural check).
   [[ "$author"     == "$own"        ]] || { printf 'external-author'; return 1; }
   [[ "$head_owner" == "$base_owner" ]] || { printf 'fork-pr';         return 1; }
-  if [[ "${GOVERN_MERGE_BRANCH_GUARD:-1}" != "0" ]]; then
+  if [[ "${GOVERN_MERGE_BRANCH_GUARD:-0}" == "1" ]]; then
     bre="$GOVERN_MERGE_BRANCH_RE"
     if govern::repo_is_public "$repo"; then bre="$GOVERN_MERGE_BRANCH_RE_PUBLIC"; fi
     [[ "$head" =~ $bre ]] || { printf 'bad-branch'; return 1; }

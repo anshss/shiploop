@@ -9,9 +9,10 @@
 #   B. Own author    + FORK repo (bob owns head)               → BLOCK exit 5, reason fork-pr
 #   C. gh api user   FAILS                                     → BLOCK exit 5, reason lookup-failed
 #   D. Own author    + own repo + green CI, branch ticket-42   → ALLOW exit 0, guard silent
-#   E. Own author    + own repo + green CI, branch vf-lever-enforce (matches no governor branch
-#      pattern)                                                → BLOCK exit 5, reason bad-branch
-#   F. Same foreign branch with GOVERN_MERGE_BRANCH_GUARD=0    → ALLOW exit 0 (kill switch)
+#   E. Own author    + own repo + green CI, branch vf-lever-enforce, guard unset (default off)
+#                                                              → ALLOW exit 0 (no branch leg by default)
+# With GOVERN_MERGE_BRANCH_GUARD=1 (opt-in third check):
+#   F. foreign branch vf-lever-enforce                         → BLOCK exit 5, reason bad-branch
 #   G. sync-auto-<x> branch on a private repo                  → ALLOW exit 0
 #   H. sl-<12hex> branch on a PRIVATE repo                     → BLOCK exit 5, reason bad-branch
 #   I. sl-<12hex> branch on a PUBLIC repo                      → ALLOW exit 0
@@ -27,7 +28,6 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"   # alpha auto-mergeable, web frontend, org acme
 # Guard is bypassed by default under mk_ws_stub — this test exercises it explicitly.
 unset _GOVERN_ASSUME_MERGE_ALLOWED
-export GOVERN_MERGE_BRANCH_GUARD=1
 
 # The gh stub is DATA-DRIVEN: the test writes GH_* files that shape each response so the same stub
 # handles every matrix cell without a per-cell rewrite. Files:
@@ -114,17 +114,20 @@ else
 fi
 assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "D: gh pr merge WAS invoked once"
 
-# ── E. Own author + own repo, a branch no governor lane produces → block(bad-branch) ──
+# ── E. Default (guard unset): a branch no governor lane produces still merges ──
 pr_json "acme" "vf-lever-enforce" "acme" "acme"
 run_merge
-assert_eq "$rc" "5" "E: a foreign branch name is blocked with exit 5"
-assert_contains "$out" "external-pr-blocked (bad-branch)" "E: reason token is bad-branch"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "E: gh pr merge was NEVER invoked"
+assert_eq "$rc" "0" "E: with the branch guard unset a foreign branch name is ALLOWED"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "E: gh pr merge WAS invoked once"
 
-# ── F. Same branch with the kill switch off → ALLOW ──
-GOVERN_MERGE_BRANCH_GUARD=0 run_merge
-assert_eq "$rc" "0" "F: GOVERN_MERGE_BRANCH_GUARD=0 turns the branch check off"
-assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "1" "F: gh pr merge WAS invoked once"
+# ── Opt-in branch guard ──
+export GOVERN_MERGE_BRANCH_GUARD=1
+
+# ── F. Foreign branch → block(bad-branch) ──
+run_merge
+assert_eq "$rc" "5" "F: a foreign branch name is blocked with exit 5"
+assert_contains "$out" "external-pr-blocked (bad-branch)" "F: reason token is bad-branch"
+assert_eq "$(wc -l < "$T/merge-invocations.log" | tr -d ' ')" "0" "F: gh pr merge was NEVER invoked"
 
 # ── G. sync-auto-* branch on a private repo → ALLOW ──
 pr_json "acme" "sync-auto-2026" "acme" "acme"

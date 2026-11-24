@@ -8,7 +8,8 @@
 #   3. ticket_branch — neutral on public, ticket-<N> on private.
 #   4. find_pr — matches the neutral head.
 #   5. GUARD (pr_automerge_allowed via merge-pr.sh): a neutral branch is ALLOWED on a public repo,
-#      but blocked (bad-branch) on a private repo: the wider pattern is public-only.
+#      and on a private repo too by default (no branch leg); with GOVERN_MERGE_BRANCH_GUARD=1 it
+#      is blocked (bad-branch) on a private repo because the wider pattern is public-only.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -99,7 +100,6 @@ assert_contains "$found" "512" "find_pr locates a PR whose head is the neutral s
 # ── 5. GUARD via merge-pr.sh: neutral branch allowed regardless of repo visibility ───
 # Reuse the automerge-guard harness shape: a data-driven gh stub + explicit guard (unset the bypass).
 unset _GOVERN_ASSUME_MERGE_ALLOWED
-export GOVERN_MERGE_BRANCH_GUARD=1
 cat > "$T/bin/gh" <<EOF
 #!/usr/bin/env bash
 case "\$*" in
@@ -129,17 +129,22 @@ run_guard GOVERN_PUBLIC_REPOS=alpha
 assert_eq "$rc" "0" "GUARD: neutral sl-<hex> branch is ALLOWED on a configured-PUBLIC repo"
 assert_eq "$(wc -l < "$T/merge.log" | tr -d ' ')" "1" "GUARD: the merge WAS invoked for the public-repo neutral PR"
 
-# PRIVATE repo (gh says private, knob unset) → neutral branch is BLOCKED (bad-branch): the wider
-# public pattern never applies to a private repo.
+# PRIVATE repo (gh says private, knob unset), branch guard unset → neutral branch ALLOWED: only
+# own-author + non-fork gate the merge by default.
 printf 'private\n' > "$T/gh-vis2"
 run_guard GOVERN_PUBLIC_REPOS=
-assert_eq "$rc" "5" "GUARD: neutral branch is BLOCKED on a PRIVATE repo (private guard not weakened)"
+assert_eq "$rc" "0" "GUARD: neutral branch is ALLOWED on a PRIVATE repo by default (no branch leg)"
+assert_eq "$(wc -l < "$T/merge.log" | tr -d ' ')" "1" "GUARD: the merge WAS invoked for the private-repo neutral PR"
+
+# Opt-in branch guard on a PRIVATE repo → neutral branch BLOCKED (the wider pattern is public-only).
+run_guard GOVERN_PUBLIC_REPOS= GOVERN_MERGE_BRANCH_GUARD=1
+assert_eq "$rc" "5" "GUARD: with the branch guard on, a neutral branch is BLOCKED on a PRIVATE repo"
 assert_contains "$out" "external-pr-blocked (bad-branch)" "GUARD: private-repo neutral PR blocks as bad-branch"
 assert_eq "$(wc -l < "$T/merge.log" | tr -d ' ')" "0" "GUARD: the merge was NOT invoked for the private-repo neutral PR"
 
 # PUBLIC repo + classic ticket-<N> head still ALLOWED (in-flight PR opened before repo went public).
 jq -n '{user:{login:"acme"},head:{ref:"ticket-42",repo:{owner:{login:"acme"}}},base:{repo:{owner:{login:"acme"}}}}' > "$T/gh-pr.json"
-run_guard GOVERN_PUBLIC_REPOS=alpha
+run_guard GOVERN_PUBLIC_REPOS=alpha GOVERN_MERGE_BRANCH_GUARD=1
 assert_eq "$rc" "0" "GUARD: classic ticket-<N> head is still ALLOWED on a public repo (transition-safe)"
 
 assert_done
