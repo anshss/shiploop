@@ -198,7 +198,7 @@ if [[ "$renamed_known" -eq 1 ]]; then
 fi
 
 if [[ "$total" -gt 0 && "$missing" -eq "$total" && "$gone_known" -eq 1 ]]; then
-  printf 'STALE #%s: all %s named path(s) are gone from disk and git history shows `%s` once existed (deleted) — skipping\n' \
+  printf 'STALE #%s: all %s named path(s) are gone from disk and git history shows `%s` once existed (deleted, not renamed); skipping\n' \
     "$N" "$total" "$gone_example"
   exit 10
 fi

@@ -306,6 +306,12 @@ if git -C "$commit_dir" rev-parse --git-dir >/dev/null 2>&1; then
   ( cd "$commit_dir"
     git add -- "$(basename "$TICKETS_FILE")" >/dev/null 2>&1 || true
     git add -- "$SEQ_FILE" >/dev/null 2>&1 || true   # absolute path; no-op if outside the repo (tests)
+    # A pathspec git cannot match fails the WHOLE commit, and the `|| true` below would hide that:
+    # a seq file outside this repo (or ignored by it) left the filing uncommitted, and the next
+    # filing's foreign-changes guard then refused with exit 12. So when git does not track the seq
+    # file here, the commit names the tickets file alone (named twice, which git accepts). This
+    # runs inside the subshell, so SEQ_FILE outside it is untouched.
+    git ls-files --error-unmatch -- "$SEQ_FILE" >/dev/null 2>&1 || SEQ_FILE="$(basename "$TICKETS_FILE")"
     git commit -q -m "docs(tickets): file #$n — $title" -- "$(basename "$TICKETS_FILE")" "$SEQ_FILE" >/dev/null 2>&1 || true
     if [[ "${GOVERN_NO_PUSH:-0}" != "1" ]] && git remote get-url origin >/dev/null 2>&1; then
       # CAS-with-retry: if origin advanced under us (a concurrent driver's land-resolution.sh run / another filing
