@@ -77,13 +77,20 @@
 #       delete the queue block against a PR that never merged. Exit 13, NOT 12, because the 6c
 #       guard owns 12; a caller can tell "tickets.md is dirty" from "the reported PR never reached
 #       the merge set".
+#   6e. (before any merge, see step 5) If the report carries a tickets[] array whose entries are
+#       not all objects {ticket:<number>,status:<string>,note?} (or bare numbers equal to THIS
+#       ticket: a one-member batch), refuse with exit 14 and merge nothing — a malformed array
+#       (observed live: "tickets":["114"], a bare STRING array) can never land, so spending the
+#       merge on it only strands a merged PR with an unbooked ticket. The landing-stage classifier
+#       (step 7's exit 14) remains as defense-in-depth behind this gate.
 #   7. Only once every PR is merged (or --no-merge) and the migration step (if any) succeeded:
 #      pipe the report into land-resolution.sh <N> — the actual tickets.md edit + commit + push.
 #      A non-empty report `.tickets` array lands PER TICKET (see the loop below). Two shapes refuse
 #      BEFORE any bookkeeping rather than land nothing while claiming success:
 #        exit 14: the array is non-empty but yields no parseable {ticket,status} entries and is
 #                 not a bare-number echo of this ticket (["junk"], [{}]), a shape the loop would
-#                 silently zero-iterate.
+#                 silently zero-iterate. The 6e pre-flight refuses the same shapes BEFORE any
+#                 merge; this check is the defense-in-depth backstop at landing time.
 #        exit 15: booked nothing: no land-resolution call succeeded (every group member
 #                 parked/failed), so no "resolved" history row and no "landed" print.
 #   8. Worker-boundary cleanup that belongs wherever a worker's resolution actually lands: refresh
@@ -261,6 +268,17 @@ if [[ "$NO_MERGE" -ne 1 ]]; then
     rt_record_history parked "queue has uncommitted changes: refused before merge"
     exit 12
   fi
+fi
+
+# ── 2c. Report tickets[] SHAPE pre-flight: refuse BEFORE any merge or gate. A malformed array
+#    (observed live 2026-11-25: "tickets":["114"], a bare STRING array) used to slip past the
+#    silenced jq in the landing loop — the PR merged, the gate passed, "landed" printed, and
+#    land-resolution.sh never ran; the later landing classifier (exit 14) catches the shape but
+#    only AFTER the merge is spent. Refusing here keeps a merge from being spent on a report
+#    that can never land; the queue block stays intact either way. ────────────────────────────
+if [[ "$(jq -r '(.tickets // []) | length == 0 or all(.[]; (type == "object" and (.ticket | type == "number") and (.status | type == "string")) or (type == "number" and . == $n))' --argjson n "$N" <<<"$report" 2>/dev/null || echo false)" != "true" ]]; then
+  echo "resolve-ticket #$N: the report's tickets array is malformed (shape: $(printf '%s' "$report" | jq -c '.tickets' 2>/dev/null | cut -c1-200)); refusing BEFORE any merge or bookkeeping: no merge, no landing, no history row, the queue block stays. Accepted shapes: absent/null (single-ticket), [{ticket:<number>,status:<string>,note?}] (group), or a bare-number array equal to this ticket ([$N], a one-member batch). A string array is never coerced into single-ticket semantics. Fix the report's tickets array and re-run." >&2
+  exit 14
 fi
 
 # ── 3. Await CI + merge every PR the report names. merge-pr.sh calls await-ci.sh internally
