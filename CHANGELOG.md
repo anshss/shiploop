@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.20.22 - 2026-11-24
+
+### Fixed
+
+**Resolve, dispatch and the suite: six release trains close in one release.**
+
+- `resolve-ticket.sh` tries the dispatch-recorded worktree name first, then rootScope.worktree, ticket-N, t-N, and the PR head branch, so a packet-dispatched ticket's worktree tears down instead of orphaning with its registry slot held (`t2026-11-24-f`).
+- `resolve-ticket.sh` classifies the report's group shape before landing: bare numbers equal to the invoked ticket take the single-ticket path, a non-empty unparseable array refuses without bookkeeping, and the "landed" line plus the resolved history row fire only after a landing actually succeeded (`t2026-11-24-f`).
+- `ticket_proposal` and `ticket_precision` return a distinct stale signal when a worker worktree's queue file predates main's proposal-appending commit, instead of the same empty return a genuinely missing proposal gives (`t2026-11-24-g`).
+- `file-ticket.sh` strips a `- ` bullet prefix from field markers at file time, and lint-tickets refuses stored bullet-prefixed markers the line-anchored extractors cannot read (`t2026-11-24-g`).
+- `ticket_deps`'s Blocks branch anchors the marker to the start of the line and ignores backticked examples, so a prose mention can no longer park a ticket with phantom dependencies (`t2026-11-24-g`).
+- The govern suite reaps its fixture processes: a shared trap-based reap helper in assert.sh kills every spawned background PID on test exit, the events-monitor test execs the real monitor so its kills land on it, fleet-monitor traps TERM and takes its tail child down, and run-suite fails a run that leaves orphans behind (`t2026-11-24-h`).
+- The three hub-context lock tests run against a stub workspace.sh so they pass from the hub checkout, and the two load-flaky tests pin their state paths per run and drain their producer pipelines pipefail-safe (`t2026-11-24-i`).
+- `govern::date_to_epoch`'s BSD branch parses midnight explicitly, so a clock tick between the now-capture and the parse can no longer floor a staleness age one day short (`t2026-11-24-i`).
+- The pre-push hook runs the hub-context test list when a push targets shiploop main with template, test or doc changes, refusing a push that would land a red main; kill switch GOVERN_PRE_PUSH_HUB_TESTS=0 (`t2026-11-24-j`).
+- `ship.sh` skips a sub-repo whose branch has no content diff against the default branch or whose PR already merged, sharing reap.sh's landed-branch check, so re-shipping a multi-repo ticket no longer re-opens merged PRs; the worktree:rm half of the squash-ancestry report was verified already fixed and left alone (`t2026-11-24-j`).
+- `wrap.sh`'s single-filesystem preflight probes st_dev GNU-first, so preflight stops refusing every clean Linux repo, and test-wrap-in-place is un-quarantined (`t2026-11-24-k`).
+
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated.
+
+Validation: every train PR landed with its own full scaffolded-suite validation and green CI (14 checks per PR head), and release parity runs at full strength on this commit.
+
 ## 1.20.21 - 2026-11-24
 
 ### Fixed
