@@ -335,7 +335,12 @@ elif [[ -n "$pr_lines" ]]; then
         ;;
       6)
         echo "resolve-ticket #$N: $_mrepo#$_mnum left open, GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
-        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
+        if [[ "${GOVERN_KEEP_BLOCK_UNTIL_MERGE:-0}" == "1" ]]; then
+          echo "resolve-ticket #$N: GOVERN_KEEP_BLOCK_UNTIL_MERGE=1: $_mrepo#$_mnum is still unmerged, so the queue block stays. Merge it yourself: gh pr merge $_mnum --repo $(govern::repo_slug "$_mrepo") --squash --delete-branch ; then re-run: resolve-ticket.sh $N --no-merge." >&2
+          ALL_MERGED=0
+        else
+          PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(autonomy-left-open)"
+        fi
         ;;
       3)
         echo "resolve-ticket #$N: $_mrepo#$_mnum refused: CI is red or still pending. Fix CI (or wait for it), then re-run resolve-ticket." >&2

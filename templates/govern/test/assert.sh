@@ -66,6 +66,7 @@ export GOVERN_EARLY_ABORT=0          # in-flight worker watchdog
 export GOVERN_RUN_MAX_TOKENS=0       # run-level spend ceiling (0 = off)
 export GOVERN_EVENTS=0               # fleet event log (lib/common.sh): OFF for the whole suite
 export GOVERN_OVERLAP_NUDGE=0        # dispatch-time overlap nudge: its own test opts back in
+export GOVERN_KEEP_BLOCK_UNTIL_MERGE=0  # keep the ticket block until the PR merges: its own test opts back in
 export GOVERN_AUTO_BUDGETS=0         # run-end --enforce-budgets flush: its own test opts back in
 export GOVERN_GOTCHA_INJECT=0        # CLAUDE.md/learnings.md **Paths:** gotcha injection — several
                                       # existing tests (test-claudemd-trim.sh etc.) write their OWN CLAUDE.md at

@@ -99,6 +99,18 @@ printf '\n## #50 — fifty\n\n**Severity:** Low\n\nb\n\n---\n' >> "$T/tickets.md
 govern::duplicate_ticket_headings "$T/tickets.md" >/dev/null && rc=0 || rc=1
 assert_eq "$rc" "0" "duplicate detector: #5 and #50 are distinct, not a collision"
 
+# A `## #N` quoted inside a fenced block is not a heading; two real headings still collide.
+mk_tickets
+printf '\n## #7 — quoter\n\n**Severity:** Low\n\n```\n## #5 — quoted\n```\n\n---\n' >> "$T/tickets.md"
+govern::duplicate_ticket_headings "$T/tickets.md" >/dev/null && rc=0 || rc=1
+assert_eq "$rc" "0" "duplicate detector: a fenced ## #5 quote is not a collision"
+sed -i.bak 's/^```$/```x/;' "$T/tickets.md" && rm -f "$T/tickets.md.bak"
+govern::duplicate_ticket_headings "$T/tickets.md" >/dev/null && rc=0 || rc=1
+assert_eq "$rc" "0" "duplicate detector: info-string fences still hide quoted headings"
+printf '\n## #5 — real dup\n\n**Severity:** Low\n\nb\n\n---\n' >> "$T/tickets.md"
+govern::duplicate_ticket_headings "$T/tickets.md" >/dev/null && rc=0 || rc=1
+assert_eq "$rc" "1" "duplicate detector: two real #5 headings still collide beside a fenced quote"
+
 # ── 5. deleting the highest ticket leaves a GAP (monotonic; never reclaim a number) ──
 mk_tickets                                  # #1, #5
 printf '5\n' > "$T/governor/.ticket-seq"

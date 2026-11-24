@@ -111,4 +111,17 @@ assert_contains "$out_b" "left open" "resolve-ticket: stderr says the PR is left
 assert_contains "$out_b" "GOVERN_AUTONOMY=pr-only" "resolve-ticket: stderr names the autonomy mode"
 assert_contains "$out_b" "[autonomy]" "resolve-ticket: left-open logged with the [autonomy] tag"
 
+# GOVERN_KEEP_BLOCK_UNTIL_MERGE=1: the same rc 6 leaves the block and lands nothing.
+before_c="$(cat "$T/queue/tickets.md")"
+: > "$LANDED"
+set +e
+out_k="$( cd "$T" && printf '%s' "$report" \
+  | STUB_MERGE_RC=6 GOVERN_AUTONOMY=pr-only GOVERN_KEEP_BLOCK_UNTIL_MERGE=1 bash "$T/bin/resolve-ticket.sh" 1 2>&1 )"
+rc_k=$?
+set -e
+assert_eq "$rc_k" "5" "keep-block: an open autonomy PR refuses to land (exit 5)"
+assert_eq "$(landed_count)" "0" "keep-block: nothing lands while the PR is unmerged"
+assert_eq "$(cat "$T/queue/tickets.md")" "$before_c" "keep-block: the queue file is byte-identical"
+assert_contains "$out_k" "still unmerged" "keep-block: stderr says the PR is unmerged"
+
 assert_done

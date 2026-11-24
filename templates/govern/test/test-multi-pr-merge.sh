@@ -118,4 +118,15 @@ mkdir -p "$T/bin2"; printf '#!/usr/bin/env bash\necho "[]"\n' > "$T/bin2/gh"; ch
 unit_rep='{"pr":{"repo":"api","number":66,"url":"u66"},"prs":[{"repo":"alpha","number":281,"url":"u281"},{"repo":"web","number":266,"url":"u266"},{"repo":"api","number":66,"url":"u66"}]}'
 got="$( PATH="$T/bin2:$PATH"; source "$DIR/../lib/common.sh"; govern::collect_ticket_prs 1 "$unit_rep" | awk -F'\t' '{printf "%s#%s ",$1,$2}' )"
 assert_eq "$got" "alpha#281 api#66 web#266 " "collect_ticket_prs: .prs[] honored, deduped, backend-first"
+# E. a row naming a repo that is neither configured nor a harness slug is excluded with ONE stderr
+# warning naming it; a configured repo's row warns nothing.
+warn_rep='{"pr":{"repo":"ghost","number":7,"url":"u7"},"prs":[{"repo":"alpha","number":281,"url":"u281"}]}'
+warn_err="$( PATH="$T/bin2:$PATH"; source "$DIR/../lib/common.sh"; govern::collect_ticket_prs 1 "$warn_rep" 2>&1 >/dev/null )"
+assert_contains "$warn_err" "ghost#7" "collect_ticket_prs: unknown-repo row is named in a warning"
+assert_contains "$warn_err" "NOT in the merge set" "collect_ticket_prs: the warning says the row is excluded"
+case "$warn_err" in *alpha*) bad=1 ;; *) bad=0 ;; esac
+assert_eq "$bad" "0" "collect_ticket_prs: a configured repo's row does not warn"
+warn_cnt="$(printf '%s\n' "$warn_err" | grep -c . || true)"
+assert_eq "$warn_cnt" "1" "collect_ticket_prs: exactly one warning"
+
 assert_done
