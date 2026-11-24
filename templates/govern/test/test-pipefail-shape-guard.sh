@@ -16,7 +16,9 @@
 # Also proves the mechanism itself, both ways:
 #   - the scan goes RED on a synthetic offender file containing both shapes (a guard that
 #     only ever reports clean is a guard nobody re-checks);
-#   - on a >64KB payload under pipefail, the OLD `printf | grep -q` shape reproduces exit 141
+#   - under pipefail, the OLD `producer | grep -q` shape surfaces the producer's death as a
+#     nonzero pipeline exit (the code is tool-dependent: 141 on a SIGPIPE kill, or the producer's
+#     own write-error exit)
 #     (negative control: the failure mode is real, not theoretical), while the fixed shapes
 #     (a here-string grep and a full-drain `sed -n '1p'` slice) return 0 and still match.
 # This test asserts on the HUB template tree, so it runs only from a hub checkout (suite
@@ -120,12 +122,19 @@ else
 fi
 
 # 4. the mechanism, live: >64KB payload, match in the first bytes, under pipefail.
-# The negative control needs a producer that OUTLIVES the consumer, so SIGPIPE is deterministic:
+# The negative control needs a producer that OUTLIVES the consumer, so its death is deterministic:
 # a bounded payload can be drained entirely by the consumer before it exits (runner-dependent),
 # which would turn the control green without proving anything. An endless `yes` always hits EPIPE.
+# The exit code is tool-dependent (macOS yes dies silently: 141; GNU coreutils yes reports the
+# write error and exits 1), so the invariant asserted is only "nonzero under pipefail".
 rc_old=0
 ( set -o pipefail; yes NEEDLE | grep -q NEEDLE ) || rc_old=$?
-assert_eq "$rc_old" "141" "OLD shape (yes | grep -q) reproduces SIGPIPE 141 (negative control, unbounded producer)"
+if [ "$rc_old" -eq 0 ]; then
+  printf 'FAIL - OLD shape (yes | grep -q) surfaces the producer death under pipefail (nonzero exit)\n       actual:   [0]\n'
+  ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  printf 'ok   - OLD shape (yes | grep -q) surfaces the producer death under pipefail (exit %d)\n' "$rc_old"
+fi
 rc_new=0
 big="$(printf 'NEEDLE\n%*s' 2000000 '')"
 ( set -o pipefail; grep -q NEEDLE <<< "$big" ) || rc_new=$?
