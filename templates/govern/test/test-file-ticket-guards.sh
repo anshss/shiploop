@@ -126,3 +126,29 @@ else
 fi
 
 assert_done
+
+# 10. An unknown leading --flag is REJECTED, never consumed as the title: non-zero exit, nothing
+#     appended, and the error names the positional usage and the near-misses (--title/--body-file).
+before10="$(grep -cE '^## ' "$T/tickets.md")"
+rc10=0
+err10="$(printf 'body\n' | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" \
+  bash "$FILE_TICKET" --title "x" 2>&1 >/dev/null || true)"
+printf 'body\n' | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" \
+  bash "$FILE_TICKET" --title "x" >/dev/null 2>/dev/null || rc10=$?
+if [[ "$rc10" -eq 0 ]]; then
+  echo "FAIL - an unknown --flag filing exited 0"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - an unknown --flag filing exits non-zero (got rc $rc10)"
+fi
+assert_eq "$(grep -cE '^## ' "$T/tickets.md")" "$before10" "an unknown --flag filing appended nothing"
+flag_heads="$(grep -cE '^## .*--' "$T/tickets.md" || true)"
+assert_eq "$flag_heads" "0" "no heading carries a --flag as its title"
+assert_contains "$err10" "unknown flag '--title'" "the error names the offending flag"
+assert_contains "$err10" '"Short title" [Severity] < body.md' "the error names the positional usage"
+assert_contains "$err10" "no --body-file" "the error names the near-miss --body-file"
+
+# 11. Control: --model is still accepted-and-ignored with its degradation log, and files cleanly.
+err11="$(printf 'Where: x\nObserved: y\nDone when: z\n' \
+  | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" bash "$FILE_TICKET" --model haiku "flag swallow control" Low 2>&1 >/dev/null)"
+assert_contains "$err11" "not a filing-time input" "--model still degrades with its log line"
+assert_not_contains "$(block_of "$(grep -cE '^## ' "$T/tickets.md")" "$T/tickets.md")" "**Model:**" "the swallowed --model emits no Model: field"

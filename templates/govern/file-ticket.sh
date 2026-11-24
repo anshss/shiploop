@@ -26,7 +26,9 @@
 # evidence of how hard the work is. Both flags are still ACCEPTED and ignored with one log line so an
 # older caller (or a `/setup` doc a fleet copied) degrades cleanly instead of consuming its value as
 # the ticket title; queue entries carrying `**Model:**` / `**Effort:**` are likewise inert: nothing on
-# the dispatch path reads them.
+# the dispatch path reads them. Any OTHER leading `--flag` is rejected with a non-zero exit and
+# nothing filed: the title and severity are positional, so an unrecognized flag has no meaning here
+# and silently consuming it as the title files a broken ticket.
 #
 # Prints the allocated ticket number to stdout. Commits tickets.md + governor/.ticket-seq and pushes
 # to origin/main by default. Set GOVERN_FILE_TICKET_NO_COMMIT=1 to revert to the legacy append-only
@@ -93,7 +95,13 @@ while [[ "${1:-}" == --* ]]; do
         *) govern::log "file-ticket: unknown flow-op '$2' — ignoring (allowlist: validate|remove)" ;;
       esac
       shift 2 ;;
-    *) break ;;
+    *)
+      # Unknown leading --flag: reject loudly and exit non-zero BEFORE anything is filed. The old
+      # fall-through broke out of the loop instead, so the flag was consumed as the title (every
+      # later positional shifted by one) and the ticket filed "successfully" with the flag as its
+      # heading. The title and severity are positional; there is no --title and no --body-file.
+      govern::die "unknown flag '$1'. Positional usage: file-ticket.sh \"Short title\" [Severity] < body.md (there is no --title and no --body-file: the title and severity are positional args, the body arrives on stdin)"
+      ;;
   esac
 done
 
