@@ -170,6 +170,10 @@ e532e30c0f1621d93f1683596727b3ef4704ba5dac84f0ac3c5916a78a70de20  govern/determi
 # -- govern/dispatch-packet.sh --
 8f21cc62eab8e0f30cf0cce7ada899451997c7d90875be7e159181e02f479b94  govern/dispatch-packet.sh
 d144ae491b4d4b0955e8aa8797544067236c02e3e831587ecd26c96a41aacfbd  govern/dispatch-packet.sh
+efbb3aae5b0405304da1bff0a168ab8be14e632e9d4a44ac47fe015806df8f53  govern/dispatch-packet.sh
+
+# -- govern/dispatch.sh --
+0a3e92a462da093be437f6d2c81fd4a5a6b6c674565b6af0b2ac9d7f7dd2070e  govern/dispatch.sh
 
 # -- govern/dry-run.sh --
 689761372db04ffd04a9b0d433c54164e3528d092ab0069f3c631b23df4e103b  govern/dry-run.sh
@@ -474,6 +478,7 @@ d76ddceca7b60f9832dcc50ed358ffdaea116b8d599bec9dbeec540289d127f7  govern/preflig
 146d27ad517b5f597a8c7ba7a4705d35c7799c79a29f15502fa704d5618af0c2  govern/resolve-ticket.sh
 2e4562e2e96fb623909e5fbb50953d608be61247539c0f06be9595c471beed04  govern/resolve-ticket.sh
 300bb3d1b1ed7d9fd3ad048d4dea3675e4f08cce13d65c66c82af52b630378c1  govern/resolve-ticket.sh
+357af3406ab086d983b92d96dbbd35bf1f162f3c0cb0338962d980dc6a3f2ab3  govern/resolve-ticket.sh
 479683b0575595e37af68f7d5089d5855a99751aeabc749f0cb169f77f5c9864  govern/resolve-ticket.sh
 5092e8c99701ef6009242c50158ebf3e51a9e8139de19b3806a694980cb8f7ba  govern/resolve-ticket.sh
 6069a88cdd914aecdbd4caf0f10b0944fbd42577b9670ebac7f81f104ea2b604  govern/resolve-ticket.sh
@@ -521,6 +526,7 @@ d93a1f552026a7da2270913f57d9ec2bff93ecf027107c05e970d76f1178cb89  govern/select-
 927ad872441d7a0e0d212f0557bfbd4acacee3a996c6edee23a932eeb2caedea  govern/status.sh
 e19771cfa6fd6d1676586b97a55730c81f336a286fdaed6fd5bb530a7211fd83  govern/status.sh
 e51c866c4ef25cc86c72a0a51cc390a9b4460d563e03e157dbd9a8b15b734955  govern/status.sh
+e642f15725fcbab62a72ca49699f83e9fdaea18d6b3bad2b06cb39548b8d2d60  govern/status.sh
 
 # -- govern/statusline-chain.sh --
 e84a398f9a3103da5dafb6493721f191881da7d2a6044b45f69bbd4609d73993  govern/statusline-chain.sh
@@ -533,6 +539,7 @@ f07953f4bc9976fc70c1bd2f4a5fe358fa79404253f9664e456cbce0cd8dfea9  govern/statusl
 8146794c9dca15dab77d41bb4db22e5e3b4f0ba3b258a89c182e127457226804  govern/statusline-segment.sh
 96177414d423d6ed511af16d3541eba0bdb048e73ec2dff91a381004c5a848f8  govern/statusline-segment.sh
 96e7fe25f3b16bd7e3fde09a9c7c126f292a88cfee1b99b6ec009313bbd87d08  govern/statusline-segment.sh
+c4745a2f4e927ce3175d841f456e0805791012a1d38ce92cbf99dbe076eb1921  govern/statusline-segment.sh
 ed583a87ac63d5b129cb9a9a75a74904f6fdc6b6eb02a8e404e4167049971612  govern/statusline-segment.sh
 
 # -- govern/sync-port.sh --
@@ -619,6 +626,7 @@ f86a3d0d3b3db1e2ef8d169dbe637db5dc34b4ee407ef0e85e4cfbc02da36b97  hooks/learning
 # -- hooks/router-posture-guard.sh --
 0bf149ffa486a414a0b7eb478a4288f32c88c0c4c85466010daddfb1829f7afc  hooks/router-posture-guard.sh
 12ea5a5b6a17449451cc68d266f3a4db17a656346a57cdc7c7f1105d40c3e674  hooks/router-posture-guard.sh
+12f0b5e9a104100aa90b64e5b73033dffeba4e18cee4e4657554bb79f61a52b8  hooks/router-posture-guard.sh
 1b79f4089973ae62743d3bc11920df2f87e2dc027ad94fe7eb7bc212a3631525  hooks/router-posture-guard.sh
 22a07ed6c70cb922d337c9874927a6727f3412029ca1e3b7a2af7bd8621e45e6  hooks/router-posture-guard.sh
 24a0f4cd81604dc6c19c323bf172d26fa99234343f2a2ba7cf06acbd0f86d113  hooks/router-posture-guard.sh
@@ -1112,6 +1120,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 58d70a5939f0e0eb4860c8b839c90d1f56082e4fab821093095c60da55771d00  scripts/govern/test/test-infra-halt.sh
 592cb344e3bf72d7ad8f834b95d485127128a778ec011a8be0984e6d41672969  scripts/govern/test/test-events-status.sh
 59cd65c18758103ad0cf946efa922d4ee930e995392f29aa4027399572c0363c  scripts/govern/test/test-log-guard.sh
+59d93662597d09b9876dc3e2b1186e7ef91e36d7ad795312d30b3f04c8dc94cf  scripts/govern/test/pipefail-shape-allowlist.txt
 5b270c6d2883b44a60ccea1b5b461ae10b16b2b9743d311ec8d73aa641738b6b  scripts/govern/test/test-tokenjam-runid.sh
 5b32b3c09938a0cc40bbbe7eb01993a724bfd44c6120f5a343ad39e3407528a6  scripts/govern/test/test-usage-error-halt.sh
 5b41d3ec107f56e6514c888f3897e26ecf9179a21fc743bd2847b0fdfa230886  scripts/govern/test/test-flows-capabilities.sh
@@ -1221,6 +1230,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 85145e988a8354b0db4cee882ae5ded98506ef50f2ef726ee62daa05ab23aa23  scripts/govern/test/test-update-channel.sh
 857a78421f09fdf0c04143d2c13cbeeecffd505bcb7ec329b6b8af0583aa9202  scripts/govern/test/test-retry-notes-injection.sh
 85b24bd72f0d65e187f9b7c4e6342374999d243af3c8ccb4f64b17022c894ae4  scripts/govern/test/test-scaffold-teammate-idle-hook.sh
+86298d50ad964c2b61b49a21a21ee636668065bf62d6708caecd29fa9e2d91cf  scripts/govern/test/test-pipefail-shape-guard.sh
 8647eee4e7e482edc5f3029b76863663fd8f5ee3d21df42c73d2b0c1fc767b20  scripts/govern/test/test-worker-agent-doctrine.sh
 86f89ca0908451ba554ba0669ec0ade7a0acd40c39e41bbe4255e549071c8ad9  scripts/govern/test/test-unpark-own-pr-merge.sh
 876d31afae4628f3c67202d8ff86f7ffee93a73a8975efb315ed07a02b1222da  scripts/govern/test/test-parallel-no-double-attempt.sh

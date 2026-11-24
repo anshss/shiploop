@@ -850,6 +850,7 @@ $(printf "$dev_lines" | sed '/^$/d')
     "govern:resolve": "bash scripts/govern/resolve-ticket.sh",
     "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
     "govern:dispatch-packet": "bash scripts/govern/dispatch-packet.sh",
+    "govern:dispatch": "bash scripts/govern/dispatch.sh",
     "govern:ship": "bash scripts/govern/ship.sh",
     "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
     "govern:escalations-emit": "bash scripts/govern/escalations-emit-pending.sh",
@@ -912,6 +913,7 @@ component_package_json_merge() {
     "govern:resolve":     "bash scripts/govern/resolve-ticket.sh",
     "govern:pre-dispatch": "bash scripts/govern/pre-dispatch-check.sh",
     "govern:dispatch-packet": "bash scripts/govern/dispatch-packet.sh",
+    "govern:dispatch":    "bash scripts/govern/dispatch.sh",
     "govern:ship":        "bash scripts/govern/ship.sh",
     "govern:escalations-apply": "bash scripts/govern/escalations-apply-answers.sh",
     "govern:escalations-emit":  "bash scripts/govern/escalations-emit-pending.sh",
@@ -1586,7 +1588,7 @@ config_drift_report() {
     missing_scripts="$(jq -r '
       (.scripts // {}) as $have
       | ["dev","doctor","sync","tail","worktree","worktree:new","worktree:rm","worktree:reap","worktree:status",
-         "worktree:exec","govern:resolve","govern:pre-dispatch","govern:dispatch-packet","govern:ship","govern:escalations-apply","govern:escalations-emit",
+         "worktree:exec","govern:resolve","govern:pre-dispatch","govern:dispatch-packet","govern:dispatch","govern:ship","govern:escalations-apply","govern:escalations-emit",
          "govern:context-budgets","govern:trim","govern:externalize","govern:validations",
          "validation:record","preflight:base-ci","preflight:main","vf"]
       | map(. as $k | select($have | has($k) | not)) | join(", ")

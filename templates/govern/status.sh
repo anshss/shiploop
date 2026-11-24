@@ -42,12 +42,132 @@ done
 LOG="${GOVERN_EVENTS_FILE:-$GOVERNOR_DIR/events.jsonl}"
 NOW="$(date +%s)"
 
+hms() { # seconds -> compact human duration
+  local s="${1:-0}"
+  [[ "$s" =~ ^[0-9]+$ ]] || { printf '?'; return 0; }
+  if   [[ "$s" -lt 60 ]]; then printf '%ds' "$s"
+  elif [[ "$s" -lt 3600 ]]; then printf '%dm' "$((s/60))"
+  else printf '%dh%02dm' "$((s/3600))" "$(((s%3600)/60))"; fi
+  return 0
+}
+
+# ── live workers of this session, read from their own transcripts ───────────────────────────────
+# The event log above says what a dispatcher RECORDED; this section says what each subagent is doing
+# now: when it was dispatched, when it last called a tool, how long it has been idle, which
+# background tasks it started and never saw finish (a worker parked on one is never woken by it),
+# what state its branch's PR is in, and the tail of the last gate log it mentioned. It reads the
+# newest session's `subagents/` directory under the Claude project dir for this workspace
+# (GOVERN_STATUS_SUBAGENTS_DIR overrides, which is also the test seam), so it works with no event
+# log at all. Kill switch: GOVERN_STATUS_WORKERS=0. Needs jq; silent without it.
+status_subagents_dir() { # -> the subagents dir of the newest session, "" if none
+  local d="${GOVERN_STATUS_SUBAGENTS_DIR:-}" proj enc newest
+  if [[ -n "$d" ]]; then [[ -d "$d" ]] && printf '%s' "$d"; return 0; fi
+  enc="$(printf '%s' "$WS_ROOT" | sed 's/[^A-Za-z0-9]/-/g')"
+  proj="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$enc"
+  [[ -d "$proj" ]] || return 0
+  newest="$(ls -t "$proj"/*/subagents/agent-*.jsonl 2>/dev/null | sed -n '1p')"
+  [[ -n "$newest" ]] && dirname "$newest"
+  return 0
+}
+
+status_worker_facts() { # <transcript> -> "first_ts last_ts last_tool_ts last_is_tool" (epoch seconds, 0 = none)
+  LC_ALL=C tr -d '\000' < "$1" 2>/dev/null | jq -R 'fromjson? // empty' 2>/dev/null | jq -rs '
+    def ep: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+    def kinds: (.message.content | if type == "array" then map(.type) else [] end);
+    ([ .[] | select(.timestamp != null) ]) as $t
+    | ([ .[] | select(.type == "assistant") | select(kinds | any(. == "tool_use" or . == "text")) ]) as $a
+    | [ (try ($t | first | .timestamp | ep) catch 0),
+        (try ($t | last | .timestamp | ep) catch 0),
+        (try ([ $a[] | select(kinds | any(. == "tool_use")) | select(.timestamp != null) ] | last | .timestamp | ep) catch 0),
+        (if ($a | length) > 0 and ($a | last | kinds | any(. == "tool_use")) then 1 else 0 end) ]
+    | @tsv' 2>/dev/null || true
+  return 0
+}
+
+status_workers() { # prints the section; nothing when there is nothing to say
+  [[ "${GOVERN_STATUS_WORKERS:-1}" != "0" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local dir f aid meta wname wmodel first last ltool islast state pend idle stale_s now_s n=0
+  dir="$(status_subagents_dir)"
+  [[ -n "$dir" ]] || return 0
+  stale_s="${GOVERN_WORKER_STALE_S:-7200}"
+  now_s="$(date +%s)"
+  for f in $(ls -t "$dir"/agent-*.jsonl 2>/dev/null); do
+    aid="$(basename "$f" .jsonl)"; aid="${aid#agent-}"
+    IFS=$'\t' read -r first last ltool islast <<<"$(status_worker_facts "$f")"
+    [[ "${last:-0}" =~ ^[0-9]+$ && "${last:-0}" -gt 0 ]] || continue
+    [[ $(( now_s - last )) -lt "$stale_s" ]] || continue
+    meta="${f%.jsonl}.meta.json"
+    wname="$aid"; wmodel=""
+    if [[ -f "$meta" ]]; then
+      wname="$(jq -r '.name // empty' "$meta" 2>/dev/null)"; wname="${wname:-$aid}"
+      wmodel="$(jq -r '.model // empty' "$meta" 2>/dev/null)"
+    fi
+    pend=""
+    if command -v govern::pending_bg_tasks_for >/dev/null 2>&1; then
+      pend="$(govern::pending_bg_tasks_for "$aid" "$f" 2>/dev/null || true)"
+    else
+      pend="$(govern::pending_bg_tasks "$f" 2>/dev/null || true)"
+    fi
+    idle=$(( now_s - last ))
+    if [[ -n "$pend" ]]; then state="PARKED"
+    elif [[ "$islast" == "1" ]]; then state="running"
+    else state="stopped"; fi
+    n=$((n+1))
+    [[ "$n" -eq 1 ]] && printf 'workers (this session):\n'
+    printf '  %-22s %-7s %-8s dispatched %s ago · last tool %s · idle %s\n' "$wname" "${wmodel:-?}" "$state" \
+      "$(hms "$(( now_s - first ))")" \
+      "$([[ "${ltool:-0}" -gt 0 ]] && printf '%s ago' "$(hms "$(( now_s - ltool ))")" || printf 'none')" "$(hms "$idle")"
+    [[ -n "$pend" ]] && printf '    waiting on background task(s): %s\n' "$pend"
+    status_worker_pr "$wname"
+    status_worker_log "$f"
+  done
+  [[ "$n" -gt 0 ]] || true
+  return 0
+}
+
+# PR state for the branch of the worker's ticket worktree (<WORKTREE_BASE>/t<N>): one `gh` call per
+# sub-repo with a checked-out branch, bounded, silent when gh or the worktree is missing.
+status_worker_pr() { # <worker name, worker-<N>>
+  local num wt r br slug line
+  [[ "${GOVERN_STATUS_PR:-1}" != "0" ]] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  num="$(printf '%s' "$1" | sed -n -E 's/^worker-([0-9]+).*$/\1/p')"
+  [[ -n "$num" ]] || return 0
+  wt="${WORKTREE_BASE:-}/t$num"
+  [[ -d "$wt" ]] || return 0
+  for r in "${REPOS[@]}"; do
+    [[ -d "$wt/$r" ]] || continue
+    br="$(git -C "$wt/$r" branch --show-current 2>/dev/null || true)"
+    [[ -n "$br" && "$br" != "main" ]] || continue
+    slug="$(govern::repo_slug "$r" 2>/dev/null || true)"
+    [[ -n "$slug" ]] || continue
+    line="$(govern::run_bounded 8 gh pr list --repo "$slug" --head "$br" --state all --json number,state \
+      --jq '.[0] | "\(.number) \(.state)"' 2>/dev/null || true)"
+    [[ -n "$line" && "$line" != "null" ]] && printf '    PR: %s#%s\n' "$r" "$line"
+  done
+  return 0
+}
+
+# The last .log path the worker's transcript mentions that still exists on disk, with its tail.
+status_worker_log() { # <transcript>
+  local p lp=""
+  while IFS= read -r p; do
+    [[ -f "$p" ]] && lp="$p"
+  done < <(grep -oE '/[A-Za-z0-9_./-]+\.log' "$1" 2>/dev/null | awk '!seen[$0]++' || true)
+  [[ -n "$lp" ]] || return 0
+  printf '    log: %s\n' "$lp"
+  tail -n 3 "$lp" 2>/dev/null | sed 's/^/      /'
+  return 0
+}
+
 if [[ ! -s "$LOG" ]]; then
   if [[ "$JSON" -eq 1 ]]; then
     printf '{"enabled":false,"log":"%s","runId":null,"active":[],"stale":[],"counts":{},"drivers":[]}\n' "$LOG"
   else
     printf 'fleet: no event log at %s\n' "$LOG"
     printf '       (the log is written only when GOVERN_EVENTS=1 — export it before `%s run govern`)\n' "${ROOT_PM:-npm}"
+    status_workers
   fi
   exit 0
 fi
@@ -185,6 +305,7 @@ if [[ "$LOG_STALE" -eq 1 ]]; then
     printf 'fleet: no recent dispatch activity (newest event %sd ago, over GOVERN_EVENTS_STALE_DAYS=%s)\n' \
       "$STALE_AGE_DAYS" "$STALE_DAYS"
     printf '       log: %s (any prior run should be treated as finished, not as still running)\n' "$LOG"
+    status_workers
   fi
   exit 0
 fi
@@ -289,14 +410,6 @@ BY_SRC="$(printf '%s\n' "$FOLD" | awk -F'\t' '$1=="U"' | run_filter | awk -F'\t'
     }
   }')"
 
-hms() { # seconds -> compact human duration
-  local s="${1:-0}"
-  [[ "$s" =~ ^[0-9]+$ ]] || { printf '?'; return 0; }
-  if   [[ "$s" -lt 60 ]]; then printf '%ds' "$s"
-  elif [[ "$s" -lt 3600 ]]; then printf '%dm' "$((s/60))"
-  else printf '%dh%02dm' "$((s/3600))" "$(((s%3600)/60))"; fi
-  return 0
-}
 
 if [[ "$JSON" -eq 1 ]]; then
   # Hand-assembled so status.sh has no jq dependency — it must stay runnable in a bare CI container.
@@ -386,4 +499,5 @@ if [[ -n "$BY_SRC" ]]; then
     printf '  %-58s %3s dispatch(es) — %s — %s\n' "$_ms" "$_cnt" "$_detail" "$_costtxt"
   done <<<"$BY_SRC"
 fi
+status_workers
 exit 0
