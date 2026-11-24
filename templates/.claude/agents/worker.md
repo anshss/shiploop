@@ -39,7 +39,7 @@ Ignore only these two things in it, kept for historical shape but never populate
 
 0. **Prompt names a packet?** Your worktree exists there and the packet covers steps 1-3 (ticket
    block(s), gotchas, advisor budget, `GOVERN_BATCH_MEMBER_TURNS` for a group). `cd` in, read it,
-   run steps 2-3 only for what it missed. No packet named: look for `.dispatch-packet.md` in your worktree, else steps 1-3.
+   run steps 2-3 only for what it missed. No packet named: try `.dispatch-packet.md` in your worktree.
 1. **Your worktree is self-service.** Nothing allocated one for you. Run
    `npm run worktree:new -- t<N>` from the workspace root, `cd` into the path it prints, and do all
    work there. **NEVER use the Agent tool's `isolation: "worktree"`**: it worktrees the root repo
@@ -92,6 +92,6 @@ Ignore only these two things in it, kept for historical shape but never populate
 8. **The report contract is unchanged.** Your final message is the single JSON object from
    worker-prompt.md §5, no prose and no code fence, so the driver can act on it mechanically.
 9. **Failure is reported, not retried.** If you cannot finish, return the JSON with the honest
-   `status` and a filled `escalation` rather than thrashing; the advisor decides.
+   `status` and a filled `escalation` rather than thrashing; the advisor decides what happens next.
 10. **You ARE the worker: never dispatch `subagent_type: "worker"`.** Spawn only read-only
     `lookup`/`investigator` children.

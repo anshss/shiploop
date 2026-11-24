@@ -20,6 +20,7 @@ f613f5b45ab53a2f1988be7d4a224afb0bc24feeb1f1a42a465b9e5c558da98e  .claude/agents
 aaa1c22be46574b7d811602454f41fba8c8d494146dc2b6853c7ee8a479fc816  .claude/agents/lookup.md
 
 # -- .claude/agents/worker.md --
+0053b475c69e403dd2b25a30bdaa5472db12e0c9c3deaeed8b358b7476bb7887  .claude/agents/worker.md
 0524df2df49695ae9b5b8af3bda72473f2b8f7c9fbdac0f78420d003e8fe06e0  .claude/agents/worker.md
 135f0a8c3ede4c08b7a0d68208b62267654a86c5e519092fa7107d8b3134ef01  .claude/agents/worker.md
 156905cb5834945cd522057b8a602f3849823de806791a7296629d1bd747bd03  .claude/agents/worker.md
@@ -28,7 +29,7 @@ aaa1c22be46574b7d811602454f41fba8c8d494146dc2b6853c7ee8a479fc816  .claude/agents
 3d3dc8a56d882cee9f270442a80c87ad423fa5c1764e4fd00d9b1ea579107679  .claude/agents/worker.md
 417c882eddb10bccb608169c7c647883228649db115affc73b41512854123f9d  .claude/agents/worker.md
 41bd8613b3af8cd3d92394b9ffaf09cbe3ad27c8d67a554acc7f5ef2ef10226f  .claude/agents/worker.md
-6895f10888ae9347a77824dc7bde48f694cfbe9916650145c0329fdd6e89e1a1  .claude/agents/worker.md
+4e1bd9c2887db5adb23751f4aa513cd894467d7e25c89cf05dad8ee2dfed8742  .claude/agents/worker.md
 69d20099c8168d2448a3cd91599027e75bea2be692e5a889af33b5b1ee059ec5  .claude/agents/worker.md
 6b362d9d682be87d388832dbed064b5dd638ddfdfc0921254b8f7a840a2c1d2c  .claude/agents/worker.md
 86a440f7ff1a618a337022340c832d0809635bf7e860ef36673448205775d528  .claude/agents/worker.md
