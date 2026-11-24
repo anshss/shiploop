@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Shiploop hub repo push guard. Activate in a hub checkout with:
+#   git config core.hooksPath .githooks
+#
+# A direct push to main here is gated by nothing: CI runs the hub-context test list
+# (tools/hub-context-tests.txt) AFTER the push and nothing consumes the result, so a doc-only
+# push that breaks a vocab or version-consistency guard lands as silent red on origin/main.
+# This hook runs that same list BEFORE the push and refuses on failure. Feature-branch pushes
+# are PR-gated and never checked here; the hub legitimately receives feature-branch PRs, so
+# unlike the harness guard (templates/githooks/pre-push) there is NO branch-name policy.
+#
+# Chaining: switching core.hooksPath from the default redirects git away from .git/hooks/, which
+# would silently drop any default-path pre-push already installed there (a local guard goes
+# unnoticed exactly the way this ticket's blind spot did). Any executable .git/hooks/pre-push
+# therefore still runs, with the same ref lines, after our check passes.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+
+stdin_file="$(mktemp "${TMPDIR:-/tmp}/hub-pre-push.XXXXXX")"
+trap 'rm -f "$stdin_file"' EXIT
+cat >"$stdin_file"
+
+# Hub-context guard: refused before anything else runs.
+bash "$root/tools/hub-context-pre-push.sh" <"$stdin_file"
+
+# Chain a default-path pre-push hook, if one exists and is not us.
+default_hooks="$(git rev-parse --git-path hooks)/pre-push"
+if [ -x "$default_hooks" ] && [ "$default_hooks" != "$here/pre-push" ]; then
+  bash "$default_hooks" <"$stdin_file"
+fi
+
+exit 0
