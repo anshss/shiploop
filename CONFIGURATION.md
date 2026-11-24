@@ -8,6 +8,7 @@ fresh install is inert until you opt in.
 | Knob | Default | Turns on |
 |---|---|---|
 | `GOVERN_AUTONOMY` | `pr-only` | Trust-ladder rung (`observe` / `pr-only` / `auto`); absent = `auto` for pre-knob installs |
+| `GOVERN_KEEP_BLOCK_UNTIL_MERGE` | `0` (off) | A PR left open by `GOVERN_AUTONOMY` observe/pr-only keeps its ticket block: resolve reports the PR as still unmerged and lands nothing until a resolve after the merge |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model govern's other headless `claude` dispatches (sync porter) launch is clamped to `max(opus, the model of the session that spawned it)`: only a session above opus may spawn above opus, and never above itself. The worker subagent is not clamped by this: its model is the `model:` in `.claude/agents/worker.md` (`sonnet`) unless the advisor raises it per dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`. `0` disables the clamp |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |

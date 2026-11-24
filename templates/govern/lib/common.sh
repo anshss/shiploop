@@ -885,13 +885,16 @@ govern::queue_foreign_refusal() { # <label> <changes>
 # (silent) when clean, 1 when any duplicate exists. The Stop hook / lint-tickets.sh treat a non-zero
 # return as a fault to surface immediately. Scans ONE file (see ticket_filemax).
 govern::duplicate_ticket_headings() { # [tickets-file]
-  local f="${1:-$TICKETS_FILE}" dups n
+  # Headings inside a ``` fenced block are ignored: a ticket that quotes another ticket's heading
+  # as evidence (a diff, mangled output, a repro) is not a second filing.
+  local f="${1:-$TICKETS_FILE}" dups n stripped
   [[ -f "$f" ]] || return 0
-  dups="$(grep -oE '^## #[0-9]+' "$f" | grep -oE '[0-9]+' | sort -n | uniq -d || true)"
+  stripped="$(awk '/^```/ { infence = !infence; next } !infence' "$f")"
+  dups="$(printf '%s\n' "$stripped" | grep -oE '^## #[0-9]+' | grep -oE '[0-9]+' | sort -n | uniq -d || true)"
   [[ -n "$dups" ]] || return 0
   while IFS= read -r n; do
     [[ -n "$n" ]] || continue
-    printf '#%s ×%s\n' "$n" "$(grep -cE "^## #${n}([^0-9]|\$)" "$f")"
+    printf '#%s ×%s\n' "$n" "$(printf '%s\n' "$stripped" | grep -cE "^## #${n}([^0-9]|\$)")"
   done <<<"$dups"
   return 1
 }
@@ -2213,9 +2216,15 @@ govern::collect_ticket_prs() {
   # emit it too, re-verified still-open via `gh pr view` (harness rows skip the normal
   # find_all_prs/gh-list re-confirmation `discovered` gets, so verify them here instead of trusting
   # the worker's JSON blind).
+  local known_repos
+  known_repos="$(govern::_repos_merge_first)"
   printf '%s\n' "$all" | while IFS=$'\t' read -r repo num _url; do
     [[ -n "$repo" ]] || continue
-    govern::is_harness_repo "$repo" && govern::harness_pr_verify "$repo" "$num"
+    if govern::is_harness_repo "$repo"; then
+      govern::harness_pr_verify "$repo" "$num"
+    elif [[ $'\n'"$known_repos"$'\n' != *$'\n'"$repo"$'\n'* ]]; then
+      echo "collect_ticket_prs: PR row $repo#$num names a repo that is neither a configured sub-repo nor a known harness slug; it is NOT in the merge set." >&2
+    fi
   done || true
   # The loop's own exit status is the last iteration's `is_harness_repo && harness_pr_verify` chain —
   # 1 whenever the ticket's rows include no harness repo (the common case). Under a caller's `set -e`
