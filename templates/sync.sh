@@ -108,6 +108,27 @@ sync_repo() {
   local current
   current=$(git branch --show-current)
 
+  # 3a. GOVERN_SYNC_PUSH_AHEAD=1 (default off): commits on local main that origin lacks reach no
+  # one until pushed, and this script otherwise only pulls. Ahead and not behind is a clean
+  # fast-forward for origin, so push it. Ahead AND behind cannot be pushed without a reconcile, so
+  # print both counts and the command to inspect them, and push nothing. Runs before the live-run
+  # check below on purpose: a push moves origin, never this checkout's files.
+  if [ "${GOVERN_SYNC_PUSH_AHEAD:-0}" = "1" ] && git rev-parse --verify -q refs/heads/main >/dev/null 2>&1 \
+     && git rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
+    local ahead behind
+    ahead=$(git rev-list --count origin/main..main 2>/dev/null || echo 0)
+    behind=$(git rev-list --count main..origin/main 2>/dev/null || echo 0)
+    if [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+      if git push origin main >/dev/null 2>&1; then
+        ok "pushed $ahead local main commit(s) to origin"
+      else
+        fail "local main is ahead by $ahead and the push FAILED: git -C $sub push origin main"
+      fi
+    elif [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+      warn "local main is ahead by $ahead and behind by $behind: not pushed. Inspect with: git -C $sub log --oneline --left-right main...origin/main"
+    fi
+  fi
+
   # 3b. a live product run in this checkout must not have its code moved under it: skip both HEAD
   # moves below and leave a marker the SessionStart hook reports until a later sync catches up.
   if run_live "$sub" "$dir"; then

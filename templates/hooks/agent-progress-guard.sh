@@ -4,9 +4,9 @@
 # children, which have no pid and no external process for anything to poll. Three behaviors, plus
 # the TeammateIdle branch below:
 #
-#   SCOPE: supervision spans every child, not only governor-spawned work. This is a
-#            per-subagent frontmatter hook (worker.md/investigator.md/lookup.md `hooks:`) so it
-#            fires for any subagent that carries it, reading `agent_transcript_path` on this
+#   SCOPE: supervision spans every child, not only governor-spawned work. The workspace's
+#            .claude/settings.json wires this hook on SubagentStop and TeammateIdle (matcher `*`),
+#            so it fires for every subagent and teammate, reading `agent_transcript_path` on this
 #            hook's stdin for the child's own turns.
 #            NOT `transcript_path`: verified live (2026-09-10, claude 2.1.246) that on a
 #            SubagentStop event `transcript_path` is the PARENT session's own transcript — reading
@@ -90,7 +90,10 @@
 # stuck could itself hang or fabricate a verdict, which is exactly the failure class this is closing.
 #
 # Design constraints (a Stop-family hook that always blocks would loop forever):
-#   1. Honor stop_hook_active — never add a THIRD loop turn on top of Claude Code's own cap.
+#   1. The doom-signature block honors stop_hook_active: it never adds a THIRD loop turn on top of
+#      Claude Code's own cap. The background-wait block below does not, on purpose: a child that
+#      starts a new background task after a first block must still be caught, and Claude Code ends a
+#      run of 8 consecutive Stop/SubagentStop blocks on its own (the count resets on every tool call).
 #   2. Read-only against the transcript; the only side effect is an OPTIONAL fleet event (gated
 #      independently by GOVERN_EVENTS, same as every other govern::event call) and, when a doom
 #      signature fires on the SubagentStop path, the block decision itself.
@@ -103,7 +106,8 @@ set -uo pipefail
 # --- read the SubagentStop/TeammateIdle hook stdin payload ---
 payload="$(cat 2>/dev/null || true)"
 get() { printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'; }
-case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;; esac
+stop_active=0
+case "$payload" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) stop_active=1 ;; esac
 
 event_name="$(get hook_event_name)"
 transcript_path="$(get agent_transcript_path)"
@@ -127,6 +131,12 @@ if [ "$event_name" = "TeammateIdle" ]; then
   [ -n "$transcript_path" ] || transcript_path="$(get transcript_path)"
 fi
 [ -n "$transcript_path" ] || exit 0
+# A payload without agent_id still names the child through its transcript, agent-<id>.jsonl.
+if [ -z "$agent_id" ]; then
+  case "$(basename "$transcript_path")" in
+    agent-*.jsonl) agent_id="$(basename "$transcript_path" .jsonl)"; agent_id="${agent_id#agent-}" ;;
+  esac
+fi
 
 # --- reach govern::early_abort_reason() the same way ticket-sweep-reminder.sh reaches
 # govern::is_validation_ticket(): source common.sh defensively so a missing workspace config
@@ -135,30 +145,51 @@ fi
 # installs to scripts/ (workspace) or lives at templates/hooks/ (hub repo / hermetic tests). ---
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# --- background-task wait guard (GOVERN_BG_WAIT_GUARD; ships OFF — set =1 to enable) ---
+# --- background-task wait guard (GOVERN_BG_WAIT_GUARD, on by default; 0 turns it off) ---
 # A child that ends its turn "waiting for the background task's completion notification" never
-# gets that notification: nothing re-invokes a stopped subagent, so the result (and the rest of
-# its task) is silently lost. govern::pending_bg_tasks reads the child's OWN transcript and names
-# the tasks it started but neither reported nor stopped. If any are pending, block the stop ONCE
-# with the remedy in the reason (a second stop passes via stop_hook_active, handled above;
-# delegate-wait guards are the parent-side backstop for that case). OFF by default: this BLOCKS a
-# stop that every existing install allows today, so it is a behavior change, not a defect fix —
-# a workspace opts in deliberately.
-# The wall-clock denial exception applies: a capped child has no legal move, so it is allowed to
-# stop (govern::watchdog_denied, same terminal-state rule the stall block below honors).
-if [ "$idle" = "0" ] && [ "${GOVERN_BG_WAIT_GUARD:-0}" = "1" ]; then
-  pending="$(
+# gets that notification: nothing re-invokes a stopped subagent or an idle teammate when its own
+# task finishes, so the result, and the rest of its task, is lost. Nothing on the parent side
+# catches this either; this block is the only check.
+# Pending tasks come from the ledger bg-task-ledger.sh writes at launch (govern::pending_bg_tasks_for),
+# so a task started in the same turn as the stop is seen. Then, with GOVERN_BG_WAIT_HOLD=1 (default),
+# the hook itself holds the stop until each task's output file shows Claude Code's exit line, up to
+# GOVERN_BG_WAIT_MAX_S, and blocks with each finished task's id, status and last output lines so the
+# child carries on with the result (govern::bg_wait_reason). A task still running at the deadline,
+# or whose output file is unknown, gets the wait-inside-your-turn remedy instead. GOVERN_BG_WAIT_HOLD=0
+# keeps the block and drops the hold.
+# This runs even under stop_hook_active (see design constraint 1). On TeammateIdle the same reason
+# goes to stderr with exit 2, which keeps the teammate working.
+# A child the wall-clock watchdog has denied stands down BEFORE any wait: it has been told to stop
+# and report, and every tool it could answer a block with is denied (govern::watchdog_denied).
+if [ "${GOVERN_BG_WAIT_GUARD:-1}" = "1" ] && [ -n "$agent_id" ]; then
+  bg_reason="$(
     source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
       || source "$SELF_ROOT/govern/lib/common.sh" 2>/dev/null || exit 0
-    command -v govern::pending_bg_tasks >/dev/null 2>&1 || exit 0
+    set +e
+    command -v govern::pending_bg_tasks_for >/dev/null 2>&1 || exit 0
     govern::watchdog_denied "$transcript_path" && exit 0
-    govern::pending_bg_tasks "$transcript_path"
+    pending="$(govern::pending_bg_tasks_for "$agent_id" "$transcript_path")"
+    [ -n "$pending" ] || exit 0
+    govern::bg_wait_reason "$agent_id" "$pending"
   )" || true
-  if [ -n "$pending" ]; then
-    printf '{"decision":"block","reason":"Background task(s) you started are unreported: %s. A subagent is not woken when its background task finishes after it stops, so stopping now loses that result. Wait INSIDE this turn: one Bash call with timeout up to 600000 that polls until the task is done (a sleep inside a loop is allowed, a bare leading sleep is not), then read its output and report. If you no longer need it, stop the task first. Next time, give a long command an explicit timeout (up to 600000) so it is not moved to the background."}\n' "$pending"
+  if [ -n "$bg_reason" ]; then
+    if [ "$idle" = "1" ]; then
+      printf '%s\n' "$bg_reason" >&2
+      exit 2
+    fi
+    if command -v jq >/dev/null 2>&1; then
+      jq -cn --arg r "$bg_reason" '{decision: "block", reason: $r}'
+    else
+      esc="$(printf '%s' "$bg_reason" | tr '\t' ' ' | tr -d '\000-\010\013-\037' \
+        | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{ printf "%s%s", sep, $0; sep = "\\n" }')"
+      printf '{"decision":"block","reason":"%s"}\n' "$esc"
+    fi
     exit 0
   fi
 fi
+
+# Everything below is the doom-signature check, which never re-blocks its own loop.
+[ "$stop_active" = "1" ] && exit 0
 
 result="$(
   source "$SELF_ROOT/scripts/govern/lib/common.sh" 2>/dev/null \
@@ -179,6 +210,19 @@ result="$(
       case ",${GOVERN_READONLY_AGENT_TYPES:-lookup,investigator}," in
         *",${agent_type},"*) exit 0 ;;
       esac
+      # A child named `ro-...` is read-only by declaration, whatever its type: same reason as above.
+      # The name is the Agent call's `name`, recorded in the transcript's own meta file; a named
+      # teammate's payload type can be that name too.
+      case "$agent_type" in ro-*) exit 0 ;; esac
+      case "$(govern::agent_meta "$transcript_path" name)" in ro-*) exit 0 ;; esac
+      # GATE 0, a finished child is not stalled: its final message is a contract report with status
+      # resolved, parked or failed, or a govern:ship call in its transcript succeeded. A worker that
+      # shipped and reported spends its last turns reading and reporting, which is exactly the shape
+      # the stall signal counts, so without this the block lands on every successful worker.
+      last_msg=""
+      command -v jq >/dev/null 2>&1 \
+        && last_msg="$(printf '%s' "$payload" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
+      govern::child_finished "$transcript_path" "$last_msg" && exit 0
       # GATE 2 — did the working tree actually change? The transcript signal only knows about
       # Edit/Write/NotebookEdit tool_uses, and a child that changes files through the shell emits
       # none of them. Ask the filesystem instead: it is immune to command idiom, which no amount of

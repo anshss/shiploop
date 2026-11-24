@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# govern::pending_bg_tasks + the agent-progress-guard background-wait block:
+# govern::pending_bg_tasks, the transcript-only background-task detector:
 # a delegate that stops "until the notification arrives" is never woken when its background task
 # finishes, so the result (and the rest of its task) is silently lost. The detector reads the
 # child's OWN transcript: started (auto-moved Bash, run_in_background, Monitor) minus
-# completion-notified minus TaskStopped. The guard block ships OFF (GOVERN_BG_WAIT_GUARD) because
-# it BLOCKS a stop every existing install allows; the test proves both knob states.
+# completion-notified minus TaskStopped. govern:status falls back to it where the ledger is absent.
 # Wire shapes are the ones real transcripts carry: the completion entry is an attachment
 # (`queued_command`) carrying <task-id>ID</task-id>, so a child merely QUOTING an id is not a
 # completion.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-# GOVERN_HOOKS_DIR (assert.sh) resolves BOTH layouts: templates/hooks in the hub repo, <root>/scripts
-# in a scaffolded workspace (hooks install flat there, so the hub-relative ../../hooks path misses).
-GUARD="$GOVERN_HOOKS_DIR/agent-progress-guard.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
@@ -43,28 +39,7 @@ assert_eq "$(govern::pending_bg_tasks "$T/d.jsonl")" "bg1 mx1" "a Monitor and a 
 assert_eq "$(govern::pending_bg_tasks "$T/e.jsonl")" "bx1" "the child QUOTING a task id is not a completion"
 assert_eq "$(govern::pending_bg_tasks "$T/missing.jsonl")" "" "a missing transcript is no evidence"
 
-# guard: the block fires only with the knob ON, on SubagentStop, once, naming the task.
-child() { # <transcript> [stop_hook_active] [knob]
-  printf '{"hook_event_name":"SubagentStop","agent_id":"atest-1","agent_type":"general-purpose","agent_transcript_path":"%s","transcript_path":"%s","cwd":"%s","stop_hook_active":%s}' \
-    "$1" "$1" "$T" "${2:-false}" \
-  | GOVERN_BG_WAIT_GUARD="${3:-1}" bash "$GUARD" 2>/dev/null
-}
-out="$(child "$T/a.jsonl")"
-if printf '%s' "$out" | jq -e '.decision == "block" and (.reason | test("bx1"))' >/dev/null 2>&1; then
-  echo "ok   - knob ON: a stop with a pending task is blocked as JSON naming the task"
-else
-  echo "FAIL - knob ON: no JSON block for a pending task: '$out'"; ASSERT_FAILS=$((ASSERT_FAILS+1))
-fi
-out="$(child "$T/a.jsonl" true)"
-assert_eq "$out" "" "a second stop (stop_hook_active) passes"
-
-# knob OFF (the shipping default): the same transcript is NOT blocked — the old behavior.
-out="$(child "$T/a.jsonl" false 0)"
-assert_eq "$out" "" "knob OFF (default): the pending-task stop is allowed, as every existing install does"
-out="$(child "$T/b.jsonl" false 1)"
-assert_eq "$out" "" "knob ON but the task was reported: no block (negative control)"
-{ moved bx1; denied; said "capped"; } > "$T/f.jsonl"
-out="$(child "$T/f.jsonl" false 1)"
-assert_eq "$out" "" "knob ON but the child is wall-clock-capped: no block (it has no legal move)"
+# The stop guard itself reads the ledger (govern::pending_bg_tasks_for), not this detector: its
+# cases live in test-bg-wait-guard.sh.
 
 assert_done

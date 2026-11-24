@@ -40,7 +40,10 @@ assert_contains "$fresh" '"TeammateIdle"' "1. fresh settings.json declares a Tea
 teammate_cmd="$(jq -r '.hooks.TeammateIdle[0].hooks[0].command' "$W1/.claude/settings.json" 2>/dev/null)"
 subagent_cmd="$(jq -r '.hooks.SubagentStop[0].hooks[0].command' "$W1/.claude/settings.json" 2>/dev/null)"
 assert_contains "$teammate_cmd" "agent-progress-guard.sh" "1. TeammateIdle hook runs agent-progress-guard.sh"
-assert_eq "$teammate_cmd" "$subagent_cmd" "1. TeammateIdle points at the SAME command as SubagentStop"
+assert_contains "$subagent_cmd" "agent-progress-guard.sh" "1. SubagentStop runs the same script"
+# TeammateIdle keeps the script's stderr and exit status (exit 2 with the reason on stderr is what
+# keeps a teammate working), so its command carries no `2>/dev/null || true` wrapper.
+assert_eq "$teammate_cmd" "bash $W1/scripts/agent-progress-guard.sh" "1. TeammateIdle passes stderr and exit 2 through"
 
 # ── 2. settings-merge onto a pre-fix settings.json (SubagentStop wired, no TeammateIdle) ──
 W2="$ROOT/ws2"; mkdir -p "$W2/.claude"
@@ -57,8 +60,8 @@ assert_eq "$rc" "0" "2. settings-merge onto a pre-fix settings.json exits 0"
 merged="$(cat "$W2/.claude/settings.json")"
 assert_contains "$merged" '"TeammateIdle"' "2. settings-merge adds the missing TeammateIdle event"
 assert_eq "$(jq -r '.hooks.TeammateIdle[0].hooks[0].command' "$W2/.claude/settings.json")" \
-  "$(jq -r '.hooks.SubagentStop[0].hooks[0].command' "$W2/.claude/settings.json")" \
-  "2. merged TeammateIdle hook matches the existing SubagentStop command"
+  "bash $W2/scripts/agent-progress-guard.sh" \
+  "2. merged TeammateIdle hook runs the guard with stderr and exit status passed through"
 # NOT a block-count assertion: another hook (worker-event-emit.sh) shares this same event and is
 # itself missing from this pre-fix fixture, so settings-merge legitimately appends a SECOND matcher
 # block for it, alongside this one, never rewriting or duplicating the FIRST. What must hold is

@@ -107,6 +107,12 @@ export GOVERN_STEER_CAP=12           # advisor-steer-guard.sh's per-session cap 
                                       # not forced off: this gate only ever DENIES a message, it
                                       # never spawns, so no dispatch fixture is perturbed by it.
                                       # Explicit so a live session's own override cannot leak in.
+export GOVERN_BG_WAIT_GUARD=0 GOVERN_BG_LEDGER=0 GOVERN_REPORT_CAPTURE=0
+                                      # the background-task wait guard (ships ON, and can hold a
+                                      # stop), its PostToolUse ledger and the SubagentStop report
+                                      # capture (both ship ON and write under governor/). Forced off
+                                      # so no other fixture blocks, waits or writes through them;
+                                      # their own tests opt back in.
 
 # Index rebuild fires post-resolve in resolve-ticket.sh. It is git/grep only, no model call, but it
 # walks every file in every stub repo on each resolved ticket, which is pure wall-clock in a suite

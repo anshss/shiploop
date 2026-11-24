@@ -3547,3 +3547,206 @@ govern::extract_report() {
   [[ -n "$best" ]] || return 1
   printf '%s' "$best"
 }
+
+# ── background-task ledger, and the stop guard's wait on it ──────────────────────────────────────
+# bg-task-ledger.sh (PostToolUse, Bash|Monitor, subagent calls only) appends one line per
+# background launch to governor/.bg-ledger/<agent_id>.tsv:
+#   <epoch>\t<task_id>\t<bash|monitor>\t<output_file>
+# It is written from the tool's own response, so a launch is on disk before the child's next turn,
+# which a transcript read at stop time cannot promise (the transcript may not yet hold the current
+# turn when a hook fires). <agent_id>.delivered beside it lists, one id per line, the tasks whose
+# result agent-progress-guard.sh already handed to the child in a block reason.
+govern::bg_ledger_dir() { # -> governor/.bg-ledger under the workspace root
+  printf '%s' "${GOVERNOR_DIR:-${WS_ROOT:-.}/governor}/.bg-ledger"
+}
+
+govern::bg_safe_id() { # <agent_id> -> the id as a filename-safe token
+  local s
+  s="$(printf '%s' "${1:-}" | tr -c 'A-Za-z0-9._-' '_')"
+  printf '%s' "${s:-unknown}"
+}
+
+# Task ids the child's own transcript shows as finished or stopped, one per line. A finished task's
+# notification carries <task-id>ID</task-id> AND a <status> tag; a Monitor's per-event notification
+# carries the same <task-id> with an <event> tag instead, so an id only counts inside a notification
+# that has a <status>. A TaskStop/KillShell the child issued counts as closed too.
+govern::_bg_closed_ids() { # <child-jsonl>
+  local f="${1:-}"
+  [[ -n "$f" && -s "$f" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | jq -R 'fromjson? // empty' 2>/dev/null | jq -rs '
+    ([ .[] | select(.type != "assistant") | tostring | split("<task-notification>")[]
+       | select(test("<status>")) | (capture("<task-id>(?<id>[A-Za-z0-9_-]+)</task-id>") | .id) ])
+    + ([ .[] | select(.type == "assistant") | .message.content[]?
+         | select(.type == "tool_use" and (.name == "TaskStop" or .name == "KillShell" or .name == "KillBash"))
+         | (.input.task_id // .input.shell_id // empty) ])
+    | unique | .[]' 2>/dev/null || true
+  return 0
+}
+
+# The ledger's launches for <agent_id>, minus the tasks the transcript shows finished or stopped,
+# minus the ones whose result the stop guard already delivered. Prints the pending ids
+# space-separated, empty when none or when there is no ledger for this agent.
+govern::pending_bg_tasks_for() { # <agent_id> <agent_transcript_path> -> space-separated ids | empty
+  local id="${1:-}" tr="${2:-}" dir safe ledger launched closed
+  [[ -n "$id" ]] || return 0
+  dir="$(govern::bg_ledger_dir)"
+  safe="$(govern::bg_safe_id "$id")"
+  ledger="$dir/$safe.tsv"
+  [[ -s "$ledger" ]] || return 0
+  launched="$(awk -F'\t' '$2 ~ /^[A-Za-z0-9_-]+$/ && !seen[$2]++ { print $2 }' "$ledger" 2>/dev/null || true)"
+  [[ -n "$launched" ]] || return 0
+  closed="$( { cat "$dir/$safe.delivered" 2>/dev/null || true; govern::_bg_closed_ids "$tr"; } )"
+  awk 'NR == FNR { if ($0 != "") gone[$0] = 1; next } !($0 in gone) { printf "%s%s", sep, $0; sep = " " }' \
+    <(printf '%s\n' "$closed") <(printf '%s\n' "$launched") 2>/dev/null || true
+  return 0
+}
+
+govern::bg_task_output_file() { # <agent_id> <task_id> -> the output file the ledger recorded | empty
+  local ledger
+  ledger="$(govern::bg_ledger_dir)/$(govern::bg_safe_id "${1:-}").tsv"
+  [[ -s "$ledger" ]] || return 0
+  awk -F'\t' -v t="${2:-}" '$2 == t { f = $4 } END { if (f != "") print f }' "$ledger" 2>/dev/null || true
+  return 0
+}
+
+# Claude Code appends one line to a background task's output file when the process ends:
+# `[exited with code N]`, or `[killed]` after a TaskStop. Verified live for run_in_background Bash,
+# an auto-backgrounded Bash and a Monitor. It is written when the task's own shell exits, even while
+# a grandchild it daemonized still holds the file open, which is why this, not "no process holds
+# the file", is the completion signal: a Monitor's file is written by Claude Code itself, so no
+# process ever holds it, and a daemonized grandchild holds a finished task's file indefinitely.
+# The line is an undocumented internal: anything else reads as "not finished", never as an error.
+govern::bg_task_trailer() { # <output_file> -> "exited with code N" | "killed" | empty
+  local f="${1:-}" tailtxt last
+  [[ -n "$f" && -f "$f" ]] || return 0
+  tailtxt="$(tail -n 3 "$f" 2>/dev/null || true)"
+  last="$(awk 'NF { l = $0 } END { print l }' <<< "$tailtxt")"
+  case "$last" in
+    "[killed]") printf 'killed' ;;
+    "[exited with code "*"]")
+      last="${last#\[exited with code }"; last="${last%\]}"
+      case "$last" in (""|*[!0-9-]*) ;; (*) printf 'exited with code %s' "$last" ;; esac ;;
+  esac
+  return 0
+}
+
+# The last <n> output lines of a finished task, its trailer and the blank line before it dropped,
+# each line cut to 300 chars so one minified blob cannot flood the reason.
+govern::bg_task_tail() { # <output_file> [n] -> lines
+  local f="${1:-}" n="${2:-20}" body
+  [[ -n "$f" && -f "$f" ]] || return 0
+  body="$(tail -n "$((n + 3))" "$f" 2>/dev/null || true)"
+  awk -v n="$n" '{ l[NR] = $0 } END {
+      e = NR
+      if (e > 0 && l[e] ~ /^\[(exited with code -?[0-9]+|killed)\]$/) e--
+      while (e > 0 && l[e] ~ /^[[:space:]]*$/) e--
+      s = e - n + 1; if (s < 1) s = 1
+      for (i = s; i <= e; i++) print substr(l[i], 1, 300)
+    }' <<< "$body"
+  return 0
+}
+
+# The stop guard's answer for <agent_id>'s pending background tasks. With GOVERN_BG_WAIT_HOLD=1
+# (default) it holds the stop until every task whose output file exists shows its trailer, or until
+# GOVERN_BG_WAIT_MAX_S (default 1740, under the 1800s hook timeout so the hook answers before Claude
+# Code kills it). Each finished task's id, exit status and last 20 output lines go into the reason
+# and its id into <agent_id>.delivered, so the same result is never handed over twice. A task still
+# running at the deadline, or one whose output file is unknown or missing, gets the wait-in-your-turn
+# remedy instead. Prints the reason text; empty only when <pending ids> is empty.
+govern::bg_wait_reason() { # <agent_id> <pending ids> -> reason text
+  local id="${1:-}" ids="${2:-}" hold="${GOVERN_BG_WAIT_HOLD:-1}" max="${GOVERN_BG_WAIT_MAX_S:-1740}"
+  local t f st now deadline all done_txt="" run_txt="" run_ids="" delivered=""
+  [[ -n "$id" && -n "$ids" ]] || return 0
+  case "$max" in (""|*[!0-9]*) max=1740 ;; esac
+  now="$(date +%s)"
+  deadline=$(( now + max ))
+  if [[ "$hold" == "1" ]]; then
+    while :; do
+      all=1
+      for t in $ids; do
+        f="$(govern::bg_task_output_file "$id" "$t")"
+        [[ -n "$f" && -f "$f" ]] || continue
+        [[ -n "$(govern::bg_task_trailer "$f")" ]] || { all=0; break; }
+      done
+      [[ "$all" == "1" ]] && break
+      [[ "$(date +%s)" -lt "$deadline" ]] || break
+      sleep 1
+    done
+  fi
+  for t in $ids; do
+    f="$(govern::bg_task_output_file "$id" "$t")"
+    st="$(govern::bg_task_trailer "$f")"
+    if [[ -n "$st" ]]; then
+      done_txt="${done_txt}
+Task ${t} finished (${st}). Last output lines:
+$(govern::bg_task_tail "$f" 20)
+"
+      delivered="${delivered}${t}
+"
+    else
+      run_ids="${run_ids:+$run_ids }$t"
+      if [[ -n "$f" && -f "$f" ]]; then
+        run_txt="${run_txt}
+until grep -Eq '^\\[(exited with code -?[0-9]+|killed)\\]\$' '${f}'; do sleep 5; done"
+      fi
+    fi
+  done
+  if [[ -n "$delivered" ]]; then
+    mkdir -p "$(govern::bg_ledger_dir)" 2>/dev/null || true
+    printf '%s' "$delivered" >> "$(govern::bg_ledger_dir)/$(govern::bg_safe_id "$id").delivered" 2>/dev/null || true
+  fi
+  if [[ -n "$done_txt" ]]; then
+    printf '%s' "A background task you started finished while you were stopping. A subagent is not woken by a task that ends after it stops, so its result is handed to you here: continue your task with it.${done_txt}"
+  fi
+  if [[ -n "$run_ids" ]]; then
+    [[ -n "$done_txt" ]] && printf '\n'
+    local poll="."
+    [[ -n "$run_txt" ]] && poll=", for example:${run_txt}
+"
+    printf '%s' "Background task(s) you started are still running: ${run_ids}. Nothing wakes a subagent once it has stopped, so stopping now loses their results. Wait INSIDE this turn: re-run the command in the foreground with an explicit timeout (timeout: 3600000), or poll it in ONE Bash call with timeout: 3600000 (a sleep inside a loop is allowed, a bare leading sleep is not)${poll} Then read its output and carry on. If you no longer need a task, stop it with TaskStop first."
+  fi
+  return 0
+}
+
+# A child that has finished: its final message parses as a contract report whose status is
+# resolved, parked or failed, or a govern:ship call in its transcript returned without error.
+# <last_message> is the SubagentStop payload's last_assistant_message; when it is empty the last
+# assistant text in the transcript is read instead. Returns 0 when finished, 1 otherwise.
+govern::child_finished() { # <child-jsonl> [last_message]
+  local f="${1:-}" msg="${2:-}" rep st
+  command -v jq >/dev/null 2>&1 || return 1
+  if [[ -z "$msg" && -n "$f" && -s "$f" ]]; then
+    msg="$(LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | jq -R 'fromjson? // empty' 2>/dev/null | jq -rs '
+      [ .[] | select(.type == "assistant") | [ .message.content[]? | select(.type == "text") | .text ]
+        | select(length > 0) | join("\n") ] | last // empty' 2>/dev/null || true)"
+  fi
+  if [[ -n "$msg" ]]; then
+    rep="$(printf '%s' "$msg" | govern::extract_report 2>/dev/null || true)"
+    st="$(printf '%s' "$rep" | jq -r '.status? // empty' 2>/dev/null || true)"
+    case "$st" in resolved|parked|failed) return 0 ;; esac
+  fi
+  [[ -n "$f" && -s "$f" ]] || return 1
+  local shipped
+  shipped="$(LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | jq -R 'fromjson? // empty' 2>/dev/null | jq -rs '
+    ([ .[] | select(.type == "assistant") | .message.content[]?
+       | select(.type == "tool_use" and .name == "Bash"
+                and ((.input.command // "") | test("govern:ship|govern/ship\\.sh")))
+       | .id ]) as $ship
+    | [ .[] | select(.type == "user") | .message.content[]?
+        | select(.type == "tool_result" and (.tool_use_id as $u | $ship | index($u)) and (.is_error != true)) ]
+    | length' 2>/dev/null || true)"
+  [[ "${shipped:-0}" =~ ^[1-9][0-9]*$ ]]
+}
+
+# A field of the subagent's own <transcript>.meta.json (written beside agent-<id>.jsonl): `name` is
+# the Agent call's name for a teammate, `customAgentType` the subagent type it was spawned as.
+govern::agent_meta() { # <child-jsonl> <field> -> value | empty
+  local f="${1:-}" meta
+  [[ -n "$f" ]] || return 0
+  meta="${f%.jsonl}.meta.json"
+  [[ -f "$meta" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -r --arg k "${2:-}" '.[$k] // empty | strings' "$meta" 2>/dev/null || true
+  return 0
+}

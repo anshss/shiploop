@@ -27,6 +27,10 @@ governor/events.jsonl
 # CLAUDE.md trim proposals: regenerated on every claudemd-trim.sh / govern:context-budgets run, derived
 # state, never source. The verdicts file (claudemd-verdicts.json) IS tracked: operator decisions.
 governor/claudemd-trim-proposals.md
+# worker reports captured at SubagentStop (govern:resolve reads one when stdin is empty) and the
+# per-agent background-task ledger the stop guard waits on. Per-machine runtime state, never source.
+governor/reports/
+governor/.bg-ledger/
 # Root lockfile policy — the ROOT uses ONE package manager (ROOT_PM in
 # scripts/lib/workspace.sh). The off-PM root lockfiles are ignored so a stray
 # `npm install` / `pnpm install` in the wrong PM can't commit a divergent root
