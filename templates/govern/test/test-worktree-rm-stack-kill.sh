@@ -63,6 +63,7 @@ wait_listen() { # port timeout_s
 
 owned_pid="$(hold_port "$WT" "$OWNED_PORT")"       # cwd UNDER the worktree → ours
 foreign_pid="$(hold_port "$OUT" "$FOREIGN_PORT")"  # cwd OUTSIDE the worktree → NOT ours
+bg_reap "$owned_pid" "$foreign_pid"
 cleanup() { kill -9 "$owned_pid" "$foreign_pid" 2>/dev/null || true; rm -rf "$T"; }
 trap 'cleanup; rm -f "$FN"' EXIT
 wait_listen "$OWNED_PORT" 50
@@ -90,6 +91,7 @@ GONE="$T/gone"; mkdir -p "$GONE"
 # a process on a would-be worktree port, cwd anywhere — with no worktree.env the fn can't scope, so
 # it must NOT kill it.
 gp="$(hold_port "$OUT" "$GONE_PORT")"; wait_listen "$GONE_PORT" 50
+bg_reap "$gp"
 kill_worktree_stack "$GONE" >/dev/null 2>&1 || true
 gp_alive=no; kill -0 "$gp" 2>/dev/null && gp_alive=yes
 kill -9 "$gp" 2>/dev/null || true

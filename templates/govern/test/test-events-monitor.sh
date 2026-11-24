@@ -61,8 +61,12 @@ assert_eq "$(wc -c < "$T/off.log" | tr -d ' ')" "0" "monitor: the kill switch pr
 # ── 1. silent with no fleet ─────────────────────────────────────────────────────────────────────
 # A directory with no governor/ anywhere above it. The monitor must poll quietly, not exit noisily.
 NOWS="$T/nofleet"; mkdir -p "$NOWS"
-( cd "$NOWS" && env -u GOVERN_EVENTS_FILE -u CLAUDE_PROJECT_DIR GOVERN_MONITOR_POLL_S=1 \
+# `exec` inside the subshell: without it $! is the subshell, the monitor is its
+# child, and the kills below reap only the subshell while the monitor re-parents
+# and runs forever (the fixture leak that stranded real fleet-monitors).
+( cd "$NOWS" && exec env -u GOVERN_EVENTS_FILE -u CLAUDE_PROJECT_DIR GOVERN_MONITOR_POLL_S=1 \
     bash "$MON" </dev/null >"$T/silent.log" 2>&1 ) & SILENT=$!
+bg_reap "$SILENT"
 sleep 3
 kill "$SILENT" 2>/dev/null; wait "$SILENT" 2>/dev/null
 assert_eq "$(wc -c < "$T/silent.log" | tr -d ' ')" "0" \
@@ -74,9 +78,10 @@ ev "{\"ts\":$((TS-800)),\"run_id\":\"r0\",\"type\":\"worker_spawned\",\"agent_id
 ev "{\"ts\":$((TS-700)),\"run_id\":\"r0\",\"type\":\"worker_done\",\"agent_id\":\"a0\",\"status\":\"resolved\",\"model\":\"sonnet\",\"elapsed\":100}"
 
 LOG="$T/mon.log"
-( cd "$WS/sub/deep" && env -u GOVERN_EVENTS_FILE -u CLAUDE_PROJECT_DIR \
+( cd "$WS/sub/deep" && exec env -u GOVERN_EVENTS_FILE -u CLAUDE_PROJECT_DIR \
     GOVERN_MONITOR_POLL_S=1 GOVERN_MONITOR_DEDUPE_S=120 GOVERN_MONITOR_MAX_PER_MIN=6 \
     bash "$MON" </dev/null >"$LOG" 2>&1 ) & MPID=$!
+bg_reap "$MPID"
 sleep 2
 assert_eq "$(wc -c < "$LOG" | tr -d ' ')" "0" \
   "monitor: attaches at the END of the log — pre-existing events are never replayed"

@@ -227,6 +227,7 @@ T="$(mk_repo)"; PRE_HEAD="$(git -C "$T" rev-parse HEAD)"; BEFORE="$(layout "$T")
 WRAP_TEST_HANG_BEFORE_RENAME=1 /bin/bash "$WRAP" --workspace-dir "$T" --name myapp \
   "${WRAP_COMMON[@]}" --yes >/dev/null 2>&1 &
 WPID=$!
+bg_reap "$WPID"
 staged=0
 for _ in $(seq 1 100); do
   if find "$T" -maxdepth 1 -name '.wrap-staging.*' -type d 2>/dev/null | grep -q .; then staged=1; break; fi

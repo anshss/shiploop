@@ -103,6 +103,7 @@ EV="$T/sem.events"; : > "$EV"
   echo 99999999 > "$INSTALL_SEM_DIR/1/holder"
   sem_acquire "r"; echo "+" >> "$EV"; sem_release; echo "-" >> "$EV" ) &
 semwait=$!
+bg_reap "$semwait"
 wait "$semwait" || true
 assert_eq "$(cat "$EV")" "$(printf '+\n-')" "sem_acquire reclaims a slot whose holder pid is dead"
 

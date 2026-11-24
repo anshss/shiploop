@@ -27,6 +27,7 @@ LOG="$ROOT/out.log"
 run_scaffold() { # <workspace> <templates> [extra scaffold args...]
   local ws="$1" tpl="$2"; shift 2
   bash "$SCAFFOLD" --workspace-dir "$ws" --templates "$tpl" "$@" --yes </dev/null >"$LOG" 2>&1 &
+  bg_reap "$!"
   wait $!
 }
 

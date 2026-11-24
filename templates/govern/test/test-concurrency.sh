@@ -92,7 +92,9 @@ rpt() { printf '{"status":"resolved","pr":{"repo":"alpha","number":%s},"newTicke
 # apply only to `rpt`, never to the `bash "$BK"` that actually reads it (the bug that made this test
 # silently pass on the wrong file pre-queue-move). GOVERN_WS_ROOT is already exported above.
 rpt 1 | GOVERN_TICKETS_FILE="$T/tickets.md" bash "$BK" 1 >/dev/null 2>&1 &
+bg_reap "$!"
 rpt 2 | GOVERN_TICKETS_FILE="$T/tickets.md" bash "$BK" 2 >/dev/null 2>&1 &
+bg_reap "$!"
 wait
 
 heads="$(grep -oE '^## #[0-9]+' "$T/tickets.md" | tr '\n' ' ')"
