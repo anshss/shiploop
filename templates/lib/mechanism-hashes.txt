@@ -1008,6 +1008,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 1b01e15930439b8c36a28c6602fc1d2f3ff553207dcbe34eed6b0ba7a3601361  scripts/govern/test/test-flows-command.sh
 1b63464c04ba96bbc9c21db5ee9210b3f87c907d5646c0802d2f709ec2ab2034  scripts/govern/test/test-progress-signal.sh
 1bf4bd3dbe1183662145c9d161bf11e0a4c759c06d7ebaeb79e01f16ab0b4363  scripts/govern/test/test-locality-batch-runloop.sh
+1c14eca1ed933ad9cbb55736abdb40767e1df216a4d4238a787932b4831fcd86  scripts/govern/test/test-run-suite.sh
 1c6e5f0828404103d472fad0a18ba699d665f40626c89d69f84dd2943877dabd  scripts/govern/test/test-ticket-block-parser.sh
 1ccceb51bef1f0f7acbc0d7fbe1d1f764298b7e83ec2ac5c1bcf591f93e1ff54  scripts/govern/test/test-self-apply.sh
 1d2fda2d5bc673dbfd57bbdd8c6719e1a95b700f511f1315f9c2422583b56e08  scripts/govern/test/test-lesson-admission.sh
@@ -1241,6 +1242,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 65542d76dcdf2dd3c353ff3ec3099ada5477f252c9cfdb5daa7c3d1806d3e84a  scripts/govern/test/test-ticket-sweep.sh
 65814c6fb81514f7561aacdf30fc9591657649261383e968ff477cfbe9f7e395  scripts/govern/test/test-sync-port-fork-funnel.sh
 65c69c79d990050c43265d1a25937266c871f49cf9a8488caedebc65c1d34268  scripts/govern/test/test-base-ref.sh
+65fa1d8436ef1e0098a447a9409d55c1cf2cb2f710810fb19b8757b54700147f  scripts/govern/test/test-post-merge-check.sh
 672ff93764ee7ebbc0f1c10aacad3bdcbe091b9f1cfb3d3d4649ba1bb8e4366e  scripts/govern/test/test-multi-pr-merge.sh
 675c244e4b55fc6cdb99a441f24be247580e09298459eb1798fe9a21f135cff7  scripts/govern/test/test-budget-exceeded-classification.sh
 6770d346433df2d24a3a250c05081c373587b03b512f2aeb57d21ea0cf900bc2  scripts/govern/test/test-worktree-reap-ticket-gone.sh
@@ -1364,6 +1366,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 8f83b1772bfb23c0b4456e9e0745ef0676e2380db4656338a5de066f1d5b58fe  scripts/govern/test/test-wrap-in-place.sh
 8fedb2bd85f4a14b3b0c734bc2e2afb831f8a29788472c9537925d2366cfd887  scripts/govern/test/test-config-check.sh
 90122ecaa98e2326fe3518888207acb1ca9870adfd2316dad36c38257cf7a574  scripts/govern/test/test-events-stale.sh
+904a2b5153ce935aa9f7bbb9069fbea767277846b3a60206b83358d3a4bb0943  scripts/govern/test/test-resolve-labs-select.sh
 90d45aadfc5766e80b2957807fb8f9cd3412e3c8db9e15696cac2731dc5d5991  scripts/govern/test/test-config-check.sh
 90ea9abe387c64bd975642379352129bdb89b9da3cc253123f3ba6243e5dcf3e  scripts/govern/test/test-merge-ci-unverifiable-park.sh
 9125c9522229756d42958ad8c68399b297a8fcbf7a118eba09329b9beafcb98f  scripts/govern/test/test-spawn-sizing-no-scout.sh

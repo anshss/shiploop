@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.20.23 - 2026-11-25
+
+### Fixed
+
+**The resolve-time gate arms with selected validation, the release ceremony becomes one command, and the govern suite turns hermetic.**
+
+- `post-merge-check.sh` gains a fleet-selectable validation subset: a selector (the conventional `eval/labs/select.js`, or `GOVERN_POST_MERGE_LABS_SELECT`) maps the merged first-parent changed files to a lab/test list handed to the post-merge command via `GOVERN_LABS_FILE`; a missing or failing selector falls back to the full suite (`t2026-11-25-a`).
+- `tools/resolve-labs-select.sh` is the hub's own selector, mapping changed paths to the govern-suite tests that cover them and over-selecting on anything unrecognized (`t2026-11-25-a`).
+- `tools/run-suite.sh` consumes `GOVERN_LABS_FILE` as a test subset with a `FULL` escape line, keeping the no-orphans guard (`t2026-11-25-a`).
+- `pre-dispatch`'s resolved-skip keys on the ticket block's presence on origin/main by exact heading anchor, refuses a gone block as "resolved-unverified" when no trunk fingerprint confirms the fix, and flags open blocks whose PR already merged on origin (`t2026-11-25-a`).
+- `tools/make-release.sh` performs the whole release ceremony as one verified step: fetch-first version/manifest/hash mutations, pre-commit consistency and parity checks, tag and push, and a GitHub release body generated from the exact CHANGELOG section with a parity self-heal (`t2026-11-25-a`).
+- The govern suite turns hermetic: the harness sandboxes each test's HOME, TMPDIR and git config behind an escape canary, `run-suite` gains an order-check pass that fails on verdict flips, seventeen fixture leaks were fixed, and the fixture git-identity gap the sandbox surfaced is fixed at the harness layer (`t2026-11-25-a`).
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated.
+
+Validation: every train PR landed with its own full-suite validation and 14/14 green CI on its head; parity runs at full strength on this commit.
+
 ## 1.20.22 - 2026-11-24
 
 ### Fixed
