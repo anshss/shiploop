@@ -11,7 +11,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 set +e   # assert.sh arms -e; the lint intentionally exits 1 on a fault
 LINT="$DIR/../lint-tickets.sh"
-SWEEP="$DIR/../../hooks/ticket-sweep-reminder.sh"
+# GOVERN_HOOKS_DIR (assert.sh) resolves BOTH layouts: templates/hooks in the hub repo, <root>/scripts
+# in a scaffolded workspace (hooks install flat there, so the hub-relative ../../hooks path misses).
+SWEEP="$GOVERN_HOOKS_DIR/ticket-sweep-reminder.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"

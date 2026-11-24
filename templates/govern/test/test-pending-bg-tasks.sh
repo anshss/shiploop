@@ -11,7 +11,9 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
-GUARD="$DIR/../../hooks/agent-progress-guard.sh"
+# GOVERN_HOOKS_DIR (assert.sh) resolves BOTH layouts: templates/hooks in the hub repo, <root>/scripts
+# in a scaffolded workspace (hooks install flat there, so the hub-relative ../../hooks path misses).
+GUARD="$GOVERN_HOOKS_DIR/agent-progress-guard.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
