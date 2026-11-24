@@ -2477,14 +2477,19 @@ govern::ticket_deps() { # N [tickets-file] -> dep numbers, one per line
       }
     }
     # (B) implicit deps from a BLOCKER: another ticket #cur declaring a `**Blocks:** ... #N ...` line.
-    # Matched on the BOLD marker (`**Blocks:**` / `**Blocks**`) or a line-leading `Blocks:` — NOT the
-    # bare word "blocks", which shows up in prose far more than "depends on" does (e.g. "this blocks
-    # the deploy flow") and would falsely link tickets. Only fires when the marker line names #N
-    # exactly. `cur != n` skips #N own `**Blocks:**` (that names its dependents, not its blockers);
-    # `cur != ""` guards the preamble before the first heading.
+    # Anchored to the START of the line, the same discipline branch (A) applies, bold optional and
+    # colon required (either wrap order): a marker occurrence ANYWHERE ELSE on a line is
+    # documentation, not a declaration. A backticked `**Blocks:**` example, a quoted one, or a
+    # bullet-list item never matches, so an unrelated ticket number later on that same line is never
+    # swept in as a false blocker (a prose line carrying a marker example once parked the dispatch
+    # gate on a ticket it had no relationship to). Matched on the word `blocks` plus its colon, NOT
+    # the bare word "blocks", which shows up in prose far more than "depends on" does (e.g. "this
+    # blocks the deploy flow") and would falsely link tickets. Only fires when the marker line names
+    # #N exactly. `cur != n` skips #N own `**Blocks:**` (that names its dependents, not its
+    # blockers); `cur != ""` guards the preamble before the first heading.
     cur != n && cur != "" {
       low=tolower($0)
-      if (low ~ /\*\*blocks:?\*\*/ || low ~ /^[[:space:]]*blocks:/) {
+      if (low ~ /^[[:space:]]*\*?\*?blocks(:\*?\*?|\*?\*?:)/) {
         s=$0; names_n=0
         while (match(s,/#[0-9]+/)) {
           if (substr(s,RSTART+1,RLENGTH-1)==n) names_n=1
