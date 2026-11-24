@@ -31,6 +31,12 @@ so the parser finds them.
 
 - **`Flow:`** — tag this ticket as a flow-registry validation (`--flow <id[,id…]>`); the worker gets
   the flow block(s) injected and bookkeeping stamps the registry on resolve.
+- **`Fix-Files-Contain:`** — comma-separated `<repo>:<fixed-string>` fingerprints that will exist on
+  trunk only once this ticket's fix lands (`repo` = sub-repo folder under the meta root, `.` = the
+  meta repo itself; pick a distinctive function name, string, or constant the fix introduces).
+  Pre-dispatch greps these against the trunk when the block is already gone from origin/main, so a
+  landed ticket skips as resolved while an unimplemented one prints an explicit resolved-unverified
+  line instead of being silently dropped. Omit it when the fix has no greppable signature.
 
 > **There is no `Model:` / `Effort:` field.** Model choice is made at dispatch, not at filing time:
 > the advisor runs `npm run govern:dispatch -- <N> --model <alias>` when the work needs more than the

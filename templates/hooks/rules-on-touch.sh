@@ -236,6 +236,7 @@ EOF
 - Work items only, one `## #N` each. Scope: this workspace's sub-repos and the harness, nothing external.
 - **Consolidate by default:** two tickets one worker would fix in one PR should have been one ticket.
 - **Numbering:** blocks are NOT number-ordered and resolved numbers are never reused. Before filing, compute next = 1 + max(N) over (a) every `## #N` heading in the whole current file and (b) every `file #N` / `resolve #N` subject in `git log --all`. The file's tail is not the ceiling. Re-verify uniqueness right before committing.
+- **`**Fix-Files-Contain:** <repo>:<fixed-string>[, <repo>:<fixed-string>...]`** on tickets whose fix leaves a greppable signature (a distinctive function name, string, or constant): each is a sub-repo folder under the meta root (`.` = the meta repo itself) plus a short string that will EXIST on trunk only once the fix lands. Pre-dispatch greps these against the trunk so a block gone from origin/main skips as resolved instead of bare-skipping unimplemented work as "resolved+pushed"; omit it only when the fix has no greppable signature.
 - Editing ONE ticket: bound its region by the `## #N` heading FIRST. Anchors like `**Done when:**` repeat across tickets, so a bare index-of can slice backwards and a scripted replace then rewrites the whole file. Verify the line count after any scripted edit, BEFORE committing.
 EOF
 ;;

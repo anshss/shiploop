@@ -43,7 +43,13 @@
 #                                 bump and its one-time permanent-park escalation
 #   2. already-a-public-issue    (govern::tickets_already_issues,
 #                                 GOVERN_SKIP_ISSUE_TICKETS, default on)
-#   3. cross-driver re-verify    (govern::ticket_present_on_origin) still on origin/main?
+#   3. cross-driver re-verify    (govern::ticket_present_on_origin) still on origin/main? A block
+#                                 gone from origin/main never bare-skips: a Fix-Files-Contain
+#                                 fingerprint on the trunk skips as resolved; anything else prints
+#                                 an explicit resolved-unverified line (confirm before trusting).
+#   3b. merged-PR mirror probe   (govern::ticket_merged_pr; GOVERN_MERGED_PR_PROBE=0 off) an open
+#                                 block whose PR is already MERGED on origin skips as
+#                                 bookkeeping-only instead of re-implementing merged work.
 #   4. depends-on gate           (govern::ticket_deps) every **Depends on:** #K landed?
 #   5. staleness gate            (staleness-gate.sh; GOVERN_STALENESS_GATE=0 by default, ships
 #                                 inert, the same default the loop shipped)
@@ -142,10 +148,37 @@ pdc_gate_one() {
   fi
 
   # ── 3. cross-driver re-verify: still on origin/main? ───────────────────────────────────────
+  # The ONLY hard skip signal is the block's ABSENCE from origin/main by exact heading anchor
+  # (govern::ticket_present_on_origin). Absence alone used to bare-skip as "resolved+pushed by a
+  # concurrent session", which burned real work twice (hunt #125: unimplemented tickets skipped
+  # while their blocks were PRESENT on origin; this workspace 2026-11-24: fresh tickets skipped
+  # because the queue existed only locally). So absence now splits on the fix-presence probe: a
+  # Fix-Files-Contain fingerprint found on the trunk is positive evidence of resolution (skip),
+  # anything else is resolved-UNVERIFIED — still a skip verdict, but printed explicitly so a
+  # dispatching session confirms before trusting it; it is never a bare silent drop.
   local META_DIR; META_DIR="$(govern::meta_root)"
   if ! govern::ticket_present_on_origin "$META_DIR" "$N"; then
-    echo "skip: #$N no longer on origin/main (resolved+pushed by a concurrent session): no worker burned"
+    if govern::ticket_fix_on_trunk "$N" "$TICKETS_FILE" "$META_DIR"; then
+      echo "skip: #$N no longer on origin/main and a Fix-Files-Contain signature is on the trunk (resolved): no worker burned"
+    else
+      echo "skip: #$N resolved-unverified: block gone from origin/main but no trunk signature found; confirm before skipping"
+    fi
     return 0
+  fi
+
+  # ── 3b. merged-PR mirror probe (the opposite bookkeeping gap, same origin-state root) ──────
+  # A PR merged on origin from OUTSIDE govern:resolve leaves the queue block open forever, and
+  # nothing used to flag it: an operator later asks to implement the already-merged ticket and
+  # burns a rediscovery session. One cheap probe (head-branch PR list + one `gh pr view --json
+  # state` per discovered ref, fail-open on any inconclusive miss) reports it at check time so
+  # the next resolve is bookkeeping-only. GOVERN_MERGED_PR_PROBE=0 is the kill switch.
+  local _merged_out=""
+  if [[ "${GOVERN_MERGED_PR_PROBE:-1}" == "1" ]]; then
+    _merged_out="$(govern::ticket_merged_pr "$N" 2>/dev/null || true)"
+    if [[ -n "$_merged_out" ]]; then
+      echo "skip: #$N's PR is already MERGED on origin (${_merged_out%%$'\n'*}) but its queue block is still open: bookkeeping-only — re-run resolve-ticket.sh $N instead of re-implementing"
+      return 0
+    fi
   fi
 
   # ── 4. depends-on gate ──────────────────────────────────────────────────────────────────────
