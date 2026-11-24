@@ -10,8 +10,8 @@
 #   A. headless-style: worktree registered as ticket-$N            -> torn down directly,
 #      the PR-head-branch fallback (gh) is NEVER consulted.
 #   B. interactive-style: worktree registered as t<N> (not ticket-$N) -> the ticket-$N lookup
-#      is refused cleanly (rm.sh never even called for it), THEN the PR's headRefName recovers
-#      t<N> and tears it down.
+#      is refused cleanly (rm.sh never even called for it), THEN the t$N packet-slug probe
+#      recovers t<N> and tears it down without ever consulting gh.
 #   C. neither name is registered (teardown genuinely can't find it) -> resolve-ticket still
 #      lands the ticket (teardown is best-effort, never a landing blocker) and says so on stderr,
 #      and rm.sh is never invoked at all.
@@ -120,7 +120,7 @@ assert_contains "$(cat "$T/rm-calls.log")" "removed ticket-41" "A: worktree tick
 # substring alone.
 assert_not_contains "$(cat "$T/gh-calls.log")" "gh called: pr view" "A: the PR-head-branch fallback is NEVER consulted when ticket-\$N matches"
 
-# ── B. interactive-style: t41 is registered, ticket-41 is NOT — recovered via the PR's headRefName ──
+# ── B. interactive-style: t41 is registered, ticket-41 is NOT: recovered by the t$N probe ────────
 : > "$LANDED"; : > "$T/rm-calls.log"; : > "$T/gh-calls.log"
 seed_registry "t41"
 export STUB_HEAD_REF="t41"
@@ -128,8 +128,8 @@ out="$(run_rt)"
 assert_eq "$(tr -cd '\n' < "$LANDED" | wc -c | tr -d ' ')" "1" "B: ticket still lands"
 rmlog="$(cat "$T/rm-calls.log")"
 assert_not_contains "$rmlog" "ticket-41" "B: the unregistered ticket-41 name is filtered by the registry lookup, rm.sh is never called with it"
-assert_contains "$rmlog" "removed t41" "B: the PR's headRefName (t41) recovers the REAL worktree and it IS torn down"
-assert_contains "$(cat "$T/gh-calls.log")" "gh called: pr view" "B: the PR-head-branch fallback WAS consulted"
+assert_contains "$rmlog" "removed t41" "B: the t\$N packet-slug probe recovers the REAL worktree and it IS torn down"
+assert_not_contains "$(cat "$T/gh-calls.log")" "gh called: pr view" "B: the PR-head-branch fallback is no longer needed once t\$N matches"
 
 # ── C. neither ticket-41 nor the PR's headRefName is a registered worktree ──────────────────────
 : > "$LANDED"; : > "$T/rm-calls.log"; : > "$T/gh-calls.log"
@@ -139,5 +139,39 @@ out="$(run_rt)"
 assert_eq "$(tr -cd '\n' < "$LANDED" | wc -c | tr -d ' ')" "1" "C: teardown failure never blocks landing the ticket"
 assert_contains "$out" "clean up manually" "C: an unrecoverable teardown says so on stderr rather than going silent"
 assert_eq "$([[ -s "$T/rm-calls.log" ]] && echo present || echo absent)" "absent" "C: rm.sh is never invoked when no name resolves at all"
+
+# ── D. packet-dispatched: t<N> registered, nothing else: the t$N probe finds it WITHOUT gh ───────
+# dispatch-packet.sh creates the worktree as slug t<N>, so the t$N probe covers the packet-created
+# worktree even when the report omits rootScope.worktree.
+: > "$LANDED"; : > "$T/rm-calls.log"; : > "$T/gh-calls.log"
+seed_registry "t41"
+export STUB_HEAD_REF="unregistered-head"
+out="$(run_rt)"
+assert_eq "$(tr -cd '\n' < "$LANDED" | wc -c | tr -d ' ')" "1" "D: ticket still lands"
+assert_contains "$(cat "$T/rm-calls.log")" "removed t41" "D: the t\$N slug probe recovers the packet-created worktree and tears it down"
+assert_not_contains "$(cat "$T/gh-calls.log")" "gh called: pr view" "D: the PR-head-branch fallback is not needed when t\$N matches"
+
+# ── E. the dispatch stamp wins: the name dispatch-packet.sh recorded is tried FIRST ──────────────
+# A non-conventional recorded name (not t<N>, not ticket-$N) still tears down deterministically,
+# and the stamp is consumed so it cannot steer a later resolve of the same number.
+: > "$LANDED"; : > "$T/rm-calls.log"; : > "$T/gh-calls.log"
+seed_registry "batch-wt"
+mkdir -p "$T/governor/dispatch-worktrees"
+printf 'batch-wt\n' > "$T/governor/dispatch-worktrees/41"
+export STUB_HEAD_REF="unregistered-head"
+out="$(run_rt)"
+assert_eq "$(tr -cd '\n' < "$LANDED" | wc -c | tr -d ' ')" "1" "E: ticket still lands"
+assert_contains "$(cat "$T/rm-calls.log")" "removed batch-wt" "E: the stamped name is used for the teardown"
+assert_not_contains "$(cat "$T/gh-calls.log")" "gh called: pr view" "E: no fallback probes needed when the stamp matches"
+assert_eq "$([[ -f "$T/governor/dispatch-worktrees/41" ]] && echo present || echo absent)" "absent" "E: the stamp is consumed after the teardown decision"
+
+# ── F. a STALE stamp (names an unregistered worktree) degrades to the probes, never a blind rm ───
+: > "$LANDED"; : > "$T/rm-calls.log"; : > "$T/gh-calls.log"
+seed_registry "ticket-41"
+mkdir -p "$T/governor/dispatch-worktrees"
+printf 'gone-wt\n' > "$T/governor/dispatch-worktrees/41"
+export STUB_HEAD_REF="unregistered-head"
+out="$(run_rt)"
+assert_contains "$(cat "$T/rm-calls.log")" "removed ticket-41" "F: an unregistered stamp falls through to the ticket-\$N probe"
 
 assert_done

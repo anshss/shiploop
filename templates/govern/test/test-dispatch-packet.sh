@@ -151,4 +151,18 @@ packet4="$(printf '%s\n' "$out4" | sed -n '1p')"
 assert_contains "$(cat "$packet4")" "silently caps at 10 upstream" "4. the recorded gotcha for the ticket's own path is folded into the packet"
 rm -rf "$CASE_T"
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# 5. the dispatch stamp: the created slug is recorded under governor state so resolve-ticket.sh
+#    tears the worktree down by the name dispatch actually used, and a re-dispatch rewrites it
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+setup_case
+out5="$(run_dp 7)"; rc5=$?
+assert_eq "$rc5" "0" "5. dispatch-packet exits 0"
+assert_eq "$(cat "$CASE_T/governor/dispatch-worktrees/7" 2>/dev/null)" "t7" "5. the created slug is stamped under governor/dispatch-worktrees/<primary>"
+run_dp 7 >/dev/null
+assert_eq "$(cat "$CASE_T/governor/dispatch-worktrees/7" 2>/dev/null)" "t7" "5. a re-dispatch (--adopt) rewrites the same stamp"
+run_dp 7,8 >/dev/null
+assert_eq "$(cat "$CASE_T/governor/dispatch-worktrees/7" 2>/dev/null)" "t7" "5. a group dispatch stamps the PRIMARY's slug"
+rm -rf "$CASE_T"
+
 assert_done

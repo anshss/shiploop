@@ -28,8 +28,16 @@ while read -r _localref _localsha remoteref _remotesha; do
   [ -z "${remoteref:-}" ] && continue
   branch="${remoteref#refs/heads/}"
 
-  # Direct push to main — always allowed (operator/governor bookkeeping path).
-  [ "$branch" = "main" ] && continue
+  # Direct push to main: allowed (operator/governor bookkeeping path), but in a hub checkout
+  # (one that ships tools/hub-context-pre-push.sh) a main push is first gated on the hub-context
+  # test list: CI runs that list only AFTER the push and nothing consumes the result, so without
+  # this gate a doc-only push that breaks a vocab guard lands as silent red on origin/main.
+  if [ "$branch" = "main" ]; then
+    if [ -f tools/hub-context-pre-push.sh ]; then
+      bash tools/hub-context-pre-push.sh "$_localsha" "$remoteref" "$_remotesha" || exit $?
+    fi
+    continue
+  fi
 
   if [ "$govern" = "1" ]; then
     # Sanctioned governor run: only a governor-owned feature branch is allowed so the governor can
