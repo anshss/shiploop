@@ -12,3 +12,4 @@
 
 test-vocab-agent-worker
 test-vocab-worker-pairing
+test-recursive-grep-doctrine

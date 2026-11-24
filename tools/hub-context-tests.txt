@@ -35,6 +35,7 @@ test-worktree-base-permissions
 test-scaffold-bg-wait-settings
 test-wrap-in-place
 test-vocab-worker-pairing
+test-recursive-grep-doctrine
 test-mechanism-local-edits
 test-update-keeps-local-hooks-and-ignores
 test-update-run-probe
