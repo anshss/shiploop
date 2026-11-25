@@ -229,7 +229,13 @@ _delete_scaffold_outputs() {
 
 rollback_and_exit() {
   local ec="${1:-1}"
-  trap - INT TERM ERR EXIT   # disarm — never recurse
+  # Ignore INT/TERM for the whole restore rather than disarming to the default:
+  # SIG_IGN discards any duplicate or in-flight signal (a second INT cannot
+  # reenter the handler or kill the shell mid-restore), and the mv/find children
+  # inherit the ignore, so nothing interrupts the moves. Once entered, the
+  # rollback completes.
+  trap '' INT TERM
+  trap - ERR EXIT
   case "$PHASE" in
     preflight|done)
       : ;;   # nothing moved (preflight) or already succeeded+cleaned (done)
@@ -642,8 +648,9 @@ do_move() {
   if [ "${WRAP_TEST_HANG_BEFORE_RENAME:-0}" = "1" ]; then
     info "TEST: hanging before rename (awaiting signal)"
     # Long enough that the injecting test observes the staging window even under
-    # a loaded parallel suite runner; the injected INT (to the whole job group)
-    # kills the sleep directly, so this never delays a signaled rollback.
+    # a loaded parallel suite runner. The group-INT usually kills the sleep
+    # directly (immediate trap), but a host's bash may swallow it group-wide, in
+    # which case the transform completes normally past this seam.
     sleep 60
   fi
 
