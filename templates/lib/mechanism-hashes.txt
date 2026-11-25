@@ -987,6 +987,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 09965b78ed398245a7c073f5987d7915711fc78dcffb3da1b26593beac91bc48  scripts/govern/test/test-spawn-worker.sh
 0a7708efcdc3b5341b72693bd10fb50356644399ed213d23680fcfba757d9b34  scripts/govern/test/assert.sh
 0ae4cbb9826f1b24c637af9b575ec305b1e396c4ef3027655f6fa063a38d2710  scripts/govern/test/test-await-ci.sh
+0b0646f99cb096900eb76f15b6dd84ed867604eb39d87974100634a5fa911c24  scripts/govern/test/test-lint-tickets-tags.sh
 0b1c352a6acae047d0e128d5fe877e0a0e73fa3d41ad4634232796f984d80510  scripts/govern/test/test-events-emitter.sh
 0b4a9adbc4c7a2b108d88d10711e24ff80b74ff7152f19f3d4b6f144ea803743  scripts/govern/test/test-single-run-lock.sh
 0b909f5b7a12ec80a942f8bd1c7d2f029fab3c0280768f1f2136f1c5e0d963fb  scripts/govern/test/assert.sh
@@ -1122,6 +1123,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 33227892494fb7f59a6b855db2a5e09dcaf95d5402c74d2d3e34d7e9096aac1d  scripts/govern/test/test-claudemd-trim.sh
 337450eeb8911ea8ae67499aba4b726f34951e5b37a5ac95ffba25a26c627a64  scripts/govern/test/test-flows-spawn-stale-note.sh
 33d641675e2313c404fc2530b684c26729b31a64e7767d80a93031f4e5c546f7  scripts/govern/test/test-base-ref.sh
+3407a3dc49db3b2c39f307f7ce7b500767a71e19ea170db20a7d33de24bdf828  scripts/govern/test/test-file-ticket-guards.sh
 34328d5636248a1906750617ea6d6c070b3de7970b0c4d5c884f820ed8970ba2  scripts/govern/test/test-worktree-rm-stack-kill.sh
 34dde23984ae99444969576ca4817a9969d6aa2e991e3130f9ca9e58916bca77  scripts/govern/test/test-locality-batch.sh
 34e4eeca857d5e1dad84b746b543871909200113c228bab03b595f140d2190e2  scripts/govern/test/test-spawn-early-abort.sh
@@ -1672,6 +1674,7 @@ dabfe7c551c30051a86e8504ec3820a6c9b36e043b2ab8fd7e1767b4b36b9b1c  scripts/govern
 db47124c29aeeb7d5ac373f51a7e96211a3e67643180b4b8a8b8d0fcaee72c75  scripts/govern/test/test-ticket-route-guard.sh
 dbb7757a9d608cdda14f1ff50e06602fa46cce55c9392dc5dcf1375ee06de1d8  scripts/govern/test/test-flows-kill-loop.sh
 dbc2753388e38c5f086d05dd9e614b574f9b7884a4b1ba1474bb86c1f55ea874  scripts/govern/test/test-events-emitter.sh
+dbfd6b2f2ff15f988dd69e9c7c7d8b679558d6bbf921d2157f70b98312bf5b73  scripts/govern/test/test-bullet-field-labels.sh
 dc127ff500f7ab25a1df5f182778b97e7648714c901776c0b19f9a6ca07ddeef  scripts/govern/test/test-validation-gate.sh
 dc982912206a288187edf034877d573c82f720de14f547b9777c1e2e0b1d1189  scripts/govern/test/test-concurrency.sh
 dc987fb947e5f6093c0ebfe973bfd6136de58d5039072441c694bbec3fcf2e54  scripts/govern/test/test-status-by-source.sh

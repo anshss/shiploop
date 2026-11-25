@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.20.27 - 2026-11-25
+
+### Fixed
+
+**The bullet-prefixed field check stops flagging prose.**
+
+- `GOVERN_FIELD_MARKER_BULLET_RE` matches only labels a strict line-anchored reader consumes (`GOVERN_STRICT_FIELD_LABELS`, plus `GOVERN_STRICT_FIELD_LABELS_SUFFIXED` for readers that accept a qualifier). Before, it matched any bold label on a list item, so `lint-tickets.sh` and the Stop hook flagged evidence lists in a live queue (`- **Live sitemap:** ...`), and `file-ticket.sh` de-bulleted them at file time, which truncates a proposal because `govern::ticket_proposal` ends its capture at the next line-anchored bold label (`t2026-11-25-e`).
+- New `test-bullet-field-labels.sh` sizes the label list by the readers: every `^\*\*<Label>` reader in the governor scripts must have its bullet form caught, so a new strict reader cannot ship unregistered (`t2026-11-25-e`).
+- `test-file-ticket-guards.sh` counts its last two cases: `assert_done` sat before cases 10 and 11, so a failure there was never counted (`t2026-11-25-e`).
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated.
+
+Validation: the train PR (#296) landed with a full local suite run and green CI on its head; parity runs at full strength on this commit.
+
 ## 1.20.26 - 2026-11-25
 
 ### Fixed
