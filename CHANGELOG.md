@@ -6,10 +6,14 @@
 
 **Ticket numbering stops over-scanning, the worktree lifecycle gains a cleanup contract, and the parallel-load test family gets its first fix.**
 
-- `ticket_logmax`'s verb match anchors to the START of the commit subject, so mid-subject ticket references ("as #N", "renumber #N to #M") stop retroactively burning ticket numbers while genuine `file/resolve/delete #N` subjects still count (`t2026-11-25-d`).
+- `ticket_logmax`'s verb match anchors to the START of the commit subject (conventional-commit prefixes accepted), so mid-subject ticket references ("as #N", "renumber #N to #M") stop retroactively burning ticket numbers while genuine `file/resolve/delete #N` subjects still count (`t2026-11-25-d`).
+- `land-resolution` includes the ticket being resolved in the next-number floor, so auto-filing during a resolve can never re-mint the number it just resolved (`t2026-11-26-a`).
+- The sync-auto port flow regenerates `mechanism-hashes.txt` when a port touches a mechanism file — auto-port PRs stop being born red on Manifest guards (`t2026-11-26-a`).
+- The suite sweeps an inherited `META_ROOT` out of the test environment, fixing the parallel-jobs failures in test-sync-run-probe, test-update-run-probe, test-validation-resolve-gate and test-post-merge-sync-probe (`t2026-11-26-a`).
+- `govern::lesson_placement` honors the report's `rung` field (appendix-routed lessons land in CLAUDE-APPENDIX.md, not always-on root), and an over-budget destination without `evicts` refuses with the budget numbers (`t2026-11-26-a`).
+- The resolved-skip mirror probe's PR discovery is guarded by a queue-generation check: an ancient merged PR on a reused branch can no longer burn a live ticket out of a dispatch wave; an explicit PR reference in the block overrides (`t2026-11-26-a`).
 - `worktree:rm` gains a documented cleanup-hook seam: a workspace `session-cleanup.sh` runs before teardown; a failed cleanup refuses teardown (overridable), "nothing to clean" is silent, and no-hook fleets are unchanged — the default is best-effort quiet, with strictness as the fleet opt-in (`t2026-11-26-a`).
-- The resolved-skip mirror probe's PR discovery is guarded: an ancient merged PR on a reused branch can no longer burn a live ticket out of a dispatch wave; an explicit PR reference in the block overrides (`t2026-11-26-a`).
-- The capability parse probes land: `claude -p <flag> <value> </dev/null` replaces the `--help` grep, so hidden-but-supported flags report correctly (`t2026-11-26-a`).
+- The capability parse probes land: `claude -p <flag> <value> </dev/null` replaces the `--help` grep, so hidden-but-supported flags report correctly (`t2026-11-25-c`).
 - CONFIGURATION.md documents the worktree knobs (WORKTREE_DRIFT_GUARD, STACK_KILL_NAMES, WT_MAX_SLOT) with commented seed examples (`t2026-11-26-a`).
 - VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated.
 
