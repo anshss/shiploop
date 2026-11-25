@@ -3006,15 +3006,55 @@ govern::ticket_fix_on_trunk() { # <N> <tickets-file> <meta-dir>
   return 1
 }
 
+# govern::_block_first_seen_iso: the OLDEST commit timestamp (strict ISO-8601 rendered in UTC) at
+# which ticket N's heading first appeared in the queue file's git history: `git log -S` fires on
+# every occurrence-count change of the heading string (the add on filing, the remove on resolve),
+# and the last line of the newest-first log is that first filing commit. The heading pattern
+# carries a trailing space, so it never matches a longer number (`## #12 ` vs `## #120`) and
+# never matches an incidental body mention. Empty when the file is outside a git repo or the
+# heading was never committed (an uncommitted, brand-new queue); callers treat empty as
+# inconclusive and stay silent: the probe never blocks on a lookup it cannot ground.
+govern::_block_first_seen_iso() { # <N> [tickets-file]
+  local n="$1" f="${2:-$TICKETS_FILE}" dir top rel
+  [[ -n "$f" && -f "$f" ]] || return 0
+  dir="$(dirname "$f")"
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  # rev-parse returns a symlink-resolved toplevel (/private/var/... on macOS), so canonicalize the
+  # file the same way before stripping the prefix, or the pathspec silently matches nothing.
+  f="$(cd "$dir" && pwd -P)/$(basename "$f")"
+  rel="${f#"$top"/}"
+  [[ "$rel" == "$f" ]] && rel="$(basename "$f")"   # file directly at the toplevel
+  TZ=UTC git -C "$top" log --date=iso-strict-local --format=%cd -S"## #$n " -- "$rel" 2>/dev/null | tail -1
+}
+
+# govern::_block_names_pr: does a queue block EXPLICITLY name PR <num> (a `Fix-PR:` field, a
+# `**PR:**`/`**PRs:**` field, or a literal `PR #<num>` mention). The block's own `#N` heading and
+# incidental body text never count, so only a deliberate reference the block author wrote can
+# vouch for a PR outside the recency window.
+govern::_block_names_pr() { # <block> <num>
+  local block="$1" num="$2" tail_re='([^0-9]|$)'
+  [[ -n "$block" && -n "$num" ]] || return 1
+  grep -qE "Fix-PR:.*#${num}${tail_re}" <<<"$block" && return 0
+  grep -qE "\*\*PRs?\*\*:.*#${num}${tail_re}" <<<"$block" && return 0
+  printf '%s\n' "$block" | grep -qE "PR #${num}${tail_re}" && return 0
+  return 1
+}
+
 # govern::ticket_merged_pr — the mirror probe: a PR for ticket N already MERGED on origin while
 # its queue block is still open (the PR was merged from OUTSIDE govern:resolve, so no bookkeeping
 # ever deleted the block). Discovers PRs by head branch (`ticket-<N>`, plus the neutral `sl-<hex>`
 # scheme govern::ticket_branch computes for public repos), then confirms each discovered ref with
-# one `gh pr view --json state`. Emits one `<repo>#<num> <url>` line per MERGED ref; EMPTY output
-# when none found or the probe is inconclusive (no gh, gh/network error) — fail-open, so an
-# environment that cannot verify never blocks a dispatch.
-govern::ticket_merged_pr() { # <N>
-  local n="$1" repo slug nb seen="" seen_prs="" key num url state
+# one `gh pr view --json state`. A discovered MERGED ref is trusted only past a generation guard:
+# a branch name is reusable across a queue renumbering, so a ref whose merge PREDATES the block
+# heading's first commit in the queue file's history cannot be this ticket's work and is ignored,
+# unless the block itself names the ref explicitly (govern::_block_names_pr). A ref with no merge
+# timestamp, or a queue with no committed history at all, is inconclusive and likewise ignored.
+# Emits one `<repo>#<num> <url>` line per trusted MERGED ref; EMPTY output when none found or the
+# probe is inconclusive (no gh, gh/network error): fail-open, so an environment that cannot
+# verify never blocks a dispatch.
+govern::ticket_merged_pr() { # <N> [tickets-file]
+  local n="$1" tf="${2:-$TICKETS_FILE}" repo slug nb seen="" seen_prs="" key num url mat state
+  local first_seen="" block="" grounded=0
   command -v gh >/dev/null 2>&1 || return 0
   nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
   while IFS= read -r repo; do
@@ -3025,16 +3065,30 @@ govern::ticket_merged_pr() { # <N>
       [[ -n "$b" ]] || continue
       [[ "$b" == "$seen" ]] && continue
       seen="$b"
-      while IFS=$'\t' read -r num url; do
+      while IFS=$'\t' read -r num url mat; do
         [[ -n "$num" ]] || continue
         key="$repo#$num"
         [[ "$seen_prs" == *"$key"* ]] && continue
         seen_prs+="$key "
         state="$(gh pr view "$num" --repo "$slug" --json state --jq '.state' 2>/dev/null || true)"
         [[ "$state" == "MERGED" ]] || continue
+        # Ground the generation guard lazily: the git-log walk and the block extract run once,
+        # and only when a MERGED ref actually needs judging.
+        if [[ "$grounded" == "0" ]]; then
+          first_seen="$(govern::_block_first_seen_iso "$n" "$tf")"
+          block="$(govern::ticket_block "$n" "$tf")"
+          grounded=1
+        fi
+        if ! govern::_block_names_pr "$block" "$num"; then
+          # No explicit mention: the merge must postdate the block's first commit. Both stamps are
+          # strict ISO-8601, so a lexicographic compare orders them; an empty stamp on either side
+          # is inconclusive and never skips.
+          [[ -n "$mat" && -n "$first_seen" ]] || continue
+          [[ "$mat" < "$first_seen" ]] && continue
+        fi
         printf '%s#%s %s\n' "$repo" "$num" "$url"
-      done < <(gh pr list --repo "$slug" --state merged --head "$b" --limit 3 --json number,url \
-               --jq '.[] | "\(.number)\t\(.url // "")"' 2>/dev/null || true)
+      done < <(gh pr list --repo "$slug" --state merged --head "$b" --limit 3 --json number,url,mergedAt \
+               --jq '.[] | "\(.number)\t\(.url // "")\t\(.mergedAt // "")"' 2>/dev/null || true)
     done
   done < <(govern::_repos_merge_first)
   return 0

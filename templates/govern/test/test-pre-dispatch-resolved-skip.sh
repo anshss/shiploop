@@ -18,6 +18,10 @@
 #   6. the merged-PR mirror probe: an OPEN block whose PR is already MERGED on origin skips as
 #      bookkeeping-only instead of re-implementing merged work; a GOVERN_MERGED_PR_PROBE=0 kill
 #      switch restores proceed; an inconclusive gh probe fails OPEN to proceed.
+#   7. the mirror probe trusts a discovered MERGED ref only past a generation guard: a merge that
+#      PREDATES the block heading's first commit in the queue history is a stale-generation branch
+#      match and never skips; an explicit PR reference in the block overrides the guard; a missing
+#      merge stamp or an uncommitted queue is inconclusive and never skips.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -199,9 +203,12 @@ assert_contains "$out74" "origin/main" "5. ...and the verdict names origin/main"
 # ── 6. the merged-PR mirror probe ────────────────────────────────────────────────────────────────
 cat > "$S/gh" <<'STUB'
 #!/usr/bin/env bash
-# Emulates the helper's `--jq` post-processing: pr list -> "num\turl" rows, pr view -> state.
+# Emulates the helper's `--jq` post-processing: pr list -> "num\turl\tmergedAt" rows,
+# pr view -> state. The merge timestamp is far in the future, so it always postdates the fixture
+# queue's first commit: the healthy shape (the PR merged after its ticket was filed) that must
+# still flag as bookkeeping-only.
 case "$2" in
-  list) printf '77\thttps://github.com/acme/alpha/pull/77\n' ;;
+  list) printf '77\thttps://github.com/acme/alpha/pull/77\t2999-01-01T00:00:00Z\n' ;;
   view) echo 'MERGED' ;;
   *) exit 0 ;;
 esac
@@ -215,6 +222,32 @@ assert_contains "$out75" "alpha#77" "6. ...and names the merged PR ref"
 
 out75b="$( cd "$W" && PATH="$S:$PATH" GOVERN_NO_PUSH=0 GOVERN_MERGE_REPOS=alpha GOVERN_MERGED_PR_PROBE=0 bash "$PDC" 75 2>/dev/null )"
 assert_contains "$out75b" "proceed" "6. GOVERN_MERGED_PR_PROBE=0 is the kill switch back to proceed"
+
+# ── 7. the generation guard: a branch name is reusable across a queue renumbering, so a merged
+# PR whose merge PREDATES the block heading's first commit in the queue history cannot be this
+# ticket's work. The probe stays silent and the dispatch proceeds: a fixture ticket with no
+# explicit PR reference is never skipped on a stale-generation branch match.
+mkdir -p "$S/stale"
+cat > "$S/stale/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$2" in
+  list) printf '77\thttps://github.com/acme/alpha/pull/77\t2020-01-01T00:00:00Z\n' ;;
+  view) echo 'MERGED' ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$S/stale/gh"
+out75s="$( cd "$W" && PATH="$S/stale:$PATH" GOVERN_NO_PUSH=0 GOVERN_MERGE_REPOS=alpha GOVERN_MERGED_PR_PROBE=1 bash "$PDC" 75 2>/dev/null )"
+assert_contains "$out75s" "proceed" "7. a merged PR predating the block's first queue commit is never trusted (stale-generation branch match)"
+assert_eq "$(printf '%s\n' "$out75s" | grep -c .)" "1" "7. ...with still exactly one verdict line"
+
+# ── 8. an explicit PR reference in the block overrides the recency guard: a block that names the
+# merged PR itself (a Fix-PR: field, a PR field, a literal `PR #N` mention) vouches for the ref
+# regardless of merge date.
+( cd "$W" && printf '\n**Fix-PR:** alpha#77\n' >> queue/tickets.md )
+out75e="$( cd "$W" && PATH="$S/stale:$PATH" GOVERN_NO_PUSH=0 GOVERN_MERGE_REPOS=alpha GOVERN_MERGED_PR_PROBE=1 bash "$PDC" 75 2>/dev/null )"
+assert_contains "$out75e" "skip" "8. a block that explicitly names the merged PR still flags as bookkeeping-only"
+assert_contains "$out75e" "already MERGED" "8. ...with the merged-PR verdict"
 
 # Inconclusive probe (gh fails) fails OPEN: never blocks a dispatch on a lookup miss.
 mkdir -p "$S/fail"
