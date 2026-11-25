@@ -39,8 +39,8 @@ If you cannot tell whether something is in scope, it is not.
    worktree and re-run `govern:ship` with the same ticket number. It is idempotent: it pushes the
    ticket branch and reuses the open PR. A bare `git push` lands on a stray branch and leaves the PR
    unchanged; confirm with `gh pr view <N> --json headRefOid` that the PR head is your new commit.
-5. Found a NEW bug/gap? FIRST `grep '^## #' queue/tickets.md` here for a ticket with the same
-   symptom/root cause: if one covers it use `crossRefs.overlaps`, else `newTickets`.
+5. Found a NEW bug/gap? FIRST `command grep '^## #' queue/tickets.md` here for a ticket with the
+   same symptom/root cause: if one covers it use `crossRefs.overlaps`, else `newTickets`.
 6. Durable root-level lesson? Fill `lessonPatch` (contract in §5).
 
 ### Ticket groups
@@ -74,6 +74,10 @@ test to be brief is a failed ticket.
 - **Bound your reads.** `Read` is 7.7% of a worker's tool calls but 31% of its returned bytes, at
   6,145 B/call — unbounded whole-file reads. Grep/Glob to locate, then `Read` with `offset`/`limit`
   on the region you need. A whole-file read needs a reason.
+- **A tree search from the workspace root runs `command grep -r`, never bare `grep`.** Claude
+  Code's injected `grep` shims `ugrep` with `--ignore-files`, which honors the root `.gitignore`
+  that excludes each sub-repo, so a plain `grep -r <pattern> .` silently returns clean while a
+  match sits inside a sub-repo. Any search that must cross into a sub-repo uses `command grep`.
 - **Run every build/test/lint command through the filter:** `scripts/govern/verify-filter.sh --
   <cmd>` — a passing run carries near-zero information yet is re-read by every later turn. It
   collapses green to one line, shows failing output in full, and passes the exit code through.
