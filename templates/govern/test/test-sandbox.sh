@@ -43,6 +43,22 @@ sweep_out="$(env GOVERN_TEST_AMBIENT_KNOB=loose GOVERN_SCOUT=9 bash "$sweep_chil
 assert_contains "$sweep_out" "knob=[UNSET]" "an ambient GOVERN_* knob beyond the suite defaults is unset at source"
 assert_contains "$sweep_out" "scout=[0]" "a pinned knob keeps the suite default, not the ambient value"
 
+# ── ambient META_ROOT sweep: the one non-GOVERN export a govern session leaks ─
+# lib/common.sh exports META_ROOT for its own children at source time, so a test
+# run inside a govern process inherits it. A fixture workspace's
+# `META_ROOT="${META_ROOT:-$T}"` default loses to that value, and anything the
+# fixture resolves through META_ROOT (probe paths, pending-sync markers) lands
+# in the outer workspace instead of the fixture. assert.sh sweeps it like the
+# GOVERN_ names; a value a test sets AFTER the source is its own business.
+meta_child="$TMP/meta-child.sh"
+cat > "$meta_child" <<'EOF'
+set -euo pipefail
+source "$1/assert.sh"
+printf 'meta=[%s]' "${META_ROOT-UNSET}"
+EOF
+meta_out="$(env META_ROOT=/outer/workspace bash "$meta_child" "$DIR" 2>&1)"
+assert_contains "$meta_out" "meta=[UNSET]" "an inherited META_ROOT is unset at source, like the GOVERN_ names"
+
 # ── escape detection: a write outside the sandbox fails, naming the escape ───
 set +e
 govern_sandbox_verify > "$TMP/verify-clean.out" 2>&1
