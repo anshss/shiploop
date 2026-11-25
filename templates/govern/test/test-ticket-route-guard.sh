@@ -63,6 +63,14 @@
 #      mention (test 2) and a resolvable-but-nonexistent number (test 15). Regression case: the
 #      original false positive (schema "ticket" ROWS plus "bug-fix COMMITS", no ticket number
 #      anywhere in the prompt) passes clean.
+#  16. Spawn-failure hardening: the guard's emit and resolution greps are all
+#      2>/dev/null-swallowed, so a transient fork/exec failure under load produces EMPTY
+#      output on the deny path (the dispatch sails through) or the advisory branch on a
+#      REAL ticket (deny assertions drop in bursts). The deny emit retries a null emit ONCE
+#      and then falls back to a compact fail-closed deny with the spawn error on stderr,
+#      never silent; the fact gate retries a null resolution ONCE before the documented
+#      degrade-to-advisory applies, so a transient grep failure recovers to the deny and a
+#      persistent failure still degrades to advisory (never a deny on an unconfirmed number).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
@@ -442,6 +450,87 @@ sid="ticketroute-schema-regression"; clear_counter "$sid"
 payload "general-purpose" "Build the benchmark dataset per bench/backlogs/SCHEMA.md: each row is a ticket with a title, a repo, and the upstream bug-fix commits that resolved it. Write the output to scratch/dataset.jsonl." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_not_contains "$out" '"permissionDecision": "deny"' "15c. the schema-rows / bug-fix-commits prompt (zero ticket numbers) is never denied"
+clear_counter "$sid"
+
+# ── 16. spawn-failure hardening: emit retry + fail-closed, resolution retry + degrade ───────
+# Shims that model the measured failure mode (a transient fork/exec failure of a
+# 2>/dev/null-swallowed spawn, which under load fires in bursts):
+#   python3 fails exactly the EMIT calls -- a call carrying TWO positional argv elements
+#   (the -c code string plus the deny/advisory text); the guard's stdin parse passes only
+#   the code string, so it delegates. SHIM_FAIL_ONCE=1 fails the first targeted call then
+#   delegates (the transient case); without it every targeted call fails (persistent).
+#   grep fails exactly the resolve_tnum ticket-number extraction (pattern arg '#[0-9]+');
+#   every other pattern delegates, so the ticket-shape detection and the fact-check grep
+#   are untouched.
+SHIMBIN_PY="$T/shims-py"; SHIMBIN_GREP="$T/shims-grep"; mkdir -p "$SHIMBIN_PY" "$SHIMBIN_GREP"
+SHIM_STATE="$T/shim-state"
+REAL_PY="$(command -v python3)"; REAL_GREP="$(command -v grep)"
+cat > "$SHIMBIN_PY/python3" <<'SHIM'
+#!/usr/bin/env bash
+has_pos=0
+for a in "$@"; do
+  case "$a" in -*) ;; *) has_pos=$((has_pos + 1)) ;; esac
+done
+if [ "$has_pos" -lt 2 ]; then exec "${REAL_PY:?}" "$@"; fi
+if [ "${SHIM_FAIL_ONCE:-0}" = 1 ] && [ -e "${SHIM_STATE:?}" ]; then exec "${REAL_PY:?}" "$@"; fi
+: > "${SHIM_STATE:?}" 2>/dev/null || true
+echo "shim python3: forced emit failure" >&2
+exit 127
+SHIM
+cat > "$SHIMBIN_GREP/grep" <<'SHIM'
+#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = '#[0-9]+' ]; then
+    if [ "${SHIM_FAIL_ONCE:-0}" = 1 ] && [ -e "${SHIM_STATE:?}" ]; then break; fi
+    : > "${SHIM_STATE:?}" 2>/dev/null || true
+    echo "shim grep: forced extraction failure" >&2
+    exit 2
+  fi
+done
+exec "${REAL_GREP:?}" "$@"
+SHIM
+chmod +x "$SHIMBIN_PY/python3" "$SHIMBIN_GREP/grep"
+
+# 16a. persistent python-emit failure: the deny path still DENIES, via the compact
+# fail-closed fallback (valid JSON naming the ticket, never empty output), with the
+# spawn error on stderr.
+sid="ticketroute-emit-failclosed"; clear_counter "$sid"; rm -f "$SHIM_STATE"
+payload "" "You are fixing ticket #42 in the backend repo. Open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN REAL_PY="$REAL_PY" SHIM_STATE="$SHIM_STATE" PATH="$SHIMBIN_PY:$PATH" bash "$GUARD" < "$PL" 2>"$T/16a.err")"
+assert_contains "$out" '"permissionDecision":"deny"' "16a. a persistently failing deny emit still DENIES via the fail-closed fallback"
+# Parse the fallback the way the driver would: it must be valid JSON carrying a deny
+# decision and the real ticket number (an empty parse result fails both asserts below).
+parsed="$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["hookSpecificOutput"]; print(d["permissionDecision"], "|", d["permissionDecisionReason"])' 2>/dev/null)"
+assert_contains "$parsed" "deny | [ROUTER POSTURE]" "16a-b. the fallback is valid JSON with a deny decision"
+assert_contains "$parsed" "dispatch-packet -- 42" "16a-c. the fallback names the real ticket number"
+assert_contains "$(cat "$T/16a.err")" "failing closed" "16a-d. the fallback carries the spawn error on stderr"
+clear_counter "$sid"
+
+# 16b. transient (fail-once) python-emit failure: the retry recovers and the output is
+# byte-identical to the normal python emit.
+sid="ticketroute-emit-retry"; clear_counter "$sid"; rm -f "$SHIM_STATE"
+payload "" "You are fixing ticket #42 in the backend repo. Open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out_ref="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>/dev/null)"
+out_once="$(env -u GOVERN_RUN SHIM_FAIL_ONCE=1 REAL_PY="$REAL_PY" SHIM_STATE="$SHIM_STATE" PATH="$SHIMBIN_PY:$PATH" bash "$GUARD" < "$PL" 2>/dev/null)"
+assert_eq "$out_once" "$out_ref" "16b. a fail-once emit recovers via the retry, byte-identical to the normal deny JSON"
+clear_counter "$sid"
+
+# 16c. transient (fail-once) resolution-grep failure: the fact-gate retry recovers to the
+# DENY on a REAL ticket, instead of dropping to advisory.
+sid="ticketroute-resolve-retry"; clear_counter "$sid"; rm -f "$SHIM_STATE"
+payload "" "Resolve ticket #50 end to end and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN SHIM_FAIL_ONCE=1 REAL_PY="$REAL_PY" REAL_GREP="$REAL_GREP" SHIM_STATE="$SHIM_STATE" PATH="$SHIMBIN_GREP:$PATH" bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "16c. a transient resolution-grep failure recovers via the retry: still DENIED on a REAL ticket"
+assert_contains "$out" 'govern:pre-dispatch -- 50' "16c-b. the recovered deny names the real ticket number"
+clear_counter "$sid"
+
+# 16d. persistent resolution-grep failure: the documented degrade-to-advisory still applies
+# (never a deny on an unconfirmed number), and the advisory branch still emits.
+sid="ticketroute-resolve-degrade"; clear_counter "$sid"; rm -f "$SHIM_STATE"
+payload "" "Resolve ticket #50 end to end and open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN REAL_PY="$REAL_PY" REAL_GREP="$REAL_GREP" SHIM_STATE="$SHIM_STATE" PATH="$SHIMBIN_GREP:$PATH" bash "$GUARD" < "$PL" 2>&1)"
+assert_not_contains "$out" '"permissionDecision": "deny"' "16d. a persistent resolution failure degrades to advisory, never a deny"
+assert_contains "$out" "ROUTER POSTURE" "16d-b. the advisory branch still emits on a persistent resolution failure"
 clear_counter "$sid"
 
 assert_done

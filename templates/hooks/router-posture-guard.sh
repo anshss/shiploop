@@ -578,9 +578,34 @@ print(json.dumps({
     exempt=1  # neither signal fired; nothing to exempt FROM
   fi
 
+  emit_deny_json() { # <text> -> deny JSON on stdout, "" when the python spawn failed
+    python3 -c '
+import json, sys
+print(json.dumps({
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": sys.argv[1],
+  }
+}))
+' "$1" 2>/dev/null || true
+  }
   if { [ "$ticket_shaped" = 1 ] || [ "$item_shaped" = 1 ]; } && [ "$exempt" != 1 ]; then
     tnum="$(resolve_tnum | sed -n '1p')"
+    route_confirmed=0
     if [ -n "$tnum" ] && ticket_block_exists "$tnum"; then
+      route_confirmed=1
+    else
+      # A transient fork/exec failure under load can null the resolution greps (each one
+      # is 2>/dev/null-swallowed), which would land a REAL ticket dispatch in the advisory
+      # branch below. Retry the resolution ONCE before the documented degrade-to-advisory
+      # applies: a persistent failure still degrades exactly as designed.
+      tnum="$(resolve_tnum | sed -n '1p')"
+      if [ -n "$tnum" ] && ticket_block_exists "$tnum"; then
+        route_confirmed=1
+      fi
+    fi
+    if [ "$route_confirmed" = 1 ]; then
       deny="$(cat <<EOF
 [ROUTER POSTURE] Denied: this is ticket-shaped work, and ticket-shaped work goes to a WORKER, never to a stock subagent. A worker is the trim, ticket/group session: sonnet floor, trimmed tools, its own workspace worktree, ending at PR-open plus a structured report. A stock subagent doing the same ticket carries the driver's posture and none of the worker doctrine, and costs multiples of a worker for the same result.
 
@@ -600,16 +625,18 @@ A worker STOPS at PR-open plus the report. Landing it is the same last step: pip
 Not ticket work after all (an investigation, a sweep, a diagnosis feeding an answer, or drafting/authoring prose about a ticket rather than resolving one)? Say so in the prompt -- a read-only framing ("audit", "investigate", "explain", "report back") or an authoring framing ("draft"/"author" plus what you're producing: "prose", "write-up", "entries") with no SURVIVING write marker is already exempt; a write verb inside a prohibition ("do not open a PR", "never commit") does not count against you. Otherwise drop the dispatch verb, the ticket reference, and any item-shaped name/description (t<N>, ticket-<N>, w<N>), and size the subagent per the haiku/sonnet table, or set GOVERN_TICKET_ROUTE_GUARD=0 to turn this guard off for the session.
 EOF
 )"
-      python3 -c '
-import json, sys
-print(json.dumps({
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": sys.argv[1],
-  }
-}))
-' "$deny" 2>/dev/null || true
+      deny_json="$(emit_deny_json "$deny")"
+      [ -n "$deny_json" ] || deny_json="$(emit_deny_json "$deny")"
+      if [ -n "$deny_json" ]; then
+        printf '%s\n' "$deny_json"
+      else
+        # The python emit failed twice: a transient fork/exec failure of the spawn, not a
+        # judgment the guard made. A deny path never exits silently -- empty output would
+        # let the ticket-shaped dispatch straight through -- so fall back to a compact
+        # fail-closed deny built without python, with the spawn error on stderr.
+        echo "router-posture-guard: ticket-route deny emit failed twice (python spawn); failing closed" >&2
+        printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[ROUTER POSTURE] Denied: ticket-shaped dispatch goes to a WORKER, never a stock subagent. Paste: npm run govern:dispatch-packet -- %s (ticket #%s). The deny emit itself failed twice, so this is the compact fail-closed fallback."}}\n' "$tnum" "$tnum"
+      fi
     else
       # No fact to deny on: either no #N was in the call at all (a bare "ticket" word, an
       # item-shaped name with no digits), or the resolved #N has no matching `## #N` block in
