@@ -927,13 +927,24 @@ govern::duplicate_ticket_headings() { # [tickets-file]
 # processes escape sequences in a -v assignment, so `\*` would reach the regex engine as a bare `*`.
 GOVERN_SEVERITY_FIELD_RE='^[[:space:]]*(-[[:space:]]+)?[*][*]Severity([*][*]:|:[*][*])'
 
-# The bullet-prefixed shape of ANY bold field marker (`- **Label:**` / `* **Label**:`): what a
-# caller hands file-ticket.sh that must be de-bulleted to the canonical line-anchored form before
-# filing. Bracketed `[*]` for the same awk -v reason as the severity regex above. A line matching
-# this is invisible to every STRICT line-anchored extractor (govern::ticket_proposal,
-# govern::ticket_precision, the Flow:/Model: latches); severity is the one field whose reader
-# deliberately tolerates the bullet, so checks built on this regex exempt it.
-GOVERN_FIELD_MARKER_BULLET_RE='^[[:space:]]*[-*][[:space:]]+[*][*][A-Za-z][^*]*([*][*]:|:[*][*])'
+# The ticket-field labels some STRICT line-anchored reader consumes, i.e. the labels a leading list
+# marker hides. Only these are fields: a bold label on a prose bullet (`- **Live sitemap:** ...`)
+# is content, and de-bulleting it is harmful, because govern::ticket_proposal ends its capture at
+# the next line-anchored bold label, so a de-bulleted list inside a proposal truncates the proposal.
+# EXACT labels must be followed directly by the colon placement; SUFFIXED labels have readers that
+# accept a trailing qualifier (`**Proposed solution (v2):**`). Bracketed case classes, never `\`,
+# for the awk -v reason below. Not listed on purpose: Severity and Files, whose readers tolerate the
+# bullet, and Paths, whose reader parses `### ` sections, not tickets. A new strict reader adds its
+# label here; test-bullet-field-labels.sh fails when a `^\*\*<Label>` reader has no entry.
+GOVERN_STRICT_FIELD_LABELS='Test|Where|Ref|Externalize|[Tt]ype|Fix-Files-Contain|[Ff]low|[Ff]low-op|[Dd]epends on|[Bb]locks'
+GOVERN_STRICT_FIELD_LABELS_SUFFIXED='Proposed solution|Precision'
+
+# The bullet-prefixed shape of a STRICT ticket field marker (`- **Proposed solution:**` /
+# `* **Precision**:`): what a caller hands file-ticket.sh that must be de-bulleted to the canonical
+# line-anchored form before filing. Bracketed `[*]` for the same awk -v reason as the severity regex
+# above. A line matching this is invisible to the strict extractor for that label (see
+# GOVERN_STRICT_FIELD_LABELS); a bold label outside that set is prose and never matches.
+GOVERN_FIELD_MARKER_BULLET_RE='^[[:space:]]*[-*][[:space:]]+[*][*](('"$GOVERN_STRICT_FIELD_LABELS"')|('"$GOVERN_STRICT_FIELD_LABELS_SUFFIXED"')([^A-Za-z*][^*]*)?)([*][*]:|:[*][*])'
 
 # govern::severity_rank <field-line> — print the numeric rank of the field's VALUE:
 # 1=Severe 2=High 3=Medium 4=Low 5=unknown.
@@ -979,9 +990,11 @@ govern::duplicate_severity_fields() { # [tickets-file]
 }
 
 # govern::bullet_prefixed_fields [tickets-file]: print one line per ticket-body line carrying a
-# bullet-prefixed bold field marker (`- **Label:**`), as `#N line <n>: <raw> -> <canonical>`.
-# Returns 0 (silent) when clean, 1 when any exists. Such a marker is invisible to every STRICT
-# line-anchored extractor: a ticket filed with `- **Proposed solution:**` read back as "no
+# bullet-prefixed STRICT field marker (`- **Proposed solution:**`, any label in
+# GOVERN_STRICT_FIELD_LABELS), as `#N line <n>: <raw> -> <canonical>`. A bold label on a prose
+# bullet (`- **Live sitemap:**`) is content and never reported. Returns 0 (silent) when clean, 1
+# when any exists. Such a marker is invisible to its STRICT line-anchored extractor: a ticket
+# filed with `- **Proposed solution:**` read back as "no
 # proposed solution" through a pre-dispatch gate that had no way to say why. `**Severity:**` lines
 # are EXEMPT: GOVERN_SEVERITY_FIELD_RE deliberately tolerates the leading list marker, so that
 # field still reads. The canonical form is the raw line minus the bullet, which is exactly what

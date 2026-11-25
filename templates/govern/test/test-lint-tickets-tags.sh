@@ -59,6 +59,14 @@ printf '## #12 — bulleted severity is canonical\n- **Severity:** Low\n- **a bo
 out="$(bash "$LINT" "$T/sevbullet.md" 2>/dev/null)"; rc=$?
 assert_eq "$rc" "0" "a bulleted **Severity:** and a colonless bold bullet pass the lint"
 
+# Negative control: a bold label on a PROSE bullet is content, not a field. Only labels a strict
+# reader consumes (GOVERN_STRICT_FIELD_LABELS) are fields, so evidence lists like these pass, and a
+# near-miss of a real label (`Test plan`, `Where it breaks`) is prose too: its reader never reads it.
+printf '## #13 — prose bullets with bold labels\n**Severity:** Low\n- **Live sitemap:** 2242 entries, none null.\n- **Spend hazard:** a create is not free.\n- **Test plan:** run it twice.\n- **Where it breaks:** the return path.\n---\n' > "$T/prose.md"
+out="$(bash "$LINT" "$T/prose.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "0" "bold-label prose bullets pass the lint"
+assert_eq "$out" "" "bold-label prose bullets print no FIELD line"
+
 # clean file: silent, exit 0 (negative control).
 printf '## #8 — clean\n**Severity:** Low\n---\n## #9 — also clean\n**Severity:** High\n---\n' > "$T/clean.md"
 out="$(bash "$LINT" "$T/clean.md" 2>/dev/null)"; rc=$?

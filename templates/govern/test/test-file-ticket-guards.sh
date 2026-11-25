@@ -116,6 +116,21 @@ assert_eq "$prec8" "stated" "the de-bulleted precision reads back through govern
 sev8="$(printf '%s\n' "$blk8" | grep -cE '^[[:space:]]*(-[[:space:]]+)?\*\*Severity' || true)"
 assert_eq "$sev8" "1" "exactly one Severity field survives (the emitter's)"
 
+# 8b. A bold label on a PROSE bullet is content, never de-bulleted. The proposal reader ends its
+#     capture at the next line-anchored bold label, so de-bulleting an evidence list inside a
+#     proposal would silently truncate the proposal to its first line.
+n8b="$(printf '%s\n' \
+  '**Proposed solution:** Narrow the check.' \
+  '- **Live sitemap:** 2242 entries, none null.' \
+  '- **Spend hazard:** a create is not free.' \
+  '**Precision:** stated' \
+  | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "prose bold-label bullets stay bullets" Low)"
+blk8b="$(block_of "$n8b" "$L/queue/tickets.md")"
+prose8b="$(grep -cE '^- \*\*(Live sitemap|Spend hazard):\*\*' <<<"$blk8b" || true)"
+assert_eq "$prose8b" "2" "bold-label prose bullets are stored as bullets"
+prop8b="$(govern::ticket_proposal "$n8b" "$L/queue/tickets.md")"
+assert_contains "$prop8b" "- **Spend hazard:** a create is not free." "the proposal reads back whole, its prose bullets included"
+
 # 9. Negative control for 8: no de-bullet log on a body with no bullet-prefixed field marker.
 stderr9="$(printf 'Where: x\nObserved: plain body\nDone when: z\n' \
   | GOVERN_WS_ROOT="$L" GOVERN_TICKETS_FILE="$L/queue/tickets.md" bash "$FILE_TICKET" "no bullet fields control" Low 2>&1 >/dev/null)"
@@ -124,8 +139,6 @@ if grep -q "de-bulleted" <<<"$stderr9"; then
 else
   echo "ok   - no de-bullet log on a clean body"
 fi
-
-assert_done
 
 # 10. An unknown leading --flag is REJECTED, never consumed as the title: non-zero exit, nothing
 #     appended, and the error names the positional usage and the near-misses (--title/--body-file).
@@ -152,3 +165,5 @@ err11="$(printf 'Where: x\nObserved: y\nDone when: z\n' \
   | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T/tickets.md" bash "$FILE_TICKET" --model haiku "flag swallow control" Low 2>&1 >/dev/null)"
 assert_contains "$err11" "not a filing-time input" "--model still degrades with its log line"
 assert_not_contains "$(block_of "$(grep -cE '^## ' "$T/tickets.md")" "$T/tickets.md")" "**Model:**" "the swallowed --model emits no Model: field"
+
+assert_done
