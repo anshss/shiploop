@@ -148,7 +148,7 @@ EOF
   chmod +x "$1"
 }
 
-mk_gh_stub() { # <path> [record-file] — record-file optionally captures each invocation's args
+mk_gh_stub() { # <path> [record-file] (record-file optionally captures each invocation's args)
   cat > "$1" <<EOF
 #!/usr/bin/env bash
 [ -n "\${GH_STUB_RECORD:-}" ] && printf '%s\n' "\$*" >> "\$GH_STUB_RECORD"
