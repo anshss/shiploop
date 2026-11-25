@@ -3,6 +3,7 @@
 # and the meta-worktree, then free the registry slot.
 #
 # Usage:  <pm> run worktree:rm -- <name> [--force] [--keep-branch] [--force-clean-fail]
+#                 [--force-unclean]
 #         <pm> run worktree:rm -- --sweep [--force]
 #
 # --force             skip the dirty-tree refusal
@@ -12,6 +13,12 @@
 #                     below). A SEPARATE flag from --force: the governor always passes
 #                     --force (to discard the merged worker branch), and that must not
 #                     silently also waive the live-process gate.
+# --force-unclean     tear down even when the workspace's session-cleanup hook FAILED and
+#                     the strict gate is on (GOVERN_RM_CLEANUP_GATE=1; see the seam contract
+#                     in wt_remove_one). A SEPARATE flag from --force-clean-fail on purpose:
+#                     the two gates fail for different reasons (a live process vs a failed
+#                     cleanup) and are waived separately, so one flag can never silently
+#                     cover both.
 # --sweep        remove every PACKET-CREATED worktree (a `.dispatch-packet.md` at its root,
 #                which govern:dispatch-packet writes) that is orphaned: the packet's own creation
 #                timestamp is older than GOVERN_AGENT_WALLCLOCK (default 3600s), AND every sub-repo
@@ -49,15 +56,17 @@ NAME=""
 FORCE=0
 KEEP_BRANCH=0
 FORCE_CLEAN_FAIL=0
+FORCE_UNCLEAN=0
 SWEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=1; shift ;;
     --keep-branch) KEEP_BRANCH=1; shift ;;
     --force-clean-fail) FORCE_CLEAN_FAIL=1; shift ;;
+    --force-unclean) FORCE_UNCLEAN=1; shift ;;
     --sweep) SWEEP=1; shift ;;
     -h|--help)
-      echo "usage: $ROOT_PM run worktree:rm -- <name> [--force] [--keep-branch] [--force-clean-fail]"
+      echo "usage: $ROOT_PM run worktree:rm -- <name> [--force] [--keep-branch] [--force-clean-fail] [--force-unclean]"
       echo "       $ROOT_PM run worktree:rm -- --sweep [--force]"
       exit 0
       ;;
@@ -243,14 +252,38 @@ wt_remove_one() {
     fi
   fi
 
-  # Run the project-specific session-cleanup hook before tearing down (best-effort).
-  # This is where project-specific teardown lives — e.g. closing billable test
-  # deploys against a cloud provider. We do NOT bake that here because it is
-  # entirely project-specific.
-  if [ -x "$ROOT/scripts/lib/session-cleanup.sh" ]; then
-    echo "→ running scripts/lib/session-cleanup.sh for slot's stack"
-    ( cd "$WORKTREE_PATH" && bash "$ROOT/scripts/lib/session-cleanup.sh" ) || \
-      echo "  (session-cleanup failed — continuing; stack may already be down)"
+  # Session-cleanup hook seam. This is where project-specific teardown lives (e.g. closing
+  # billable test deploys against a cloud provider); nothing project-specific is baked in
+  # here. A workspace installs scripts/lib/session-cleanup.sh (see workspace.sh) and, when
+  # it exists, rm runs it (cwd = the worktree) before teardown and honors its exit:
+  #   exit 0    clean. Its output is shown only when non-empty: the hook's contract is to
+  #             stay SILENT when there was nothing to clean (no local stack, no
+  #             orchestrator reachable), so silence means nothing happened and the failure
+  #             path below is the only signal that can ever train away.
+  #   non-zero  cleanup FAILED. GOVERN_RM_CLEANUP_GATE=1 (the fleet opt-in for worktrees
+  #             holding billable or deployable resources) REFUSES the teardown, waivable
+  #             per-run with --force-unclean. The default is best-effort: print the
+  #             failure and continue.
+  # A workspace with no hook skips this block entirely and behaves exactly as before.
+  local hook="$ROOT/scripts/lib/session-cleanup.sh"
+  if [ -x "$hook" ]; then
+    local cleanup_out cleanup_rc
+    cleanup_out="$( cd "$WORKTREE_PATH" && bash "$hook" 2>&1 )"; cleanup_rc=$?
+    if [ "$cleanup_rc" -eq 0 ]; then
+      [ -n "$cleanup_out" ] && printf '%s\n' "$cleanup_out"
+    else
+      printf '%s\n' "$cleanup_out"
+      if [ "${GOVERN_RM_CLEANUP_GATE:-0}" = "1" ] && [ "$FORCE_UNCLEAN" -ne 1 ]; then
+        echo "✗ session-cleanup failed (exit $cleanup_rc); refusing to tear down '$NAME' while its resources may still be live" >&2
+        echo "  Close them and re-run, or pass --force-unclean to tear down anyway." >&2
+        return 1
+      fi
+      if [ "$FORCE_UNCLEAN" -eq 1 ]; then
+        echo "  (session-cleanup failed, exit $cleanup_rc; continuing per --force-unclean; its resources may still be live)" >&2
+      else
+        echo "  (session-cleanup failed, exit $cleanup_rc; continuing; its resources may still be live)" >&2
+      fi
+    fi
   fi
 
   echo "→ killing this worktree's dev stack (ownership-scoped)"
