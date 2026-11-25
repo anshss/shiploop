@@ -247,7 +247,14 @@ cat > "$ROOT/package.json" <<'PJEOF'
 {"scripts": {"dev": "bash scripts/dev.sh"}}
 PJEOF
 git init -q "$ROOT"
-cp "$(cd "$DIR/../.." && pwd)/gitignore" "$ROOT/.gitignore"
+# Use the gitignore a fresh workspace actually has: templates/gitignore sits two dirs up when the
+# suite runs from the hub checkout, but CI (and the copy-in dev loop) runs it from a scaffolded
+# workspace's scripts/govern/test, where the same template content landed in the workspace root.
+if [ -f "$DIR/../../gitignore" ]; then
+  cp "$DIR/../../gitignore" "$ROOT/.gitignore"
+else
+  cp "$DIR/../../../.gitignore" "$ROOT/.gitignore"
+fi
 mkdir -p "$ROOT/governor"
 for f in .repo-visibility .claude-edp-support .claude-tools-support; do
   printf 'acme/web public\n' > "$ROOT/governor/$f"
