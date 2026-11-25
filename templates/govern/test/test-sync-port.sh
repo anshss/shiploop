@@ -352,7 +352,7 @@ out="$( tool_env "$s"
   export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
   bash "$TOOL" 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "12. mechanism-file port → exit 0"
-branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | head -1)"
+branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | sed -n '1p')"
 [ -n "$branch" ] || branch="<no-branch>"
 assert_contains "$(git -C "$s/templates" log --format=%s "origin/main..$branch")" \
   "regenerate mechanism-hashes" "12. regen commit present on the port branch"
@@ -374,7 +374,7 @@ out="$( tool_env "$s"
   export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
   bash "$TOOL" 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "13. no-mechanism port → exit 0"
-branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | head -1)"
+branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | sed -n '1p')"
 [ -n "$branch" ] || branch="<no-branch>"
 n_regen="$(git -C "$s/templates" log --format=%s "origin/main..$branch" | grep -c 'regenerate mechanism-hashes' || true)"
 assert_eq "$n_regen" "0" "13. no regen commit on a non-mechanism port"
