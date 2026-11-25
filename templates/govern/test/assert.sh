@@ -10,6 +10,7 @@ ASSERT_FAILS=0
 # source never re-sweeps away a knob the test opted back in after the first source.
 if [[ -z "${GOVERN_SANDBOX_SWEPT:-}" ]]; then
   GOVERN_SANDBOX_AMBIENT="$(env | sed -n 's/^\(GOVERN_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u)"
+  GOVERN_SANDBOX_AMBIENT_META_ROOT="${META_ROOT+set}"
 fi
 
 # ── Layout resolver ──────────────────────────────────────────────────────────
@@ -477,5 +478,15 @@ if [[ -z "${GOVERN_SANDBOX_SWEPT:-}" ]]; then
     unset GOVERN_SANDBOX_PINNED
   fi
   unset GOVERN_SANDBOX_AMBIENT
+  # META_ROOT is the one non-GOVERN export a govern session leaks into a suite
+  # run: lib/common.sh pins it for its own children at source time, and a value
+  # inherited past that resolves a fixture workspace's `META_ROOT="${META_ROOT:-$T}"`
+  # default against the OUTER workspace, sending probe lookups and pending-sync
+  # markers outside the fixture. Swept like the GOVERN_ names; the mechanisms
+  # that need it export it themselves.
+  if [[ -n "${GOVERN_SANDBOX_AMBIENT_META_ROOT:-}" ]]; then
+    unset META_ROOT
+  fi
+  unset GOVERN_SANDBOX_AMBIENT_META_ROOT
   GOVERN_SANDBOX_SWEPT=1
 fi

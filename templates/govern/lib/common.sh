@@ -833,8 +833,17 @@ govern::ticket_logmax() { # [tickets-file] -> N (0 if none)
 # Peek still takes the lock (a consistent read against a concurrent real allocation), it just skips
 # the write. Every real caller (file-ticket.sh, land-resolution.sh, sync-port.sh,
 # lib/valpending.sh) leaves GOVERN_SEQ_PEEK unset and keeps writing as before.
-govern::next_ticket_number() { # [tickets-file] -> N
+#
+# FLOOR (arg 2): a caller that knows a number is already spent can force the allocation strictly
+# above it even when all three max sources miss it. land-resolution.sh passes the number being
+# resolved: its block is deleted BEFORE the allocation and the `resolve #N` commit does not exist
+# until AFTER it, so when the seq high-water mark is stale-low (the ticket was filed by hand or the
+# seq file was lost), every source misses N and the helper would hand N right back, reusing a
+# number this same run just resolved. The floor applies before the seq bump, so the persisted
+# high-water mark climbs past N too and the next allocation in the same run cannot collide.
+govern::next_ticket_number() { # [tickets-file] [floor] -> N
   local tickets_file="${1:-$TICKETS_FILE}"
+  local floor="${2:-0}"
   local seq_file="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
   local lock="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
   local got_lock=0
@@ -848,6 +857,7 @@ govern::next_ticket_number() { # [tickets-file] -> N
   maxn=$(( hwm > filemax ? hwm : filemax ))
   logmax="$(govern::ticket_logmax "$tickets_file")"
   maxn=$(( maxn > logmax ? maxn : logmax ))
+  maxn=$(( floor > maxn ? floor : maxn ))
   maxn=$((maxn+1))
   if [[ "${GOVERN_SEQ_PEEK:-0}" != "1" ]]; then
     printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
@@ -2007,17 +2017,40 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
   [[ "$v" == "public" ]]
 }
 
-# Bound (seconds) for the `--help` capability probes below (--tools and the real-vs-stub claude_bin
-# check further down). A synchronous probe ahead of a real spawn's
-# kill traps being armed means a `claude` wrapper/shim that hangs on `--help` would otherwise hang
-# the ENTIRE spawn with no cleanup path. 5s is ample for a real CLI's --help. Override via
-# GOVERN_EDP_PROBE_TIMEOUT_S.
+# Bound (seconds) for the capability probes below (the --tools flag probe and the real-vs-stub
+# claude_bin check further down). A synchronous probe ahead of a real spawn's kill traps being
+# armed means a `claude` wrapper/shim that hangs would otherwise hang the ENTIRE spawn with no
+# cleanup path. 5s is ample: a parse probe errors out at argument validation and never reaches an
+# API call. Override via GOVERN_EDP_PROBE_TIMEOUT_S.
 _GOVERN_EDP_PROBE_TIMEOUT_S="${GOVERN_EDP_PROBE_TIMEOUT_S:-5}"
+
+# Zero-spend parse probe: does <bin> accept <flag>? Runs `<bin> -p <flag> <value> </dev/null>`
+# and classifies the output. A flag the CLI knows fails input validation BEFORE any API call and
+# prints "Input must be provided either through stdin or as a prompt argument" to stderr; an
+# unknown flag fails argument parsing with "error: unknown option '<flag>'" (both verified on CLI
+# 2.1.280, neither spends tokens). Unlike a grep of the CLI's `--help` output, this sees flags the
+# CLI accepts but does not list in help, so a hidden-but-supported flag reports correctly. Sets
+# $_GOVERN_EDP_TIMED_OUT=1 when the wall-clock bound tripped (a hanging wrapper/shim), so the
+# caller can log a distinct "timed out" message instead of a normal negative. Any output that
+# matches neither signature classifies as unsupported: the probe answers only for the two shapes
+# it knows, never guesses "supported" on unfamiliar output.
+govern::claude_flag_parses() { # <bin> <flag> <value> -> rc 0 parses, 1 unknown/other
+  local bin="$1" flag="$2" value="$3"
+  local out="" rc=0
+  _GOVERN_EDP_TIMED_OUT=0
+  out="$(govern::run_bounded "$_GOVERN_EDP_PROBE_TIMEOUT_S" "$bin" -p "$flag" "$value" </dev/null 2>&1)" || rc=$?
+  [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
+  case "$out" in
+    *"unknown option"*) return 1 ;;
+    *"Input must be provided"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # Capability probe: does $claude_bin support `--tools`? This
 # file ships to every fleet, the fleet's CLI version is not ours, and an unknown flag kills EVERY
-# worker at argument parsing (an outage that govern's failure classifier cannot even see; see
-# learnings.md). Same run-scoped `--help` cache so a long run probes at most once.
+# worker at argument parsing (an outage that govern's failure classifier cannot even see). Same
+# run-scoped cache so a long run probes at most once.
 # Test seam: pre-seed _GOVERN_TOOLS_SUPPORTED=1|0 to skip the probe entirely.
 _GOVERN_TOOLS_PROBE_CACHE="${GOVERN_TOOLS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-tools-support}"
 govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
@@ -2028,36 +2061,20 @@ govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
   fi
   [[ -f "$_GOVERN_TOOLS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true)"
   if [[ -z "$cached" ]]; then
-    # `--tools <tools...>` — anchored on the space so it can never match `--toolsomething`, and
-    # distinct from `--allowedTools, --allowed-tools <tools...>` which is a different flag.
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--tools <tools'; then
+    # Parsed as `--tools <value>`: the value only has to be plausible, since a known flag exits
+    # at the missing-input check before the value is ever interpreted.
+    if govern::claude_flag_parses "$bin" '--tools' 'Bash'; then
       cached="1"
     else
       cached="0"
     fi
     if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim) — treating as unsupported this run; omitting --tools"
+      govern::log "claude CLI ($bin) flag probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --tools"
     fi
     mkdir -p "$(dirname "$_GOVERN_TOOLS_PROBE_CACHE")" 2>/dev/null || true
     printf '%s' "$cached" > "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true
   fi
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
-
-# Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
-# Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
-# macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled
-# background+poll+govern::kill_tree watchdog when NEITHER binary is on PATH, so a bare macOS box
-# with no coreutils installed still gets a bounded probe instead of an unbounded hang. Sets
-# $_GOVERN_EDP_TIMED_OUT=1 when the bound tripped, so the caller can log a distinct "timed out"
-# message instead of a normal negative (flag genuinely absent).
-govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
-  local bin="$1" secs="$2" needle="$3"
-  local out="" rc=0
-  _GOVERN_EDP_TIMED_OUT=0
-  out="$(govern::run_bounded "$secs" "$bin" --help 2>/dev/null)" || rc=$?
-  [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
-  grep -q -- "$needle" <<< "$out"
 }
 
 # Run <cmd...> under a wall-clock bound, portably. Prefers the system `timeout` (always present on
@@ -2114,10 +2131,12 @@ govern::_run_with_manual_timeout() { # <secs> <cmd...>
 # those, via mk_ws_stub or inline, so the suite itself was never the source). WS_ROOT then silently
 # fell through to the real workspace and the fixture output landed in the real tree.
 #
-# Same `--help`-probe idiom as the capability checks above, but the needle here is authenticity,
-# not a specific flag: the real CLI's `--help` banner names itself ("Claude Code - starts an
-# interactive session…"), which a hand-rolled fixture script has no reason to fake. Cached the same
-# way (run-scoped file) so a long run probes at most once.
+# Same parse-probe idiom as the capability checks above, but the point here is authenticity, not
+# a specific flag: the real CLI parses `--max-turns` and stops at its missing-input validation,
+# behavior a hand-rolled fixture script has no reason to reproduce (a fixture faking only a
+# plausible `--help` banner fails here). `--max-turns` is itself hidden from `--help` on some CLI
+# versions yet parses on the real binary, so this check never depends on help output. Cached the
+# same way (run-scoped file) so a long run probes at most once.
 # Test seam: pre-seed _GOVERN_REAL_CLAUDE_BIN=1|0 to skip the probe entirely.
 _GOVERN_REAL_BIN_PROBE_CACHE="${GOVERN_REAL_BIN_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-real-bin}"
 govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecognized
@@ -2127,7 +2146,7 @@ govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecogni
   fi
   [[ -f "$_GOVERN_REAL_BIN_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_REAL_BIN_PROBE_CACHE" 2>/dev/null || true)"
   if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" 'Claude Code'; then
+    if govern::claude_flag_parses "$bin" '--max-turns' '1'; then
       cached="1"
     else
       cached="0"
@@ -2996,15 +3015,55 @@ govern::ticket_fix_on_trunk() { # <N> <tickets-file> <meta-dir>
   return 1
 }
 
+# govern::_block_first_seen_iso: the OLDEST commit timestamp (strict ISO-8601 rendered in UTC) at
+# which ticket N's heading first appeared in the queue file's git history: `git log -S` fires on
+# every occurrence-count change of the heading string (the add on filing, the remove on resolve),
+# and the last line of the newest-first log is that first filing commit. The heading pattern
+# carries a trailing space, so it never matches a longer number (`## #12 ` vs `## #120`) and
+# never matches an incidental body mention. Empty when the file is outside a git repo or the
+# heading was never committed (an uncommitted, brand-new queue); callers treat empty as
+# inconclusive and stay silent: the probe never blocks on a lookup it cannot ground.
+govern::_block_first_seen_iso() { # <N> [tickets-file]
+  local n="$1" f="${2:-$TICKETS_FILE}" dir top rel
+  [[ -n "$f" && -f "$f" ]] || return 0
+  dir="$(dirname "$f")"
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  # rev-parse returns a symlink-resolved toplevel (/private/var/... on macOS), so canonicalize the
+  # file the same way before stripping the prefix, or the pathspec silently matches nothing.
+  f="$(cd "$dir" && pwd -P)/$(basename "$f")"
+  rel="${f#"$top"/}"
+  [[ "$rel" == "$f" ]] && rel="$(basename "$f")"   # file directly at the toplevel
+  TZ=UTC git -C "$top" log --date=iso-strict-local --format=%cd -S"## #$n " -- "$rel" 2>/dev/null | tail -1
+}
+
+# govern::_block_names_pr: does a queue block EXPLICITLY name PR <num> (a `Fix-PR:` field, a
+# `**PR:**`/`**PRs:**` field, or a literal `PR #<num>` mention). The block's own `#N` heading and
+# incidental body text never count, so only a deliberate reference the block author wrote can
+# vouch for a PR outside the recency window.
+govern::_block_names_pr() { # <block> <num>
+  local block="$1" num="$2" tail_re='([^0-9]|$)'
+  [[ -n "$block" && -n "$num" ]] || return 1
+  grep -qE "Fix-PR:.*#${num}${tail_re}" <<<"$block" && return 0
+  grep -qE "\*\*PRs?\*\*:.*#${num}${tail_re}" <<<"$block" && return 0
+  printf '%s\n' "$block" | grep -qE "PR #${num}${tail_re}" && return 0
+  return 1
+}
+
 # govern::ticket_merged_pr — the mirror probe: a PR for ticket N already MERGED on origin while
 # its queue block is still open (the PR was merged from OUTSIDE govern:resolve, so no bookkeeping
 # ever deleted the block). Discovers PRs by head branch (`ticket-<N>`, plus the neutral `sl-<hex>`
 # scheme govern::ticket_branch computes for public repos), then confirms each discovered ref with
-# one `gh pr view --json state`. Emits one `<repo>#<num> <url>` line per MERGED ref; EMPTY output
-# when none found or the probe is inconclusive (no gh, gh/network error) — fail-open, so an
-# environment that cannot verify never blocks a dispatch.
-govern::ticket_merged_pr() { # <N>
-  local n="$1" repo slug nb seen="" seen_prs="" key num url state
+# one `gh pr view --json state`. A discovered MERGED ref is trusted only past a generation guard:
+# a branch name is reusable across a queue renumbering, so a ref whose merge PREDATES the block
+# heading's first commit in the queue file's history cannot be this ticket's work and is ignored,
+# unless the block itself names the ref explicitly (govern::_block_names_pr). A ref with no merge
+# timestamp, or a queue with no committed history at all, is inconclusive and likewise ignored.
+# Emits one `<repo>#<num> <url>` line per trusted MERGED ref; EMPTY output when none found or the
+# probe is inconclusive (no gh, gh/network error): fail-open, so an environment that cannot
+# verify never blocks a dispatch.
+govern::ticket_merged_pr() { # <N> [tickets-file]
+  local n="$1" tf="${2:-$TICKETS_FILE}" repo slug nb seen="" seen_prs="" key num url mat state
+  local first_seen="" block="" grounded=0
   command -v gh >/dev/null 2>&1 || return 0
   nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
   while IFS= read -r repo; do
@@ -3015,16 +3074,30 @@ govern::ticket_merged_pr() { # <N>
       [[ -n "$b" ]] || continue
       [[ "$b" == "$seen" ]] && continue
       seen="$b"
-      while IFS=$'\t' read -r num url; do
+      while IFS=$'\t' read -r num url mat; do
         [[ -n "$num" ]] || continue
         key="$repo#$num"
         [[ "$seen_prs" == *"$key"* ]] && continue
         seen_prs+="$key "
         state="$(gh pr view "$num" --repo "$slug" --json state --jq '.state' 2>/dev/null || true)"
         [[ "$state" == "MERGED" ]] || continue
+        # Ground the generation guard lazily: the git-log walk and the block extract run once,
+        # and only when a MERGED ref actually needs judging.
+        if [[ "$grounded" == "0" ]]; then
+          first_seen="$(govern::_block_first_seen_iso "$n" "$tf")"
+          block="$(govern::ticket_block "$n" "$tf")"
+          grounded=1
+        fi
+        if ! govern::_block_names_pr "$block" "$num"; then
+          # No explicit mention: the merge must postdate the block's first commit. Both stamps are
+          # strict ISO-8601, so a lexicographic compare orders them; an empty stamp on either side
+          # is inconclusive and never skips.
+          [[ -n "$mat" && -n "$first_seen" ]] || continue
+          [[ "$mat" < "$first_seen" ]] && continue
+        fi
         printf '%s#%s %s\n' "$repo" "$num" "$url"
-      done < <(gh pr list --repo "$slug" --state merged --head "$b" --limit 3 --json number,url \
-               --jq '.[] | "\(.number)\t\(.url // "")"' 2>/dev/null || true)
+      done < <(gh pr list --repo "$slug" --state merged --head "$b" --limit 3 --json number,url,mergedAt \
+               --jq '.[] | "\(.number)\t\(.url // "")\t\(.mergedAt // "")"' 2>/dev/null || true)
     done
   done < <(govern::_repos_merge_first)
   return 0

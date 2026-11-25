@@ -350,3 +350,12 @@ wsp_repo_localdir() { # short-repo-name -> abs path
     *) printf '%s/%s' "$META_ROOT" "$1" ;;
   esac
 }
+
+# ── Worktree knobs (COMMENTED examples; effects and defaults in CONFIGURATION.md) ──
+# Uncomment ONE you actually want: uncommenting in this file sets it for every worktree
+# script (they all source this file). They ship commented on purpose: /shiploop:update
+# appends any LIVE assignment in the hub seed that your workspace lacks, and each of
+# these is a per-workspace decision, never a fleet-wide default.
+# export WORKTREE_DRIFT_GUARD=1   # new.sh: fast-forward a reused stale branch against origin/main; refuse creation (exit 5) on real divergence
+# export STACK_KILL_NAMES="node tsx npm npx next go air esbuild vite"   # rm.sh cwd-kill allowlist when a worktree is removed; add your stack's binaries
+# export WT_MAX_SLOT=199          # registry slot ceiling (default 99); each slot owns a SLOT_PORT_STEP-wide port band, so raising it only widens the port space

@@ -13,6 +13,9 @@
 #   9. uncommitted-work strand → escalation, no push/PR, templates restored.
 #  10. fingerprint dedup — two runs against same drift → one entry, Last-seen bump.
 #  11. GOVERN_UPSTREAM_HARNESS_REPO empty (default) → mechanism inert, exit 0.
+#  12. port touches a mechanism file → hash manifest regenerated + committed in-branch.
+#  13. port touches no mechanism file → no regen, no annotation.
+#  14. generator unclassifiable → PR body names the manifest regen at creation.
 #
 # Every heavy dep is stubbed via the script's env seams.
 set -uo pipefail
@@ -72,6 +75,31 @@ EOF
   printf 'echo run\n' > "$T/templates/govern/spawn-worker.sh"
   printf '#!/usr/bin/env bash\nMETA_NAME="__META_NAME__"\nGITHUB_ORG="__GITHUB_ORG__"\nREPOS=(__REPOS__)\n' > "$T/templates/lib/workspace.sh"
   printf 'echo assert\n' > "$T/templates/govern/test/assert.sh"
+  # Optional stub hub tooling for the mechanism-hash regen cases: MECH_STUB=mech
+  # lists the mirrored file as a mechanism file (regen branch), MECH_STUB=nomech
+  # lists an unrelated one (no-regen branch). No stub = unclassifiable (the
+  # annotate-in-PR-body fallback).
+  case "${MECH_STUB:-}" in
+    mech)
+      mkdir -p "$T/tools"
+      cat > "$T/scaffold.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "--list-mechanism-files" ] && printf 'govern/spawn-worker.sh\tscripts/govern/spawn-worker.sh\n'
+exit 0
+EOF
+      cat > "$T/tools/gen-mechanism-hashes.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'regenerated-manifest\n'
+EOF
+      chmod +x "$T/scaffold.sh" "$T/tools/gen-mechanism-hashes.sh" ;;
+    nomech)
+      cat > "$T/scaffold.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "--list-mechanism-files" ] && printf 'govern/some-other.sh\tscripts/govern/some-other.sh\n'
+exit 0
+EOF
+      chmod +x "$T/scaffold.sh" ;;
+  esac
   git -C "$T" init -q; git -C "$T" config user.email t@t; git -C "$T" config user.name t
   git -C "$T" add -A; git -C "$T" commit -qm "init templates"
   git init --bare -q "$TBARE"
@@ -120,9 +148,11 @@ EOF
   chmod +x "$1"
 }
 
-mk_gh_stub() { cat > "$1" <<'EOF'
+mk_gh_stub() { # <path> [record-file] (record-file optionally captures each invocation's args)
+  cat > "$1" <<EOF
 #!/usr/bin/env bash
-[ "$1" = "pr" ] && [ "$2" = "create" ] && { echo "https://github.com/acme/shiploop/pull/42"; exit 0; }
+[ -n "\${GH_STUB_RECORD:-}" ] && printf '%s\n' "\$*" >> "\$GH_STUB_RECORD"
+[ "\$1" = "pr" ] && [ "\$2" = "create" ] && { echo "https://github.com/acme/shiploop/pull/42"; exit 0; }
 exit 0
 EOF
 chmod +x "$1"; }
@@ -309,5 +339,61 @@ out="$( tool_env "$s"; export GOVERN_MERGE_CMD="$merge"; bash "$TOOL" 2>&1 )"; r
 assert_eq "$rc" "0" "11. GOVERN_UPSTREAM_HARNESS_REPO empty → exit 0 (inert)"
 assert_contains "$out" "feature off" "11. states that the feature is off"
 assert_eq "$( [ -s "$mrec" ] && echo yes || echo no )" "no" "11. inert → no merge"
+
+# ── Case 12: mechanism file in the port → hash manifest regenerated + committed ──────────────
+s="$(MECH_STUB=mech mk_sandbox)"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
+gh="$s/gh.sh"; mk_gh_stub "$gh"
+mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
+ghrec="$s/gh-record.txt"
+out="$( tool_env "$s"
+  export GOVERN_CLAUDE_BIN="$porter" GOVERN_GH_BIN="$gh" GOVERN_MERGE_CMD="$merge"
+  export GOVERN_SCAFFOLD_TEST_CMD="/usr/bin/true" GH_STUB_RECORD="$ghrec"
+  export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
+  bash "$TOOL" 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "12. mechanism-file port → exit 0"
+branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | sed -n '1p')"
+[ -n "$branch" ] || branch="<no-branch>"
+assert_contains "$(git -C "$s/templates" log --format=%s "origin/main..$branch")" \
+  "regenerate mechanism-hashes" "12. regen commit present on the port branch"
+assert_contains "$(git -C "$s/templates" show "$branch:templates/lib/mechanism-hashes.txt" 2>/dev/null)" \
+  "regenerated-manifest" "12. mechanism-hashes.txt on the branch carries the regen"
+assert_eq "$( [ -s "$mrec" ] && echo yes || echo no )" "yes" "12. merge invoked on the green port"
+assert_not_contains "$(cat "$ghrec" 2>/dev/null)" "Manifest regen required" \
+  "12. in-branch regen means the PR body carries NO regen annotation"
+
+# ── Case 13: no mechanism file in the port → no regen, no annotation ─────────────────────────
+s="$(MECH_STUB=nomech mk_sandbox)"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
+gh="$s/gh.sh"; mk_gh_stub "$gh"
+mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
+ghrec="$s/gh-record.txt"
+out="$( tool_env "$s"
+  export GOVERN_CLAUDE_BIN="$porter" GOVERN_GH_BIN="$gh" GOVERN_MERGE_CMD="$merge"
+  export GOVERN_SCAFFOLD_TEST_CMD="/usr/bin/true" GH_STUB_RECORD="$ghrec"
+  export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
+  bash "$TOOL" 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "13. no-mechanism port → exit 0"
+branch="$(git -C "$s/templates" for-each-ref --format='%(refname:short)' 'refs/heads/sync-auto-*' | sed -n '1p')"
+[ -n "$branch" ] || branch="<no-branch>"
+n_regen="$(git -C "$s/templates" log --format=%s "origin/main..$branch" | grep -c 'regenerate mechanism-hashes' || true)"
+assert_eq "$n_regen" "0" "13. no regen commit on a non-mechanism port"
+assert_not_contains "$(cat "$ghrec" 2>/dev/null)" "Manifest regen required" \
+  "13. no-mechanism port is unchanged (no PR-body annotation)"
+
+# ── Case 14: generator/classification unavailable → PR body names the regen at creation ──────
+s="$(mk_sandbox)"
+porter="$s/porter.sh"; mk_porter_stub "$porter" "$s/templates/templates/govern/spawn-worker.sh"
+gh="$s/gh.sh"; mk_gh_stub "$gh"
+mrec="$s/merge-record.txt"; merge="$s/merge.sh"; mk_merge_stub "$merge" "$mrec"
+ghrec="$s/gh-record.txt"
+out="$( tool_env "$s"
+  export GOVERN_CLAUDE_BIN="$porter" GOVERN_GH_BIN="$gh" GOVERN_MERGE_CMD="$merge"
+  export GOVERN_SCAFFOLD_TEST_CMD="/usr/bin/true" GH_STUB_RECORD="$ghrec"
+  export STUB_STATUS=ported STUB_ADD_LINE='echo "run v2 generic mechanism"'
+  bash "$TOOL" 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "14. unclassifiable port → exit 0"
+assert_contains "$(cat "$ghrec" 2>/dev/null)" "Manifest regen required" \
+  "14. PR body names the manifest regen at creation"
 
 assert_done
