@@ -171,10 +171,13 @@ pdc_gate_one() {
   # nothing used to flag it: an operator later asks to implement the already-merged ticket and
   # burns a rediscovery session. One cheap probe (head-branch PR list + one `gh pr view --json
   # state` per discovered ref, fail-open on any inconclusive miss) reports it at check time so
-  # the next resolve is bookkeeping-only. GOVERN_MERGED_PR_PROBE=0 is the kill switch.
+  # the next resolve is bookkeeping-only. GOVERN_MERGED_PR_PROBE=0 is the kill switch. The probe
+  # discovers by head-branch name, which a queue renumbering can reuse, so a MERGED ref is only
+  # trusted when its merge postdates the block's first commit in the queue history, or the block
+  # names the ref explicitly.
   local _merged_out=""
   if [[ "${GOVERN_MERGED_PR_PROBE:-1}" == "1" ]]; then
-    _merged_out="$(govern::ticket_merged_pr "$N" 2>/dev/null || true)"
+    _merged_out="$(govern::ticket_merged_pr "$N" "$TICKETS_FILE" 2>/dev/null || true)"
     if [[ -n "$_merged_out" ]]; then
       echo "skip: #$N's PR is already MERGED on origin (${_merged_out%%$'\n'*}) but its queue block is still open: bookkeeping-only — re-run resolve-ticket.sh $N instead of re-implementing"
       return 0
