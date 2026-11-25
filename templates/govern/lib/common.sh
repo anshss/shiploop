@@ -833,8 +833,17 @@ govern::ticket_logmax() { # [tickets-file] -> N (0 if none)
 # Peek still takes the lock (a consistent read against a concurrent real allocation), it just skips
 # the write. Every real caller (file-ticket.sh, land-resolution.sh, sync-port.sh,
 # lib/valpending.sh) leaves GOVERN_SEQ_PEEK unset and keeps writing as before.
-govern::next_ticket_number() { # [tickets-file] -> N
+#
+# FLOOR (arg 2): a caller that knows a number is already spent can force the allocation strictly
+# above it even when all three max sources miss it. land-resolution.sh passes the number being
+# resolved: its block is deleted BEFORE the allocation and the `resolve #N` commit does not exist
+# until AFTER it, so when the seq high-water mark is stale-low (the ticket was filed by hand or the
+# seq file was lost), every source misses N and the helper would hand N right back, reusing a
+# number this same run just resolved. The floor applies before the seq bump, so the persisted
+# high-water mark climbs past N too and the next allocation in the same run cannot collide.
+govern::next_ticket_number() { # [tickets-file] [floor] -> N
   local tickets_file="${1:-$TICKETS_FILE}"
+  local floor="${2:-0}"
   local seq_file="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
   local lock="${GOVERN_BOOKKEEP_LOCK:-$GOVERNOR_DIR/.bookkeep.lock}"
   local got_lock=0
@@ -848,6 +857,7 @@ govern::next_ticket_number() { # [tickets-file] -> N
   maxn=$(( hwm > filemax ? hwm : filemax ))
   logmax="$(govern::ticket_logmax "$tickets_file")"
   maxn=$(( maxn > logmax ? maxn : logmax ))
+  maxn=$(( floor > maxn ? floor : maxn ))
   maxn=$((maxn+1))
   if [[ "${GOVERN_SEQ_PEEK:-0}" != "1" ]]; then
     printf '%s\n' "$maxn" > "$seq_file" 2>/dev/null || true
