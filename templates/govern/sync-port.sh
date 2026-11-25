@@ -523,6 +523,55 @@ if [[ "${#CHANGED[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# ── 3a. mechanism-hash regen ────────────────────────────────────────────────
+# A port that touches any mechanism file must carry the regenerated
+# templates/lib/mechanism-hashes.txt in the branch (the same rule a worker PR
+# follows), or the Manifest-guards CI job fails the PR at birth. When this
+# context cannot classify the port or cannot run the generator, the PR body
+# names the required regen at creation instead, so the reviewer never has to
+# rediscover it from a red CI run.
+MECH_REGEN_NOTE=""
+mech_hit=""
+mech_classified=""
+if [[ -f "$TEMPLATE_REPO_DIR/scaffold.sh" ]]; then
+  mech_classified=1
+  mech_list="$(cd "$TEMPLATE_REPO_DIR" && bash scaffold.sh --list-mechanism-files 2>/dev/null | cut -f1 | sort -u)"
+  for _c in "${CHANGED[@]}"; do
+    case "$_c" in templates/*)
+      [[ $'\n'"$mech_list"$'\n' == *$'\n'"${_c#templates/}"$'\n'* ]] && mech_hit=1 ;;
+    esac
+  done
+elif [[ -f "$LIVE_ROOT/scaffold.sh" ]]; then
+  mech_classified=1
+  mech_list="$(bash "$LIVE_ROOT/scaffold.sh" --list-mechanism-files 2>/dev/null | cut -f2 | sort -u)"
+  for _c in "${DRIFT_FILES[@]}"; do
+    [[ $'\n'"$mech_list"$'\n' == *$'\n'"$_c"$'\n'* ]] && mech_hit=1
+  done
+fi
+if [[ -n "$mech_classified" && -z "$mech_hit" ]]; then
+  govern::log "sync-port: port touches no mechanism file; hash manifest untouched"
+elif [[ -n "$mech_classified" && -f "$TEMPLATE_REPO_DIR/tools/gen-mechanism-hashes.sh" ]]; then
+  if ( cd "$TEMPLATE_REPO_DIR" && bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt ) 2>>"$LOG_DIR/mech-regen.log"; then
+    git -C "$TEMPLATE_REPO_DIR" add templates/lib/mechanism-hashes.txt
+    if git -C "$TEMPLATE_REPO_DIR" diff --cached --quiet; then
+      govern::log "sync-port: mechanism file(s) ported; hash manifest already current"
+    elif git -C "$TEMPLATE_REPO_DIR" commit -qm "chore(templates): regenerate mechanism-hashes for the ported mechanism file(s)"; then
+      govern::log "sync-port: mechanism file(s) ported; hash manifest regenerated on $BRANCH"
+    else
+      MECH_REGEN_NOTE=1
+      govern::log "sync-port: hash-manifest regen COMMIT failed; the PR body will name the regen"
+    fi
+  else
+    MECH_REGEN_NOTE=1
+    govern::log "sync-port: mechanism-hash regen FAILED (see $LOG_DIR/mech-regen.log); the PR body will name the regen"
+  fi
+else
+  # Either a mechanism file IS in the port and the generator is unreachable, or
+  # mechanism status is unclassifiable here. Fail safe: name the regen.
+  MECH_REGEN_NOTE=1
+  govern::log "sync-port: mechanism status unclassifiable or generator unreachable; the PR body will name the regen"
+fi
+
 synfail=""
 for f in "${CHANGED[@]}"; do
   case "$f" in *.sh)
@@ -670,6 +719,8 @@ Drifted files:
 $(printf -- '- %s\n' "${DRIFT_FILES[@]}")
 
 Validated: bash -n, forbidden-identity-strings gate (added lines), scaffold govern test suite.
+${MECH_REGEN_NOTE:+
+**Manifest regen required:** this port touches mechanism file(s) (or mechanism status could not be classified here) and the hash manifest was NOT regenerated in-branch; run \`bash tools/gen-mechanism-hashes.sh > templates/lib/mechanism-hashes.txt\` and add it to this branch before merge.}
 🤖 Generated with sync-port.sh"
 pr_url="$("$GH_BIN" pr create --repo "$CANONICAL_SLUG" --base main --head "$head_ref" \
            --title "$pr_title" --body "$pr_body" 2>>"$LOG_DIR/gh.log")"
