@@ -84,6 +84,19 @@ declare -a patched_files=()   # every extra file (beyond TICKETS_FILE/SEQ_FILE/v
 #   GOVERN_LESSON_BUDGET_CHARS                   (default: $SHIPLOOP_CLAUDEMD_MAX_CHARS, else 14000)
 #       The budget the eviction gate measures against — deliberately the SAME number the SessionStart
 #       digest already warns on, so the warning and the gate can never disagree.
+#
+# Two behaviours that are ON by default (not gated behind a flag):
+#
+#   rung="appendix" is honored: a patch that declares lessonPatch.rung="appendix" and names the
+#       default destination routes to CLAUDE-APPENDIX.md instead of defaulting into root CLAUDE.md.
+#       The sub-repo redirect still wins (the text-based placement gate runs first), and an explicit
+#       non-default `file` is still honored by landing exactly where it names.
+#
+#   The appendix budget is an ENFORCEMENT when the appendix is the destination the patch itself
+#       chose (explicit `file: CLAUDE-APPENDIX.md`, or rung routing): at/over budget without a usable
+#       `lessonPatch.evicts` REFUSES the landing (nothing is written; the author re-runs with an
+#       eviction named). The gates' own demotions still append unconditionally; there, a refused
+#       landing would lose the lesson.
 
 # Does this lessonPatch CLAIM an always-on slot? Both halves of the bar must be stated explicitly:
 # frequency (how often it fires) AND reversibility (what it costs when missed). Returns 0 on a
@@ -393,6 +406,10 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
       # "insert everything into CLAUDE.md" behaviour is the fallback, exactly as for overflow below).
       lesson_route="always-on"
       route_reason="default sink (GOVERN_LESSON_SINK=claude-md)"
+      appendix_chosen=0
+      if [[ "$lp_file" == "CLAUDE-APPENDIX.md" ]]; then
+        appendix_chosen=1   # the patch names the appendix itself as its destination (explicit file)
+      fi
       if [[ -f "$appendix" ]]; then
         sink_mode="${GOVERN_LESSON_SINK:-claude-md}"
         if [[ "$sink_mode" == "appendix" ]] && ! govern_bk::claims_always_on "$report"; then
@@ -422,16 +439,54 @@ if [[ -n "$lp_file" && "$lp_file" != */* ]]; then   # root-level file only (no s
         fi
       fi
 
+      # Honor an explicit rung="appendix": the author routed this as durable-but-reference knowledge,
+      # so it goes to CLAUDE-APPENDIX.md instead of defaulting into the always-on root file. Fires only
+      # when the gates above left the lesson routed to the always-on sink AND the patch named the
+      # default destination (an explicit non-default file is honored by landing exactly where it
+      # names, which the appendix_chosen flag above already tracks). rung="guard"/"lint" change
+      # nothing here: they assert a cheaper rung covers the lesson, which only the ladder gate acts on.
+      if [[ "$lesson_route" == "always-on" && "$lp_file" == "CLAUDE.md" ]]; then
+        lp_rung="$(printf '%s' "$report" | jq -r '.lessonPatch.rung // ""' 2>/dev/null || true)"
+        if [[ "$lp_rung" == "appendix" ]]; then
+          lesson_route="appendix"
+          route_reason="lessonPatch.rung=\"appendix\" honored: durable-but-reference knowledge routes to the appendix, not the always-on file"
+          appendix_chosen=1
+        fi
+      fi
+
       if [[ "$lesson_route" == "appendix" ]]; then
-        # DEMOTED, not lost: the FULL text lands in the appendix under its own heading and NOTHING is
-        # inserted into the always-on file (a pointer line would re-charge the per-turn tax this gate
-        # exists to avoid). The appendix is not a rot reservoir — an entry parked here is still
-        # subject to be-right / supersede-in-place / delete, never "moved and forgotten".
-        heading="#$N — ${ticket_title:-lesson}"
-        { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
-        patched_files+=("$appendix")
-        govern::log "bookkeep #$N: lessonPatch routed to CLAUDE-APPENDIX.md (\"$heading\") instead of always-on $lp_file — $route_reason"
-        target="$appendix"   # the summary line reports the sink that actually received the lesson
+        # When the appendix is the DESTINATION THE PATCH CHOSE (explicit file, or rung="appendix"
+        # routing), an at/over-budget landing without a usable .evicts REFUSES outright instead of
+        # landing with a budget note: demotion to the appendix is a no-op when the appendix already
+        # IS the target, so the old fallback just kept growing an over-budget file. The gates' own
+        # demotions above (sink inversion, ladder, at-budget root overflow) are unaffected; those
+        # still append unconditionally, because there a refused landing would LOSE the lesson.
+        appendix_refused=0
+        if [[ "$appendix_chosen" == "1" ]]; then
+          appendix_budget="${GOVERN_LESSON_BUDGET_CHARS:-${SHIPLOOP_CLAUDEMD_MAX_CHARS:-14000}}"
+          appendix_cur="$(wc -c < "$appendix" 2>/dev/null | tr -d '[:space:]')"
+          [[ -n "$appendix_cur" ]] || appendix_cur=0
+          if (( appendix_cur + ${#text} > appendix_budget )); then
+            appendix_evicts="$(printf '%s' "$report" | jq -r '.lessonPatch.evicts // ""' 2>/dev/null || true)"
+            if [[ -n "$appendix_evicts" ]] && govern_bk::evict_entry "$appendix" "$appendix_evicts"; then
+              govern::log "bookkeep #$N: CLAUDE-APPENDIX.md at/over budget ($appendix_cur + ${#text} chars > $appendix_budget): evicted the named incumbent (\"$appendix_evicts\") to make room for the lesson"
+            else
+              appendix_refused=1
+              govern::log "bookkeep #$N: lessonPatch REFUSED: CLAUDE-APPENDIX.md at/over budget ($appendix_cur + ${#text} chars > $appendix_budget) and no usable lessonPatch.evicts ($route_reason); nothing landed; the author re-runs the resolve with an eviction named"
+            fi
+          fi
+        fi
+        if [[ "$appendix_refused" == "0" ]]; then
+          # DEMOTED, not lost: the FULL text lands in the appendix under its own heading and NOTHING is
+          # inserted into the always-on file (a pointer line would re-charge the per-turn tax this gate
+          # exists to avoid). The appendix is not a rot reservoir; an entry parked here is still
+          # subject to be-right / supersede-in-place / delete, never "moved and forgotten".
+          heading="#$N — ${ticket_title:-lesson}"
+          { printf '\n## %s\n\n' "$heading"; printf '%s\n' "$text"; } >> "$appendix"
+          patched_files+=("$appendix")
+          govern::log "bookkeep #$N: lessonPatch routed to CLAUDE-APPENDIX.md (\"$heading\") instead of always-on $lp_file: $route_reason"
+          target="$appendix"   # the summary line reports the sink that actually received the lesson
+        fi
       elif [[ "${#text}" -gt "$lesson_max_chars" && -f "$appendix" ]]; then
         if grep -qE '^[[:space:]]*$' <<< "$text"; then
           lead="$(awk '/^[[:space:]]*$/{exit} {print}' <<<"$text")"

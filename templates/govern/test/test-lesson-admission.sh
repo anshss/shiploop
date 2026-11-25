@@ -92,7 +92,7 @@ rpt() { # <extra-jq-object>
 
 run() { # <report-json> <env-assignments...>
   local r="$1"; shift
-  printf '%s' "$r" | env GOVERN_NO_PUSH=1 GOVERN_TICKETS_FILE="$T/tickets.md" "$@" bash "$BK" 9 >/dev/null 2>&1
+  printf '%s' "$r" | env GOVERN_NO_PUSH=1 GOVERN_TICKETS_FILE="$T/tickets.md" "$@" bash "$BK" 9 >/dev/null 2>/tmp/bk-log.$$
 }
 
 # ── 1. DEFAULTS: GOVERN_LESSON_EVICT is ON by default ──────────────────
@@ -221,4 +221,63 @@ run "$(rpt '{}')" GOVERN_LESSON_SINK=appendix GOVERN_LESSON_LADDER=1 GOVERN_LESS
 assert_contains "$(cat "$T/CLAUDE.md")" "$LESSON" "no appendix on disk: all gates skipped, lesson still lands (never lost)"
 assert_eq "$(test -f "$T/CLAUDE-APPENDIX.md" && echo y || echo n)" "n" "no appendix on disk: none conjured up"
 
+# ── 6. RUNG ROUTING (always on, no flag): rung="appendix" is honored ─────────
+# The placement gate runs first; with no sub-repo path signal in the text there is nothing to
+# redirect on, and an explicit rung="appendix" is the author's routing decision, so the lesson
+# lands in CLAUDE-APPENDIX.md instead of defaulting into the always-on root file.
+reset_ws yes
+run "$(rpt '{"rung":"appendix"}')"
+assert_contains     "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON"          "rung=appendix: routes to CLAUDE-APPENDIX.md"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON"          "rung=appendix: root CLAUDE.md does not grow"
+assert_contains     "$(cat "$T/CLAUDE.md")"          "INCUMBENT_BULLET" "rung=appendix: incumbents untouched"
+assert_contains     "$(cat /tmp/bk-log.$$)" "durable-but-reference knowledge routes to the appendix" "rung=appendix: routing logged"
+
+# the no-rung baseline is unchanged: the same patch shape without a rung still lands in CLAUDE.md
+reset_ws yes
+run "$(rpt '{}')"
+assert_contains     "$(cat "$T/CLAUDE.md")" "$LESSON" "no rung: baseline unchanged, lesson lands in CLAUDE.md"
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "no rung: appendix untouched"
+
+# an explicit file: CLAUDE-APPENDIX.md is honored under budget (lands exactly where it names)
+reset_ws yes
+run "$(rpt '{"file":"CLAUDE-APPENDIX.md"}')"
+assert_contains     "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "explicit appendix file under budget: honored, lesson lands there"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON" "explicit appendix file under budget: root untouched"
+
+# ── 7. APPENDIX BUDGET IS ENFORCEMENT when the appendix is the patch's own destination ──
+# 7a. explicit file + at/over budget + NO evicts: the landing REFUSES (nothing lands anywhere,
+# the appendix does not grow) and the refusal names the budget numbers.
+reset_ws yes
+run "$(rpt '{"file":"CLAUDE-APPENDIX.md"}')" GOVERN_LESSON_BUDGET_CHARS=10
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "appendix over budget, no evicts: REFUSED, appendix unchanged"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON" "appendix over budget, no evicts: nothing falls back to root"
+assert_contains     "$(cat /tmp/bk-log.$$)" "REFUSED" "appendix over budget, no evicts: refusal logged"
+assert_contains     "$(cat /tmp/bk-log.$$)" "11 + ${#LESSON} chars > 10" "appendix over budget, no evicts: refusal carries the budget numbers (current, budget, patch size)"
+
+# 7b. same shape WITH a usable .evicts: the named appendix incumbent is displaced, lesson lands.
+reset_ws yes
+printf '# Appendix\n\n- OLD_APPENDIX_RULE: weakest appendix incumbent.\n' > "$T/CLAUDE-APPENDIX.md"
+( cd "$T" && git add -A && git commit -q -m pad >/dev/null 2>&1 || true )
+run "$(rpt '{"file":"CLAUDE-APPENDIX.md","evicts":"OLD_APPENDIX_RULE"}')" GOVERN_LESSON_BUDGET_CHARS=10
+assert_contains     "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON"           "appendix over budget + named eviction: lesson lands in the appendix"
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "OLD_APPENDIX_RULE" "appendix over budget + named eviction: the named incumbent is evicted"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON"           "appendix over budget + named eviction: root untouched"
+
+# 7c. rung-routed (no explicit file) into an at/over-budget appendix without evicts: refuses too.
+# CLAUDE.md stays under this budget so only the rung routing puts the appendix in play.
+reset_ws yes
+printf '# Appendix\n\n%s\n' "$(head -c 500 /dev/zero | tr '\0' 'x')" > "$T/CLAUDE-APPENDIX.md"
+( cd "$T" && git add -A && git commit -q -m pad >/dev/null 2>&1 || true )
+run "$(rpt '{"rung":"appendix"}')" GOVERN_LESSON_BUDGET_CHARS=400
+assert_not_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "rung-routed appendix over budget, no evicts: REFUSED, appendix unchanged"
+assert_not_contains "$(cat "$T/CLAUDE.md")"          "$LESSON" "rung-routed appendix over budget, no evicts: nothing falls back to root"
+assert_contains     "$(cat /tmp/bk-log.$$)" "REFUSED" "rung-routed appendix over budget: refusal logged"
+
+# ── 8. gates' own DEMOTIONS still land in the appendix unconditionally (never lose a lesson) ──
+# sink inversion demoting into an at/over-budget appendix keeps the old append-anyway fallback.
+reset_ws yes
+run "$(rpt '{}')" GOVERN_LESSON_SINK=appendix GOVERN_LESSON_BUDGET_CHARS=10
+assert_contains "$(cat "$T/CLAUDE-APPENDIX.md")" "$LESSON" "sink demotion into an over-budget appendix: still lands (never lost)"
+
+rm -f /tmp/bk-log.$$
 assert_done

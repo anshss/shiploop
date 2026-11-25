@@ -296,6 +296,7 @@ f3ba0e7d9241e31ba2ed585988e6a2f694fdeaaa22125cda6e72356ff9797b35  govern/govern-
 a9f8f537a9ba631b5c75bdf40bca898ec98621e5a5c246825a8cc2607bd04994  govern/land-resolution.sh
 d487a95beb0460a7c8f466eeb1b9e66dc0b4577069276459dee3ce4b3ef7c7b2  govern/land-resolution.sh
 e3e99a1d5d15d9bc27dc7253c486866da47a704c9019013e0afed55e9dac7309  govern/land-resolution.sh
+ff792699b8abb32433cf0243006449140b2f15de17a7e45903655bf39e9421c4  govern/land-resolution.sh
 
 # -- govern/lib/common.sh --
 05a6f871138ecf46aa6cd60455b2e37bc97475e2a525af52f38c5108b6826771  govern/lib/common.sh
@@ -1057,6 +1058,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 246ee6c68a8878ada93cc781eb127c9605bdf9c248ffecbb2e780348163693ec  scripts/govern/test/test-spawn-effort-routing.sh
 24c3caa9498002b8c1e0a67f016667ecbd6a17435457433db96dbdf4ee5e039e  scripts/govern/test/test-events-runloop.sh
 24fca040cb81d4bfa4fee5b9beae095749ce33573bf0733ec95f5b97058a6284  scripts/govern/test/test-events-monitor.sh
+2534898e3773e8b844233297721683c7c3be3ed990efc60935b698e7b2dd2bc0  scripts/govern/test/test-ticket-numbering.sh
 25977ff984bab5138dc060f7ab32fe9080f0f3ab3bdb0b57fc4b4045f676dee4  scripts/govern/test/test-resolve-ticket-worktree-teardown.sh
 25c92125fdc206559dcf270b3041e861b90903b1cee38518339f8814799c691a  scripts/govern/test/test-flows-lint.sh
 25d043f98986dc867a7e37de877b196d627bce5b78b2a6bf0a5c06e30e064ae8  scripts/govern/test/test-worker-log-runscope.sh

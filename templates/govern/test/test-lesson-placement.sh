@@ -152,5 +152,16 @@ assert_eq "$(cd "$T/alpha" && git branch --show-current)" "ticket-99" "non-defau
 assert_contains "$(cat /tmp/bk-log.$$)" "not on its default branch" "non-default-branch: skip reason logged"
 ( cd "$T/alpha" && git checkout -q main )
 
+# ── 9. rung="appendix" does NOT override the conservative sub-repo redirect ──
+# An explicit rung="appendix" is honored only when the placement gate has no redirect evidence;
+# an unambiguous single-sub-repo lesson still redirects to that sub-repo's CLAUDE.md.
+reset_all
+lesson9='Run alpha/scripts/bootstrap.sh once before the first alpha build of the day.'
+rpt9=$(jq -n --arg t "$lesson9" '{status:"resolved",pr:{repo:"alpha",number:1},newTickets:[],lessonPatch:{file:"CLAUDE.md",anchor:null,text:$t,rung:"appendix"}}')
+run_bk "$rpt9"
+assert_not_contains "$(cat "$T/CLAUDE.md")" "$lesson9" "rung+sub-repo: root CLAUDE.md NOT touched"
+assert_contains "$(cat "$T/alpha/CLAUDE.md")" "$lesson9" "rung+sub-repo: the conservative sub-repo redirect still wins over rung routing"
+assert_contains "$(cat /tmp/bk-log.$$)" "redirected root CLAUDE.md -> alpha/CLAUDE.md" "rung+sub-repo: redirect logged"
+
 rm -f /tmp/bk-out.$$ /tmp/bk-log.$$
 assert_done
