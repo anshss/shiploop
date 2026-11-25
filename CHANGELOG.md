@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.20.24 - 2026-11-25
+
+### Fixed
+
+**Six fixes from one train: filing, doctrine, guards, and the gitignore merge.**
+
+- `file-ticket.sh` rejects any unrecognized leading `--flag` with a non-zero exit and nothing filed, naming the positional usage and the `--title`/`--body-file` near-misses; `--model`/`--effort` still degrade with a log (`t2026-11-25-b`).
+- `pre-dispatch`'s resolved-skip keys on the ticket block's presence on origin/main by exact heading anchor, refuses a gone block as "resolved-unverified" when no trunk fingerprint confirms the fix, and flags open blocks whose PR already merged on origin (`t2026-11-25-b`).
+- `merge-pr.sh` books an already-MERGED PR as success (exit 0, logged), so a plain resolve re-run books it (`t2026-11-25-b`).
+- `resolve-ticket.sh` validates the report's `tickets[]` shape at pre-flight, refusing before any merge when an entry is not an object carrying a numeric `.ticket` and a string `.status` (`t2026-11-25-b`).
+- `worker-prompt.md` doctrine instructs `command grep -r` for searches crossing into sub-repos (the injected grep shim honors the root gitignore and silently skips them), with a new hub-context test asserting the guidance (`t2026-11-25-b`).
+- `router-posture-guard.sh` retries a failed emit once and emits a fail-closed compact deny on a second failure; fact-gate resolution retries once before the documented degrade-to-advisory (`t2026-11-25-b`).
+- The gitignore merge distinguishes removed from never-received via the workspace's recorded stamp, and the governor runtime caches (`.repo-visibility`, capability probes) are gitignored in the hub templates (`t2026-11-25-b`).
+- The wrap.sh SIGINT rollback completes once entered (INT/TERM ignored during restore), fixing the residue-under-parallel-loads signature (`t2026-11-25-b`).
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated.
+
+Validation: every train PR landed with its own full-suite validation and green CI on its head; parity runs at full strength on this commit.
+
 ## 1.20.23 - 2026-11-25
 
 ### Fixed
