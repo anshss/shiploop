@@ -168,23 +168,45 @@ assert_eq "$(landed_count)" "1" "7b. exactly one land call"
 assert_eq "$rc" "0" "7c. exit 0"
 assert_contains "$(cat "$hist")" '"status":"resolved"' "7d. a resolved history row is written"
 
-# ── 8. a non-empty array that parses to nothing refuses BEFORE any bookkeeping ───────────────────
+# ── 8. a non-empty array that parses to nothing refuses BEFORE ANY MERGE ──────────────────────────
 # Cases: a bare number that is NOT this ticket, a string, an object without .ticket. Each must exit
-# non-zero with no land call, no "landed"/bookkeeping output, and no new history row.
+# non-zero with no merge call, no land call, no "landed"/bookkeeping output, no new history row, and
+# the queue block byte-identical (the 6e pre-flight fires before the merge gate; the landing
+# classifier behind it is defense-in-depth only).
+TICKETS_BEFORE="$(cat "$T/queue/tickets.md")"
 hist_case() { # <report> <label-prefix>
-  : > "$LANDED"; : > "$hist"
+  : > "$LANDED"; : > "$MERGED"; : > "$hist"
   local rc out
   out="$( ( cd "$T" && printf '%s' "$1" | bash "$T/bin/resolve-ticket.sh" 40 2>&1 ); echo $? )"
   rc="${out##*$'\n'}"
   assert_eq "$(landed_count)" "0" "$2: nothing lands"
+  assert_eq "$(merged_count)" "0" "$2: nothing merges (refusal is pre-merge)"
   assert_not_contains "$rc" "0" "$2: exits non-zero"
   assert_not_contains "$out" "resolve-ticket #40: landed" "$2: no landed line"
   assert_eq "$([[ -s "$hist" ]] && echo present || echo absent)" "absent" "$2: no history row"
-  assert_contains "$out" "no parseable {ticket,status} entries" "$2: the refusal names the unparseable shape"
+  assert_contains "$out" "tickets array is malformed" "$2: the refusal names the malformed shape"
+  assert_eq "$(cat "$T/queue/tickets.md")" "$TICKETS_BEFORE" "$2: the queue block survives byte-identical"
 }
 hist_case '{"status":"resolved","pr":{"repo":"alpha","number":15,"url":"u"},"prs":[],"tickets":[99]}' "8a. a bare number that is not N"
 hist_case '{"status":"resolved","pr":{"repo":"alpha","number":16,"url":"u"},"prs":[],"tickets":["junk"]}' "8b. a bare string"
 hist_case '{"status":"resolved","pr":{"repo":"alpha","number":17,"url":"u"},"prs":[],"tickets":[{}]}' "8c. an object without .ticket"
+
+# ── 8d. the OBSERVED live shape: a bare STRING array of this ticket's own number ─────────────────
+# "tickets":["40"] is exactly what the hunt workspace's worker emitted (their #114, 2026-11-25):
+# it must refuse pre-merge, never be coerced into single-ticket semantics.
+hist_case '{"status":"resolved","pr":{"repo":"alpha","number":19,"url":"u"},"prs":[],"tickets":["40"]}' "8d. a string array of N"
+
+# ── 8e. the same refusal on the --no-merge path (no merge at stake, the shape is still fatal) ────
+: > "$LANDED"; : > "$MERGED"; : > "$hist"
+out="$( ( cd "$T" && printf '%s' '{"status":"resolved","pr":{"repo":"alpha","number":20,"url":"u"},"prs":[],"tickets":["40"]}' | bash "$T/bin/resolve-ticket.sh" 40 --no-merge 2>&1 ); echo $? )"
+rc="${out##*$'\n'}"
+assert_not_contains "$rc" "0" "8e-a. --no-merge with a string array exits non-zero"
+assert_eq "$(landed_count)" "0" "8e-b. nothing lands"
+assert_contains "$out" "tickets array is malformed" "8e-c. the refusal names the malformed shape"
+assert_eq "$(cat "$T/queue/tickets.md")" "$TICKETS_BEFORE" "8e-d. the queue block survives byte-identical"
+
+# ── 8f. an object entry missing .status refuses pre-merge too (status must be a string) ──────────
+hist_case '{"status":"resolved","pr":{"repo":"alpha","number":21,"url":"u"},"prs":[],"tickets":[{"ticket":40}]}' "8f. an object without .status"
 
 # ── 9. a group whose every member is parked books nothing: honest refusal at the tail ────────────
 : > "$LANDED"; : > "$MERGED"; : > "$hist"

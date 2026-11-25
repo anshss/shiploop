@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Merge a PR IF its repo is auto-mergeable AND CI is green (or VERIFIED checkless). Usage:
 # merge-pr.sh <repo> <pr>. Exit codes:
-#   0 — merged (or, under GOVERN_ECHO=1, would-merge printed).
+#   0 — merged (or already MERGED: an idempotent re-run books as success, logged;
+#       or, under GOVERN_ECHO=1, would-merge printed).
 #   2 — refused: frontend repo (a different account merges).
 #   3 — refused: CI is red/pending (not mergeable).
 #   4 — refused: CI state UNVERIFIABLE ('error' from await-ci — gh could not confirm CI).
@@ -35,6 +36,16 @@ fi
 if ! govern::is_merge_repo "$REPO"; then
   govern::log "refusing to merge $REPO#$PR — frontend is PR-only (other account merges)."
   exit 2
+fi
+
+# Already-MERGED → success (idempotent re-run): a resolve re-run on a PR that merged on an
+# earlier attempt must BOOK the resolution, not die at `gh pr merge` ("PR is already merged")
+# and strand the ticket queued with its merge already spent. A lookup failure here degrades to
+# the empty string, i.e. "not known merged" — the CI/guard gates below stay fail-closed.
+_state="$(gh pr view "$PR" --repo "$(govern::repo_slug "$REPO")" --json state -q '.state' 2>/dev/null || true)"
+if [[ "$_state" == "MERGED" ]]; then
+  govern::log "$REPO#$PR is already merged — nothing to merge (idempotent re-run)."
+  exit 0
 fi
 
 if [[ "${GOVERN_SKIP_CI:-0}" != "1" ]]; then

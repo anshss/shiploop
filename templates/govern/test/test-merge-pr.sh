@@ -46,6 +46,35 @@ set +e
 out4="$(PATH="$TMP:$PATH" GOVERN_ECHO=1 "$MERGE" alpha 44 2>&1)"; code4=$?
 set -e
 assert_eq "$code4" "3" "red CI merge refused with exit 3"
+
+# An ALREADY-MERGED PR → success (exit 0, logged), never a `gh pr merge` failure: a resolve re-run
+# on a PR that merged on an earlier attempt must book the resolution instead of dying at the merge.
+# The stub answers the state probe before anything else can run, so no CI/await-ci path is reached.
+cat > "$TMP/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"--json state"* ]]; then printf 'MERGED'; exit 0; fi
+exit 0
+EOF
+chmod +x "$TMP/gh"
+set +e
+out5="$(PATH="$TMP:$PATH" "$MERGE" alpha 45 2>&1)"; code5=$?
+set -e
+assert_eq "$code5" "0" "already-MERGED PR treated as success (exit 0)"
+assert_contains "$out5" "already merged" "the already-merged outcome is logged, not silent"
+assert_not_contains "$out5" "gh pr merge" "no merge command runs against a merged PR"
+
+# A state probe that FAILS (gh down) degrades to "not known merged": the fail-closed gates below
+# still own the decision — here GOVERN_SKIP_CI=1 + echo mode reaches the guard/merge print.
+cat > "$TMP/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$TMP/gh"
+set +e
+out6="$(PATH="$TMP:$PATH" GOVERN_SKIP_CI=1 GOVERN_ECHO=1 "$MERGE" alpha 46 2>&1)"; code6=$?
+set -e
+assert_eq "$code6" "0" "a failed state probe does not fake an already-merged success"
+assert_contains "$out6" "gh pr merge" "probe failure falls through to the normal merge path"
 rm -rf "$TMP"
 
 assert_done
