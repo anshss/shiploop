@@ -799,16 +799,19 @@ govern::ticket_filemax() { # [tickets-file] -> N
 # govern::ticket_logmax: highest ticket number named by a `file #N`, `resolve #N` or `delete #N`
 # commit subject anywhere in the git history of the directory holding the tickets file (every ref),
 # or 0 when that directory is not a git repo or git fails. The three verbs are the ones the queue's
-# own commits use; matching is case-insensitive and the verb must start the line or follow a
-# non-alphanumeric character, so a `repo#230` PR reference in a subject never counts. A number whose
-# block was filed by hand and later resolved and deleted leaves no trace in the file or in
-# .ticket-seq, but its commit subjects still carry it.
+# own commits mint (file-ticket.sh, land-resolution.sh). Matching is case-insensitive and the verb
+# must open the subject: either bare, or directly after a conventional-commit prefix
+# (`docs(tickets): file #12`), which is the only other shape genuine subjects take. A reference the
+# verb does not open ("as #300", "renumber #400 to #401", "fixes regression from #500") therefore
+# never matches and can never raise the ceiling, and neither does a `repo#230` PR reference. A
+# number whose block was filed by hand and later resolved and deleted leaves no trace in the file
+# or in .ticket-seq, but its commit subjects still carry it.
 govern::ticket_logmax() { # [tickets-file] -> N (0 if none)
   local f="${1:-$TICKETS_FILE}" dir n
   dir="$(cd "$(dirname "$f")" 2>/dev/null && pwd || true)"
   [[ -n "$dir" ]] || { printf '0\n'; return 0; }
   n="$(git -C "$dir" log --all --format=%s 2>/dev/null \
-        | grep -ioE '(^|[^[:alnum:]])(file|resolve|delete) #[0-9]+' \
+        | grep -ioE '^([a-z]+(\([^)]*\))?:[[:space:]]+)?(file|resolve|delete) #[0-9]+' \
         | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
   printf '%s\n' "${n:-0}"
   return 0

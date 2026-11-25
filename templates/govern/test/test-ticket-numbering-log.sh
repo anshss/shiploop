@@ -5,6 +5,8 @@
 #   1. a number present only in a `file #N` subject is never reissued.
 #   2. `resolve #N` and `delete #N` count too, case-insensitively, on every ref.
 #   3. a `repo#230` PR reference, or a verb glued to a longer word, never raises the number.
+#   3b. a mid-subject reference the verb does not open (a renumber, a "fixes regression from", an
+#       "as #N was taken" aside) never raises the number either: the verb must open the subject.
 #   4. not a git repo: contributes nothing.
 #   5. GOVERN_SEQ_PEEK=1 still reads the history and still does not bump the seq file.
 set -uo pipefail
@@ -43,6 +45,12 @@ assert_eq "$(govern::next_ticket_number "$TF")" "81" "2. a subject on a ref that
           && git commit -q --allow-empty -m "chore: unfile #900 and profile #800" \
           && git commit -q --allow-empty -m "docs: see file-ticket #700 for details" )
 assert_eq "$(govern::next_ticket_number "$TF")" "82" "3. repo#230, unfile #900, profile #800 and file-ticket #700 never raise the number"
+
+# ── 3b. mid-subject references must NOT count: the verb must open the subject ────────────────────
+( cd "$T" && git commit -q --allow-empty -m "docs(tickets): renumber #901 to #902" \
+          && git commit -q --allow-empty -m "chore: fixes regression from #903" \
+          && git commit -q --allow-empty -m "rename the module as #904 was retired" )
+assert_eq "$(govern::next_ticket_number "$TF")" "83" "3b. mid-subject references (renumber #901, from #903, as #904) never raise the number"
 
 # ── 4. not a git repo ────────────────────────────────────────────────────────────────────────────
 NG="$(mktemp -d)"
