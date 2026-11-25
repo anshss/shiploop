@@ -118,7 +118,7 @@ removing a sub-repo is a one-file edit there.
 
 ## Anti-patterns (load-bearing)
 
-1. **PRs aren't transactional across sub-repos: merge backend-first**, and state the order in each
+1. **PRs aren't transactional across sub-repos: merge allowlisted repos first**, and state the order in each
    sibling PR.
 2. **`.env.example` is the contract.** Never commit `.env`: nothing enforces this mechanically.
 3. **Coordination files commit directly to `main` in the main checkout** (`CLAUDE.md`, `queue/`,

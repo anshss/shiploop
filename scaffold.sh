@@ -10,8 +10,8 @@
 #     --workspace-dir /path/to/workspace \
 #     --pm npm \
 #     --org my-github-org \
-#     --repos "backend:3080:npm run dev,console:3000:pnpm dev,site::" \
-#     --merge-allowlist "backend" \
+#     --repos "api:3080:npm run dev,console:3000:pnpm dev,site::" \
+#     --merge-allowlist "api" \
 #     --worktree-base '$HOME/code/workspace.wt' \
 #     --git-init \
 #     --verify \

@@ -27,7 +27,7 @@ pr_lines="$(govern::collect_ticket_prs "$N" "")"
 if [[ -n "$pr_lines" ]]; then
   while IFS=$'\t' read -r prepo pnum _purl; do
     [[ -n "$prepo" && -n "$pnum" ]] || continue
-    GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$prepo" "$pnum" || echo "    (would refuse $prepo#$pnum: frontend PR-only, left open)"
+    GOVERN_ECHO=1 GOVERN_SKIP_CI=1 "$DIR/merge-pr.sh" "$prepo" "$pnum" || echo "    (would refuse $prepo#$pnum: human-merge PR-only, left open)"
   done <<< "$pr_lines"
 else
   echo "    no open PR found for ticket #$N, nothing to merge"
@@ -46,7 +46,7 @@ echo "    on a parked report:   WOULD append the escalation to governor/escalati
 echo "    on a failed report:   WOULD append a failed escalation and leave ticket #$N"
 
 # 4. Prove the CI poller wiring read-only against an existing open PR, if one exists.
-#    Probe the first auto-merge repo (e.g. a backend): it's the one whose PRs get merged.
+#    Probe the first auto-merge (allowlisted) repo: it's the one whose PRs get merged.
 echo "[4/4] CI poller wiring check:"
 probe_repo="${GOVERN_MERGE_REPOS[0]:-}"
 if [[ -n "$probe_repo" ]]; then

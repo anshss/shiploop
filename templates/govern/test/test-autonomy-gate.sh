@@ -15,7 +15,7 @@ MERGE="$DIR/../merge-pr.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-mk_ws_stub "$T"   # alpha auto-mergeable, web frontend; sets NO GOVERN_AUTONOMY (the backward-compat case)
+mk_ws_stub "$T"   # alpha auto-mergeable, web human-merge; sets NO GOVERN_AUTONOMY (the backward-compat case)
 
 # ── A. merge-pr.sh gate (unchanged) ─────────────────────────────────────────────────────────────
 # Backward compat: knob ABSENT → treated as auto → merges (echo mode prints the merge, exit 0).

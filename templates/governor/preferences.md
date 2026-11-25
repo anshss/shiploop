@@ -4,7 +4,7 @@ Operator's standing policy — auto-resolve decisions the way the operator would
 for a human. Grows only via an escalation answer marked "make this a rule" or a ~2-3x recurring
 decision (`escalations.md`).
 
-> Defaults assume backend repos with post-merge CI, frontend repos behind a billed preview — edit to
+> Defaults assume allowlisted repos with post-merge CI, human-merge repos behind a billed preview, edit to
 > match your stack. Auto-merge allowlist: `scripts/lib/workspace.sh` (`GOVERN_MERGE_REPOS`); this file
 > is the judgment applied around it.
 
@@ -19,8 +19,8 @@ decision (`escalations.md`).
 ## Merging
 - Auto-merge only repos in `GOVERN_MERGE_REPOS`, only once CI is green or has no PR-level checks
   (post-merge-CI repo shows "no checks" = mergeable; red/pending block).
-- Never merge other (frontend/PR-only) repos — open PR and stop; a human/different account merges.
-  Honors merge-backend-first (the consumer waits anyway).
+- Never merge other (human-merge/PR-only) repos: open PR and stop; a human/different account merges.
+  Honors allowlisted-first merge order (the consumer waits anyway).
 - "Resolved" = PR opened, not merged. Governor (not worker) does `tickets.md`/`CLAUDE.md` bookkeeping
   in the main checkout.
 - Additive prod migration chain (only if `GOVERN_MIGRATE_CMD` set): merge → apply → verify → resolve.

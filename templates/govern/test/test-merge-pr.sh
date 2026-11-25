@@ -4,16 +4,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/assert.sh"
 MERGE="$DIR/../merge-pr.sh"
 
-# Hermetic config: alpha is auto-mergeable, web is frontend (PR-only) — independent of the live workspace.
+# Hermetic config: alpha is auto-mergeable, web is human-merge (PR-only), independent of the live workspace.
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
 
-# Frontend repo → refused (exit 2), regardless of CI.
+# Human-merge repo → refused (exit 2), regardless of CI.
 set +e
 out="$(GOVERN_ECHO=1 "$MERGE" web 9 2>&1)"; code=$?
 set -e
-assert_eq "$code" "2" "web (frontend) merge refused with exit 2"
-assert_contains "$out" "PR-only" "refusal explains frontend is PR-only"
+assert_eq "$code" "2" "web (human-merge) merge refused with exit 2"
+assert_contains "$out" "PR-only" "refusal explains human-merge repos are PR-only"
 
 # Allowlisted repo in echo mode → prints the gh merge command, does not run it, exit 0.
 set +e

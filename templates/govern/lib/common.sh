@@ -218,13 +218,13 @@ govern::worker_logdir() { # ticket -> dir
 }
 
 # Auto-mergeable repos (green-or-no-checks CI) come from workspace.sh's
-# GOVERN_MERGE_REPOS. Frontend (PR-only) = the sub-repos NOT in that allowlist,
+# GOVERN_MERGE_REPOS. Human-merge (PR-only) = the sub-repos NOT in that allowlist,
 # derived from REPOS. `harness` / a cross-owner skill-template repo live OUTSIDE
 # $REPOS, so they never land here — they stay merge-universe-only. Space-separated
 # to match the PR-search loops below.
-GOVERN_FRONTEND_REPOS=""
+GOVERN_HUMAN_MERGE_REPOS=""
 for _r in "${REPOS[@]}"; do
-  wsp_is_merge_repo "$_r" || GOVERN_FRONTEND_REPOS+="${GOVERN_FRONTEND_REPOS:+ }$_r"
+  wsp_is_merge_repo "$_r" || GOVERN_HUMAN_MERGE_REPOS+="${GOVERN_HUMAN_MERGE_REPOS:+ }$_r"
 done
 unset _r
 
@@ -234,7 +234,7 @@ unset _r
 # repos is scored as "self-referential churn" by the ROI health summary (govern-health.sh). By
 # DEFAULT this is the merge UNIVERSE (GOVERN_MERGE_REPOS) MINUS the product sub-repos ($REPOS) — i.e.
 # exactly the auto-merge repos that live OUTSIDE $REPOS (the meta-repo itself + any skill-template
-# repo on another owner). Everything in $REPOS (backend / frontend / …) is product work. Override
+# repo on another owner). Everything in $REPOS is product work. Override
 # GOVERN_SELFREF_REPOS (space-separated) to curate the set explicitly.
 _govern_selfref_default=""
 for _r in ${GOVERN_MERGE_REPOS:-}; do
@@ -2220,11 +2220,11 @@ govern::find_pr() {
   # A public repo's head is the neutral `sl-<hex>` (deterministic from N); recompute it once and match
   # it alongside the classic `ticket-<N>` head so mixed-visibility workspaces resolve either scheme.
   nb="$(govern::neutral_branch "$n" 2>/dev/null || true)"
-  # Search the whole merge UNIVERSE (GOVERN_MERGE_REPOS) plus the frontend repos —
+  # Search the whole merge UNIVERSE (GOVERN_MERGE_REPOS) plus the human-merge repos,
   # NOT just $REPOS — so a PR on a cross-owner repo that is in the allowlist but not
   # a sub-repo (e.g. the meta-repo itself / a skill-template repo) is still found.
   # repo_slug resolves each name to its owner/repo (honoring cross-owner overrides).
-  for repo in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do
+  for repo in $GOVERN_MERGE_REPOS $GOVERN_HUMAN_MERGE_REPOS; do
     j="$(gh pr list --repo "$(govern::repo_slug "$repo")" --state open --json number,url,headRefName 2>/dev/null || echo '[]')"
     row="$(jq -c --arg n "$n" --arg nb "$nb" '
       ( [ .[] | select(.headRefName == ("ticket-" + $n)) ][0] )
@@ -2259,18 +2259,18 @@ govern::find_pr() {
   return 1
 }
 
-# Merge-first repo order (auto-merge repos before frontend), so a multi-repo ticket's live backend
-# always merges before any frontend sibling (anti-pattern #5-safe). Emits the full merge UNIVERSE
-# (GOVERN_MERGE_REPOS — may include cross-owner repos outside $REPOS) then the derived frontend repos.
+# Merge-first repo order (auto-merge repos before human-merge), so a multi-repo ticket's live allowlisted repo
+# always merges before any human-merge sibling (anti-pattern #5-safe). Emits the full merge UNIVERSE
+# (GOVERN_MERGE_REPOS may include cross-owner repos outside $REPOS) then the derived human-merge repos.
 govern::_repos_merge_first() {
   local r
-  for r in $GOVERN_MERGE_REPOS $GOVERN_FRONTEND_REPOS; do printf '%s\n' "$r"; done
+  for r in $GOVERN_MERGE_REPOS $GOVERN_HUMAN_MERGE_REPOS; do printf '%s\n' "$r"; done
 }
 
 # like find_pr, but enumerate EVERY open PR whose head matches ticket-<N> across ALL repos
-# (merge + frontend) — not just the first. A worker for a multi-repo ticket may open N PRs; find_pr
+# (merge + human-merge), not just the first. A worker for a multi-repo ticket may open N PRs; find_pr
 # returned only the first repo's, so the siblings were orphaned unmerged. Prints one
-# "repo<TAB>number<TAB>url" line per matching open PR, in merge-then-frontend order (backend-first,
+# "repo<TAB>number<TAB>url" line per matching open PR, in merge-then-human-merge order (allowlisted-first,
 # anti-pattern #5-safe). Empty if none.
 govern::find_all_prs() {
   local n="$1" repo j rows nb
@@ -2286,11 +2286,11 @@ govern::find_all_prs() {
   done < <(govern::_repos_merge_first)
 }
 
-# the FULL, deduped, backend-first PR set for ticket $1 — the worker-reported PR(s) in the
+# the FULL, deduped, allowlisted-first PR set for ticket $1: the worker-reported PR(s) in the
 # report JSON $2 (the single `.pr` PLUS the multi-PR `.prs[]` array) UNION every open ticket-<N>
 # head discovered across all repos. Deduped by repo#number (first occurrence wins, preserving its
-# url) and emitted in merge-then-frontend order so the live backend always merges before any
-# frontend sibling (anti-pattern #5). Prints "repo<TAB>number<TAB>url" lines; empty if the ticket
+# url) and emitted in merge-then-human-merge order so an allowlisted repo always merges before any
+# human-merge sibling (anti-pattern #5). Prints "repo<TAB>number<TAB>url" lines; empty if the ticket
 # has no PR at all.
 govern::collect_ticket_prs() {
   local n="$1" report="$2" reported discovered all repo
@@ -2306,7 +2306,7 @@ govern::collect_ticket_prs() {
     printf '%s\n' "$all" | awk -F'\t' -v r="$repo" '$1==r'
   done < <(govern::_repos_merge_first)
   # the merge-first walk above only knows the configured sub-repo allowlist
-  # (REPOS/GOVERN_MERGE_REPOS/GOVERN_FRONTEND_REPOS), so a HARNESS-scope ticket's reported PR — repo
+  # (REPOS/GOVERN_MERGE_REPOS/GOVERN_HUMAN_MERGE_REPOS), so a HARNESS-scope ticket's reported PR, repo
   # is the meta-repo's own remote, never a member of that allowlist — was silently dropped from the
   # "FULL" set this function promises, even though it was sitting right there in `all`. That silent
   # drop is what let a clean worker resolve (status:"resolved", a real open harness PR) fall through
@@ -2335,7 +2335,7 @@ govern::collect_ticket_prs() {
 
 # resolve which configured repo owns OPEN PR number $1, for a worker report that gave a
 # bare integer with no repo. If the merge-first candidate set (GOVERN_MERGE_REPOS +
-# GOVERN_FRONTEND_REPOS, i.e. every REPOS entry) has exactly ONE repo total, that repo IS the
+# GOVERN_HUMAN_MERGE_REPOS, i.e. every REPOS entry) has exactly ONE repo total, that repo IS the
 # answer — no `gh` call needed, and a bad number still fails safely later (merge-pr.sh/await-ci.sh
 # refuse on a PR that doesn't exist, never a silent land). With more than one candidate, ask `gh`
 # which repo actually has PR $1 open, merge-first then harness slugs, first OPEN match wins.
@@ -2480,7 +2480,7 @@ govern::normalize_pr_field() { # <report-json> -> normalized-report-json (rc 1 =
 # (the common case: a governor-dispatched HARNESS-scope ticket's PR targets this repo itself) plus
 # GOVERN_UPSTREAM_HARNESS_REPO if configured (the /shiploop:push hub — a workspace may route some
 # harness work there instead). Neither is ever a member of REPOS/GOVERN_MERGE_REPOS/
-# GOVERN_FRONTEND_REPOS, so every lookup keyed off that allowlist is blind to both.
+# GOVERN_HUMAN_MERGE_REPOS, so every lookup keyed off that allowlist is blind to both.
 govern::harness_repo_slugs() { # -> owner/repo lines
   local root rslug
   root="$(govern::meta_root 2>/dev/null || true)"

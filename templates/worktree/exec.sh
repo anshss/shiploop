@@ -23,7 +23,7 @@ cd "$WORKTREE_PATH"
 source "$WORKTREE_PATH/worktree.env"
 
 # Derive a CONSOLE_URL from the first repo in REPO_PORTS that looks like a
-# frontend (name contains "console", "web", or "frontend"); fall back to the
+# UI repo (its name contains "console", "web", or "frontend"); fall back to the
 # first ported repo if none match. This gives exec.sh a useful URL hint without
 # hardcoding any repo name.
 CONSOLE_URL=""

@@ -148,7 +148,7 @@ export GOVERN_QUEUE_STALE_GUARD=0
 # list / auto-merge allowlist) — common.sh sources "$GOVERN_WS_ROOT/scripts/lib/workspace.sh", so without
 # this a test only "passes" when run from inside a real workspace whose config happens to match. Call it
 # right after `mktemp -d`. Pass the auto-merge repos as a comma list (default "alpha"); REPOS = those plus
-# a frontend "web" repo (PR-only). Exports GOVERN_WS_ROOT (+ GOVERN_EXTERNALIZE_LANE=0, harmless where the
+# a human-merge "web" repo (PR-only). Exports GOVERN_WS_ROOT (+ GOVERN_EXTERNALIZE_LANE=0, harmless where the
 # externalize lane doesn't exist, required where it does so the externalize lane doesn't fire under the stub).
 #   mk_ws_stub "$T"                     # alpha auto-mergeable, web PR-only
 #   mk_ws_stub "$T" "alpha,api"         # alpha + api auto-mergeable

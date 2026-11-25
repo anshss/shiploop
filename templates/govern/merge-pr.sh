@@ -3,7 +3,7 @@
 # merge-pr.sh <repo> <pr>. Exit codes:
 #   0 — merged (or already MERGED: an idempotent re-run books as success, logged;
 #       or, under GOVERN_ECHO=1, would-merge printed).
-#   2 — refused: frontend repo (a different account merges).
+#   2: refused, human-merge repo (not on the allowlist; a different account merges).
 #   3 — refused: CI is red/pending (not mergeable).
 #   4 — refused: CI state UNVERIFIABLE ('error' from await-ci — gh could not confirm CI).
 #       Distinct from 3 so the caller can classify it as PARK-worthy (ci-state-unverifiable)
@@ -34,7 +34,7 @@ if ! govern::automerge_enabled; then
 fi
 
 if ! govern::is_merge_repo "$REPO"; then
-  govern::log "refusing to merge $REPO#$PR — frontend is PR-only (other account merges)."
+  govern::log "refusing to merge $REPO#$PR: human-merge repo, PR-only (other account merges)."
   exit 2
 fi
 
