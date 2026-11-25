@@ -25,7 +25,7 @@ MERGE="$DIR/../merge-pr.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-mk_ws_stub "$T"   # alpha auto-mergeable, web frontend, org acme
+mk_ws_stub "$T"   # alpha auto-mergeable, web human-merge, org acme
 # Guard is bypassed by default under mk_ws_stub — this test exercises it explicitly.
 unset _GOVERN_ASSUME_MERGE_ALLOWED
 

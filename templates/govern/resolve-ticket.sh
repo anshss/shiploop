@@ -42,7 +42,7 @@
 #      product-judgment call the worker must never make for itself.
 #   5. Await CI + merge EVERY PR the report names (.pr + .prs[]), via the EXISTING await-ci.sh /
 #      merge-pr.sh — never reimplemented here. merge-pr.sh's exit code is honoured exactly:
-#        0 merged · 2 frontend/PR-only · 3 CI red/pending · 4 CI unverifiable ·
+#        0 merged · 2 human-merge/PR-only · 3 CI red/pending · 4 CI unverifiable ·
 #        5 external-PR-blocked · 6 left-open (GOVERN_AUTONOMY observe/pr-only)
 #      rc 2 and rc 6 are LEFT OPEN BY DESIGN, not refusals: the PR is deliberately not this
 #      governor's to merge, so the ticket still lands with the PR surfaced in the history note,
@@ -290,11 +290,11 @@ if [[ "$NO_MERGE" -eq 1 ]]; then
   MERGE_REPO_MERGED=1
 elif [[ -n "$pr_lines" ]]; then
   # Two DIFFERENT non-zero classes, exactly as the loop drew the line:
-  #   LEFT OPEN, still land, rc 2 (frontend/PR-only repo: a different account merges it) and
+  #   LEFT OPEN, still land, rc 2 (human-merge/PR-only repo: a different account merges it) and
   #     rc 6 (GOVERN_AUTONOMY observe/pr-only: the governor opens PRs and does not merge them).
   #     Neither is a failure of the resolution: the work is done, the PR is deliberately not ours
   #     to merge, and the loop bookkept the ticket resolved with the PR SURFACED as left-open.
-  #     Refusing to land here would strand every multi-repo ticket with a frontend sibling and
+  #     Refusing to land here would strand every multi-repo ticket with a human-merge sibling and
   #     every pr-only workspace permanently un-bookkept.
   #   REFUSAL, do not land, rc 3 (CI red/pending), 4 (CI unverifiable), 5 (external-PR guard) and
   #     anything unexpected. Those say "this PR is not known-good", which is exactly the case where
@@ -357,8 +357,8 @@ elif [[ -n "$pr_lines" ]]; then
         fi
         ;;
       2)
-        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (frontend is PR-only), surfaced, not merged; merge it yourself when ready." >&2
-        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(frontend-left-open)"
+        echo "resolve-ticket #$N: $_mrepo#$_mnum left open (human-merge repo: PR-only), surfaced, not merged; merge it yourself when ready." >&2
+        PR_DISPOSITIONS="$PR_DISPOSITIONS $_mrepo#$_mnum(human-merge-left-open)"
         ;;
       6)
         echo "resolve-ticket #$N: $_mrepo#$_mnum left open, GOVERN_AUTONOMY=$(govern::autonomy) (the governor opens PRs, it does not auto-merge; flip to auto to enable) [autonomy]" >&2
@@ -713,7 +713,7 @@ if [[ "$LAND_SUCCEEDED" -ne 1 ]]; then
   echo "resolve-ticket #$N: booked nothing: no land-resolution call succeeded on this report (every group member parked/failed, or none parseable). NOT recording 'resolved'." >&2
   exit 15
 fi
-# Record EVERY PR with its disposition (merged / frontend-left-open / autonomy-left-open) so
+# Record EVERY PR with its disposition (merged / human-merge-left-open / autonomy-left-open) so
 # nothing a multi-repo ticket opened is silently dropped from the history row.
 _rnote="${PR_DISPOSITIONS:-}"
 _rnote="${_rnote# }"

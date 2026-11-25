@@ -185,6 +185,7 @@ f89de5cb253c6da424ac7ab967efb2cb9775a33f0aba81705cfc32d44974a92b  govern/dispatc
 0a3e92a462da093be437f6d2c81fd4a5a6b6c674565b6af0b2ac9d7f7dd2070e  govern/dispatch.sh
 
 # -- govern/dry-run.sh --
+0015d84ea60644df89e7ade98511d64a8328e747b386b2dd43b16ee6cfd85da9  govern/dry-run.sh
 689761372db04ffd04a9b0d433c54164e3528d092ab0069f3c631b23df4e103b  govern/dry-run.sh
 700f76a959b44bb44ffc7610a65d1682a41855140b3071c2679675edebe2bef2  govern/dry-run.sh
 8e98795f883c9d924b6a2f35b78bedd5a4f6d74a4f71e299bd525aaab370a7fe  govern/dry-run.sh
@@ -373,6 +374,7 @@ b61f164d56265af97c3ede0a4d21a5e620d64dbdcc11e1430ee12707495e1e9c  govern/lib/com
 b89c29872c53b667b9befe34a382aa60c2c2babced876a71d1e89511d7485215  govern/lib/common.sh
 b9575caa68685ace8095fde44b45ca564447f4b471746bd6eb8c1bf1cbdd3717  govern/lib/common.sh
 bcad6265e5b1df9654443a382026e34d9332fe9972b9bc0a22246c52e1d03c71  govern/lib/common.sh
+bdefe8ab1859c0b9c2b2e34f5cf8b321f09461f8569fcd7db5cae07a6e0d3554  govern/lib/common.sh
 c4ed57bd0b4f594eafb65a10a47bc6efa8c2f2b564e7d7c6a947f1e4cb6777c8  govern/lib/common.sh
 c809d17ff940f37ef698753695277befc26cfad54c0c3ef5d02441df6dfb94db  govern/lib/common.sh
 ccf9561e53c2d1fe88f37480f790a21e6b9028252b3c448314289c2dc61235dd  govern/lib/common.sh
@@ -473,6 +475,7 @@ cbf275e8f4afb9b5101896bb57e5a08c0a25033680bb3dd37cd38c9b8e2e99a8  govern/lint-va
 9c81e58262b76665bd58802b16ac4ed2e17d965082248652ceaa2a96a4547ad1  govern/merge-pr.sh
 9c8909b0b035366376f47eaba087bab35dd18f191220d3a9e2c3cbc8efcb2ca4  govern/merge-pr.sh
 d4e9d1e084abb2917751782a7233aae46f7ceeabfd8166848e25f7d2498b0fbe  govern/merge-pr.sh
+d898fd37679ee4476a6ebde445a17aa1ea3dd0f82a464e6b16a96e6ce44fc251  govern/merge-pr.sh
 f25ff7d1dbdf577e91db929b872899e5fd0378db41aff3b53b0e6b1d79c75242  govern/merge-pr.sh
 
 # -- govern/post-merge-check.sh --
@@ -501,6 +504,7 @@ ea66047389c5b8efdd41909eecb7c76d068f2e4b06234af620266510d56d25f7  govern/pre-dis
 # -- govern/preflight-base-ci.sh --
 77ea195c3855548c56f199ab49e6b20f854969a14acba41cceaf1713285f30c6  govern/preflight-base-ci.sh
 9ab464aa1097baf56555a212547888d8b02d7d117dcfe2129a46835a74e4e4b8  govern/preflight-base-ci.sh
+c6985775be05a646ccc9c5f07887b27dead08c910b76ea6c8c40895f56dc5688  govern/preflight-base-ci.sh
 
 # -- govern/preflight-main.sh --
 131160e3e4e27e12ff0f92493df35979097b246a324c8ed9481ce8b6ca091284  govern/preflight-main.sh
@@ -530,6 +534,7 @@ d76ddceca7b60f9832dcc50ed358ffdaea116b8d599bec9dbeec540289d127f7  govern/preflig
 8200e6cfc5b2ac7fe5270111c48ec4462f8ee147b20bd7f0006026ec7d63d849  govern/resolve-ticket.sh
 8cd6f67e515136a69ffdf036caef790d356c6a9606b6b89d29c088c76920171f  govern/resolve-ticket.sh
 ba29e57556028498dc7be537a7e41f82732ea25ccc23dc5360c8561d222cf88c  govern/resolve-ticket.sh
+c4d82d6541e1fb84312e66cbad32f36cf3b22d79956bbc73e0468011a9201da8  govern/resolve-ticket.sh
 c9ce53e1750cfd51bb050e81faabf573afe0c3af73af67a5819b853486f36763  govern/resolve-ticket.sh
 dd3853aca272b063ac622a577ac90306b1cec6af31f4635624cbcc4cc1b7ac88  govern/resolve-ticket.sh
 f79353555fab34366cbe4b8fa698b41b792c5109487c0eba32951246fc4628ae  govern/resolve-ticket.sh
@@ -813,6 +818,7 @@ e51c30ade2112b361c23616730c5508009f88754ad9ac85e6ec0e2d41d0899d0  sync.sh
 c7ed2bca6b3c0eb6f638b6a5e460603e6f28bf9d7f7f4f4c995c10871ab30e6d  tail.sh
 
 # -- worktree/exec.sh --
+0d798b0f1dfa3c6d4bf64618c10cce8f98cbb892227fcacc81f461c617f1a7e0  worktree/exec.sh
 699cee9b0eb4409f064c6bf77aded897fbeeccc2cf2f58096638a83f10bc0a30  worktree/exec.sh
 
 # -- worktree/lib/base-ref.sh --

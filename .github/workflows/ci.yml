@@ -274,8 +274,8 @@ jobs:
             --workspace-dir "$WS" \
             --pm npm \
             --org acme-ci \
-            --repos "backend:3080:npm run dev,console:3000:npm run dev" \
-            --merge-allowlist "backend" \
+            --repos "api:3080:npm run dev,console:3000:npm run dev" \
+            --merge-allowlist "api" \
             --worktree-base "$WS.wt" \
             --git-init \
             --verify \

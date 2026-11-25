@@ -15,8 +15,8 @@ as a `worker` subagent that runs `sonnet` by default, the advisor raising the mo
 when the work needs it (no automatic escalation); every
 resolved ticket promotes a durable lesson into the git-tracked `CLAUDE.md`.
 
-Example shape: `your-workspace/{backend,console,website}/` — three sub-folders, each its own git
-repo, a script launcher at the root.
+Example shape: `your-workspace/{api,console,website}/` (three sub-folders, each its own git
+repo) and a script launcher at the root.
 
 **The root uses ONE package manager** — npm/pnpm/yarn/bun (`ROOT_PM` in `scripts/lib/workspace.sh`,
 default `npm`). Root `package.json` holds only thin `bash scripts/<x>.sh` aliases, so `npm run dev`
@@ -181,7 +181,7 @@ auto-merge on green CI. Graduate one repo at a time. (Absent/empty `GOVERN_AUTON
 - **Per ticket:** `pre-dispatch-check.sh` gates it → a worker runs in a fresh `ticket-<N>` worktree →
   it implements + validates + opens a PR and returns a JSON report → `resolve-ticket.sh`, for an
   auto-merge repo, awaits CI and merges on **green-or-no-checks** → deterministic `queue/tickets.md`
-  bookkeeping via `land-resolution.sh` (the worker never writes it). Frontend/PR-only repos stop at
+  bookkeeping via `land-resolution.sh` (the worker never writes it). Human-merge (PR-only) repos stop at
   the open PR.
 - **Locality batching (folding two co-located tickets into one worker session) has no dispatcher
   any more**: it lived in the headless launcher's multi-ticket invocation, retired along with it.
@@ -253,7 +253,7 @@ Wired into `.claude/settings.json` by setup:
 
 The scaffolded workspace `CLAUDE.md` (auto-loaded every session) carries the enforced list: MCP-at-
 root, `cd`-before-commit, no shared-branch assumption, verify-repo-before-destructive-git,
-merge-backend-first, `.env.example`-is-the-contract, one-PM-at-root, main-only-in-main-checkout,
+allowlisted-first-merge, `.env.example`-is-the-contract, one-PM-at-root, main-only-in-main-checkout,
 tear-down-stack-on-PR, workers-never-write-tickets, driver-never-reads-source. This skill doesn't
 restate it — see that file.
 
@@ -263,7 +263,7 @@ restate it — see that file.
 2. Make changes per sub-repo
 3. `cd <sub-repo> && git add … && git commit … && git push -u origin HEAD`
 4. `gh pr create` per changed sub-repo
-5. Track sibling PRs together; merge backend-first, state the order in each PR.
+5. Track sibling PRs together; merge allowlisted repos first, state the order in each PR.
 
 PRs land independently — don't expect atomicity.
 

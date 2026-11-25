@@ -9,7 +9,7 @@ source "$DIR/assert.sh"
 PF="$DIR/../preflight-base-ci.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-mk_ws_stub "$TMP"   # REPOS=(alpha web), GOVERN_MERGE_REPOS=alpha (so GOVERN_FRONTEND_REPOS=web)
+mk_ws_stub "$TMP"   # REPOS=(alpha web), GOVERN_MERGE_REPOS=alpha (so GOVERN_HUMAN_MERGE_REPOS=web)
 
 # Fake gh: branches on `run list --repo <slug>`, returning $FAKE_ALPHA / $FAKE_WEB per repo so a
 # test can red-flag one repo without touching the other.

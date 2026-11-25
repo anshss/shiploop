@@ -31,7 +31,7 @@ RT="$DIR/../resolve-ticket.sh"
 # PART A — UNIT: govern::normalize_pr_field / govern::resolve_pr_repo, sourced directly.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 TU="$(mktemp -d)"; trap 'rm -rf "$TU" "${T2:-}" "${T3:-}" "${T4:-}"' EXIT
-mk_ws_stub "$TU" "alpha,api"   # 2 merge repos + web (frontend) => 3 candidates total, forces the
+mk_ws_stub "$TU" "alpha,api"   # 2 merge repos + web (human-merge) => 3 candidates total, forces the
                                # gh-lookup path in resolve_pr_repo (never the single-repo shortcut)
 source "$DIR/../lib/common.sh"
 set +e   # common.sh's own `set -euo pipefail` re-armed -e on sourcing above — a bare failing call

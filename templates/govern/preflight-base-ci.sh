@@ -8,7 +8,7 @@
 # discovering the break the most expensive way (await-ci.sh, after N workers each opened a PR).
 #
 # Checks the latest completed run on the base branch for every repo this run could dispatch into
-# (GOVERN_MERGE_REPOS + GOVERN_FRONTEND_REPOS — the full harness repo universe; ticket selection
+# (GOVERN_MERGE_REPOS + GOVERN_HUMAN_MERGE_REPOS, the full harness repo universe; ticket selection
 # hasn't happened yet at this point in the run, so every repo is in scope). Prints the failing run
 # URL(s) and exits 2 ONLY when a repo's base branch is unambiguously red (a completed run whose
 # conclusion is "failure"). Exits 0 (fail-open) on everything else: gh missing, gh unauthenticated,
@@ -34,7 +34,7 @@ fi
 
 BRANCH="${GOVERN_BASE_BRANCH:-main}"
 seen=","
-for repo in ${GOVERN_MERGE_REPOS:-} ${GOVERN_FRONTEND_REPOS:-}; do
+for repo in ${GOVERN_MERGE_REPOS:-} ${GOVERN_HUMAN_MERGE_REPOS:-}; do
   [[ -n "$repo" ]] || continue
   case "$seen" in *",$repo,"*) continue;; esac
   seen="$seen$repo,"

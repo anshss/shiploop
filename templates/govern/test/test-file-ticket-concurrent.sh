@@ -30,7 +30,7 @@ TICKETS_BODY() {
 }
 
 # Seed a clone's hermetic workspace.sh stub (file-ticket/bookkeep source it via common.sh; without it
-# they'd read the LIVE workspace config). Generic: org acme, alpha auto-merge + web frontend.
+# they'd read the LIVE workspace config). Generic: org acme, alpha auto-merge + web human-merge.
 seed_ws_stub() { # <clone-dir>
   mkdir -p "$1/scripts/lib"
   cat > "$1/scripts/lib/workspace.sh" <<EOF

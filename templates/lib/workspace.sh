@@ -41,7 +41,7 @@ GITHUB_ORG="__GITHUB_ORG__"          # e.g. Aquanodeio
 # not associative). macOS ships bash 3.2, which has no `declare -A`, so we pair by
 # position: REPOS[i] ⇄ REPO_CMDS[i] ⇄ REPO_PORTS[i]. Keep all three the same length
 # and order. Use the wsp_repo_* helpers below to look up by name.
-REPOS=(__REPOS__)                    # e.g. (backend console website)
+REPOS=(__REPOS__)                    # e.g. (api console website)
 
 # Dev command per sub-repo — detected from each sub-repo's lockfile / Makefile.
 # Do NOT assume one PM for all: package-lock.json→"npm run dev",
@@ -63,13 +63,13 @@ WORKTREE_BASE="${WORKTREE_BASE:-__WORKTREE_BASE__}"   # e.g. $HOME/code/aquanode
 # Repos the governor may AUTO-MERGE once CI is green-or-no-checks. Everything
 # else is PR-only (the governor opens the PR and stops). Put repos whose CI runs
 # POST-merge (e.g. Cloud Build / a deploy pipeline, so PRs show no checks) here;
-# keep anything a human must eyeball (frontend behind a billing'd preview) out.
+# keep anything a human must eyeball (a human-merge repo behind a billing'd preview) out.
 # SPACE-SEPARATED, and it defines the governor's whole PR/merge UNIVERSE: the
-# PR-search + merge loops iterate THIS list (plus the derived frontend repos), NOT
+# PR-search + merge loops iterate THIS list (plus the derived human-merge repos), NOT
 # $REPOS — so it may include a cross-owner repo that is NOT a sub-repo in $REPOS
 # (e.g. the meta-repo itself, or a skill-template repo on another owner). Give any
 # such repo a wsp_repo_slug / wsp_repo_localdir override below.
-GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "backend api"
+GOVERN_MERGE_REPOS="${GOVERN_MERGE_REPOS:-__GOVERN_MERGE_REPOS__}"   # space-separated; e.g. "api"
 # ── Worker tier: a cheap FLOOR plus a CAP on explicit requests (two knobs, never one) ──
 # First attempts run at the FLOOR. Measured over a real backlog: opus $8.94/ticket, sonnet $2.22,
 # haiku $0.59; three tickets sized opus resolved at sonnet on attempt 1 for $1.34-$2.95 while the
@@ -119,7 +119,7 @@ export GOVERN_PARALLEL_DEFAULT="${GOVERN_PARALLEL_DEFAULT:-4}"
 #             human reviews + clicks merge. This is the default for a NEW scaffold: you get the full
 #             ship pipeline minus the final merge, so nothing lands until you say so.
 #   auto      Full autonomy — the governor auto-merges every allowlisted-repo PR on green-or-no-checks
-#             CI (frontend stays PR-only regardless). Flip to this once you trust the loop.
+#             CI (human-merge repos stay PR-only regardless). Flip to this once you trust the loop.
 # BACKWARD COMPAT: a workspace.sh that predates this knob has NO GOVERN_AUTONOMY line at all → the
 # governor treats an absent/empty value as `auto` (today's behavior is preserved for existing installs).
 # A NEW scaffold seeds `pr-only` right here, so first-time adopters start one rung down the ladder.

@@ -98,7 +98,7 @@ nothing else):
 - **`pr-only`** — workers open normal PRs; the governor still never merges (a human clicks merge). The
   default a fresh scaffold seeds — full pipeline minus the final merge.
 - **`auto`** — full autonomy: the governor auto-merges allowlisted-repo PRs on green-or-no-checks CI
-  (frontend stays PR-only regardless). The original behavior.
+  (human-merge repos stay PR-only regardless). The original behavior.
 
 Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` line and resolves to
 `auto` (unchanged). Graduation is always one direction you choose: observe → pr-only → auto.
