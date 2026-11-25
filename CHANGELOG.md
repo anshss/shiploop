@@ -5,7 +5,7 @@
 ### Fixed
 
 - The merge vocabulary de-leaks: "frontend"/"backend" becomes human-merge/allowlisted across comments, log lines, the disposition string, and docs, with a grep guard blocking the old aquanode-shaped terms from returning; repos outside the merge allowlist are human-merge repos, not frontends.
-- `test-config-check.sh` copies the workspace root `.gitignore` instead of a `scripts/gitignore` path fresh scaffolds never have, fixing the CI-only red that shipped with v1.20.24.
+- `test-config-check.sh` copies the workspace root `.gitignore` instead of a `scripts/gitignore` path fresh scaffolds never have, fixing the CI-only red that shipped with v1.20.24 (`t2026-11-25-c`).
 
 Validation: both PRs landed green on their heads; parity runs at full strength on this commit.
 
