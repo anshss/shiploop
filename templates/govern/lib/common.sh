@@ -2017,17 +2017,40 @@ govern::repo_is_public() { # <repo-short-name> -> rc 0 public, 1 private/interna
   [[ "$v" == "public" ]]
 }
 
-# Bound (seconds) for the `--help` capability probes below (--tools and the real-vs-stub claude_bin
-# check further down). A synchronous probe ahead of a real spawn's
-# kill traps being armed means a `claude` wrapper/shim that hangs on `--help` would otherwise hang
-# the ENTIRE spawn with no cleanup path. 5s is ample for a real CLI's --help. Override via
-# GOVERN_EDP_PROBE_TIMEOUT_S.
+# Bound (seconds) for the capability probes below (the --tools flag probe and the real-vs-stub
+# claude_bin check further down). A synchronous probe ahead of a real spawn's kill traps being
+# armed means a `claude` wrapper/shim that hangs would otherwise hang the ENTIRE spawn with no
+# cleanup path. 5s is ample: a parse probe errors out at argument validation and never reaches an
+# API call. Override via GOVERN_EDP_PROBE_TIMEOUT_S.
 _GOVERN_EDP_PROBE_TIMEOUT_S="${GOVERN_EDP_PROBE_TIMEOUT_S:-5}"
+
+# Zero-spend parse probe: does <bin> accept <flag>? Runs `<bin> -p <flag> <value> </dev/null>`
+# and classifies the output. A flag the CLI knows fails input validation BEFORE any API call and
+# prints "Input must be provided either through stdin or as a prompt argument" to stderr; an
+# unknown flag fails argument parsing with "error: unknown option '<flag>'" (both verified on CLI
+# 2.1.280, neither spends tokens). Unlike a grep of the CLI's `--help` output, this sees flags the
+# CLI accepts but does not list in help, so a hidden-but-supported flag reports correctly. Sets
+# $_GOVERN_EDP_TIMED_OUT=1 when the wall-clock bound tripped (a hanging wrapper/shim), so the
+# caller can log a distinct "timed out" message instead of a normal negative. Any output that
+# matches neither signature classifies as unsupported: the probe answers only for the two shapes
+# it knows, never guesses "supported" on unfamiliar output.
+govern::claude_flag_parses() { # <bin> <flag> <value> -> rc 0 parses, 1 unknown/other
+  local bin="$1" flag="$2" value="$3"
+  local out="" rc=0
+  _GOVERN_EDP_TIMED_OUT=0
+  out="$(govern::run_bounded "$_GOVERN_EDP_PROBE_TIMEOUT_S" "$bin" -p "$flag" "$value" </dev/null 2>&1)" || rc=$?
+  [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
+  case "$out" in
+    *"unknown option"*) return 1 ;;
+    *"Input must be provided"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # Capability probe: does $claude_bin support `--tools`? This
 # file ships to every fleet, the fleet's CLI version is not ours, and an unknown flag kills EVERY
-# worker at argument parsing (an outage that govern's failure classifier cannot even see; see
-# learnings.md). Same run-scoped `--help` cache so a long run probes at most once.
+# worker at argument parsing (an outage that govern's failure classifier cannot even see). Same
+# run-scoped cache so a long run probes at most once.
 # Test seam: pre-seed _GOVERN_TOOLS_SUPPORTED=1|0 to skip the probe entirely.
 _GOVERN_TOOLS_PROBE_CACHE="${GOVERN_TOOLS_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-tools-support}"
 govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
@@ -2038,36 +2061,20 @@ govern::claude_supports_tools_flag() { # <claude_bin> -> rc 0 supported, 1 not
   fi
   [[ -f "$_GOVERN_TOOLS_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true)"
   if [[ -z "$cached" ]]; then
-    # `--tools <tools...>` — anchored on the space so it can never match `--toolsomething`, and
-    # distinct from `--allowedTools, --allowed-tools <tools...>` which is a different flag.
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" '--tools <tools'; then
+    # Parsed as `--tools <value>`: the value only has to be plausible, since a known flag exits
+    # at the missing-input check before the value is ever interpreted.
+    if govern::claude_flag_parses "$bin" '--tools' 'Bash'; then
       cached="1"
     else
       cached="0"
     fi
     if [[ "${_GOVERN_EDP_TIMED_OUT:-0}" == "1" ]]; then
-      govern::log "claude CLI ($bin) --help probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim) — treating as unsupported this run; omitting --tools"
+      govern::log "claude CLI ($bin) flag probe TIMED OUT after ${_GOVERN_EDP_PROBE_TIMEOUT_S}s (possible hanging wrapper/shim), treating as unsupported this run; omitting --tools"
     fi
     mkdir -p "$(dirname "$_GOVERN_TOOLS_PROBE_CACHE")" 2>/dev/null || true
     printf '%s' "$cached" > "$_GOVERN_TOOLS_PROBE_CACHE" 2>/dev/null || true
   fi
   if [[ "$cached" == "1" ]]; then return 0; else return 1; fi
-}
-
-# Bounded `"$bin" --help | grep -q -- "$needle"`. Prefers the system `timeout` (always present on
-# Linux; also what a homebrew-coreutils macOS box exposes) or `gtimeout` (homebrew coreutils'
-# macOS-safe name, since macOS's own `/usr/bin` ships neither) — falls back to a hand-rolled
-# background+poll+govern::kill_tree watchdog when NEITHER binary is on PATH, so a bare macOS box
-# with no coreutils installed still gets a bounded probe instead of an unbounded hang. Sets
-# $_GOVERN_EDP_TIMED_OUT=1 when the bound tripped, so the caller can log a distinct "timed out"
-# message instead of a normal negative (flag genuinely absent).
-govern::_bounded_help_grep() { # <bin> <timeout_s> <needle>
-  local bin="$1" secs="$2" needle="$3"
-  local out="" rc=0
-  _GOVERN_EDP_TIMED_OUT=0
-  out="$(govern::run_bounded "$secs" "$bin" --help 2>/dev/null)" || rc=$?
-  [[ "$rc" -eq 124 ]] && _GOVERN_EDP_TIMED_OUT=1
-  grep -q -- "$needle" <<< "$out"
 }
 
 # Run <cmd...> under a wall-clock bound, portably. Prefers the system `timeout` (always present on
@@ -2124,10 +2131,12 @@ govern::_run_with_manual_timeout() { # <secs> <cmd...>
 # those, via mk_ws_stub or inline, so the suite itself was never the source). WS_ROOT then silently
 # fell through to the real workspace and the fixture output landed in the real tree.
 #
-# Same `--help`-probe idiom as the capability checks above, but the needle here is authenticity,
-# not a specific flag: the real CLI's `--help` banner names itself ("Claude Code - starts an
-# interactive session…"), which a hand-rolled fixture script has no reason to fake. Cached the same
-# way (run-scoped file) so a long run probes at most once.
+# Same parse-probe idiom as the capability checks above, but the point here is authenticity, not
+# a specific flag: the real CLI parses `--max-turns` and stops at its missing-input validation,
+# behavior a hand-rolled fixture script has no reason to reproduce (a fixture faking only a
+# plausible `--help` banner fails here). `--max-turns` is itself hidden from `--help` on some CLI
+# versions yet parses on the real binary, so this check never depends on help output. Cached the
+# same way (run-scoped file) so a long run probes at most once.
 # Test seam: pre-seed _GOVERN_REAL_CLAUDE_BIN=1|0 to skip the probe entirely.
 _GOVERN_REAL_BIN_PROBE_CACHE="${GOVERN_REAL_BIN_PROBE_CACHE:-${GOVERN_RUN_DIR:-$GOVERNOR_DIR}/.claude-real-bin}"
 govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecognized
@@ -2137,7 +2146,7 @@ govern::claude_bin_is_real() { # <claude_bin> -> rc 0 real CLI, 1 stub/unrecogni
   fi
   [[ -f "$_GOVERN_REAL_BIN_PROBE_CACHE" ]] && cached="$(cat "$_GOVERN_REAL_BIN_PROBE_CACHE" 2>/dev/null || true)"
   if [[ -z "$cached" ]]; then
-    if govern::_bounded_help_grep "$bin" "$_GOVERN_EDP_PROBE_TIMEOUT_S" 'Claude Code'; then
+    if govern::claude_flag_parses "$bin" '--max-turns' '1'; then
       cached="1"
     else
       cached="0"
