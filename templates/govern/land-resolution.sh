@@ -260,7 +260,10 @@ SEQ_FILE="${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}"
 count="$(printf '%s' "$report" | jq '.newTickets | length' 2>/dev/null || echo 0)"
 i=0
 while [[ "$i" -lt "$count" ]]; do
-  maxn="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE")"
+  # Floor at $N: the block is deleted above and the `resolve #$N` commit only lands below, so when
+  # the seq high-water mark is stale-low both filemax and logmax miss $N and an unfloored
+  # allocation would mint #$N again for a newTicket filed by the very run resolving it.
+  maxn="$(GOVERN_BOOKKEEP_LOCK_HELD=1 govern::next_ticket_number "$TICKETS_FILE" "$N")"
   title="$(printf '%s' "$report" | jq -r ".newTickets[$i].title")"
   sev="$(printf '%s' "$report" | jq -r ".newTickets[$i].severity // \"Medium\"")"
   body="$(printf '%s' "$report" | jq -r ".newTickets[$i].body")"

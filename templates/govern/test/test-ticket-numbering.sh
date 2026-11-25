@@ -123,6 +123,44 @@ assert_eq "$(grep -c '^## #5 ' "$T/tickets.md")" "0" "gap: highest ticket #5 del
 n="$(govern::next_ticket_number "$T/tickets.md")"
 assert_eq "$n" "6" "gap: after deleting #5, next number is 6 — #5 is never reused"
 
+# ── 5b. resolving the highest ticket with a STALE-LOW seq mints strictly ABOVE it ──
+# The block is deleted before the allocation and the resolve commit only lands after it, so when
+# the seq high-water mark is stale-low both filemax and logmax miss the number being resolved,
+# and the allocation must be floored at it (a newTicket carried by the resolve itself re-minted
+# the resolved number in live operation, reusing the number of the very ticket being resolved).
+# Fresh repo: sections 1-5's commits already carry `resolve` subjects, whose logmax would mask a
+# stale-low seq here.
+T2="$(mktemp -d)"
+mkdir -p "$T2/governor"
+( cd "$T2" && git init -q && git config user.email t@t && git config user.name t )
+cat > "$T2/tickets.md" <<'EOF'
+# Tickets
+
+## #1 — alpha
+
+**Severity:** High
+
+body one
+
+---
+
+## #5 — gamma
+
+**Severity:** Low
+
+body three
+
+---
+EOF
+printf '4\n' > "$T2/governor/.ticket-seq"   # stale-low: seq says 4, file's max is 5
+( cd "$T2" && git add -A && git commit -q -m init )
+rpt='{"status":"resolved","pr":{"repo":"alpha","number":1},"newTickets":[{"title":"born-low","severity":"Low","body":"b"}],"lessonPatch":null}'
+printf '%s' "$rpt" | GOVERN_WS_ROOT="$T" GOVERN_TICKETS_FILE="$T2/tickets.md" \
+  GOVERN_TICKET_SEQ_FILE="$T2/governor/.ticket-seq" GOVERN_NO_PUSH=1 bash "$BK" 5 >/dev/null 2>&1
+assert_eq "$(grep -c '^## #5 — born-low' "$T2/tickets.md")" "0" "floor: resolving #5 never re-mints #5 for its own newTicket"
+assert_eq "$(grep -c '^## #6 — born-low' "$T2/tickets.md")" "1" "floor: newTicket minted strictly above the resolved #5 -> #6"
+assert_eq "$(cat "$T2/governor/.ticket-seq")" "6" "floor: seq high-water mark persisted past the resolved number"
+
 # ── 6. wiring assertions (so the safety can't silently regress) ──
 # The Stop hook resolves to templates/hooks/ (in-place) or scripts/ (scaffold) via GOVERN_HOOKS_DIR.
 SWEEP_HOOK="${GOVERN_HOOKS_DIR:-$DIR/../..}/ticket-sweep-reminder.sh"
