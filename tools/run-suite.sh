@@ -122,6 +122,14 @@ main() {
 
   [ -d "$suite_dir" ] || { echo "::error::suite dir not found: $suite_dir" >&2; return 2; }
 
+  # The runner owns the environment tests inherit. META_ROOT is the one
+  # non-GOVERN export a parent govern script leaks into a run (lib/common.sh
+  # pins it for its own children at source time): inherited past that, a fixture
+  # workspace's `META_ROOT="${META_ROOT:-$T}"` default loses and probe lookups
+  # and pending-sync markers resolve against the OUTER workspace. assert.sh
+  # sweeps the same knob per test; this covers the run before any test starts.
+  unset META_ROOT
+
   # Default: ON for a full run, OFF for a shard run; an explicit value always wins.
   if [ -z "$order_check" ]; then
     if [ -n "$shard" ]; then order_check=0; else order_check=1; fi
