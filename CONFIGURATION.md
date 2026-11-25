@@ -80,6 +80,19 @@ prints nothing at all when there is no fleet.
 | `GOVERN_GROUP_MAX` | `6` | Largest batch `pre-dispatch-check.sh` accepts in a plan (`12,14 17`: comma = one worker, space = parallel workers). A batch over the cap keeps its first `GOVERN_GROUP_MAX` members and prints every dropped ticket with its reason |
 | `GOVERN_BATCH_MEMBER_TURNS` | `60` | Stop valve for a batched worker, written into its dispatch packet when a batch has more than one member: once the worker has spent this many turns on the batch, it starts no new member, finishes the one in progress, and reports the rest `parked` (not started) for a fresh dispatch |
 
+### Worktrees
+
+| Knob | Default | Turns on |
+|---|---|---|
+| `WORKTREE_DRIFT_GUARD` | `0` (off) | `worktree/new.sh` drift self-heal: with `1`, each freshly created worktree is compared against `origin/main`. A reused branch that is merely behind is fast-forwarded; one with real diverged commits refuses creation (exit 5) instead of surfacing as conflicts at PR time. Off by default because it mutates a fresh checkout and can refuse creation |
+| `STACK_KILL_NAMES` | `node tsx npm npx next go air esbuild vite` | The command allowlist `worktree/rm.sh`'s cwd-scoped kill pass may kill inside a worktree being removed (a process dies only when its cwd sits under that worktree). The port pass cannot see a watcher child that stopped listening, and once the directory is gone the cwd string is the only identification left. Override to add your own stack's binaries; keep the operator's shell and editor out of the list |
+| `WT_MAX_SLOT` | `99` | Highest allocatable worktree slot (`worktree/lib/registry.sh`). Each slot owns a `SLOT_PORT_STEP` (10)-wide port band, so the stock ceiling covers ports up to base+990 and raising it only widens the port space; it never overlaps an existing slot. Raise it only when the workspace genuinely runs that many concurrent worktrees |
+
+All three are read via `${VAR:-default}`: uncomment the matching example in
+`scripts/lib/workspace.sh`, or export the variable in your environment. The seed ships them
+commented, because `/shiploop:update` appends every live assignment the hub seed carries that a
+workspace lacks into every fleet on update, and each of these is a per-workspace decision.
+
 ### Script-level overrides (not seeded in workspace.sh)
 
 A handful of toggles are read straight out of the environment by the one script that uses them,
