@@ -1271,6 +1271,7 @@ f2f23eaf0b5f8de2903ab439ec7cd51bb261986adfd268fc2eab00ab9984a1e4  .claude/comman
 62822bf36921069d4c68d09cd75e5e2b3e1e996c33e6323e6a85a490987f33c6  scripts/govern/test/test-events-runloop.sh
 62d97b845c6badbe98ad43b3d8815a95ebc4b2eebe88c657b2a6d420399a6c74  scripts/govern/test/test-merge-pr.sh
 62e9ba7acec2a7a21c8fd6bc8b78e002e242e77c42f127cb32ed7dd694814609  scripts/govern/test/test-ticket-sweep.sh
+63173e7a854279d1da2777967ef23d6fdea2154e836900a166824084e32c1456  scripts/govern/test/assert.sh
 6393c9c316d6ead38bdbebf4bfd88211801c125a0b85d557c6e4b26f7d92a8f7  scripts/govern/test/test-post-merge-sync-probe.sh
 63edc66dbb5a537ac42e53b38da2616a373e860f95336dc063d9fc68e76cdd32  scripts/govern/test/test-resolve-unmerged-refusal.sh
 63f6f41f7e8fae56cfab42fc5aa3c710d9032db62f0eac4ec16e8671f306a1ea  scripts/govern/test/test-public-pr-hygiene.sh
@@ -1583,6 +1584,7 @@ c1a9c01ca37808dea498b99e5f981df6f0c615149891672bc994b76718579674  scripts/govern
 c21c04e95e7268040f68d312117625b0964baa65447bb5afbbda745247a9a6dc  scripts/govern/test/test-router-posture-vf-nudge.sh
 c25d8473d72f94e8012d99cc4cfe474c50d60859a64e24fe10a6165d87ce15e6  scripts/govern/test/test-sync-templates.sh
 c27b1fccfe2f9dd10614b6fd99e246d3d64728e395f91957af7cfd5f69cdf845  scripts/govern/test/test-vocab-worker-pairing.sh
+c3609dec2bbbd272b833c50337c1001512efc322aea5ba449926d54b005e1d4e  scripts/govern/test/test-worktree-rm-cleanup-hook.sh
 c3d5de1ef4f86a3147d9c7f4145f5f595245190eef397dada4b3da3831b5e100  scripts/govern/test/test-run-suite.sh
 c3e66e7aef0be1d2810112a3cee8ad035743ac5c7f20adb54f3e44ff09a9159b  scripts/govern/test/test-claudemd-trim.sh
 c4813e505104a14d9d8f4c4a564b2fe35f8074d68ed75d4ef0464039416130c0  scripts/govern/test/test-router-posture-vf-nudge.sh
