@@ -335,6 +335,7 @@ ff792699b8abb32433cf0243006449140b2f15de17a7e45903655bf39e9421c4  govern/land-re
 5e95172bbef78c7874b303f5cfadaa8215bb80003255f38132edcf73b030f212  govern/lib/common.sh
 5ef2f4be96315bb477391df707b694c5977e0f735bd0f3c4126f1bf5c606e282  govern/lib/common.sh
 62cf51ffbec5b747b9ba99cb5971727740933d61d5e6d421fd55238e7f6abca9  govern/lib/common.sh
+63c649355fbc1bc26c6347e2a94b72bd17325000f28f0e11f9fdd1e4560f5954  govern/lib/common.sh
 67cd440f7aa344250ae724bb6cdfad51a95a68e271efe0f0a28e7577e9af348f  govern/lib/common.sh
 67de00766e256bcb7eb1ab0a5a68ee59c35a57700387ee947bbabeb9b35d2404  govern/lib/common.sh
 68d0637351ad245af4bc1432a3158c444ac9e07c0e88f5875e9ab450fc7762be  govern/lib/common.sh
@@ -887,6 +888,7 @@ ecab9d9b0e74eadec1ca56533ab57beb4a0ffce15f6efefc90b9b6800ff340d5  worktree/reap.
 6df57726f5856c34a8d5f01cf493c0e699e63c4ba8b02f96e590ff4fde3393ef  worktree/rm.sh
 a5dc4fd8c7dd4cb582701f778d60cce2039ab667cf63a33a93c86646b4660b30  worktree/rm.sh
 bb60f6fdc2846e4aff3a77c9f024d702222120e55eea9a282393db445b8d0780  worktree/rm.sh
+d201eb41b5585bc5d8dfa25b16ea404b7ab6c6087c946b3b8d120cdf02ffc195  worktree/rm.sh
 f892258b393fdd6a7a96218cd956d5609e1df4e82cd9829ca49b1b3b81b335ac  worktree/rm.sh
 
 # -- worktree/session-end-cleanup.sh --

@@ -250,6 +250,17 @@ export GOVERN_RUN_PROBE="${GOVERN_RUN_PROBE:-}"
 # scripts/lib/session-cleanup.sh
 #     Project cleanup run by the SessionEnd hook and worktree/rm.sh BEFORE a
 #     worktree is torn down — e.g. close billable test deploys. Best-effort.
+#     Contract: exit 0 to pass; print output ONLY when you actually cleaned
+#     something (stay silent when there is nothing to clean: no local stack, no
+#     orchestrator reachable) so a teardown stays quiet when nothing happened;
+#     exit non-zero only on a genuine failure.
+# GOVERN_RM_CLEANUP_GATE  (env, optional)
+#     worktree/rm.sh: 1 = a FAILED session-cleanup hook REFUSES the worktree
+#     teardown (waive per-run with --force-unclean) instead of warning and
+#     continuing. Opt in only when your worktrees hold billable or deployable
+#     resources the hook must close: an unreliable hook then blocks every
+#     teardown. Fleets without the hook are unaffected either way.
+# export GOVERN_RM_CLEANUP_GATE=1
 # GOVERN_MIGRATE_CMD / GOVERN_VERIFY_CMD  (env, optional)
 #     If a resolved ticket carries an ADDITIVE prod migration, the governor runs
 #     MIGRATE then VERIFY after merge. Leave unset to disable auto-migration.

@@ -277,7 +277,7 @@ assert_contains() { # haystack needle message
   # `grep <<<"$1"` (here-string), NOT `printf "$1" | grep -q`: a -q grep exits on first match and
   # SIGPIPEs the printf, which `set -o pipefail` then reports as a pipeline failure once the haystack
   # exceeds the 64KB pipe buffer (e.g. cat of a large script) — a false "not found".
-  if grep -qF "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
+  if grep -qF -e "$2" <<<"$1"; then printf 'ok   - %s\n' "$3"
   else printf 'FAIL - %s\n       [%s] not found in output\n' "$3" "$2"; ASSERT_FAILS=$((ASSERT_FAILS+1)); fi
 }
 assert_not_contains() { # haystack needle message

@@ -3045,7 +3045,7 @@ govern::_block_names_pr() { # <block> <num>
   [[ -n "$block" && -n "$num" ]] || return 1
   grep -qE "Fix-PR:.*#${num}${tail_re}" <<<"$block" && return 0
   grep -qE "\*\*PRs?\*\*:.*#${num}${tail_re}" <<<"$block" && return 0
-  printf '%s\n' "$block" | grep -qE "PR #${num}${tail_re}" && return 0
+  grep -qE "PR #${num}${tail_re}" <<<"$block" && return 0
   return 1
 }
 
