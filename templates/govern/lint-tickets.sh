@@ -5,7 +5,8 @@
 # hand-edit, a pre-helper filing, an unserialized append). ALSO fails on a ticket block carrying
 # two `**Severity:**` fields (whatever renders the ticket reads the FIRST; a second copy is
 # invisible dead text that can disagree with it), and on a bullet-prefixed field marker
-# (`- **Proposed solution:**`), which is invisible to the strict line-anchored extractors, since
+# (`- **Proposed solution:**`, a label in GOVERN_STRICT_FIELD_LABELS; a bold label on a prose
+# bullet is content, not a field), which is invisible to the strict line-anchored extractors, since
 # file-ticket.sh de-bullets at file time and anything still stored arrived by hand-edit or an
 # older filer. Each fault's stdout lines are TAGGED `HEADING #N ×count` / `SEVERITY #N ×count` /
 # `FIELD #N line <n>: ...` so the Stop hook routes them to the right remedy.

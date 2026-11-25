@@ -110,12 +110,14 @@ sev="${2:-Medium}"
 body="$(cat)"
 [[ -n "${body//[[:space:]]/}" ]] || govern::die "ticket body required on stdin"
 # Field markers are line-anchored: every extractor that reads one (govern::ticket_proposal,
-# govern::ticket_precision, the Flow:/Model: latches, the severity regex) anchors on line start,
-# so a bullet-prefixed marker (`- **Proposed solution:**`) was invisible to all of them, and a
+# govern::ticket_precision, the Flow: latch, the severity regex) anchors on line start, so a
+# bullet-prefixed marker (`- **Proposed solution:**`) was invisible to all of them, and a
 # fully-specified ticket read back as "no proposed solution" through the pre-dispatch gate. The
 # extractors stay STRICT; the filer normalizes instead: strip the bullet, keep the marker, so the
-# stored file is always in the canonical form the extractors see. lint-tickets.sh backstops the
-# stored file against hand-edits and older filers (govern::bullet_prefixed_fields).
+# stored file is always in the canonical form the extractors see. Only labels a strict reader
+# consumes are normalized (GOVERN_STRICT_FIELD_LABELS): a prose bullet with a bold label stays a
+# bullet. lint-tickets.sh backstops the stored file against hand-edits and older filers
+# (govern::bullet_prefixed_fields).
 _ft_has_bullet_field=0
 while IFS= read -r _ft_line || [[ -n "$_ft_line" ]]; do
   [[ "$_ft_line" =~ $GOVERN_FIELD_MARKER_BULLET_RE ]] && { _ft_has_bullet_field=1; break; }
