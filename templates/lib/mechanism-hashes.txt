@@ -818,9 +818,11 @@ cbb11549ebf7e1ee467947def4d0f6bbe303c173776f31a4309187109b68f5c7  lib/githooks.s
 
 # -- lib/model-profiles/claude.conf --
 59e65286a394890ab16f0642d057d2839e50eacbfb051f29474903326528c50b  lib/model-profiles/claude.conf
+8f01304e58c3ed9388483bf84516b2361172744e71f07a00e7ae78e965940398  lib/model-profiles/claude.conf
 
 # -- lib/model-profiles/glm.conf --
 0e1f03c8bbdc4d3e74caac871d2b343b4284308588d6f0ff7c47b59f352f2d8a  lib/model-profiles/glm.conf
+30a8d2981fadca5d1ac00351c9a423ed5ba0da80288d2ed51539913b915e80e7  lib/model-profiles/glm.conf
 82e97a0baa852d3428a1a146ab1faf6f5c7f88e25685914998d1c351e929323a  lib/model-profiles/glm.conf
 
 # -- lib/preflight.sh --
@@ -1694,6 +1696,7 @@ da6c41fda613c3294ad7bc8aa155ef008da78e7722d2b57bbc5b621eab8230cd  scripts/govern
 da92bfea41e9303d74afda24dcc1bcd38d2aac160b8454a1404609aa2d9023d6  scripts/govern/test/test-dual-lane-race.sh
 dabfe7c551c30051a86e8504ec3820a6c9b36e043b2ab8fd7e1767b4b36b9b1c  scripts/govern/test/test-worktree-rm-stack-kill.sh
 db47124c29aeeb7d5ac373f51a7e96211a3e67643180b4b8a8b8d0fcaee72c75  scripts/govern/test/test-ticket-route-guard.sh
+db55ed8f14627b6cb89471207522cbf6e5b1dea057c76141c885ad16f73ddeea  scripts/govern/test/test-model-router.sh
 dbb7757a9d608cdda14f1ff50e06602fa46cce55c9392dc5dcf1375ee06de1d8  scripts/govern/test/test-flows-kill-loop.sh
 dbc2753388e38c5f086d05dd9e614b574f9b7884a4b1ba1474bb86c1f55ea874  scripts/govern/test/test-events-emitter.sh
 dbfd6b2f2ff15f988dd69e9c7c7d8b679558d6bbf921d2157f70b98312bf5b73  scripts/govern/test/test-bullet-field-labels.sh

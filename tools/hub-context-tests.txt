@@ -42,3 +42,4 @@ test-update-run-probe
 test-pipefail-shape-guard
 test-resolve-labs-select
 test-model-router
+test-launcher-setup

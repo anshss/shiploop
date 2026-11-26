@@ -183,7 +183,7 @@ while IFS=$'\t' read -r _ key jsval; do
   bval="$(SHIPLOOP_MODEL_PROFILE=claude GOVERN_MODEL_PROFILE_DIR="$PROFILES" govern::model_profile_get "$key" 2>/dev/null)"
   [ "$jsval" = "$bval" ] || { n_bad=$((n_bad + 1)); echo "       $key: mod=[$jsval] bash=[$bval]"; }
 done <<< "$(printf '%s\n' "$got" | awk -F'\t' '$1 == "value"')"
-assert_eq "$n_vals" "18" "6b. both shipped profiles were read (9 keys each)"
+assert_eq "$n_vals" "19" "6b. both shipped profiles were read (10 keys in glm.conf, 9 in claude.conf)"
 assert_eq "$n_bad" "0" "6b. the mod and govern::model_profile_get agree on every value in both profiles"
 
 # ── the real engine, when the claude CLI is here ──────────────────────────────────────────────
