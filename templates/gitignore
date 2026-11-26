@@ -36,6 +36,10 @@ governor/.bg-ledger/
 governor/.repo-visibility
 governor/.claude-edp-support
 governor/.claude-tools-support
+# governor post-merge gate PASS cache: per-machine record of a recent gate PASS on a merged ref
+# (repo, sha, command key, timestamp), reused within a short TTL by post-merge-check.sh. Runtime
+# state, never source.
+governor/.post-merge-cache/
 # Root lockfile policy — the ROOT uses ONE package manager (ROOT_PM in
 # scripts/lib/workspace.sh). The off-PM root lockfiles are ignored so a stray
 # `npm install` / `pnpm install` in the wrong PM can't commit a divergent root
