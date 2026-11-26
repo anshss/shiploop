@@ -10,7 +10,9 @@
 #
 #   1. under SHIPLOOP_MODEL_PROFILE=glm each shiploop role gets its profile model;
 #   2. the profile model replaces a model the call passed;
-#   3. a type the profile holds no role for passes through as the same object;
+#   3. a type the profile holds no role for passes through as the same object; an agent this
+#      plugin provides arrives namespaced (<plugin>:<type>) and the type behind its own plugin's
+#      prefix is the role, while another plugin's namespaced type is not;
 #   4. no profile, an unreadable profile, a profile name that is not a plain name, and a resumed
 #      run each pass through;
 #   5. the workspace's copy of the profile is read before the one the plugin ships;
@@ -50,7 +52,7 @@ const fire = async (h, env, event, files = {}, cwd = '/ws') => {
     env: { get: async (name) => env[name] },
     session: { cwd: async () => cwd },
     fs: { read: async (path) => { reads.push(path); if (!(path in files)) throw new Error('ENOENT ' + path); return files[path] } },
-    plugin: { root: '/plugin' },
+    plugin: { name: 'shiploop', root: '/plugin' },
   }
   return { ...(await h($, event, next)), reads }
 }
@@ -76,6 +78,10 @@ out('call-model-replaced', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }
 out('unknown.general-purpose', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('general-purpose'), { [WS]: GLM })))
 out('unknown.Explorer', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('Explore'), { [WS]: GLM })))
 out('unknown.teammate', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('teammate', { isTeammate: true }), { [WS]: GLM })))
+out('namespaced.own.lookup', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('shiploop:lookup'), { [WS]: GLM })))
+out('namespaced.own.worker-retry', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('shiploop:worker-retry'), { [WS]: GLM })))
+out('namespaced.other.lookup', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('other-plugin:lookup'), { [WS]: GLM })))
+out('fork.worker', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('worker', { fork: true }), { [WS]: GLM })))
 out('noprofile.worker', model(await fire(h, {}, spawn('worker'), { [WS]: GLM })))
 out('noprofile.empty', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: '' }, spawn('worker'), { [WS]: GLM })))
 out('unreadable.worker', model(await fire(h, { SHIPLOOP_MODEL_PROFILE: 'glm' }, spawn('worker'))))
@@ -111,6 +117,10 @@ assert_eq "$(field call-model-replaced)" "glm-5.3-flash[1m]" "2. the profile mod
 assert_eq "$(field unknown.general-purpose)" "passthrough" "3. general-purpose is not a role: the same event object goes on"
 assert_eq "$(field unknown.Explorer)" "passthrough" "3. a built-in type is not a role: passes through"
 assert_eq "$(field unknown.teammate)" "passthrough" "3. a teammate spawn is not a role: passes through"
+assert_eq "$(field namespaced.own.lookup)" "glm-5.3-flash[1m]" "3. an agent this plugin provides arrives as <plugin>:<type>: the type behind the prefix is the role"
+assert_eq "$(field namespaced.own.worker-retry)" "glm-5.4[1m]" "3. the same for worker-retry behind the plugin namespace"
+assert_eq "$(field namespaced.other.lookup)" "passthrough" "3. a type namespaced by another plugin is not a shiploop role: passes through"
+assert_eq "$(field fork.worker)" "passthrough" "3. a fork always inherits: passes through"
 assert_eq "$(field noprofile.worker)" "passthrough" "4. SHIPLOOP_MODEL_PROFILE unset: passes through"
 assert_eq "$(field noprofile.empty)" "passthrough" "4. SHIPLOOP_MODEL_PROFILE empty: passes through"
 assert_eq "$(field unreadable.worker)" "passthrough" "4. a profile no location holds: passes through"

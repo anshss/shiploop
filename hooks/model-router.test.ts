@@ -66,6 +66,10 @@ test('an agent type the profile holds no role for inherits the session model', a
 
   expect((await spawn($, 'general-purpose')).model).toBe(INHERITED)
   expect((await spawn($, 'Explore')).model).toBe(INHERITED)
+  // A plugin-provided agent arrives namespaced; behind this plugin's own prefix it is the role,
+  // and behind any other plugin's prefix it is not.
+  expect((await spawn($, 'shiploop:lookup')).model).toBe('glm-5.3-flash[1m]')
+  expect((await spawn($, 'other-plugin:lookup')).model).toBe(INHERITED)
 })
 
 test('with no profile active every spawn passes through unchanged', async ($, on) => {
@@ -94,10 +98,11 @@ test('a profile name that is not a plain name passes through without reading any
   expect((await spawn($, 'worker')).model).toBe(INHERITED)
 })
 
-test('a resumed run is left alone', async ($, on) => {
+test('a resumed run and a fork are left alone', async ($, on) => {
   mock.env(on, { SHIPLOOP_MODEL_PROFILE: 'glm' })
   on('fs.read', () => ({ value: PROFILE }))
   engineAnswers(on)
 
   expect((await spawn($, 'worker', { resume: { agentId: 'a1' } })).model).toBe(INHERITED)
+  expect((await spawn($, 'worker', { fork: true })).model).toBe(INHERITED)
 })

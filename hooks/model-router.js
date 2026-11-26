@@ -29,10 +29,24 @@ function parseProfile(text) {
   return profile
 }
 
-// The profile key that holds a role's model: the agent type with every non-identifier character
-// taken as an underscore, so `worker-retry` reads ROLE_worker_retry.
-function roleKey(subagentType) {
-  return 'ROLE_' + String(subagentType).replace(/[^A-Za-z0-9_]/g, '_')
+// The role a spawn's agent type names, or "" when it names none.
+//
+// A workspace installs shiploop's agent definitions at .claude/agents/, and the type arrives bare
+// (`worker`, `worker-retry`). An agent a PLUGIN provides arrives namespaced, `<plugin>:<type>`, and
+// when this plugin is the one providing it the type behind the prefix is still the role. A type
+// namespaced by any other plugin is some other plugin's agent, whatever it is called, and is not a
+// shiploop role.
+function roleName(subagentType, ownPlugin) {
+  const type = String(subagentType)
+  const colon = type.indexOf(':')
+  if (colon < 0) return type
+  return type.slice(0, colon) === ownPlugin ? type.slice(colon + 1) : ''
+}
+
+// The profile key that holds a role's model: the role with every non-identifier character taken
+// as an underscore, so `worker-retry` reads ROLE_worker_retry.
+function roleKey(role) {
+  return 'ROLE_' + role.replace(/[^A-Za-z0-9_]/g, '_')
 }
 
 // The active profile as a plain object, or null when none applies.
@@ -73,7 +87,8 @@ export function register(on) {
     // A resumed run keeps the model it started on; a change here would be ignored anyway, and a
     // retry is meant to be a fresh worker-retry spawn, never a resumed worker.
     if (e.resume) return next(e)
-    const model = profile[roleKey(e.subagentType)]
+    if (e.fork) return next(e)
+    const model = profile[roleKey(roleName(e.subagentType, $.plugin.name))]
     // An empty or missing role means the type is not a shiploop role: leave the spawn alone.
     if (!model) return next(e)
     return next({ ...e, model })
