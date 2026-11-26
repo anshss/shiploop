@@ -155,7 +155,7 @@ export PATH="$T/bin:$PATH" GOVERN_NO_PUSH=1
 cat > "$T/queue/tickets.md" <<'TIX'
 # Tickets
 
-## #42 — an ordinary ticket
+## #42: an ordinary ticket
 
 **Severity:** Low
 

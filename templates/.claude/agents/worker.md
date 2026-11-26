@@ -55,7 +55,7 @@ Ignore only these two things in it, kept for historical shape but never populate
    any output the same way §1 describes. Empty output is the common case and not a reason to skip it.
 3. **Self-serve the proposal lookup too, and keep its grade for delta 4:**
    `scripts/govern/ticket-proposal.sh <N>`. **Empty output → STOP before doing any work** and message
-   the advisor for the real proposal (delta 4's channel) — never invent one, never treat the plain
+   the advisor for the real proposal (delta 4's channel): never invent one, never treat the plain
    problem description as the proposal. Nothing pre-computes an advisor budget from the grade for
    you, and shell state does not persist between your tool calls, so pass it inline on the `claim`
    call in delta 4: `GOVERN_ADVISOR_BUDGET=<n>` on this scale:
@@ -85,7 +85,7 @@ Ignore only these two things in it, kept for historical shape but never populate
    `queue/tickets.md`. The queue block stays intact until merge; the driver pipes your report into
    `npm run govern:resolve -- <N>`, which awaits CI, merges, and lands the resolution instead of
    redoing the work. This still holds for root-scope work: you never write to the main checkout,
-   and `queue/tickets.md` there stays advisor-only — `rootScope.commits` is what hands the driver
+   and `queue/tickets.md` there stays advisor-only: `rootScope.commits` is what hands the driver
    something to land in place of a PR.
 7. **Never end your turn waiting on a background task's completion notification.** A completed
    task never re-invokes an idle worker: poll in the foreground, bounded, or report

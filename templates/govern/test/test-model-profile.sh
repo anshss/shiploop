@@ -114,7 +114,7 @@ unset SHIPLOOP_MODEL_PROFILE
 # ── the real dispatch scripts, in a real meta root (as test-dispatch-packet.sh builds one) ─────
 TICKETS_BODY='# Tickets
 
-## #7 — tighten the alpha retry ladder
+## #7: tighten the alpha retry ladder
 
 **Severity:** Low
 
