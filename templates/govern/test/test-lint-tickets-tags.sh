@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lint-tickets.sh fails on THREE independent faults and TAGS each stdout line (`HEADING #N ×count`
-# / `SEVERITY #N ×count` / `FIELD #N line <n>: ...`) so ticket-sweep-reminder.sh can route them:
+# lint-tickets.sh fails on FOUR independent faults and TAGS each stdout line (`HEADING #N ×count`
+# / `SEVERITY #N ×count` / `FIELD #N line <n>: ...` / `SEQ #N`) so ticket-sweep-reminder.sh can route them:
 # before this, ANY non-zero
 # exit was reported as a duplicate heading, and the remedy that came with it (renumber the LATER
 # duplicate) silently corrupts a live ticket's `**Ref:**`/`depends on #N` pointers if followed for
@@ -101,6 +101,52 @@ if grep -q "untagged fault" <<<"$hook_out"; then
   echo "FAIL - sweep hook called a FIELD fault untagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
 else
   echo "ok   - sweep hook does NOT report a FIELD fault as untagged"
+fi
+
+# ── SEQ fault: a live heading numbered ABOVE the allocator's high-water mark ────────────────────
+# file-ticket.sh allocates under the bookkeep lock and bumps governor/.ticket-seq on every filing,
+# so nothing it allocated can land above it: a heading that did is a hand-minted filing. Every
+# above-seq heading is its own tagged line. The pass is skipped when the seq file is absent (no
+# high-water mark on disk: the allocator derives everything from the file), and a heading inside
+# a ``` fence is a quotation, not a filing.
+printf '11\n' > "$T/seq"
+printf '## #11: allocated\n**Severity:** Low\n---\n## #12: hand-minted above seq\n**Severity:** Low\n---\n## #14: also above\n**Severity:** Low\n---\n' > "$T/seqmd.md"
+out="$(GOVERN_TICKET_SEQ_FILE="$T/seq" bash "$LINT" "$T/seqmd.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "1" "a heading above the allocator high-water mark fails the lint"
+assert_contains "$out" "SEQ #12" "the first above-seq heading is tagged SEQ"
+assert_contains "$out" "SEQ #14" "the second above-seq heading is tagged SEQ"
+if grep -qE '^(HEADING|SEVERITY|FIELD) ' <<<"$out"; then
+  echo "FAIL - a SEQ-only fault produced another fault tag"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - a SEQ-only fault produces only SEQ lines"
+fi
+
+# No seq file on disk: the pass is skipped, however high the heading numbers run.
+out="$(GOVERN_TICKET_SEQ_FILE="$T/absent-seq" bash "$LINT" "$T/seqmd.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "0" "no seq file: the SEQ pass is skipped"
+assert_eq "$out" "" "no seq file: no SEQ line"
+
+# A heading quoted inside a fence is evidence, not a filing.
+printf '## #11: allocated\n**Severity:** Low\n\n```\n## #99: quoted in a fence\n```\n---\n' > "$T/seqfence.md"
+out="$(GOVERN_TICKET_SEQ_FILE="$T/seq" bash "$LINT" "$T/seqfence.md" 2>/dev/null)"; rc=$?
+assert_eq "$rc" "0" "a fenced heading above seq passes the lint"
+assert_eq "$out" "" "a fenced heading above seq prints no SEQ line"
+
+# Sweep-hook ROUTING: a SEQ fault gets the allocator remedy (file through file-ticket.sh, then set
+# the seq file to the live max), never the untagged fallback and never the duplicate-heading remedy.
+cp "$T/seqmd.md" "$T/queue/tickets.md"
+hook_out="$(printf '{"session_id":"qrout","stop_hook_active":false,"cwd":"%s"}' "$T" \
+  | META_ROOT="$T" GOVERN_TICKET_SEQ_FILE="$T/seq" bash "$SWEEP" 2>/dev/null)"
+assert_contains "$hook_out" "numbered above governor/.ticket-seq" "the sweep hook routes a SEQ fault under the allocator remedy"
+if grep -q "untagged fault" <<<"$hook_out"; then
+  echo "FAIL - sweep hook called a SEQ fault untagged"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - sweep hook does NOT report a SEQ fault as untagged"
+fi
+if grep -q "Renumber the LATER duplicate" <<<"$hook_out"; then
+  echo "FAIL - sweep hook offered the renumber remedy for a SEQ-only fault"; ASSERT_FAILS=$((ASSERT_FAILS+1))
+else
+  echo "ok   - sweep hook does NOT offer the renumber remedy for a SEQ-only fault"
 fi
 
 assert_done

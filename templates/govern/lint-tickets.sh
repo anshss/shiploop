@@ -72,6 +72,28 @@ else
   printf '%s\n' "$bulletfields" | sed 's/^/FIELD /'
   rc=1
 fi
+# A heading numbered ABOVE governor/.ticket-seq is a hand-minted filing: the allocator (file-ticket.sh)
+# reads/bumps the seq file under the bookkeeping lock for every filing, so nothing it allocated can land
+# above it. Skipped when the seq file is absent: with no high-water mark on disk the allocator derives
+# everything from the file, so "above seq" is meaningless. Headings inside ``` fences are ignored (a
+# quoted heading is evidence, not a filing), same as the duplicate-heading pass.
+if [[ -f "${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}" ]]; then
+  seq_val="$(tr -dc '0-9' < "${GOVERN_TICKET_SEQ_FILE:-$GOVERNOR_DIR/.ticket-seq}" 2>/dev/null)"
+  seq_val="${seq_val:-0}"
+  seq_over="$(awk -v seq="$seq_val" '
+    /^```/ { infence = !infence; next }
+    !infence && $0 ~ /^##[[:space:]]+#[0-9]+/ {
+      n = $0; sub(/^##[[:space:]]+#/, "", n); sub(/[^0-9].*$/, "", n)
+      if (n + 0 > seq + 0) print n + 0
+    }
+  ' "$file" | sort -nu || true)"
+  if [[ -n "$seq_over" ]]; then
+    printf 'Ticket heading(s) numbered above the allocator high-water mark (%s) in %s — a hand-minted filing that bypassed file-ticket.sh:\n' "$seq_val" "$file" >&2
+    printf '%s\n' "$seq_over" | sed 's/^/SEQ #/'
+    printf '  → renumber the block(s) through allocator conventions (file-ticket.sh prints the next safe number), then set the seq file to the live max.\n' >&2
+    rc=1
+  fi
+fi
 if [[ "$rc" -eq 0 ]]; then
   exit 0
 fi

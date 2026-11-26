@@ -466,6 +466,7 @@ b4ec994cf4a027de5826f07217e7cf766634a2c4280ecaf8e995d53a6b729f69  govern/lib/val
 # -- govern/lint-tickets.sh --
 1a317c2e31492558f6a5b57a10cd2d78598e65ade3ffe60b2b721d63662e954d  govern/lint-tickets.sh
 46f4b44e7b1c4af36a05068fbf12af15d267da221d1b250e330a679f90cfe291  govern/lint-tickets.sh
+6acabd737acc0798c8efa1a18ed2bb243356ad9183ebdf3377037ac8e7f9331c  govern/lint-tickets.sh
 95a045d6a4aa653b2ea9c23b9697b754400ff99889600101a74f952225242d1f  govern/lint-tickets.sh
 c0e4a1655436304f3c392b7e7106335212cd72aa2892e80158932f37c8715721  govern/lint-tickets.sh
 c18d0d2f7c211c855173f219315a561c57ab10684a780c4e9bfcecd3f500d5e4  govern/lint-tickets.sh
@@ -498,6 +499,7 @@ f25ff7d1dbdf577e91db929b872899e5fd0378db41aff3b53b0e6b1d79c75242  govern/merge-p
 
 # -- govern/post-merge-check.sh --
 62bba8d7235500b8bd7f6461dbe1b38714c898260bbc37be3c6f0d29052c777c  govern/post-merge-check.sh
+6e1eaceb1683be327497511bcf5490b95ed0f5d73a47a5c3415a44348c965db8  govern/post-merge-check.sh
 7481861830950aa7de62c9f574fe469ec6b16dc9ef890f3c7e42231e5cf8980f  govern/post-merge-check.sh
 8d41e7eb80b3be787ad0445e6de01bbcccea27cdc5b06eaf478cab5d1c59197e  govern/post-merge-check.sh
 f28183edda940a1a8f962f9a6e130eb6086025e377a7da1c5bf847184ef172ba  govern/post-merge-check.sh
@@ -749,6 +751,7 @@ e69846829bb412dc52fe5fc36ddc880ff2484a45659e8fdba6afb6acd0caf7d7  hooks/router-p
 f6dcd99017140455c6dbd769993bed95a880e8bca773f48e1a98b0dbc0d9aea0  hooks/router-posture-reminder.sh
 
 # -- hooks/rules-on-touch.sh --
+06a9ec4a8d4ff62b15e8a9d09c71906267510ca3a30cf4fb9f0ee67403f5b0a7  hooks/rules-on-touch.sh
 091b6c578aaa4c655b2b0cfbd20ae87d2728d75cb152094348aa93706013299f  hooks/rules-on-touch.sh
 18ddb58f7f999390d170f97af8e52ff9dff3d3a677fbf09a6452b1b4e795c158  hooks/rules-on-touch.sh
 2051fa84a4695052b7d6428a146149ba0c25fd8bb64ad55969d0e98df7908860  hooks/rules-on-touch.sh
@@ -783,6 +786,7 @@ d1606478b0886a32b3ab4b8c8f3bc4a698e14d7c0f13ba49cebf0f7153e1d684  hooks/session-
 742dec285965412394958000c73b1eda3c89a766f4c4af19fbe83ea7b609253a  hooks/ticket-sweep-reminder.sh
 805f0b6df33c241a0290f87944ea2a1dafaf6cf3c393d9290183b619c10d14dd  hooks/ticket-sweep-reminder.sh
 99f9ec98ed25cf541ea7e7def76b270f758a45f7fffdf6930254c69640a224b5  hooks/ticket-sweep-reminder.sh
+a558d260110b2f302b6e2a59d650999e3bbc691248bbd976ab174f47fed378e9  hooks/ticket-sweep-reminder.sh
 b346b50e224dfcb56c0b1250e61b936131192aec8f4814f6cf4b41d6cb779033  hooks/ticket-sweep-reminder.sh
 b9a84d827df957fe9d3b65691dab9d58eec98489d9c993806924672c7c4d8e4a  hooks/ticket-sweep-reminder.sh
 c4e674fcbb2dc964de4805e81c8d78a059f73b01f2f69b54b30d26eb229d3159  hooks/ticket-sweep-reminder.sh
@@ -1535,6 +1539,7 @@ ab87ebbe8d7024deaac811bfc36110ede4885ffcf78acf7208f4335fdfe6d948  scripts/govern
 abbd38ec2b26e6346c21567c93c62f1420bed12ae5fbf1667f6057b08922c55a  scripts/govern/test/test-merge-fail-park.sh
 abd1f9326948f49e4015f1465bf6c47b4d51f7f6c0eaafa020bc256feea35376  scripts/govern/test/test-valpending-emit.sh
 abdccfab580e8524930eff03626b439a271a7f7586ece44b72ebcf4e45c3c3b7  scripts/govern/test/test-no-force-push.sh
+abf181aea04578bb8dc03619454138bbd68a7ca1ea7a246ab8a5ff49e954fe4c  scripts/govern/test/test-subagent-usage.sh
 ac215389acd93bcf67dd472d78e7060b1335814be298e0912c1df6924532a926  scripts/govern/test/test-validation-resolve-gate.sh
 ac2201e5e33dcaa297066462a7b7b196fa98f59117b0c7bb29c6f2fe08b88e30  scripts/govern/test/test-supervisor-cadence-parallel.sh
 accacae24ab753e9b8670d3e4dc7a924ac7e4728823422531d35d80b78331dd2  scripts/govern/test/test-status-workers.sh

@@ -66,20 +66,22 @@ if [ -n "${GOVERN_SESSION_OPTOUT_DIR:-}" ] && [ "$session_id" != "nosession" ]; 
   fi
 fi
 
-# --- collision backstop: lint-tickets.sh fails on TWO independent, unrelated faults — a duplicate
-# `## #N` heading (two filings reused one number) and a duplicate `**Severity:**` field inside one
-# block. Surface either the moment a session ends — independent of (and before) the new-ticket
-# reminder below, and NOT gated by the once-per-session marker, so either nags until fixed.
+# --- collision backstop: lint-tickets.sh fails on FOUR independent, unrelated faults — a duplicate
+# `## #N` heading (two filings reused one number), a duplicate `**Severity:**` field inside one
+# block, a bullet-prefixed field marker the extractors cannot see, and a live `## #N` heading
+# numbered ABOVE governor/.ticket-seq (a hand-minted filing that bypassed file-ticket.sh). Surface
+# any the moment a session ends — independent of (and before) the new-ticket reminder below, and
+# NOT gated by the once-per-session marker, so any of them nags until fixed.
 # stop_hook_active (handled above) prevents an in-turn loop. Run as a subprocess so the lint's set
 # flags can't leak into this hook (which deliberately runs without -e).
 #
-# The two faults are ROUTED SEPARATELY, not folded into one hardcoded reason string: before this,
+# The faults are ROUTED SEPARATELY, not folded into one hardcoded reason string: before this,
 # ANY non-zero exit here was reported as a duplicate heading regardless of which check actually
 # failed — a severity-dup fault (no duplicate heading at all) was reported under the wrong name,
 # with a remedy (renumbering a ticket that was never duplicated) that silently corrupts a live
 # ticket's `**Ref:**`/`depends on #N` pointers if followed. lint-tickets.sh tags each stdout line
-# `HEADING #N ×count`, `SEVERITY #N ×count` or `FIELD #N line <n>: ...` precisely so this hook can
-# tell them apart instead of assuming.
+# `HEADING #N ×count`, `SEVERITY #N ×count`, `FIELD #N line <n>: ...` or `SEQ #N` precisely so this
+# hook can tell them apart instead of assuming.
 lint="$SELF_ROOT/scripts/govern/lint-tickets.sh"
 [ -x "$lint" ] || lint="$SELF_ROOT/govern/lint-tickets.sh"
 if [ -x "$lint" ]; then
@@ -87,7 +89,8 @@ if [ -x "$lint" ]; then
     heading_dups="$(printf '%s\n' "$dups" | sed -n 's/^HEADING //p')"
     sev_dups="$(printf '%s\n' "$dups" | sed -n 's/^SEVERITY //p')"
     field_lines="$(printf '%s\n' "$dups" | sed -n 's/^FIELD //p')"
-    other_dups="$(printf '%s\n' "$dups" | grep -vE '^(HEADING|SEVERITY|FIELD) ' || true)"
+    seq_faults="$(printf '%s\n' "$dups" | sed -n 's/^SEQ //p')"
+    other_dups="$(printf '%s\n' "$dups" | grep -vE '^(HEADING|SEVERITY|FIELD|SEQ) ' || true)"
     reason=""
     if [ -n "$heading_dups" ]; then
       heading_flat="$(printf '%s\n' "$heading_dups" | tr '\n' ' ')"
@@ -108,6 +111,14 @@ rationale as prose), commit, then stop."
 anchor on line start, so the field is invisible to them; strip the leading bullet (and its space) \
 so the line starts with the bold marker, the form file-ticket.sh files. Commit, then stop."
       reason="${reason:+$reason }$field_reason"
+    fi
+    if [ -n "$seq_faults" ]; then
+      seq_flat="$(printf '%s\n' "$seq_faults" | tr '\n' ' ')"
+      seq_reason="tickets.md has ticket heading(s) numbered above governor/.ticket-seq: \
+${seq_flat}. That is a hand-minted filing that bypassed file-ticket.sh. Renumber the block(s) \
+through allocator conventions (file-ticket.sh prints the next safe number), then set \
+governor/.ticket-seq to the live max, commit, then stop."
+      reason="${reason:+$reason }$seq_reason"
     fi
     if [ -n "$other_dups" ]; then
       other_flat="$(printf '%s\n' "$other_dups" | tr '\n' ' ')"
