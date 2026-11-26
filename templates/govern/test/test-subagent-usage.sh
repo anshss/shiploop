@@ -8,8 +8,9 @@
 #     1. one API response is several assistant lines sharing message.id, and only the last line
 #        carries the usage: each field takes the response's largest figure, never their sum;
 #     2. usage is also broken down per model (message.model), `model` is what answered the last
-#        request, costUsd is always null (a transcript carries no price), and the usageSource is
-#        "subagent";
+#        request (chronologically: by timestamp when the lines carry one, else by place in the file,
+#        never by how the message ids happen to sort), costUsd is always null (a transcript carries
+#        no price), and the usageSource is "subagent";
 #     3. a missing, empty, non-JSON or usage-free transcript reads as usageSource "none";
 #     4. a line with no message id is a response of its own.
 #   govern::usage_merge joins several agents of one ticket (a first attempt and a retry): tokens
@@ -203,5 +204,48 @@ row="$(grep '"ticket":42' "$HIST" | tail -1)"
 assert_eq "$(jq -c '[.tokens.total, .costUsd, .usageSource]' <<<"$row")" '[55,0.5,"result"]' \
   "9. with a stream of its own the worker's row comes from the stream alone"
 rm -rf "$T/logs"
+
+# ── 10. `model` is the chronologically last request's, however the message ids sort ───────────
+# Responses are grouped by message id, and group_by orders the groups by that id. An id that sorts
+# last is not the last response written: ids are opaque and need not be in file order at all.
+# A transcript line with a timestamp. <file> <message-id> <model> <input> <timestamp-iso|-> <outputs...>
+tline() { # append one JSONL line, stamped when the 5th argument is not "-"
+  local ts=''
+  [[ "$5" != "-" ]] && ts=",\"timestamp\":\"$5\""
+  printf '{"type":"assistant"%s,"agentId":"a1","message":{"id":"%s","role":"assistant","model":"%s","usage":{"input_tokens":%s,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
+    "$ts" "$2" "$3" "$4" >> "$1"
+}
+# The two-line repro: the id that sorts FIRST is the request written LAST. Without timestamps the
+# file order is all there is, and it must decide.
+{ tline "$U/order.jsonl" msg_z_early model-EARLY 100 -
+  tline "$U/order.jsonl" msg_a_late  model-LATE  200 - ; } >/dev/null
+u="$(usage_of "$U/order.jsonl")"
+assert_eq "$(jq -r '.model' <<<"$u")" "model-LATE" "10. model is the last request in file order, not the id that sorts last"
+assert_eq "$(jq -c '.tokens' <<<"$u")" '{"input":300,"output":2,"cacheRead":0,"cacheCreation":0,"total":302}' \
+  "10. ...and the out-of-order ids still sum every response exactly once"
+assert_eq "$(jq -c '.usageByModel' <<<"$u")" '{"model-EARLY":{"input":100,"output":1,"cacheRead":0,"cacheCreation":0,"total":101},"model-LATE":{"input":200,"output":1,"cacheRead":0,"cacheCreation":0,"total":201}}' \
+  "10. ...with the breakdown per model intact"
+
+# With timestamps the stamps decide, even against the file order: the later line was written first.
+{ tline "$U/stamped.jsonl" msg_b model-LATE  200 2026-11-26T22:05:58.500Z
+  tline "$U/stamped.jsonl" msg_z model-MID   300 2026-11-26T22:06:00Z
+  tline "$U/stamped.jsonl" msg_a model-EARLY 100 2026-11-26T22:05:00Z ; } >/dev/null
+u="$(usage_of "$U/stamped.jsonl")"
+assert_eq "$(jq -r '.model' <<<"$u")" "model-MID" "10. with timestamps the latest stamp names model, over both file order and id order"
+assert_eq "$(jq -r '.tokens.total' <<<"$u")" "603" "10. ...and every stamped response still counts"
+
+# A partly stamped transcript: the stamps it has decide, and an unstamped line never wins by
+# being last in the file.
+{ tline "$U/part.jsonl" msg_a model-STAMPED 100 2026-11-26T22:05:00Z
+  tline "$U/part.jsonl" msg_b model-UNSTAMPED 200 - ; } >/dev/null
+u="$(usage_of "$U/part.jsonl")"
+assert_eq "$(jq -r '.model' <<<"$u")" "model-STAMPED" "10. a stamped response beats an unstamped one written after it"
+
+# A timestamp that does not parse is no timestamp: the line keeps its place in the file order.
+{ tline "$U/badts.jsonl" msg_a model-FIRST 100 not-a-date
+  tline "$U/badts.jsonl" msg_b model-LAST  200 - ; } >/dev/null
+u="$(usage_of "$U/badts.jsonl")"
+assert_eq "$(jq -r '.model' <<<"$u")" "model-LAST" "10. an unparseable timestamp falls back to file order"
+assert_eq "$(jq -r '.usageSource' <<<"$u")" "subagent" "10. ...and the transcript still reads as subagent, not none"
 
 assert_done
