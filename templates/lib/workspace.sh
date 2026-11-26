@@ -211,6 +211,13 @@ export WSP_PR_FOOTER="${WSP_PR_FOOTER:-on}"   # on | off
 export GOVERN_POST_MERGE_GATE="${GOVERN_POST_MERGE_GATE:-1}"
 export GOVERN_POST_MERGE_CMD="${GOVERN_POST_MERGE_CMD:-}"
 export GOVERN_POST_MERGE_SYNC="${GOVERN_POST_MERGE_SYNC:-0}"
+# GOVERN_GATE_ENV_STRIP: comma-separated extra VARIABLE PREFIXES (no spaces, e.g. ACME_,STRIPE_)
+# removed from the environment the post-merge check command runs in, on top of the fixed
+# GOVERN_/WSP_ strip. The check must prove merged main, not merged main as seen through the calling
+# session's knobs, so list every prefix your own workspace knobs live under. Empty (default) = only
+# the fixed namespaces are stripped. (GOVERN_POST_MERGE_CACHE and GOVERN_POST_MERGE_CACHE_TTL are
+# read where the check runs, with their defaults, like GOVERN_QUEUE_FOREIGN_GUARD below.)
+export GOVERN_GATE_ENV_STRIP="${GOVERN_GATE_ENV_STRIP:-}"
 # Seed examples, COMMENTED on purpose: arming the gate is a per-workspace decision and convergence
 # must never append an activation here. GOVERN_POST_MERGE_CMD runs in a fresh temp checkout of the
 # merged ref (dependency-free commands only). GOVERN_POST_MERGE_LABS_SELECT overrides the
