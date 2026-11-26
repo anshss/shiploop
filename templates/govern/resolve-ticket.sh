@@ -160,12 +160,40 @@ _norm_report="$(govern::normalize_pr_field "$report")" && report="$_norm_report"
 # Writes govern-health.sh's only input, in the {ticket,run,status,ts} shape plus
 # tokens/costUsd/model/effort/attempt/usageSource/churn/repos. "run" falls back to "manual" exactly
 # like land-resolution.sh's own --source string does when GOVERN_RUN_DIR is unset.
-rt_history_enrich() { # -> json extra fields (tokens/costUsd/model/effort/attempt/usageSource/churn/repos)
+#
+# Usage comes from the worker's own stream when it has one (a headless worker.jsonl). A worker
+# dispatched in-session has none: it is a sidechain whose transcript lives under the advisor's
+# session, and worker-report-capture.sh records that transcript's path per ticket in
+# governor/agents/<N>/<agent-id>.json. rt_subagent_usage sums those records, oldest agent first,
+# so a first attempt and a retry both count. The stream wins when both exist: the same numbers must
+# never be counted twice.
+rt_subagent_usage() { # -> one usage JSON for every agent recorded against $N (never fails)
+  local adir ts tp usage=()
+  adir="$GOVERNOR_DIR/agents/$N"
+  if [[ -d "$adir" ]]; then
+    while IFS=$'\t' read -r ts tp; do
+      [[ -n "$tp" ]] || continue
+      usage+=("$(govern::subagent_usage "$tp" 2>/dev/null)")
+    done < <(for f in "$adir"/*.json; do
+               [[ -f "$f" ]] || continue
+               jq -r '[(.ts // 0), (.transcript // "")] | @tsv' "$f" 2>/dev/null || true
+             done | sort -n)
+  fi
+  [[ "${#usage[@]}" -gt 0 ]] || usage=('{"tokens":null,"costUsd":null,"model":null,"usageByModel":{},"usageSource":"none"}')
+  govern::usage_merge ${usage[@]+"${usage[@]}"}
+  return 0
+}
+
+rt_history_enrich() { # -> json extra fields (tokens/costUsd/model/effort/attempt/usageSource/churn/repos/usageByModel/agentIds)
   local logdir jsonl extra
   logdir="$(govern::worker_logdir "$N")"
   jsonl="$logdir/worker.jsonl"
   extra="$(govern::stream_usage "$jsonl" 2>/dev/null || echo '{}')"
   [[ -n "$extra" ]] || extra='{}'
+  if [[ "$(printf '%s' "$extra" | jq -r '.usageSource // "none"' 2>/dev/null)" == "none" ]]; then
+    extra="$(rt_subagent_usage 2>/dev/null || true)"
+    [[ -n "$extra" ]] || extra='{}'
+  fi
   local repos nrepos nself _r churn
   repos="$(printf '%s' "$report" | jq -c '[ (.pr // empty), (.prs // [])[] ]
     | map(.repo // empty) | map(select(. != "")) | unique' 2>/dev/null || echo '[]')"
@@ -178,9 +206,18 @@ rt_history_enrich() { # -> json extra fields (tokens/costUsd/model/effort/attemp
       < <(printf '%s' "$repos" | jq -r '.[]' 2>/dev/null || true)
     if [[ "$nself" -eq "$nrepos" ]]; then churn=true; else churn=false; fi
   fi
-  jq -nc --argjson e "$extra" --argjson ch "$churn" --argjson rp "$repos" \
-    '{tokens:null, costUsd:null, model:null, effort:null, attempt:null, usageSource:null}
-     + $e + {churn:$ch, repos:$rp}' 2>/dev/null || echo '{}'
+  # agentIds name the in-session subagents whose usage the row carries (empty for a headless row).
+  local ids='[]'
+  if [[ -d "$GOVERNOR_DIR/agents/$N" ]]; then
+    ids="$(for f in "$GOVERNOR_DIR/agents/$N"/*.json; do
+             [[ -f "$f" ]] || continue
+             jq -r '.agent_id // empty' "$f" 2>/dev/null || true
+           done | jq -Rs 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')"
+    [[ -n "$ids" ]] || ids='[]'
+  fi
+  jq -nc --argjson e "$extra" --argjson ch "$churn" --argjson rp "$repos" --argjson ids "$ids" \
+    '{tokens:null, costUsd:null, model:null, effort:null, attempt:null, usageSource:null, usageByModel:null}
+     + $e + {churn:$ch, repos:$rp, agentIds:$ids}' 2>/dev/null || echo '{}'
   return 0
 }
 

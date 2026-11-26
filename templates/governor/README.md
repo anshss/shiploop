@@ -124,6 +124,21 @@ Backward compat: a workspace.sh predating this knob has no `GOVERN_AUTONOMY` lin
   the item, or take it to the operator.
 - Tickets carry no `Model:` / `Effort:` field. An entry still holding them is inert: ignored, never
   an error, because a filing-time guess is made before any evidence exists.
+- **Under a model profile** (`SHIPLOOP_MODEL_PROFILE=<family>`, a session launched on another model
+  family) the model is not chosen per dispatch at all. The agent type is the role (`worker` for a
+  first attempt, `worker-retry` for the retry, `lookup`, `investigator`) and the plugin's
+  model-router mod hands each spawn the model the family's profile assigns to that role
+  (`scripts/lib/model-profiles/<family>.conf`). `govern:dispatch` takes `--role <worker|worker-retry>`
+  instead of `--model`, the packet records a `Role:` line, and the ceiling reads the profile's
+  `TIER_ORDER` instead of the Claude ladder. With the variable unset none of this is read.
+
+## Usage is recorded per ticket
+- A worker dispatched in-session has no stream of its own. When it stops, its agent id and
+  transcript path are recorded under `governor/agents/<N>/`, and `resolve-ticket.sh` sums that
+  transcript into the ticket's history row: `tokens` (input, output, cache read, cache creation),
+  `model` (what answered the last request), `usageByModel` (the same figures per model) and
+  `agentIds`. `costUsd` stays null for such a row: a transcript carries no price. A first attempt
+  and a retry both count.
 - The tier set is deliberately **coarse**: the prompt cache is per-model and an effort change
   invalidates the tools+system prefix, so spreading tickets across many `(model, effort)`
   combinations fragments the cross-worker shared prefix.

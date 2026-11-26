@@ -229,8 +229,13 @@ permission_mode="${permission_mode:-}"
 agent_model="${agent_model:-}"
 [ -n "$tool_name" ] || exit 0
 
+# A worker is any of the worker types: `worker` for a first attempt, `worker-retry` for the one
+# retry on the family's top model. Same doctrine, same body, two names, so every "is this a
+# worker" question below asks this and never the one literal.
+is_worker_type() { case "$1" in worker|worker-retry) return 0 ;; *) return 1 ;; esac; }
+
 # --- worker-spawns-worker: fires even for a worker caller (see header SIXTH behavior) -------
-if [ "$tool_name" = "Agent" ] && [ "$subagent_type" = "worker" ] && [ "$agent_type" = "worker" ] \
+if [ "$tool_name" = "Agent" ] && is_worker_type "$subagent_type" && is_worker_type "$agent_type" \
    && [ "${GOVERN_TICKET_ROUTE_GUARD:-1}" != "0" ]; then
   python3 -c '
 import json
@@ -330,7 +335,7 @@ if [ "$tool_name" = "Agent" ]; then
     [ -n "$n" ] && [ -f "$tickets_file" ] || return 1
     grep -qE "^##[[:space:]]+#${n}([^0-9]|\$)" "$tickets_file" 2>/dev/null
   }
-  if [ "$subagent_type" = "worker" ]; then
+  if is_worker_type "$subagent_type"; then
     # ── SEVENTH behavior: the proposed-solution gate, on THIS lane ──────────────
     # pre-dispatch-check.sh already refuses a dispatch on a ticket with no
     # **Proposed solution:**, off the same GOVERN_PROPOSAL_GATE switch, ON by default. But
@@ -396,7 +401,10 @@ print(json.dumps({
     # than GOVERN_DISPATCH_FRESH_HOURS (default 6), the hook cuts one the way govern:dispatch does:
     # the pre-dispatch gates first, then dispatch-packet.sh. A skip or refuse verdict is the one
     # deny left, and it carries the verdict line. The `model` the call passed (none means sonnet) is
-    # written into the packet's `Model:` line, never denied. Every allowed spawn returns the
+    # written into the packet's `Model:` line, never denied. Under an active model profile
+    # (SHIPLOOP_MODEL_PROFILE) the call's agent type is written into a `Role:` line instead and a
+    # `model` the call passed is not recorded: the model-router mod sets the model from the role
+    # at spawn. Every allowed spawn returns the
     # tickets' Proposed solution and Done when blocks plus the packet path as additionalContext, so
     # the advisor sees the ticket at spawn time. Anything the hook cannot prepare (no govern scripts
     # on this install, no ticket number in the call, a packet that fails to write) degrades to a
@@ -414,6 +422,11 @@ print(json.dumps({
           *opus*) dp_alias="opus" ;;
           *) dp_alias="sonnet" ;;
         esac
+        # The profile that decides the worker's model, or "" when none is active (a name that is
+        # not a plain name is no profile, the same reading dispatch-packet.sh and the router make).
+        dp_profile="${SHIPLOOP_MODEL_PROFILE:-}"
+        [[ "$dp_profile" =~ ^[A-Za-z0-9_.-]+$ ]] || dp_profile=""
+        dp_role="$subagent_type"
         dp_packet="$(printf '%s' "$agent_prompt" | grep -oE '[^[:space:]]*\.dispatch-packet\.md' | sed -n '1p' || true)"
         dp_fresh=0
         if [ -n "$dp_packet" ] && [ -f "$dp_packet" ]; then
@@ -429,9 +442,20 @@ print(json.dumps({
           [ $(( $(date +%s) - dp_created )) -gt $(( dp_hours * 3600 )) ] && dp_fresh=0
         fi
         if [ "$dp_fresh" = "1" ]; then
-          # A fresh packet is reused as is; only its Model line follows the call.
-          if grep -q '^Model: ' "$dp_packet"; then
+          # A fresh packet is reused as is; only its Model (or, under a profile, Role) line follows
+          # the call. A packet cut under the other mode has that line converted, never left stale.
+          if [ -n "$dp_profile" ]; then
+            if grep -q '^Role: ' "$dp_packet"; then
+              dp_tmp="$(sed -E "s/^Role: .*/Role: ${dp_role}/" "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+            elif grep -q '^Model: ' "$dp_packet"; then
+              dp_tmp="$(sed -E "s/^Model: .*/Role: ${dp_role}/" "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+            else
+              dp_tmp="$(awk -v r="Role: ${dp_role}" '{print} /^Worktree: /&&!d{print r; d=1}' "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+            fi
+          elif grep -q '^Model: ' "$dp_packet"; then
             dp_tmp="$(sed -E "s/^Model: .*/Model: ${dp_alias}/" "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
+          elif grep -q '^Role: ' "$dp_packet"; then
+            dp_tmp="$(sed -E "s/^Role: .*/Model: ${dp_alias}/" "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
           else
             dp_tmp="$(awk -v m="Model: ${dp_alias}" '{print} /^Worktree: /&&!d{print m; d=1}' "$dp_packet")" && printf '%s\n' "$dp_tmp" > "$dp_packet"
           fi
@@ -457,12 +481,18 @@ print(json.dumps({
 ' "$dp_csv" "$dp_verdict" 2>/dev/null || true
             exit 0
           fi
-          dp_out="$(bash "$dp_gdir/dispatch-packet.sh" "$dp_csv" --model "$dp_alias" 2>/dev/null || true)"
+          if [ -n "$dp_profile" ]; then
+            dp_out="$(bash "$dp_gdir/dispatch-packet.sh" "$dp_csv" --role "$dp_role" 2>/dev/null || true)"
+          else
+            dp_out="$(bash "$dp_gdir/dispatch-packet.sh" "$dp_csv" --model "$dp_alias" 2>/dev/null || true)"
+          fi
           dp_packet="$(printf '%s\n' "$dp_out" | sed -n '1p')"
         fi
         if [ -n "$dp_packet" ] && [ -f "$dp_packet" ]; then
           dp_blocks="$(bash "$dp_gdir/dispatch.sh" --print-blocks "$dp_csv" 2>/dev/null || true)"
-          dp_ctx="[DISPATCH] Worker spawn prepared. Packet: ${dp_packet} (Model: ${dp_alias}). The tickets as the worker will implement them:
+          dp_on="Model: ${dp_alias}"
+          [ -z "$dp_profile" ] || dp_on="Role: ${dp_role}"
+          dp_ctx="[DISPATCH] Worker spawn prepared. Packet: ${dp_packet} (${dp_on}). The tickets as the worker will implement them:
 ${dp_blocks}"
         fi
       fi

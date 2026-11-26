@@ -3,9 +3,14 @@
 # governor/reports/<N>.json at the workspace root, one file per ticket number it was dispatched on,
 # so `govern:resolve -- <N>` can land it without anyone copying the JSON by hand.
 #
-# Which child: agent_type "worker" on the payload, or, for a named teammate (whose payload type can
-# be its name), the customAgentType/spawnedAgentType "worker" recorded in the transcript's own
+# Which child: a worker type ("worker", or "worker-retry", the same worker on its one retry) as
+# agent_type on the payload, or, for a named teammate (whose payload type can be its name), that
+# same type as the customAgentType/spawnedAgentType recorded in the transcript's own
 # agent-<id>.meta.json. Every other child is ignored.
+
+# A worker is any of the worker types: `worker` for a first attempt, `worker-retry` for the one
+# retry on the family's top model. Same doctrine, same body, two names.
+is_worker_type() { case "$1" in worker|worker-retry) return 0 ;; *) return 1 ;; esac; }
 #
 # Where the report comes from, first hit wins:
 #   1. a SubagentHandback tool call in the child's transcript: its input.message;
@@ -23,6 +28,13 @@
 # Each later stop of the same child overwrites the file, so the last report it gives is the one on
 # disk. GOVERN_REPORT_CAPTURE=0 turns the hook off. Never blocks: every degenerate input (no jq, no
 # common.sh, no transcript) exits 0 silently.
+#
+# The same stop also records WHICH subagent ran each of those tickets, as
+# governor/agents/<N>/<agent_id>.json holding the agent's id, type and transcript path, whether or
+# not its report parsed. A worker dispatched in-session is a sidechain with no stream of its own, so
+# that transcript is the only place its token usage exists; resolve-ticket.sh sums it per ticket and
+# model from this record. One file per agent, overwritten on each of its stops (the transcript is
+# cumulative for that agent), so a first attempt and a retry both stay on record.
 set -uo pipefail
 
 [ "${GOVERN_REPORT_CAPTURE:-1}" = "1" ] || exit 0
@@ -38,13 +50,14 @@ set +e
 command -v govern::extract_report >/dev/null 2>&1 || exit 0
 
 agent_type="$(printf '%s' "$payload" | jq -r '.agent_type // empty' 2>/dev/null)"
+agent_id="$(printf '%s' "$payload" | jq -r '.agent_id // empty' 2>/dev/null)"
 transcript="$(printf '%s' "$payload" | jq -r '.agent_transcript_path // empty' 2>/dev/null)"
 last_msg="$(printf '%s' "$payload" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
 
-if [ "$agent_type" != "worker" ]; then
+if ! is_worker_type "$agent_type"; then
   meta_type="$(govern::agent_meta "$transcript" customAgentType)"
   [ -n "$meta_type" ] || meta_type="$(govern::agent_meta "$transcript" spawnedAgentType)"
-  [ "$meta_type" = "worker" ] || exit 0
+  is_worker_type "$meta_type" || exit 0
 fi
 
 entries=""
@@ -77,8 +90,6 @@ if [ -z "$report" ] && [ -n "$entries" ]; then
       | select(length > 0) | join("\n") ] | last // empty' 2>/dev/null)"
   report="$(as_report "$last_text")"
 fi
-[ -n "$report" ] || exit 0
-
 # --- the ticket numbers, from the spawn prompt ---
 prompt=""
 if [ -n "$entries" ]; then
@@ -99,7 +110,27 @@ if [ -z "$nums" ]; then
 fi
 [ -n "$nums" ] || exit 0
 
-dir="${GOVERNOR_DIR:-${GOVERN_WS_ROOT:-$SELF_ROOT}/governor}/reports"
+governor="${GOVERNOR_DIR:-${GOVERN_WS_ROOT:-$SELF_ROOT}/governor}"
+
+# --- which subagent ran these tickets: one record per agent, written on every stop ---
+if [ -n "$agent_id" ] && [ -n "$transcript" ]; then
+  safe_agent="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9._-' '_')"
+  if [ -n "$safe_agent" ]; then
+    for n in $nums; do
+      adir="$governor/agents/$n"
+      mkdir -p "$adir" 2>/dev/null || continue
+      tmp="$adir/.$safe_agent.json.$$"
+      jq -cn --arg id "$agent_id" --arg ty "$agent_type" --arg tp "$transcript" --argjson ts "$(date +%s)" \
+        '{agent_id:$id, agent_type:$ty, transcript:$tp, ts:$ts}' > "$tmp" 2>/dev/null \
+        && mv -f "$tmp" "$adir/$safe_agent.json" 2>/dev/null
+      rm -f "$tmp" 2>/dev/null
+    done
+  fi
+fi
+
+# --- the report itself, when the child gave one ---
+[ -n "$report" ] || exit 0
+dir="$governor/reports"
 mkdir -p "$dir" 2>/dev/null || exit 0
 for n in $nums; do
   tmp="$dir/.$n.json.$$"

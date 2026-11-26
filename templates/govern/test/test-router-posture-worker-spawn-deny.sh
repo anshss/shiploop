@@ -86,4 +86,19 @@ out="$(GOVERN_RUN=1 GOVERN_TICKET_ROUTE_GUARD=0 bash "$GUARD" < "$PL" 2>&1)"
 assert_not_contains "$out" '"permissionDecision": "deny"' \
   "5. GOVERN_TICKET_ROUTE_GUARD=0 silences the worker-spawns-worker deny too"
 
+# ── 6. worker-retry is a worker on both sides of the call ────────────────────────────────────
+# It is the same worker dispatched again for its one retry, so it neither nests nor may be nested.
+payload "worker-retry" "worker" "/tmp/fake-transcript.jsonl"
+out="$(GOVERN_RUN=1 bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "6a. a worker spawning subagent_type worker-retry is DENIED"
+payload "worker" "worker-retry" "/tmp/fake-transcript.jsonl"
+out="$(GOVERN_RUN=1 bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "6b. a worker-retry caller spawning subagent_type worker is DENIED"
+payload "worker-retry" "worker-retry" "/tmp/.claude/subagents/abc/transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_contains "$out" '"permissionDecision": "deny"' "6c. worker-retry spawning worker-retry is DENIED under the interactive lane too"
+payload "worker-retry" "" "/tmp/fake-transcript.jsonl"
+out="$(GOVERN_RUN=1 bash "$GUARD" < "$PL" 2>&1)"
+assert_not_contains "$out" '"permissionDecision": "deny"' "6d. a driver dispatching worker-retry is never denied by this lever"
+
 assert_done

@@ -5,8 +5,8 @@
 # What it does, in order, so none of it depends on the advisor remembering a step:
 #   1. runs pre-dispatch-check.sh on every named batch (comma = one worker, space = parallel
 #      workers) and stops on a `skip:` / `refuse:` verdict, printing that line;
-#   2. for every batch that proceeds, runs dispatch-packet.sh (worktree, packet, and the
-#      `Model: <alias>` line, default sonnet);
+#   2. for every batch that proceeds, runs dispatch-packet.sh (worktree, packet, and the line
+#      that says what the worker runs on: `Model: <alias>`, default sonnet);
 #   3. prints, per batch, the ticket's own `**Proposed solution:**` and `**Done when:**` blocks
 #      verbatim (the advisor re-reads what it is about to hand over), then ONE ready Agent call:
 #      subagent_type "worker", name worker-<first N>, `model` only when it is not sonnet (the
@@ -14,7 +14,12 @@
 #      prompt. router-posture-guard.sh denies a worker spawn that does not match this packet, so
 #      the printed call is the one that passes.
 #
-# Usage: dispatch.sh 12 | 12,14 | 12 15 | 12,14 15 [--model opus]
+# Under an active model profile (SHIPLOOP_MODEL_PROFILE) the worker's model is the profile's model
+# for its role, chosen at spawn by the model-router mod, so --model is refused in favor of
+# --role <worker|worker-retry>: the packet gets a `Role:` line and the printed call names the
+# role's agent type and carries no `model` at all.
+#
+# Usage: dispatch.sh 12 | 12,14 | 12 15 | 12,14 15 [--model opus | --role worker-retry]
 # Exit code: 0 whenever a verdict was produced (a skip or refuse is information, not an error),
 # non-zero only for a malformed invocation or a packet that could not be written.
 set -euo pipefail
@@ -56,18 +61,38 @@ fi
 
 MODEL_ALIAS="sonnet"
 BATCH_ARGS=()
+# The profile that decides the worker's model, or "" when none is active (a name that is not a
+# plain name is no profile, the same reading dispatch-packet.sh and the router make).
+MODEL_PROFILE="${SHIPLOOP_MODEL_PROFILE:-}"
+[[ "$MODEL_PROFILE" =~ ^[A-Za-z0-9_.-]+$ ]] || MODEL_PROFILE=""
+ROLE_ARGS=()
+USAGE="usage: dispatch.sh <N>[,<N>...] [<N>[,<N>...] ...] [--model <haiku|sonnet|opus> | --role <worker|worker-retry>]"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) [[ $# -ge 2 ]] || govern::die "--model needs a value (haiku|sonnet|opus)"; MODEL_ALIAS="$2"; shift 2 ;;
-    --model=*) MODEL_ALIAS="${1#--model=}"; shift ;;
+    --model)
+      [[ $# -ge 2 ]] || govern::die "--model needs a value (haiku|sonnet|opus)"
+      [[ -z "$MODEL_PROFILE" ]] || govern::die "SHIPLOOP_MODEL_PROFILE=$MODEL_PROFILE is active: the worker's model comes from that profile's model for its role, so pass --role <worker|worker-retry>, not --model"
+      MODEL_ALIAS="$2"; shift 2 ;;
+    --model=*)
+      [[ -z "$MODEL_PROFILE" ]] || govern::die "SHIPLOOP_MODEL_PROFILE=$MODEL_PROFILE is active: the worker's model comes from that profile's model for its role, so pass --role <worker|worker-retry>, not --model"
+      MODEL_ALIAS="${1#--model=}"; shift ;;
+    --role) [[ $# -ge 2 ]] || govern::die "$USAGE"; ROLE_ARGS=(--role "$2"); shift 2 ;;
+    --role=*) ROLE_ARGS=(--role "${1#--role=}"); shift ;;
     *) BATCH_ARGS+=("$1"); shift ;;
   esac
 done
-[[ "${#BATCH_ARGS[@]}" -ge 1 ]] || govern::die "usage: dispatch.sh <N>[,<N>...] [<N>[,<N>...] ...] [--model <haiku|sonnet|opus>]"
+[[ "${#BATCH_ARGS[@]}" -ge 1 ]] || govern::die "$USAGE"
 case "$MODEL_ALIAS" in
   haiku|sonnet|opus) ;;
   *) govern::die "not a model alias: '$MODEL_ALIAS' (use haiku, sonnet or opus)" ;;
 esac
+# --role means nothing without a profile: the type's own definition decides the model then.
+if [[ -z "$MODEL_PROFILE" && "${#ROLE_ARGS[@]}" -gt 0 ]]; then
+  govern::die "--role names a role in a model profile, and no profile is active (SHIPLOOP_MODEL_PROFILE is unset): without one pass --model <haiku|sonnet|opus>"
+fi
+# The agent type the printed call names: the role under a profile, "worker" otherwise.
+SPAWN_TYPE="worker"
+if [[ -n "$MODEL_PROFILE" && "${#ROLE_ARGS[@]}" -eq 2 ]]; then SPAWN_TYPE="${ROLE_ARGS[1]}"; fi
 for _a in "${BATCH_ARGS[@]}"; do
   [[ "$_a" =~ ^[0-9]+(,[0-9]+)*$ ]] || govern::die "not a ticket number or comma group: '$_a'"
 done
@@ -90,7 +115,11 @@ fi
 # ── 2 + 3. packet and the ready call, per batch ──────────────────────────────────────────────────
 for batch in "${PROCEED[@]}"; do
   [[ -n "$batch" ]] || continue
-  out="$(bash "$DIR/dispatch-packet.sh" "$batch" --model "$MODEL_ALIAS")" || govern::die "dispatch-packet failed for $batch"
+  if [[ -n "$MODEL_PROFILE" ]]; then
+    out="$(bash "$DIR/dispatch-packet.sh" "$batch" ${ROLE_ARGS[@]+"${ROLE_ARGS[@]}"})" || govern::die "dispatch-packet failed for $batch"
+  else
+    out="$(bash "$DIR/dispatch-packet.sh" "$batch" --model "$MODEL_ALIAS")" || govern::die "dispatch-packet failed for $batch"
+  fi
   packet="$(printf '%s\n' "$out" | sed -n '1p')"
   prompt="$(printf '%s\n' "$out" | sed -n '2p')"
   primary="${batch%%,*}"
@@ -98,8 +127,9 @@ for batch in "${PROCEED[@]}"; do
   printf '\n== batch %s ==\n' "$batch"
   IFS=',' read -r -a members <<< "$batch"
   print_blocks "${members[@]}"
-  printf '\nPacket: %s\nSpawn it with exactly this call:\n\nAgent(\n  subagent_type: "worker",\n  name: "worker-%s",\n' "$packet" "$primary"
-  [[ "$MODEL_ALIAS" == "sonnet" ]] || printf '  model: "%s",\n' "$MODEL_ALIAS"
+  printf '\nPacket: %s\nSpawn it with exactly this call:\n\nAgent(\n  subagent_type: "%s",\n  name: "worker-%s",\n' "$packet" "$SPAWN_TYPE" "$primary"
+  # Under a profile the call carries no model: the model-router mod sets it from the role at spawn.
+  if [[ -z "$MODEL_PROFILE" && "$MODEL_ALIAS" != "sonnet" ]]; then printf '  model: "%s",\n' "$MODEL_ALIAS"; fi
   printf '  description: "Resolve ticket %s",\n  prompt: "%s"\n)\n' "$primary" "$prompt"
 done
 exit 0

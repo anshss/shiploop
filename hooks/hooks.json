@@ -1,0 +1,4 @@
+{
+  "description": "shiploop hooks module: the model router that maps a spawn's agent type to the active model profile's role model",
+  "modules": ["./model-router.js"]
+}

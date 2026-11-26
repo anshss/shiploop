@@ -58,7 +58,7 @@ Examples use `npm run` (default `ROOT_PM`); substitute `pnpm <script>` / `yarn <
 | `npm run worktree:exec -- <slug> [-- <cmd>]` | Run a command with that slot's env |
 | `npm run worktree` | Worktree dispatcher (`new` / `rm` / `status` / `exec`) |
 | `npm run govern:pre-dispatch -- <N>` | Every pre-spawn gate for ticket N, one verdict line: `proceed` / `skip: <reason>` / `refuse: <reason>` |
-| `npm run govern:dispatch -- <N>[,<N>...] [--model <haiku\|sonnet\|opus>]` | Runs the gates, records the model (default `sonnet`) in the dispatch packet, prints the verdict, the ticket and the exact `Agent` call |
+| `npm run govern:dispatch -- <N>[,<N>...] [--model <haiku\|sonnet\|opus> \| --role <worker\|worker-retry>]` | Runs the gates, records what the worker runs on in the dispatch packet (the model, default `sonnet`; or, under a model profile, the role), prints the verdict, the ticket and the exact `Agent` call |
 | `npm run govern:status` | What is running now: active workers, their age and pending background tasks |
 | *(say "work on \<tickets\>")* | Dispatch a `worker` subagent for ticket N and pipe its JSON report onward (see Dispatch below) |
 | `npm run govern:resolve -- <N>` | Reads the worker's report from `governor/reports/<N>.json` (or JSON on stdin): awaits CI, merges, lands the resolution and deletes the queue block |
@@ -140,7 +140,10 @@ inside YOUR session, one ticket at a time, near-zero Claude context throughout:
 1. `npm run govern:dispatch -- <N>[,<N>...] [--model <alias>]` runs every pre-spawn gate (the scripts
    own the list), prints the verdict (`proceed` / `skip: <reason>` / `refuse: <reason>`) and, on
    `proceed`, the exact `Agent` call. The worker defaults to `sonnet`; `--model` raises it for that
-   one dispatch. Nothing escalates the model automatically.
+   one dispatch. Nothing escalates the model automatically. Under a model profile
+   (`SHIPLOOP_MODEL_PROFILE=<family>`, see CONFIGURATION.md) the type is the role instead: the call
+   carries no `model`, the plugin's model-router mod picks the family's model for the role at spawn,
+   a retry is `subagent_type: "worker-retry"`, and `--role` replaces `--model`.
 2. On `proceed`, dispatch `Agent(subagent_type: "worker")` for that ticket. A worker spawn with no fresh
    packet gets one cut automatically by the hook (the same path as `govern:dispatch`), and the advisor
    receives the ticket's proposed solution and done-when as context at spawn time. The only refusal is

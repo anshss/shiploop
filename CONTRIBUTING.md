@@ -53,6 +53,8 @@ There is no dev server; everything is bash. The realistic dev loop:
 
 3. Iterate on the template, re-run only the affected test (`bash scripts/govern/test/test-<name>.sh`), then finish with a full `tools/run-suite.sh` run (step 2) before pushing.
 
+4. The model router (`hooks/model-router.js`, a plugin mod) is proven three ways, and the third is the only one that sees the real engine. `test-model-router.sh` loads the module in a Node stand-in, `hooks/model-router.test.ts` runs through `claude plugin test`, and `tools/model-router-probe.sh` runs a real `claude -p` session against a loopback stand-in endpoint and prints the model each request carried on the wire. Run the probe after touching the mod, the profiles or the agent definitions, and after a Claude Code update (it needs the `claude` CLI and node, so CI cannot run it). It makes no model call: the base URL is 127.0.0.1 and the session's config dir is a throwaway.
+
 ### The safe-redirect + wait test idiom
 
 Bash tests in `templates/govern/test/` invoke scripts like this:

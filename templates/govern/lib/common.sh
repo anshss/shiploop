@@ -3327,6 +3327,93 @@ govern::stream_usage() { # worker-jsonl -> usage JSON
     || printf '{"tokens":null,"costUsd":null,"usageSource":"none"}'
 }
 
+# ── usage of an in-session subagent ─────────────────────────────────────
+# A worker dispatched from a live session is a sidechain inside the advisor's own `claude` process:
+# there is no worker.jsonl and no final result event, so the usage above has nothing to read. Its
+# transcript (~/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl) carries it instead,
+# on every assistant line as message.usage, with message.model naming what answered.
+#
+# One API response is written as SEVERAL assistant lines that share message.id (one per content
+# block), and only the last of them carries the response's usage: the earlier ones carry zeros.
+# So lines are grouped by message id and each field takes the group's maximum. Summing the lines
+# raw happens to give the same total while the zeros stay zeros, and stops the moment a line
+# repeats a nonzero figure; grouping does not depend on that.
+#
+# Output shape, matching govern::stream_usage beside it: {tokens:{input,output,cacheRead,
+# cacheCreation,total}|null, costUsd:null, model:<what answered the last request>|null,
+# usageByModel:{<model>:{input,output,cacheRead,cacheCreation,total}}, usageSource:"subagent"|"none"}.
+# costUsd is always null: a transcript carries token counts and never a price, and inventing one
+# would fabricate the figure a sizing decision is tuned on. Never fails.
+govern::subagent_usage() { # <agent-jsonl> -> usage JSON
+  local f="${1:-}" out
+  out=""
+  if [[ -n "$f" && -s "$f" ]] && command -v jq >/dev/null 2>&1; then
+    # NUL bytes stripped and grep -a, the same NUL-hole tolerance govern::stream_grep gives a
+    # worker.jsonl: a transcript reopened mid-write can carry a hole too.
+    out="$( { LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | LC_ALL=C grep -a . || true; } \
+      | jq -Rc -s '
+        [ split("\n")[]
+          | fromjson?
+          | select(.type == "assistant")
+          | .message
+          | select(.usage != null)
+          | { id: (.id // ""),
+              model: (.model // "unknown"),
+              i: (.usage.input_tokens // 0),
+              o: (.usage.output_tokens // 0),
+              r: (.usage.cache_read_input_tokens // 0),
+              c: (.usage.cache_creation_input_tokens // 0) } ] as $m
+        # A line with no message id gets one of its own, so it never merges into another response.
+        | [ $m | to_entries[]
+            | .value + { id: (if .value.id == "" then "line-\(.key)" else .value.id end) } ] as $lines
+        # One response, several lines: per field, the largest figure any of its lines carries.
+        | [ $lines | group_by(.id)[]
+            | { model: .[0].model, i: (map(.i) | max), o: (map(.o) | max), r: (map(.r) | max), c: (map(.c) | max) } ] as $reqs
+        | [ $reqs | group_by(.model)[]
+            | { key: .[0].model,
+                value: { input: (map(.i) | add), output: (map(.o) | add),
+                         cacheRead: (map(.r) | add), cacheCreation: (map(.c) | add) } } ] as $pairs
+        | ($pairs | map(.value.total = (.value.input + .value.output + .value.cacheRead + .value.cacheCreation)) | from_entries) as $by
+        | if ($reqs | length) == 0 then
+            { tokens: null, costUsd: null, model: null, usageByModel: {}, usageSource: "none" }
+          else
+            { tokens: { input: ($reqs | map(.i) | add), output: ($reqs | map(.o) | add),
+                        cacheRead: ($reqs | map(.r) | add), cacheCreation: ($reqs | map(.c) | add),
+                        total: (($reqs | map(.i) | add) + ($reqs | map(.o) | add) + ($reqs | map(.r) | add) + ($reqs | map(.c) | add)) },
+              costUsd: null, model: ($reqs | last | .model), usageByModel: $by, usageSource: "subagent" }
+          end' 2>&1)" || out=""
+    # A jq that fails prints its error instead of JSON; that is "unreadable", never a wrong figure.
+    [[ "$out" == \{* ]] || out=""
+  fi
+  [[ -n "$out" ]] || out='{"tokens":null,"costUsd":null,"model":null,"usageByModel":{},"usageSource":"none"}'
+  printf '%s' "$out"
+  return 0
+}
+
+# Merge several govern::subagent_usage outputs, oldest record first, into one row of the same
+# shape: tokens and usageByModel add across the agents, and `model` stays the model of the LAST
+# record, the agent whose outcome this row records. A row with no tokens at all reads as "none".
+govern::usage_merge() { # <usage-json>... -> one usage JSON (never fails)
+  printf '%s\n' "$@" | jq -c -s '
+    map(select(type == "object"))
+    | {tokens: (if any(.[]; .tokens != null) then {
+                  input: (map(.tokens.input // 0)|add), output: (map(.tokens.output // 0)|add),
+                  cacheRead: (map(.tokens.cacheRead // 0)|add), cacheCreation: (map(.tokens.cacheCreation // 0)|add)}
+                  | .total = (.input + .output + .cacheRead + .cacheCreation) else null end),
+       costUsd: null,
+       model: ([.[] | select(.model != null) | .model] | last // null),
+       usageByModel: ([ .[] | (.usageByModel // {}) | to_entries[] ]
+                     | group_by(.key)
+                     | map({key: .[0].key, value: (reduce .[].value as $v ({input:0,output:0,cacheRead:0,cacheCreation:0};
+                                   {input: (.input + $v.input), output: (.output + $v.output),
+                                    cacheRead: (.cacheRead + $v.cacheRead), cacheCreation: (.cacheCreation + $v.cacheCreation)}
+                                 | .total = (.input + .output + .cacheRead + .cacheCreation)))})
+                     | from_entries),
+       usageSource: (if any(.[]; .usageSource == "subagent") then "subagent" else "none" end)}' 2>/dev/null \
+    || printf '{"tokens":null,"costUsd":null,"model":null,"usageByModel":{},"usageSource":"none"}'
+  return 0
+}
+
 # ── interrupted/mid-stream-drop detection ─────────────────────────────
 # A laptop that sleeps mid-run (e.g. clamshell-on-battery) suspends the worker's process tree and
 # drops the network, so the in-flight `claude -p` API stream dies mid-response with "API Error:
@@ -3622,7 +3709,75 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
+# ── model profiles ──────────────────────────────────────────────────────────────────────────────
+# One file per model family (scripts/lib/model-profiles/<family>.conf), holding that family's
+# session model, one model per shiploop role, and the role ladder TIER_ORDER. SHIPLOOP_MODEL_PROFILE
+# names the active family; with it unset there is no active profile, every reader below answers
+# "", and every consumer falls through to the Claude defaults it had before profiles existed.
+#
+# A profile is DATA, never sourced: the model-router mod parses the same file with its own parser,
+# so the format is kept to plain KEY=value lines, an optional pair of double quotes around the
+# value, and # comments. Nothing here expands a value or runs one.
+GOVERN_MODEL_PROFILE_DIR="${GOVERN_MODEL_PROFILE_DIR:-}"   # override for where <family>.conf files live (default: beside the mechanism libs)
+
+govern::model_profile_dir() { # -> the directory holding the profiles, absolute, or "" when none exists
+  local d
+  for d in "$GOVERN_MODEL_PROFILE_DIR" "$WS_ROOT/scripts/lib/model-profiles" "$GOVERN_LIB_DIR/../lib/model-profiles"; do
+    [[ -n "$d" && -d "$d" ]] || continue
+    (cd "$d" && pwd)
+    return 0
+  done
+  return 0
+}
+
+# The profile name becomes a path segment, so it must be a plain name. Anything else (a separator,
+# a space, an empty string) reads as "no profile active" exactly as an unset variable does.
+govern::model_profile_name() { # -> the active family's name, or "" when none is active
+  local name="${SHIPLOOP_MODEL_PROFILE:-}"
+  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo ""; return 0; }
+  printf '%s' "$name"
+  return 0
+}
+
+govern::model_profile_file() { # -> path of the active profile, or "" when none is active or the file is missing
+  local name dir
+  name="$(govern::model_profile_name)"
+  [[ -n "$name" ]] || { echo ""; return 0; }
+  dir="$(govern::model_profile_dir)"
+  [[ -n "$dir" && -f "$dir/$name.conf" ]] || { echo ""; return 0; }
+  printf '%s' "$dir/$name.conf"
+  return 0
+}
+
+# An empty answer means "no active profile, no such key, or the key's value is empty"; callers
+# treat all three as unset. Never fails: every caller runs under `set -euo pipefail` inside a
+# command substitution, where a nonzero status would abort the caller for the sake of a lookup.
+govern::model_profile_get() { # <KEY> -> its value in the active profile, "" when unset
+  local key="${1:-}" f
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo ""; return 0; }
+  f="$(govern::model_profile_file)"
+  [[ -n "$f" ]] || { echo ""; return 0; }
+  sed -n -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*(.*)\$/\1/p" "$f" 2>/dev/null \
+    | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/' | sed -n '1p'
+  return 0
+}
+
+# The model a shiploop role runs on under the active profile: its ROLE_<role> value. The role is
+# an agent type with dashes taken as underscores, the same key the model-router mod derives from
+# the spawn's type, so a packet, a guard and the router all read one line of one file.
+govern::model_profile_role() { # <role> -> the profile's model for it, "" when no profile or no such role
+  local role="${1:-}"
+  role="$(printf '%s' "$role" | tr '-' '_')"
+  govern::model_profile_get "ROLE_${role}"
+}
+
 # ── model ladder, session ceiling, and the clamp ────────────────────────────────────────────────
+# Under an active model profile the ladder is the profile's TIER_ORDER: a model's rank is the
+# position of the first role on that list whose ROLE_ value it is, so the list reads highest first
+# and two roles on one model share a rank. A model the profile does not place falls through to the
+# Claude ladder below, so an alias someone passes by habit still ranks sensibly. With no profile
+# active nothing here runs and the Claude ladder is the whole ladder, as before.
+#
 # The ladder used to be three bare aliases (haiku/sonnet/opus) because that was the entire tier set
 # the harness could dispatch at. It now has to compare a bare alias against a FULL model id, because
 # the ceiling below is derived from the SPAWNING SESSION's model, which arrives as an id
@@ -3641,9 +3796,20 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
 # only which family the caller meant. The old haiku<sonnet<opus ordering is preserved exactly, so
 # every existing govern::model_max caller is unaffected.
 govern::model_rank() { # model alias OR full model id -> total-ordered int (0 = unknown/unrankable)
-  local m fam base rest major minor
+  local m fam base rest major minor idx role rm
   m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   m="${m%%\[*}"                       # claude-opus-5[1m] -> claude-opus-5
+  # The profile ladder, highest first: rank (100 - position) * 10000, so every profile tier sits
+  # a whole "family" step apart and all of them outrank any Claude name the fallback would rank.
+  if [[ -n "${SHIPLOOP_MODEL_PROFILE:-}" ]]; then
+    idx=0
+    for role in $(govern::model_profile_get TIER_ORDER); do
+      rm="$(govern::model_profile_get "ROLE_$role" | tr '[:upper:]' '[:lower:]')"
+      rm="${rm%%\[*}"
+      if [[ -n "$rm" && "$rm" == "$m" ]]; then echo "$(( (100 - idx) * 10000 ))"; return 0; fi
+      idx=$((idx + 1))
+    done
+  fi
   case "$m" in
     *haiku*)  fam=haiku;  base=1 ;;
     *sonnet*) fam=sonnet; base=2 ;;
@@ -3742,8 +3908,20 @@ govern::model_ceiling() { # -> "opus", or the session model verbatim when its FA
   # on its family's floor), but it is still the opus family and must yield the canonical `opus`. The
   # ceiling handed to --model stays a plain tier name for everything at or below opus, and only a
   # session in a family ABOVE opus reports itself verbatim.
-  local sm fam_sm fam_opus
+  local sm fam_sm fam_opus top ladder
   sm="$(govern::session_model)"
+  # Under an active profile the ceiling is the session's own place on the profile's ladder, and an
+  # undetectable session gets that ladder's top: "never spawn above your own tier" reads the tier
+  # off TIER_ORDER, with no Claude name to fall back on. A profile whose file is missing has no
+  # ladder, and the Claude ceiling below applies as though none were named.
+  if [[ -n "${SHIPLOOP_MODEL_PROFILE:-}" ]]; then
+    ladder="$(govern::model_profile_get TIER_ORDER)"
+    top="$(govern::model_profile_get "ROLE_${ladder%% *}")"
+    if [[ -n "$top" ]]; then
+      if [[ "$(govern::model_rank "$sm")" -gt 0 ]]; then printf '%s' "$sm"; else printf '%s' "$top"; fi
+      return 0
+    fi
+  fi
   fam_sm="$(( $(govern::model_rank "$sm") / 10000 ))"
   fam_opus="$(( $(govern::model_rank opus) / 10000 ))"
   if [[ "$fam_sm" -gt "$fam_opus" ]]; then printf '%s' "$sm"; else printf 'opus'; fi

@@ -4,7 +4,8 @@
 # Vocabulary under test: a **worker** is the trim, single-ticket session dispatched as
 # `Agent(subagent_type: "worker")`. Anything else the Agent tool spawns is a **subagent**.
 # Ticket-shaped work belongs to a worker, so a ticket-shaped `Agent` call WITHOUT
-# subagent_type "worker" is denied -- but ONLY once the referenced ticket number is confirmed to
+# subagent_type "worker" (or "worker-retry", the same worker on its one retry) is denied -- but
+# ONLY once the referenced ticket number is confirmed to
 # exist in queue/tickets.md. Sandboxed with mk_ws_stub plus a fixture tickets.md (#42, #50, #126,
 # #200, #955, #1004) so that fact check has something real to confirm; a number NOT in the
 # fixture proves the negative direction.
@@ -192,6 +193,14 @@ sid="ticketroute-isworker"; clear_counter "$sid"; clear_fanout "$sid"
 payload "worker" "You are fixing ticket #42. Open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
 out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
 assert_eq "$out" "" "3. a call that is ALREADY subagent_type worker passes untouched"
+clear_counter "$sid"; clear_fanout "$sid"
+
+# 3b. worker-retry is the worker on its one retry: a worker type, so the same exemption holds.
+# Before it was one, a retry fell to the deny below as "a stock subagent doing a worker's job".
+sid="ticketroute-isworkerretry"; clear_counter "$sid"; clear_fanout "$sid"
+payload "worker-retry" "You are fixing ticket #42. Open a PR when done." "$sid" "/tmp/fake-transcript.jsonl"
+out="$(env -u GOVERN_RUN bash "$GUARD" < "$PL" 2>&1)"
+assert_eq "$out" "" "3b. a call that is subagent_type worker-retry passes untouched: it is a worker type"
 clear_counter "$sid"; clear_fanout "$sid"
 
 # ── 4. a non-ticket Agent call is never denied ──────────────────────────────────────────────

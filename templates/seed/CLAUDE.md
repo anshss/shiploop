@@ -27,10 +27,17 @@
    | a `## #N` ticket exists, or the user names tickets | `Agent(subagent_type: "worker")`, one per ticket |
    | heavy but not ticket-shaped (investigation feeding an answer) | `Agent`, sized per the table below |
    | trivial | inline |
-   | a worker failed or parked | read its report, then re-dispatch with a corrected proposal or report to the operator; nothing retries or escalates on its own |
+   | a worker failed or parked | read its report, then re-dispatch with a corrected proposal as `Agent(subagent_type: "worker-retry")` (the same worker on the family's top model), or report to the operator; nothing retries or escalates on its own |
 
-   **Model is chosen at dispatch, by you.** The worker runs `sonnet` by default; when the work needs
-   more, raise it for that one dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`.
+   **Model is chosen at dispatch, by you.** How you choose it depends on whether the session runs
+   on a model profile (`SHIPLOOP_MODEL_PROFILE` in your environment):
+   - **No profile (a Claude session).** The worker runs `sonnet` by default; when the work needs
+     more, raise it for that one dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`.
+   - **A profile is active (any other model family).** Never pass `model` on a spawn and never
+     `--model`: the agent TYPE is the role, and the profile picks that family's model for the role
+     at spawn. A ticket is `subagent_type: "worker"`, its retry `"worker-retry"`, a single-fact
+     lookup `lookup`, an investigation `investigator`; `npm run govern:dispatch -- <N> [--role worker-retry]`
+     prints the call. Anything else you spawn inherits your own model.
    There is no automatic escalation and no field on a ticket for it: never size a ticket when
    filing one. For other children: `haiku` = mechanical/lookup · `sonnet` = search/investigate/standard
    edits · inherit only for judgment-heavy synthesis or final review.

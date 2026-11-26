@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.20.28 - 2026-11-26
+
+### Added
+
+**Model profiles and roles: shiploop's own spawns run on the launched family's models, by name, and a ticket records what it spent.**
+
+- One profile per model family, `scripts/lib/model-profiles/<family>.conf` (`glm.conf` and `claude.conf` ship; adding a family is adding one file): the session model, one model per shiploop role and the role ladder `TIER_ORDER`. `SHIPLOOP_MODEL_PROFILE=<family>` selects one. Unset, no profile is read and every path below behaves exactly as before.
+- The shiploop plugin carries a mod, `hooks/model-router.js`. Its `agent.spawn` hook hands each spawn the profile's model for its role, so an advisor running on another model family reaches that family's models by name instead of through Claude's slot aliases. The advisor never passes `model`: it picks a type, and the type is the role. An agent type the profile holds no role for, a resumed run and a fork are left alone and inherit the session's model. The mod needs Claude Code 2.1.287 or later and a session that has the plugin loaded (`/plugin install shiploop@shiploop`, or `claude --plugin-dir <a hub checkout>`); a session without it resolves models as it always did.
+- `worker-retry`: the worker on its one retry, the worker definition under another name, on the family's top model. With no profile it pins `opus`, the model a retry was dispatched with before.
+- Under a profile `npm run govern:dispatch` takes `--role <worker|worker-retry>` and refuses `--model` (an alias would name another family's model); the dispatch packet records `Role:`; `router-posture-guard.sh` writes the call's agent type into that line. `GOVERN_WORKER_ROLE` sets the default role.
+- `govern::model_rank` places a model by its first position on the profile's `TIER_ORDER`, and the session ceiling reads the same ladder, so "never spawn above your own tier" holds for the family without a Claude name anywhere.
+- A worker dispatched in-session now records its token usage per ticket. Its transcript is summed into the ticket-history row as `tokens`, `model` (what answered the last request), `usageByModel` (the same figures per model) and `agentIds`; a first attempt and a retry both count. `costUsd` stays null for such a row: a transcript carries no price.
+- `tools/model-router-probe.sh` runs a real `claude -p` session against a loopback stand-in endpoint and prints the model each request carried on the wire. No model is called. It is the one check that sees the engine's real event shape; run it after touching the mod, the profiles or the agent definitions, and after a Claude Code update.
+- `CONFIGURATION.md` documents `SHIPLOOP_MODEL_PROFILE`, `GOVERN_MODEL_PROFILE_DIR` and `GOVERN_WORKER_ROLE`, and the profile format.
+
+Validation: the full govern suite against a freshly scaffolded workspace; `claude plugin validate` and `claude plugin test` on Claude Code 2.1.296; `tools/model-router-probe.sh` PASS for `worker`, `worker-retry`, `investigator` and `lookup` on the `glm` profile and `lookup` on the `claude` profile, with the no-profile control running each spawn on its definition's model.
+
 ## 1.20.27 - 2026-11-25
 
 ### Fixed
