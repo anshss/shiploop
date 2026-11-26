@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.20.30 - 2026-11-27
+
+### Added
+
+**A launcher installer wires a model family into Claude Code on any machine, from its profile.**
+
+- `tools/launcher-setup.sh <family>`, run from a hub checkout, writes what had to be written by hand on each machine: `~/.claude/settings-<family>.json` (a `modelPicker` row per `PICKER` id with a label derived from the id and `replaceBuiltInOptions: true`, plus an `autoCompactWindow` per bare id when the profile has `WINDOW`), `~/.shiploop/launchers/<family>.conf` (created only when absent, mode 600, `BASE_URL` and `AUTH_TOKEN` as placeholders; never read, printed or overwritten) and one marked block in `$SHELL_RC` (default `~/.zshrc`) defining `<family>()`. Re-running regenerates the settings file and replaces only the block, in place, keeping the rc's inode and mode, so a symlinked rc stays a symlink. The row's description names the highest `TIER_ORDER` role that runs the id, or says that no shiploop role does.
+- `<family>()` runs in a subshell, refuses to launch while either conf value is still a placeholder (naming the file, never its contents), and otherwise exports the endpoint, the token, `API_TIMEOUT_MS`, the three slot aliases from `ROLE_advisor`, `ROLE_investigator` and `ROLE_worker`, `SHIPLOOP_MODEL_PROFILE`, the two context window exports when `WINDOW` is set, then runs `claude --settings <file> --plugin-dir <hub checkout> "$@"`. A `claude()` wrapper already in the rc still runs; the `claude` family goes through `command claude` so its function does not call itself.
+- `glm.conf` gains `WINDOW="1000000"`. `claude.conf` carries no `WINDOW`: Claude Code meters its own model names, so that launcher sets no window and its settings file has no `modelSettings` block.
+- A run is validated before anything is written: an unknown family, a profile without the three slot roles, a `WINDOW` that is not a whole number, an id that is not a plain model name, or rc markers that are missing on one side, duplicated or out of order leaves every file untouched. One finding does not block: a `<family>()` defined outside the block draws a single warning.
+- `GOVERN_MODEL_PROFILE_DIR` redirects the installer's profile lookup as well.
+- `CONFIGURATION.md` documents `WINDOW` and the installer.
+
+Validation: `templates/govern/test/test-launcher-setup.sh`, listed in `tools/hub-context-tests.txt`, covers a fresh install, the byte-exact settings file, byte-identical re-runs, the rc outside the block, in-place replacement beside a sibling family's block, a missing final newline and a symlinked rc's inode, a pre-populated conf kept byte for byte and never printed, the WINDOW-less branch on the shipped `claude.conf` and on a fixture profile, every refusal, and the launcher's refuse and launch paths under bash and zsh against a stub `claude`, all in a fixture HOME. `tools/run-suite.sh` from the hub checkout: 213 passed, 0 failed, 0 skipped, order check clean. Against a freshly scaffolded workspace: 189 passed, 0 failed, 24 skipped (the hub-context list), order check clean; the 24 hub-context tests ok run one by one as CI runs them. The installer and its test also pass under macOS's stock bash 3.2. `tools/check-version-consistency.sh`, `tools/check-manifests.sh` and `tools/check-release-parity.sh --pre`: ok. `claude plugin validate .` and `claude plugin test` on Claude Code 2.1.296. No model endpoint was called, and the installer was never run against a real HOME.
+
 ## 1.20.29 - 2026-11-26
 
 ### Fixed

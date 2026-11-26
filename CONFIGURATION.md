@@ -12,7 +12,7 @@ fresh install is inert until you opt in.
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model govern's other headless `claude` dispatches (sync porter) launch is clamped to `max(opus, the model of the session that spawned it)`: only a session above opus may spawn above opus, and never above itself. The worker subagent is not clamped by this: its model is the `model:` in `.claude/agents/worker.md` (`sonnet`) unless the advisor raises it per dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`. `0` disables the clamp |
 | `SHIPLOOP_MODEL_PROFILE` | unset | The model family the session runs on, as the name of a `scripts/lib/model-profiles/<family>.conf` file (`glm`, `claude`). Set, shiploop speaks roles: the agent type is the role and the plugin's model-router mod gives each spawn the family's model for it; `govern:dispatch` takes `--role` and refuses `--model`; the packet records `Role:`; the model ceiling reads the profile's `TIER_ORDER`. Unset, no profile is read and every one of those paths behaves as before. A launcher exports it; never put it in a `settings.json` `env` block for one workspace only |
-| `GOVERN_MODEL_PROFILE_DIR` | empty | Where `<family>.conf` files live. Empty: the workspace's `scripts/lib/model-profiles/`, then the hub's `templates/lib/model-profiles/`. Mainly a seam for tests and for a launcher keeping profiles outside any workspace |
+| `GOVERN_MODEL_PROFILE_DIR` | empty | Where `<family>.conf` files live. Empty: the workspace's `scripts/lib/model-profiles/`, then the hub's `templates/lib/model-profiles/`. Mainly a seam for tests and for a launcher keeping profiles outside any workspace; `tools/launcher-setup.sh` honors it too |
 | `GOVERN_WORKER_ROLE` | `worker` | Under a profile, the role `govern:dispatch` dispatches unless `--role` says otherwise (`worker` or `worker-retry`). Ignored with no profile active |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |
 | `GOVERN_STALENESS_RUN_TESTS` | `0` (off) | On top of the staleness check, also execute a test command read out of `tickets.md`. A separate opt-in on purpose: the queue is partly machine-written, and a stat() is not a `bash -c` |
@@ -153,11 +153,12 @@ shiploop's own spawns. It is one data file per family, `scripts/lib/model-profil
 | Key | Holds |
 |---|---|
 | `SESSION_MODEL` | What `claude --model` gets for the advisor's own session |
-| `PICKER` | The `/model` lineup, highest first, `\|-separated` (a launcher renders it into a `modelPicker` settings file; shiploop does not read it) |
+| `PICKER` | The `/model` lineup, highest first, `\|-separated`. `tools/launcher-setup.sh` renders it into the `modelPicker` settings file the launcher starts Claude Code with (see **Launching a family** below); nothing else reads it |
+| `WINDOW` | Optional. The context window every id in the family serves, in tokens. Set, the launcher exports it as `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the settings file gives each bare id that `autoCompactWindow`; Claude Code knows the window only of its own model names, so without it a bare `glm-*` id is metered against 200k and compacts early. Left out (the shipped `claude.conf`), the launcher sets no window and the settings file carries none |
 | `ROLE_<role>` | One model per shiploop role: `advisor`, `worker`, `worker_retry`, `investigator`, `lookup`. The key is the agent type with dashes taken as underscores |
 | `TIER_ORDER` | The roles highest first: the family's tier ladder |
 
-The launcher selects one with `SHIPLOOP_MODEL_PROFILE=<family>`. With it set:
+A launcher selects one with `SHIPLOOP_MODEL_PROFILE=<family>` (the installer below writes one; a hand-written launcher works the same). With it set:
 
 - **The router.** The shiploop plugin carries a mod (`hooks/model-router.js`) whose `agent.spawn`
   hook reads the profile and hands each spawn the model for its role. The advisor never passes
@@ -176,3 +177,40 @@ The launcher selects one with `SHIPLOOP_MODEL_PROFILE=<family>`. With it set:
 With `SHIPLOOP_MODEL_PROFILE` unset no profile is read: the router returns every spawn unchanged,
 the definitions' own `model:` lines apply, `--model` works as above, and the Claude ladder is the
 whole ladder. The same workspace therefore runs on Claude with no per-workspace change.
+
+### Launching a family: the launcher installer
+
+The profiles say which models a family runs. Making Claude Code run on one took hand edits on each
+machine: a `<family>()` function in the shell rc and a `~/.claude/settings-<family>.json`, both
+written by hand and rediscovered per machine. `tools/launcher-setup.sh <family>`, run from a hub
+checkout (`bash tools/launcher-setup.sh glm`), writes that wiring from the profile, so the same
+family is wired the same way on any machine. It writes three things and nothing else:
+
+| Writes | What |
+|---|---|
+| `~/.claude/settings-<family>.json` | Regenerated on every run, byte for byte the same for the same profile: a `modelPicker` row per `PICKER` id, `replaceBuiltInOptions: true`, and with `WINDOW` set an `autoCompactWindow` per bare id. The label is derived from the id (`glm-5.3-flash[1m]` is "GLM 5.3 Flash"); the description names the highest `TIER_ORDER` role that runs the id ("Advisor tier"), or says that no shiploop role does |
+| `~/.shiploop/launchers/<family>.conf` | Created only when absent, mode 600, holding `BASE_URL`, `AUTH_TOKEN` and `API_TIMEOUT_MS` as placeholders. The installer never reads, prints or overwrites it: fill the two values in by hand |
+| `$SHELL_RC` (default `~/.zshrc`) | One marked block, `# >>> shiploop launcher (<family>) >>>` to `# <<< shiploop launcher (<family>) <<<`, defining `<family>()`. Re-running replaces the block in place; nothing outside the markers is touched, and the file keeps its inode and mode, so a symlinked rc stays a symlink |
+
+`<family>()` opens a subshell, reads the conf, and refuses to launch while `BASE_URL` or
+`AUTH_TOKEN` is still a placeholder (it names the file, never its contents). Otherwise it exports
+the endpoint and the token, `API_TIMEOUT_MS`, the three slot aliases
+(`ANTHROPIC_DEFAULT_OPUS_MODEL` is `ROLE_advisor`, `ANTHROPIC_DEFAULT_SONNET_MODEL` is
+`ROLE_investigator`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` is `ROLE_worker`) and
+`SHIPLOOP_MODEL_PROFILE=<family>`, with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` too when the profile has `WINDOW`, then runs
+`claude --settings ~/.claude/settings-<family>.json --plugin-dir <hub checkout> "$@"`. None of it
+reaches the calling shell. Because the plugin is loaded only through the launcher, its model-router
+mod maps shiploop spawns to the family's models in a launched session and leaves a plain `claude`
+session alone.
+
+A run is validated before anything is written. An unknown family, a profile without
+`ROLE_advisor`, `ROLE_investigator` or `ROLE_worker`, a `WINDOW` that is not a whole number, an id
+that is not a plain model name, or an rc whose markers are missing on one side, duplicated, or out
+of order, leaves every file untouched. One finding does not block: a `<family>()` defined outside
+the block, which shadows it or is shadowed by it depending on order. Remove that definition.
+
+The hub checkout's path is resolved at install time, so after moving or re-cloning the hub, run the
+installer again. The block calls `claude` by name, so a `claude()` wrapper already in the rc still
+runs; the `claude` family's own function is the one exception and goes through `command claude`, or
+it would call itself.
