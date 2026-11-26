@@ -58,7 +58,7 @@ const fire = async (h, env, event, files = {}, cwd = '/ws') => {
 }
 const register = () => { const handlers = {}; mod.register((name, m, fn) => { handlers[name] = typeof m === 'function' ? m : fn }); return handlers }
 
-const GLM = ['ROLE_worker="glm-5.3-flash[1m]"', 'ROLE_worker_retry="glm-5.4[1m]"', 'ROLE_investigator="glm-5.3"',
+const GLM = ['ROLE_worker="glm-5.3-flash[1m]"', 'ROLE_worker_retry="glm-5.4[1m]"', 'ROLE_investigator="glm-5.4[1m]"',
   'ROLE_lookup="glm-5.3-flash[1m]"', 'TIER_ORDER="advisor worker_retry investigator worker lookup"'].join('\n')
 const WS = '/ws/scripts/lib/model-profiles/glm.conf'
 const PLUGIN = '/plugin/templates/lib/model-profiles/glm.conf'
@@ -111,7 +111,7 @@ field() { printf '%s\n' "$got" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit 
 assert_eq "$(field registered)" "" "0. the module registers exactly one hook, on agent.spawn"
 assert_eq "$(field role.worker)" "glm-5.3-flash[1m]" "1. worker gets the profile's ROLE_worker"
 assert_eq "$(field role.worker-retry)" "glm-5.4[1m]" "1. worker-retry gets ROLE_worker_retry (dash read as underscore)"
-assert_eq "$(field role.investigator)" "glm-5.3" "1. investigator gets ROLE_investigator"
+assert_eq "$(field role.investigator)" "glm-5.4[1m]" "1. investigator gets ROLE_investigator"
 assert_eq "$(field role.lookup)" "glm-5.3-flash[1m]" "1. lookup gets ROLE_lookup, [1m] suffix intact"
 assert_eq "$(field call-model-replaced)" "glm-5.3-flash[1m]" "2. the profile model replaces a model the call passed"
 assert_eq "$(field unknown.general-purpose)" "passthrough" "3. general-purpose is not a role: the same event object goes on"

@@ -9,7 +9,7 @@ const PROFILE = [
   'ROLE_advisor="glm-5.4[1m]"',
   'ROLE_worker="glm-5.3-flash[1m]"',
   'ROLE_worker_retry="glm-5.4[1m]"',
-  'ROLE_investigator="glm-5.3"',
+  'ROLE_investigator="glm-5.4[1m]"',
   'ROLE_lookup="glm-5.3-flash[1m]"',
   'TIER_ORDER="advisor worker_retry investigator worker lookup"',
 ].join('\n')
@@ -47,7 +47,7 @@ test('a shiploop role gets the profile model for that role', async ($, on) => {
 
   expect((await spawn($, 'worker')).model).toBe('glm-5.3-flash[1m]')
   expect((await spawn($, 'worker-retry')).model).toBe('glm-5.4[1m]')
-  expect((await spawn($, 'investigator')).model).toBe('glm-5.3')
+  expect((await spawn($, 'investigator')).model).toBe('glm-5.4[1m]')
   expect((await spawn($, 'lookup')).model).toBe('glm-5.3-flash[1m]')
 })
 

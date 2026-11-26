@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.20.29 - 2026-11-26
+
+### Fixed
+
+**The GLM profile carries the 1M context suffix on every id, and the investigator leaves glm-5.3.**
+
+- `glm.conf`: `PICKER` listed a bare `glm-5.3` between two suffixed entries and `ROLE_investigator` was the same bare id. The CLI meters a bare id against a 200k window and auto-compacts there, so an investigator spawned on it compacted early on a model that serves 1M. The `PICKER` entry is now `glm-5.3[1m]`, and every id in the file carries `[1m]`.
+- `ROLE_investigator` is `glm-5.4[1m]`. On the z.ai coding plan glm-5.3 deducts more credits per token than glm-5.4 (6.9 / 1.7 / 24 against 4.6 / 1.1 / 16 per 10k input, cached and output tokens) while being the weaker model, so no role names it. The investigator now shares the top model with `advisor` and `worker-retry` and ranks on the ladder's top tier, as `worker-retry` already did.
+- `claude.conf` is unchanged: Opus 5.5, Sonnet 5.5 and Haiku 5.5 each serve a 1M window on their bare id.
+- `test-model-router.sh` and `hooks/model-router.test.ts` pin the investigator's new model.
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated. The regeneration also records the 1.20.28 blobs of six files under the retired `scripts/govern/test/` path: that section of the manifest is read from committed history, so the run made before the 1.20.28 commit could not see them.
+
+Validation: the full govern suite against a freshly scaffolded workspace (189 passed, 0 failed, 23 skipped, order check clean), and the 23 hub-context tests run from the checkout, all ok; `claude plugin validate .` and `claude plugin test` on Claude Code 2.1.296; `tools/model-router-probe.sh` PASS for `investigator`, `worker`, `worker-retry` and `lookup` on the `glm` profile, with the spawned investigator's transcript recording `requestedModel=glm-5.4[1m]`.
+
 ## 1.20.28 - 2026-11-26
 
 ### Added
