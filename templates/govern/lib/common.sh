@@ -3622,7 +3622,75 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
   echo "${total:-0}"
 }
 
+# ── model profiles ──────────────────────────────────────────────────────────────────────────────
+# One file per model family (scripts/lib/model-profiles/<family>.conf), holding that family's
+# session model, one model per shiploop role, and the role ladder TIER_ORDER. SHIPLOOP_MODEL_PROFILE
+# names the active family; with it unset there is no active profile, every reader below answers
+# "", and every consumer falls through to the Claude defaults it had before profiles existed.
+#
+# A profile is DATA, never sourced: the model-router mod parses the same file with its own parser,
+# so the format is kept to plain KEY=value lines, an optional pair of double quotes around the
+# value, and # comments. Nothing here expands a value or runs one.
+GOVERN_MODEL_PROFILE_DIR="${GOVERN_MODEL_PROFILE_DIR:-}"   # override for where <family>.conf files live (default: beside the mechanism libs)
+
+govern::model_profile_dir() { # -> the directory holding the profiles, absolute, or "" when none exists
+  local d
+  for d in "$GOVERN_MODEL_PROFILE_DIR" "$WS_ROOT/scripts/lib/model-profiles" "$GOVERN_LIB_DIR/../lib/model-profiles"; do
+    [[ -n "$d" && -d "$d" ]] || continue
+    (cd "$d" && pwd)
+    return 0
+  done
+  return 0
+}
+
+# The profile name becomes a path segment, so it must be a plain name. Anything else (a separator,
+# a space, an empty string) reads as "no profile active" exactly as an unset variable does.
+govern::model_profile_name() { # -> the active family's name, or "" when none is active
+  local name="${SHIPLOOP_MODEL_PROFILE:-}"
+  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo ""; return 0; }
+  printf '%s' "$name"
+  return 0
+}
+
+govern::model_profile_file() { # -> path of the active profile, or "" when none is active or the file is missing
+  local name dir
+  name="$(govern::model_profile_name)"
+  [[ -n "$name" ]] || { echo ""; return 0; }
+  dir="$(govern::model_profile_dir)"
+  [[ -n "$dir" && -f "$dir/$name.conf" ]] || { echo ""; return 0; }
+  printf '%s' "$dir/$name.conf"
+  return 0
+}
+
+# An empty answer means "no active profile, no such key, or the key's value is empty"; callers
+# treat all three as unset. Never fails: every caller runs under `set -euo pipefail` inside a
+# command substitution, where a nonzero status would abort the caller for the sake of a lookup.
+govern::model_profile_get() { # <KEY> -> its value in the active profile, "" when unset
+  local key="${1:-}" f
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo ""; return 0; }
+  f="$(govern::model_profile_file)"
+  [[ -n "$f" ]] || { echo ""; return 0; }
+  sed -n -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*(.*)\$/\1/p" "$f" 2>/dev/null \
+    | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/' | sed -n '1p'
+  return 0
+}
+
+# The model a shiploop role runs on under the active profile: its ROLE_<role> value. The role is
+# an agent type with dashes taken as underscores, the same key the model-router mod derives from
+# the spawn's type, so a packet, a guard and the router all read one line of one file.
+govern::model_profile_role() { # <role> -> the profile's model for it, "" when no profile or no such role
+  local role="${1:-}"
+  role="$(printf '%s' "$role" | tr '-' '_')"
+  govern::model_profile_get "ROLE_${role}"
+}
+
 # ── model ladder, session ceiling, and the clamp ────────────────────────────────────────────────
+# Under an active model profile the ladder is the profile's TIER_ORDER: a model's rank is the
+# position of the first role on that list whose ROLE_ value it is, so the list reads highest first
+# and two roles on one model share a rank. A model the profile does not place falls through to the
+# Claude ladder below, so an alias someone passes by habit still ranks sensibly. With no profile
+# active nothing here runs and the Claude ladder is the whole ladder, as before.
+#
 # The ladder used to be three bare aliases (haiku/sonnet/opus) because that was the entire tier set
 # the harness could dispatch at. It now has to compare a bare alias against a FULL model id, because
 # the ceiling below is derived from the SPAWNING SESSION's model, which arrives as an id
@@ -3641,9 +3709,20 @@ govern::cumulative_tokens() { # worker-jsonl -> integer token total so far (0 if
 # only which family the caller meant. The old haiku<sonnet<opus ordering is preserved exactly, so
 # every existing govern::model_max caller is unaffected.
 govern::model_rank() { # model alias OR full model id -> total-ordered int (0 = unknown/unrankable)
-  local m fam base rest major minor
+  local m fam base rest major minor idx role rm
   m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   m="${m%%\[*}"                       # claude-opus-5[1m] -> claude-opus-5
+  # The profile ladder, highest first: rank (100 - position) * 10000, so every profile tier sits
+  # a whole "family" step apart and all of them outrank any Claude name the fallback would rank.
+  if [[ -n "${SHIPLOOP_MODEL_PROFILE:-}" ]]; then
+    idx=0
+    for role in $(govern::model_profile_get TIER_ORDER); do
+      rm="$(govern::model_profile_get "ROLE_$role" | tr '[:upper:]' '[:lower:]')"
+      rm="${rm%%\[*}"
+      if [[ -n "$rm" && "$rm" == "$m" ]]; then echo "$(( (100 - idx) * 10000 ))"; return 0; fi
+      idx=$((idx + 1))
+    done
+  fi
   case "$m" in
     *haiku*)  fam=haiku;  base=1 ;;
     *sonnet*) fam=sonnet; base=2 ;;
@@ -3742,8 +3821,20 @@ govern::model_ceiling() { # -> "opus", or the session model verbatim when its FA
   # on its family's floor), but it is still the opus family and must yield the canonical `opus`. The
   # ceiling handed to --model stays a plain tier name for everything at or below opus, and only a
   # session in a family ABOVE opus reports itself verbatim.
-  local sm fam_sm fam_opus
+  local sm fam_sm fam_opus top ladder
   sm="$(govern::session_model)"
+  # Under an active profile the ceiling is the session's own place on the profile's ladder, and an
+  # undetectable session gets that ladder's top: "never spawn above your own tier" reads the tier
+  # off TIER_ORDER, with no Claude name to fall back on. A profile whose file is missing has no
+  # ladder, and the Claude ceiling below applies as though none were named.
+  if [[ -n "${SHIPLOOP_MODEL_PROFILE:-}" ]]; then
+    ladder="$(govern::model_profile_get TIER_ORDER)"
+    top="$(govern::model_profile_get "ROLE_${ladder%% *}")"
+    if [[ -n "$top" ]]; then
+      if [[ "$(govern::model_rank "$sm")" -gt 0 ]]; then printf '%s' "$sm"; else printf '%s' "$top"; fi
+      return 0
+    fi
+  fi
   fam_sm="$(( $(govern::model_rank "$sm") / 10000 ))"
   fam_opus="$(( $(govern::model_rank opus) / 10000 ))"
   if [[ "$fam_sm" -gt "$fam_opus" ]]; then printf '%s' "$sm"; else printf 'opus'; fi
