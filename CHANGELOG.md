@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.20.31 - 2026-11-27
+
+### Fixed
+
+**`govern::subagent_usage` names the model of the chronologically last request, not the one whose message id sorts last.**
+
+- The function groups a worker transcript's assistant lines by `message.id` (one API response is several lines) and read `model` from the last group `group_by` yielded. `group_by` orders its groups by the key, so on a transcript whose ids did not sort in the order they were written, `model` was the response whose id sorted last, not the last request the function's own contract names. Two-line repro: `msg_z_early` on model-EARLY written first, `msg_a_late` on model-LATE written second, and the function returned model-EARLY.
+- `model` is now read from the response placed last by its `timestamp` when the transcript carries one (the ISO-8601 parse `status.sh` already applies, fractional seconds accepted), else by its place in the file. A stamped response always beats an unstamped one, so a partly stamped transcript is still decided by the stamps it has, and a timestamp that does not parse is no timestamp: the line keeps its place and its tokens (`try/catch`, where jq's `?` would have dropped the whole object and undercounted). A response's model is taken from its last line, the one that carries the usage.
+- Token totals, `usageByModel` and the `none` shape are unchanged: on three fixture transcripts shaped like real ones (26 responses, chronologically sorted ids, multi-line responses with the usage on the last line, two sessions switching models mid-run) the output is byte-identical before and after.
+- `templates/govern/test/test-subagent-usage.sh` gains section 10: the repro above (which fails on the previous function with exactly `model-EARLY`), a stamp-decided case that contradicts both file order and id order, a stamped-over-unstamped case, and the unparseable-timestamp fallback.
+- VERSION, both manifests and CHANGELOG bumped; `mechanism-hashes.txt` regenerated (the regeneration also records three blobs the 1.20.30 run could not see in history yet: its own `common.sh`, and `test-model-router.sh` and `test-launcher-setup.sh` under the retired `scripts/govern/test/` path).
+
+Validation: `tools/run-suite.sh --suite-dir templates/govern/test --hub-context tools/hub-context-tests.txt` from the hub checkout: 213 passed, 0 failed, 0 skipped, order check clean (the same selection reversed gives every verdict identical). `test-subagent-usage.sh` run against the previous `common.sh` fails section 10 with exactly `expected model-LATE, actual model-EARLY`, and passes against this one. The three-fixture before/after comparison ran through `govern::subagent_usage` sourced the way the test sources it. No model endpoint was called.
+
 ## 1.20.30 - 2026-11-27
 
 ### Added

@@ -3339,6 +3339,12 @@ govern::stream_usage() { # worker-jsonl -> usage JSON
 # raw happens to give the same total while the zeros stay zeros, and stops the moment a line
 # repeats a nonzero figure; grouping does not depend on that.
 #
+# "The last request" is the chronologically last response, NOT the last group group_by yields:
+# group_by(.id) orders groups by message id, and ids need not sort in the order they were written.
+# Each response is placed by its timestamp when the transcript carries one (ISO-8601, the same
+# parse govern-status applies), else by its place in the file; a stamped response always beats an
+# unstamped one, so a partly stamped transcript is still decided by the stamps it has.
+#
 # Output shape, matching govern::stream_usage beside it: {tokens:{input,output,cacheRead,
 # cacheCreation,total}|null, costUsd:null, model:<what answered the last request>|null,
 # usageByModel:{<model>:{input,output,cacheRead,cacheCreation,total}}, usageSource:"subagent"|"none"}.
@@ -3352,23 +3358,30 @@ govern::subagent_usage() { # <agent-jsonl> -> usage JSON
     # worker.jsonl: a transcript reopened mid-write can carry a hole too.
     out="$( { LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | LC_ALL=C grep -a . || true; } \
       | jq -Rc -s '
+        # A stamp that does not parse is no stamp: try/catch keeps the line (and its tokens),
+        # where the ? operator would drop the whole object on the error.
+        def epoch: sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null;
         [ split("\n")[]
           | fromjson?
           | select(.type == "assistant")
-          | .message
-          | select(.usage != null)
-          | { id: (.id // ""),
-              model: (.model // "unknown"),
-              i: (.usage.input_tokens // 0),
-              o: (.usage.output_tokens // 0),
-              r: (.usage.cache_read_input_tokens // 0),
-              c: (.usage.cache_creation_input_tokens // 0) } ] as $m
+          | select(.message.usage != null)
+          | { id: (.message.id // ""),
+              model: (.message.model // "unknown"),
+              ts: (if .timestamp == null then null else (.timestamp | epoch) end),
+              i: (.message.usage.input_tokens // 0),
+              o: (.message.usage.output_tokens // 0),
+              r: (.message.usage.cache_read_input_tokens // 0),
+              c: (.message.usage.cache_creation_input_tokens // 0) } ] as $m
         # A line with no message id gets one of its own, so it never merges into another response.
+        # seq is its place in the file, the fallback order when the transcript carries no timestamps.
         | [ $m | to_entries[]
-            | .value + { id: (if .value.id == "" then "line-\(.key)" else .value.id end) } ] as $lines
-        # One response, several lines: per field, the largest figure any of its lines carries.
+            | .value + { seq: .key,
+                         id: (if .value.id == "" then "line-\(.key)" else .value.id end) } ] as $lines
+        # One response, several lines: per field, the largest figure any of its lines carries, and
+        # the place of its latest line.
         | [ $lines | group_by(.id)[]
-            | { model: .[0].model, i: (map(.i) | max), o: (map(.o) | max), r: (map(.r) | max), c: (map(.c) | max) } ] as $reqs
+            | { model: (last | .model), ts: (map(.ts) | max), seq: (map(.seq) | max),
+                i: (map(.i) | max), o: (map(.o) | max), r: (map(.r) | max), c: (map(.c) | max) } ] as $reqs
         | [ $reqs | group_by(.model)[]
             | { key: .[0].model,
                 value: { input: (map(.i) | add), output: (map(.o) | add),
@@ -3380,7 +3393,7 @@ govern::subagent_usage() { # <agent-jsonl> -> usage JSON
             { tokens: { input: ($reqs | map(.i) | add), output: ($reqs | map(.o) | add),
                         cacheRead: ($reqs | map(.r) | add), cacheCreation: ($reqs | map(.c) | add),
                         total: (($reqs | map(.i) | add) + ($reqs | map(.o) | add) + ($reqs | map(.r) | add) + ($reqs | map(.c) | add)) },
-              costUsd: null, model: ($reqs | last | .model), usageByModel: $by, usageSource: "subagent" }
+              costUsd: null, model: ($reqs | max_by([.ts, .seq]) | .model), usageByModel: $by, usageSource: "subagent" }
           end' 2>&1)" || out=""
     # A jq that fails prints its error instead of JSON; that is "unreadable", never a wrong figure.
     [[ "$out" == \{* ]] || out=""
