@@ -83,6 +83,15 @@ scripts own that list, read `pre-dispatch-check.sh` rather than a copy of it her
 verdict and the exact `Agent` call. The model is the advisor's per-dispatch choice, `sonnet` unless
 raised; nothing escalates it automatically. `npm run govern:status` shows what is running.
 
+**Roles under a model profile.** A session launched on another model family sets
+`SHIPLOOP_MODEL_PROFILE=<family>`. Shiploop then speaks roles, not model names: `worker` is a
+ticket's first attempt, `worker-retry` (the same definition under another name) its retry,
+`lookup` and `investigator` the read-only children, and the plugin's model-router mod gives each
+spawn the family's model for its role at spawn. The profile is one file per family,
+`scripts/lib/model-profiles/<family>.conf`, holding one model per role and the role ladder. With
+the variable unset no profile is read: the definitions' own `model:` lines apply and `--model`
+works as above. A type the profile holds no role for is left alone and inherits the session's model.
+
 Anything else you spawn with the `Agent` tool is a **subagent**, never a worker. The distinction is
 load-bearing rather than cosmetic: `worker` is a literal string in the call, so a routing rule that
 says "worker" cannot be satisfied by a generic spawn that merely feels worker-like.

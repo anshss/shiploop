@@ -43,6 +43,12 @@ export _GOVERN_ASSUME_MERGE_ALLOWED=1
 # a governor session: the precedent the dispatch-path mechanisms below follow.
 unset GOVERN_FIX_CI
 
+# Same hermetic-input rule for the one non-GOVERN knob the dispatch path reads. A session launched
+# with a model profile exports SHIPLOOP_MODEL_PROFILE, and inheriting it would turn every
+# profile-unset fixture (which is the whole suite) into a profile-set one: packets would carry Role
+# lines instead of Model lines and --model would be refused. Tests that need a profile set it.
+unset SHIPLOOP_MODEL_PROFILE
+
 # Hermetic sizing: a scout pass would run a REAL `claude -p` on the dispatch path, so leaving this on
 # would (a) make every dispatch test issue an implicit model call and (b) burn one invocation of the
 # stubbed `claude` these tests script per-attempt — shifting a "attempt 1 drops, attempt 2 resolves"

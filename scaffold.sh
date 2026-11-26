@@ -139,6 +139,12 @@ mechanism_map() {
       done
       for s in session-state preflight githooks install-semaphore run-probe; do
         printf 'lib/%s.sh\tscripts/lib/%s.sh\n' "$s" "$s"
+      done
+      # Model profiles: one <family>.conf per model family, read by the govern scripts and by the
+      # model-router mod. Data, not scripts, but installed and hash-tracked the same way so
+      # /shiploop:update refreshes them and a locally edited one is kept.
+      for f in "$T"/lib/model-profiles/*.conf; do
+        [ -f "$f" ] && printf 'lib/model-profiles/%s\tscripts/lib/model-profiles/%s\n' "$(basename "$f")" "$(basename "$f")"
       done ;;
     worktrees)
       for s in new rm reap status exec main session-end-cleanup; do
@@ -403,13 +409,14 @@ KEPT_SUMMARY=""    # one pre-formatted line per component
 mechanism_state() {
   local template="$1" dest="$2" rel="$3" probe="$2" norm="" st
   if [ ! -e "$dest" ]; then echo absent; return 0; fi
-  # worker.md carries an operator-chosen maxTurns written by component_agents: compare it with
-  # that one line set to the template's value, so the rewrite alone never reads as a local edit.
-  if [ "$rel" = ".claude/agents/worker.md" ]; then
+  # worker.md and worker-retry.md carry an operator-chosen maxTurns written by component_agents:
+  # compare them with that one line set to the template's value, so the rewrite alone never reads
+  # as a local edit.
+  case "$rel" in .claude/agents/worker.md|.claude/agents/worker-retry.md)
     norm="$(mktemp)"
     sed "s/^maxTurns: .*/$(grep -m1 '^maxTurns: ' "$template" || echo 'maxTurns: 150')/" "$dest" > "$norm"
     probe="$norm"
-  fi
+  esac
   if cmp -s "$probe" "$template"; then st=identical
   elif mechanism_pristine "$probe" "$rel"; then st=pristine
   else st=local
@@ -564,15 +571,19 @@ component_agents() {
   log "component: shipped subagent definitions (.claude/agents/)"
   mkdir -p .claude/agents
   mechanism_install_component agents
-  # worker.md's maxTurns is a plain frontmatter value, not a template placeholder -- rewrite it
-  # in place only when the operator asked for something other than the shipped default, so a diff
-  # against the template stays empty for every install that never touched the flag.
-  if [ -f .claude/agents/worker.md ] && [ "$WORKER_MAX_TURNS" != "150" ]; then
+  # The worker definitions' maxTurns is a plain frontmatter value, not a template placeholder --
+  # rewrite it in place only when the operator asked for something other than the shipped default,
+  # so a diff against the template stays empty for every install that never touched the flag.
+  # worker-retry.md is the worker on its one retry and keeps the same turn budget.
+  if [ "$WORKER_MAX_TURNS" != "150" ]; then
     case "$WORKER_MAX_TURNS" in
       *[!0-9]*|"") die "--worker-max-turns must be a positive integer (got: $WORKER_MAX_TURNS)" ;;
     esac
-    sed -i.bak "s/^maxTurns: .*/maxTurns: $WORKER_MAX_TURNS/" .claude/agents/worker.md && rm -f .claude/agents/worker.md.bak
-    info "worker.md maxTurns set to $WORKER_MAX_TURNS (--worker-max-turns)"
+    for wdef in worker worker-retry; do
+      [ -f ".claude/agents/$wdef.md" ] || continue
+      sed -i.bak "s/^maxTurns: .*/maxTurns: $WORKER_MAX_TURNS/" ".claude/agents/$wdef.md" && rm -f ".claude/agents/$wdef.md.bak"
+      info "$wdef.md maxTurns set to $WORKER_MAX_TURNS (--worker-max-turns)"
+    done
   fi
   info "installed .claude/agents/"
 }

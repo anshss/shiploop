@@ -11,6 +11,9 @@ fresh install is inert until you opt in.
 | `GOVERN_KEEP_BLOCK_UNTIL_MERGE` | `0` (off) | A PR left open by `GOVERN_AUTONOMY` observe/pr-only keeps its ticket block: resolve reports the PR as still unmerged and lands nothing until a resolve after the merge |
 | `GOVERN_MERGE_REPOS` | empty | Per-repo auto-merge allowlist (requires `auto`) |
 | `GOVERN_MODEL_CEILING` | `1` (on) | Session ceiling: every model govern's other headless `claude` dispatches (sync porter) launch is clamped to `max(opus, the model of the session that spawned it)`: only a session above opus may spawn above opus, and never above itself. The worker subagent is not clamped by this: its model is the `model:` in `.claude/agents/worker.md` (`sonnet`) unless the advisor raises it per dispatch with `npm run govern:dispatch -- <N> --model <haiku|sonnet|opus>`. `0` disables the clamp |
+| `SHIPLOOP_MODEL_PROFILE` | unset | The model family the session runs on, as the name of a `scripts/lib/model-profiles/<family>.conf` file (`glm`, `claude`). Set, shiploop speaks roles: the agent type is the role and the plugin's model-router mod gives each spawn the family's model for it; `govern:dispatch` takes `--role` and refuses `--model`; the packet records `Role:`; the model ceiling reads the profile's `TIER_ORDER`. Unset, no profile is read and every one of those paths behaves as before. A launcher exports it; never put it in a `settings.json` `env` block for one workspace only |
+| `GOVERN_MODEL_PROFILE_DIR` | empty | Where `<family>.conf` files live. Empty: the workspace's `scripts/lib/model-profiles/`, then the hub's `templates/lib/model-profiles/`. Mainly a seam for tests and for a launcher keeping profiles outside any workspace |
+| `GOVERN_WORKER_ROLE` | `worker` | Under a profile, the role `govern:dispatch` dispatches unless `--role` says otherwise (`worker` or `worker-retry`). Ignored with no profile active |
 | `GOVERN_STALENESS_GATE` | `0` (off) | Skip a ticket before dispatch if its named paths are gone from the tree. Fail-open: it only acts on positive evidence, never on absence of evidence |
 | `GOVERN_STALENESS_RUN_TESTS` | `0` (off) | On top of the staleness check, also execute a test command read out of `tickets.md`. A separate opt-in on purpose: the queue is partly machine-written, and a stat() is not a `bash -c` |
 | `GOVERN_EARLY_ABORT` | `0` (off) | Kill a worker showing no progress around turn 30 instead of letting it run to the usual ~218; it leaves a handoff the retry resumes from |
@@ -139,3 +142,37 @@ environment variables if you need to change one.
 ## Model choice
 
 The worker subagent runs `sonnet` by default (`model:` in `.claude/agents/worker.md`). The advisor raises the model for one dispatch with `npm run govern:dispatch -- <N>[,<N>...] --model <haiku|sonnet|opus>`; the choice is recorded in the dispatch packet as a `Model:` line. Nothing escalates the model automatically, and a ticket carries no `Model:` or `Effort:` field.
+
+### Other model families: profiles and roles
+
+A session on a model family other than Claude's reaches its models through slot aliases, so every
+role's model is an accident of one global alias map. A **model profile** replaces that map for
+shiploop's own spawns. It is one data file per family, `scripts/lib/model-profiles/<family>.conf`
+(`glm.conf` and `claude.conf` ship; adding a family is adding one file), holding:
+
+| Key | Holds |
+|---|---|
+| `SESSION_MODEL` | What `claude --model` gets for the advisor's own session |
+| `PICKER` | The `/model` lineup, highest first, `\|-separated` (a launcher renders it into a `modelPicker` settings file; shiploop does not read it) |
+| `ROLE_<role>` | One model per shiploop role: `advisor`, `worker`, `worker_retry`, `investigator`, `lookup`. The key is the agent type with dashes taken as underscores |
+| `TIER_ORDER` | The roles highest first: the family's tier ladder |
+
+The launcher selects one with `SHIPLOOP_MODEL_PROFILE=<family>`. With it set:
+
+- **The router.** The shiploop plugin carries a mod (`hooks/model-router.js`) whose `agent.spawn`
+  hook reads the profile and hands each spawn the model for its role. The advisor never passes
+  `model`: it picks a type, and the type is the role. A type the profile holds no role for (a lens,
+  `general-purpose`, `Explore`) is left alone and inherits the session's model, as does a resumed
+  run. The mod needs Claude Code 2.1.287 or later and a session that has the plugin loaded
+  (`/plugin install shiploop@shiploop`, or `claude --plugin-dir <this checkout>`).
+- **Dispatch.** `npm run govern:dispatch -- <N> [--role <worker|worker-retry>]`: the packet records
+  `Role:`, the printed `Agent` call names the role's type and carries no `model`, and `--model` is
+  refused because an alias would name another family's model. `worker-retry` is the worker on its
+  one retry, on the family's top model.
+- **The ceiling.** `govern::model_rank` places a model by its first position on `TIER_ORDER`, and
+  `govern::model_ceiling` reads the same ladder, so "never spawn above your own tier" holds for the
+  family without a Claude name anywhere.
+
+With `SHIPLOOP_MODEL_PROFILE` unset no profile is read: the router returns every spawn unchanged,
+the definitions' own `model:` lines apply, `--model` works as above, and the Claude ladder is the
+whole ladder. The same workspace therefore runs on Claude with no per-workspace change.

@@ -31,6 +31,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mk_ws_stub "$T"
 source "$DIR/../lib/common.sh"
+set +e   # common.sh re-arms set -e; a test asserts on failing commands
 U="$T/usage"; mkdir -p "$U"
 
 # A transcript line. <file> <type> <message-id> <model> <input> <output> <cache-read> <cache-creation>
