@@ -114,14 +114,15 @@ counter="${TMPDIR:-/tmp}/metarepo-advisor-steer-count-${safe_sid}"
 
 # --- record a worker dispatch's address ---------------------------------------------------------
 if [ "$tool_name" = "Agent" ]; then
-  if [ "$subagent_type" = "worker" ]; then
+  # worker-retry is the same worker dispatched again for its one retry; the steer cap covers both.
+  case "$subagent_type" in worker|worker-retry)
     if [ -n "$agent_name" ]; then
       printf '%s\n' "$(printf '%s' "$agent_name" | tr '[:upper:]' '[:lower:]')" >> "$registry" 2>/dev/null || true
     else
       # No name: addressable by its type, or by a raw agentId this call cannot know yet.
-      printf 'worker\n@unnamed\n' >> "$registry" 2>/dev/null || true
+      printf '%s\n@unnamed\n' "$subagent_type" >> "$registry" 2>/dev/null || true
     fi
-  fi
+  esac
   exit 0
 fi
 

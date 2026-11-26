@@ -3327,6 +3327,93 @@ govern::stream_usage() { # worker-jsonl -> usage JSON
     || printf '{"tokens":null,"costUsd":null,"usageSource":"none"}'
 }
 
+# ── usage of an in-session subagent ─────────────────────────────────────
+# A worker dispatched from a live session is a sidechain inside the advisor's own `claude` process:
+# there is no worker.jsonl and no final result event, so the usage above has nothing to read. Its
+# transcript (~/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl) carries it instead,
+# on every assistant line as message.usage, with message.model naming what answered.
+#
+# One API response is written as SEVERAL assistant lines that share message.id (one per content
+# block), and only the last of them carries the response's usage: the earlier ones carry zeros.
+# So lines are grouped by message id and each field takes the group's maximum. Summing the lines
+# raw happens to give the same total while the zeros stay zeros, and stops the moment a line
+# repeats a nonzero figure; grouping does not depend on that.
+#
+# Output shape, matching govern::stream_usage beside it: {tokens:{input,output,cacheRead,
+# cacheCreation,total}|null, costUsd:null, model:<what answered the last request>|null,
+# usageByModel:{<model>:{input,output,cacheRead,cacheCreation,total}}, usageSource:"subagent"|"none"}.
+# costUsd is always null: a transcript carries token counts and never a price, and inventing one
+# would fabricate the figure a sizing decision is tuned on. Never fails.
+govern::subagent_usage() { # <agent-jsonl> -> usage JSON
+  local f="${1:-}" out
+  out=""
+  if [[ -n "$f" && -s "$f" ]] && command -v jq >/dev/null 2>&1; then
+    # NUL bytes stripped and grep -a, the same NUL-hole tolerance govern::stream_grep gives a
+    # worker.jsonl: a transcript reopened mid-write can carry a hole too.
+    out="$( { LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | LC_ALL=C grep -a . || true; } \
+      | jq -Rc -s '
+        [ split("\n")[]
+          | fromjson?
+          | select(.type == "assistant")
+          | .message
+          | select(.usage != null)
+          | { id: (.id // ""),
+              model: (.model // "unknown"),
+              i: (.usage.input_tokens // 0),
+              o: (.usage.output_tokens // 0),
+              r: (.usage.cache_read_input_tokens // 0),
+              c: (.usage.cache_creation_input_tokens // 0) } ] as $m
+        # A line with no message id gets one of its own, so it never merges into another response.
+        | [ $m | to_entries[]
+            | .value + { id: (if .value.id == "" then "line-\(.key)" else .value.id end) } ] as $lines
+        # One response, several lines: per field, the largest figure any of its lines carries.
+        | [ $lines | group_by(.id)[]
+            | { model: .[0].model, i: (map(.i) | max), o: (map(.o) | max), r: (map(.r) | max), c: (map(.c) | max) } ] as $reqs
+        | [ $reqs | group_by(.model)[]
+            | { key: .[0].model,
+                value: { input: (map(.i) | add), output: (map(.o) | add),
+                         cacheRead: (map(.r) | add), cacheCreation: (map(.c) | add) } } ] as $pairs
+        | ($pairs | map(.value.total = (.value.input + .value.output + .value.cacheRead + .value.cacheCreation)) | from_entries) as $by
+        | if ($reqs | length) == 0 then
+            { tokens: null, costUsd: null, model: null, usageByModel: {}, usageSource: "none" }
+          else
+            { tokens: { input: ($reqs | map(.i) | add), output: ($reqs | map(.o) | add),
+                        cacheRead: ($reqs | map(.r) | add), cacheCreation: ($reqs | map(.c) | add),
+                        total: (($reqs | map(.i) | add) + ($reqs | map(.o) | add) + ($reqs | map(.r) | add) + ($reqs | map(.c) | add)) },
+              costUsd: null, model: ($reqs | last | .model), usageByModel: $by, usageSource: "subagent" }
+          end' 2>&1)" || out=""
+    # A jq that fails prints its error instead of JSON; that is "unreadable", never a wrong figure.
+    [[ "$out" == \{* ]] || out=""
+  fi
+  [[ -n "$out" ]] || out='{"tokens":null,"costUsd":null,"model":null,"usageByModel":{},"usageSource":"none"}'
+  printf '%s' "$out"
+  return 0
+}
+
+# Merge several govern::subagent_usage outputs, oldest record first, into one row of the same
+# shape: tokens and usageByModel add across the agents, and `model` stays the model of the LAST
+# record, the agent whose outcome this row records. A row with no tokens at all reads as "none".
+govern::usage_merge() { # <usage-json>... -> one usage JSON (never fails)
+  printf '%s\n' "$@" | jq -c -s '
+    map(select(type == "object"))
+    | {tokens: (if any(.[]; .tokens != null) then {
+                  input: (map(.tokens.input // 0)|add), output: (map(.tokens.output // 0)|add),
+                  cacheRead: (map(.tokens.cacheRead // 0)|add), cacheCreation: (map(.tokens.cacheCreation // 0)|add)}
+                  | .total = (.input + .output + .cacheRead + .cacheCreation) else null end),
+       costUsd: null,
+       model: ([.[] | select(.model != null) | .model] | last // null),
+       usageByModel: ([ .[] | (.usageByModel // {}) | to_entries[] ]
+                     | group_by(.key)
+                     | map({key: .[0].key, value: (reduce .[].value as $v ({input:0,output:0,cacheRead:0,cacheCreation:0};
+                                   {input: (.input + $v.input), output: (.output + $v.output),
+                                    cacheRead: (.cacheRead + $v.cacheRead), cacheCreation: (.cacheCreation + $v.cacheCreation)}
+                                 | .total = (.input + .output + .cacheRead + .cacheCreation)))})
+                     | from_entries),
+       usageSource: (if any(.[]; .usageSource == "subagent") then "subagent" else "none" end)}' 2>/dev/null \
+    || printf '{"tokens":null,"costUsd":null,"model":null,"usageByModel":{},"usageSource":"none"}'
+  return 0
+}
+
 # ── interrupted/mid-stream-drop detection ─────────────────────────────
 # A laptop that sleeps mid-run (e.g. clamshell-on-battery) suspends the worker's process tree and
 # drops the network, so the in-flight `claude -p` API stream dies mid-response with "API Error:

@@ -19,11 +19,19 @@
 # The `#N` stays in the prompt because the PROPOSAL GATE reads the ticket number out of it
 # (resolve_tnum) -- that gate is unchanged by this script.
 #
-# The packet records the model alias the worker is dispatched on as a `Model: <alias>` line (default
-# sonnet; --model haiku|sonnet|opus). router-posture-guard.sh compares the Agent call's `model`
-# param against that line, so the choice is made once, here, and enforced at spawn.
+# The packet records what the worker is dispatched on, so the choice is made once, here, and
+# router-posture-guard.sh holds the spawn to it. Which line that is depends on the model profile:
 #
-# Usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]
+#   no profile (SHIPLOOP_MODEL_PROFILE unset)  `Model: <alias>` (default sonnet; --model
+#                                              haiku|sonnet|opus), the Claude slot the Agent call
+#                                              carries. Unchanged from before profiles existed.
+#   a profile active                            `Role: <role>` (default worker, or GOVERN_WORKER_ROLE,
+#                                              or --role worker|worker-retry). The type is the
+#                                              role and the model-router mod picks the family's
+#                                              model for it at spawn, so --model is refused: an
+#                                              alias would name a model of another family.
+#
+# Usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus> | --role <worker|worker-retry>]
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -31,19 +39,42 @@ govern::require git
 
 TICKETS_ARG=""
 MODEL_ALIAS="sonnet"
+ROLE_ARG=""
+# The profile that decides the worker's model, or "" when none is active. A name that is not a
+# plain name is no profile (the same reading govern::model_profile_name and the router make).
+MODEL_PROFILE="${SHIPLOOP_MODEL_PROFILE:-}"
+[[ "$MODEL_PROFILE" =~ ^[A-Za-z0-9_.-]+$ ]] || MODEL_PROFILE=""
+USAGE="usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus> | --role <worker|worker-retry>]"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) [[ $# -ge 2 ]] || govern::die "--model needs a value (haiku|sonnet|opus)"; MODEL_ALIAS="$2"; shift 2 ;;
-    --model=*) MODEL_ALIAS="${1#--model=}"; shift ;;
-    *) [[ -z "$TICKETS_ARG" ]] || govern::die "usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]"
+    --model)
+      [[ $# -ge 2 ]] || govern::die "--model needs a value (haiku|sonnet|opus)"
+      [[ -z "$MODEL_PROFILE" ]] || govern::die "SHIPLOOP_MODEL_PROFILE=$MODEL_PROFILE is active: the worker's model comes from that profile's model for its role, so pass --role <worker|worker-retry>, not --model"
+      MODEL_ALIAS="$2"; shift 2 ;;
+    --model=*)
+      [[ -z "$MODEL_PROFILE" ]] || govern::die "SHIPLOOP_MODEL_PROFILE=$MODEL_PROFILE is active: the worker's model comes from that profile's model for its role, so pass --role <worker|worker-retry>, not --model"
+      MODEL_ALIAS="${1#--model=}"; shift ;;
+    --role) [[ $# -ge 2 ]] || govern::die "--role needs a value (worker|worker-retry)"; ROLE_ARG="$2"; shift 2 ;;
+    --role=*) ROLE_ARG="${1#--role=}"; shift ;;
+    *) [[ -z "$TICKETS_ARG" ]] || govern::die "$USAGE"
        TICKETS_ARG="$1"; shift ;;
   esac
 done
-[[ -n "$TICKETS_ARG" ]] || govern::die "usage: dispatch-packet.sh <N>[,<N>...] [--model <haiku|sonnet|opus>]"
+[[ -n "$TICKETS_ARG" ]] || govern::die "$USAGE"
 case "$MODEL_ALIAS" in
   haiku|sonnet|opus) ;;
   *) govern::die "not a model alias: '$MODEL_ALIAS' (use haiku, sonnet or opus)" ;;
 esac
+WORKER_ROLE="worker"
+if [[ -n "$MODEL_PROFILE" ]]; then
+  WORKER_ROLE="${ROLE_ARG:-${GOVERN_WORKER_ROLE:-worker}}"
+  case "$WORKER_ROLE" in
+    worker|worker-retry) ;;
+    *) govern::die "not a worker role: '$WORKER_ROLE' (use worker or worker-retry)" ;;
+  esac
+else
+  [[ -z "$ROLE_ARG" ]] || govern::die "--role names a role in a model profile, and no profile is active (SHIPLOOP_MODEL_PROFILE is unset): without one the worker's model is a Claude slot alias, pass --model <haiku|sonnet|opus>"
+fi
 IFS=',' read -r -a TICKET_NUMS <<< "$TICKETS_ARG"
 for _t in "${TICKET_NUMS[@]}"; do
   [[ "$_t" =~ ^[0-9]+$ ]] || govern::die "not a ticket number: '$_t'"
@@ -125,7 +156,11 @@ PACKET="$WORKTREE_PATH/.dispatch-packet.md"
   printf '# Dispatch packet for %s\n\n' "$(printf '#%s, ' "${TICKET_NUMS[@]}" | sed 's/, $//')"
   printf 'Created: %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   printf 'Worktree: %s\n' "$WORKTREE_PATH"
-  printf 'Model: %s\n' "$MODEL_ALIAS"
+  if [[ -z "$MODEL_PROFILE" ]]; then
+    printf 'Model: %s\n' "$MODEL_ALIAS"
+  else
+    printf 'Role: %s\n' "$WORKER_ROLE"
+  fi
   if [[ -n "$TOUCHED_REPOS" ]]; then
     for _r in $TOUCHED_REPOS; do
       if [[ -f "$WORKTREE_PATH/$_r/CLAUDE.md" ]]; then
